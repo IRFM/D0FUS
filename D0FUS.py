@@ -196,9 +196,9 @@ os.makedirs(save_directory, exist_ok=True)
 # Set parameters related to a (radius)
 na = 1000
 nx = 2000  # Number of points for approximations
-a_min = 0.4
+a_min = 0.4 # range of a for a chosen scan
 a_max = 2.6
-a_pas = 0.01
+a_pas = 0.01 # gap between 2 try
 a_init = 1   # Initial value of a in the searches for the zero of the loss function
 
 def initialize_lists():
