@@ -542,8 +542,8 @@ def Solveur_fb_fnc_fonction_de_a(H,Bmax,P_fus,P_W):
     a = a if a is not None else np.nan
     return(a)
 
-def Solveur_raffiné(H,Bmax,P_fus,P_W):
-    delta = 0.002 # Finesse de la détection
+def Solveur_raffiné(H,Bmax,P_fus,P_W,f_RF_objectif):
+    delta = 0.002 # Finesse de la détection (en mètres)
     def To_solve_raffiné(a):
         (R0_solution,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs) = calcul(a,H,Bmax,P_fus,P_W)
         return max(fRF_solution / f_RF_objectif ,n_vec_solution / nG_solution,beta_solution / betaN,q / qstar_solution)
@@ -553,13 +553,20 @@ def Solveur_raffiné(H,Bmax,P_fus,P_W):
     result = minimize_scalar(To_solve_raffiné, bounds=bounds)
     # La valeur optimale de 'a' sera dans result.x
     optimal_a = result.x
+    optimal_a_raffine = np.nan
+    
+    # Si nan : retour nan
     if To_solve_raffiné(optimal_a) is None or np.isnan(To_solve_raffiné(optimal_a)):
         return np.nan
+    
+    # Si L'une des 4 limites supérieur à 1 alors on retourne a minisant le max des limites
     elif To_solve_raffiné(optimal_a)>1:
             return optimal_a
+    
+    # Si il existe une solution :
     elif To_solve_raffiné(optimal_a)<=1:
         # Boucle parcourant les valeurs de a
-        while optimal_a <= 3:
+        while optimal_a <= 4:
             # Évaluer les valeurs en fonction de 'a'
             (R0_solution,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs) = calcul(optimal_a, H, Bmax, P_fus, P_W)
             # Vérifier si toutes les conditions sont satisfaites
@@ -567,13 +574,18 @@ def Solveur_raffiné(H,Bmax,P_fus,P_W):
                 n_vec_solution / nG_solution < 1 and
                 beta_solution / betaN < 1 and
                 q / qstar_solution < 1 and
-                fB_solution / fNC_solution < 1
+                fRF_solution / f_RF_objectif < 1
             ):
+                if not np.isnan(R0_a_b_c_CS_solution):
+                    optimal_a_raffine = optimal_a
+                    
                 # Si toutes les conditions sont satisfaites, passer à la prochaine valeur de a
                 optimal_a += delta
             else:
                 # Si une des conditions n'est pas satisfaite, sortir de la boucle avec la dernière valeur satisfaisant les conditions
                 break 
+        if optimal_a_raffine is not None and not np.isnan(optimal_a_raffine):
+            optimal_a = optimal_a_raffine
         return (optimal_a-delta)
             
 # Cost function to minimize
@@ -966,22 +978,29 @@ def Plot_operational_domain(chosen_parameter,parameter_values,first_acceptable_v
     
     # Plot parameter evolution
     plt.figure(figsize=(8, 6))
+    taille_titre_principal = 16
+    taille_sous_titre = 14
+    plt.suptitle('Operational domain', fontsize=taille_titre_principal, fontweight='bold')
     if chosen_parameter == 'H':
-        plt.title(f"Operational domain ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T)", fontsize=15)
-    elif chosen_parameter == 'a':
-        plt.title(f"Operational domain ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H})", fontsize=15)
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T", fontsize=taille_sous_titre)
     elif chosen_parameter == 'Bmax':
-        plt.title(f"Operational domain ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H})", fontsize=15)
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H}", fontsize=taille_sous_titre)
     elif chosen_parameter =='Pfus':
-        plt.title(f"Operational domain (Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H})", fontsize=15)
+        plt.title(f"Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H}", fontsize=taille_sous_titre)
     elif chosen_parameter == 'Pw':
-        plt.title(f"Operational domain (Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW H={H})", fontsize=15)
+        plt.title(f"Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW H={H})", fontsize=taille_sous_titre)
+    elif chosen_parameter == 'fobj':
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H}", fontsize=taille_sous_titre)
+    else :
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H}", fontsize=taille_sous_titre)
     if chosen_parameter == 'Bmax':
         plt.xlabel(f"$B_{{\mathrm{{max}}}}$ [{chosen_unity}]")
     elif chosen_parameter =='Pfus':
         plt.xlabel(f"$P_{{\mathrm{{fus}}}}$ [{chosen_unity}]")
     elif chosen_parameter =='a':
         plt.xlabel(f"a [{chosen_unity}]")
+    elif chosen_parameter =='fobj':
+        plt.xlabel(f"$f_{{\mathrm{{obj}}}}$ [{chosen_unity}]")
     elif chosen_parameter == 'Pw':
         plt.xlabel(f"$P_{{\mathrm{{w}}}}$ [{chosen_unity}]")
     else :
@@ -1017,24 +1036,31 @@ def Plot_heat_parameter(chosen_parameter,parameter_values,chosen_unity,heat_solu
     plt.rcParams.update({'font.size': 17})
     
     plt.figure(figsize=(8, 6))
+    taille_titre_principal = 16
+    taille_sous_titre = 14
+    plt.suptitle('Heat Parameter', fontsize=taille_titre_principal, fontweight='bold')
     if chosen_parameter == 'H':
-        plt.title(f"Heat flux parameter ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T)", fontsize=15)
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T", fontsize=taille_sous_titre)
     elif chosen_parameter == 'Bmax':
-        plt.title(f"Heat flux parameter ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H})", fontsize=15)
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H}", fontsize=taille_sous_titre)
     elif chosen_parameter =='Pfus':
-        plt.title(f"Heat flux parameter (Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H})", fontsize=15)
+        plt.title(f"Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H}", fontsize=taille_sous_titre)
     elif chosen_parameter == 'Pw':
-        plt.title(f"Heat flux parameter (Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW H={H})", fontsize=15)
-    elif chosen_parameter == 'a':
-        plt.title(f"Heat flux parameter ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H})", fontsize=15)
+        plt.title(f"Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW H={H})", fontsize=taille_sous_titre)
+    elif chosen_parameter == 'fobj':
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H}", fontsize=taille_sous_titre)
+    else :
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H}", fontsize=taille_sous_titre)
     if chosen_parameter == 'Bmax':
         plt.xlabel(f"$B_{{\mathrm{{max}}}}$ [{chosen_unity}]")
     elif chosen_parameter =='Pfus':
         plt.xlabel(f"$P_{{\mathrm{{fus}}}}$ [{chosen_unity}]")
-    elif chosen_parameter == 'Pw':
-        plt.xlabel(f"$P_{{\mathrm{{w}}}}$ [{chosen_unity}]")
     elif chosen_parameter =='a':
         plt.xlabel(f"a [{chosen_unity}]")
+    elif chosen_parameter =='fobj':
+        plt.xlabel(f"$f_{{\mathrm{{obj}}}}$ [{chosen_unity}]")
+    elif chosen_parameter == 'Pw':
+        plt.xlabel(f"$P_{{\mathrm{{w}}}}$ [{chosen_unity}]")
     else :
         plt.xlabel(f"{chosen_parameter} [{chosen_unity}]")
     plt.ylabel("Q//")
@@ -1056,24 +1082,31 @@ def Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solution
     plt.rcParams.update({'font.size': 17})
     
     fig, ax1 = plt.subplots(figsize=(8, 6))
+    taille_titre_principal = 16
+    taille_sous_titre = 14
+    plt.suptitle('Radial Build', fontsize=taille_titre_principal, fontweight='bold')
     if chosen_parameter == 'H':
-        plt.title(f"Radial Build ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T)", fontsize=15)
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T", fontsize=taille_sous_titre)
     elif chosen_parameter == 'Bmax':
-        plt.title(f"Radial Build ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H})", fontsize=15)
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H}", fontsize=taille_sous_titre)
     elif chosen_parameter =='Pfus':
-        plt.title(f"Radial Build (Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H})", fontsize=15)
+        plt.title(f"Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H}", fontsize=taille_sous_titre)
     elif chosen_parameter == 'Pw':
-        plt.title(f"Radial Build (Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW H={H})", fontsize=15)
-    elif chosen_parameter == 'a':
-        plt.title(f"Radial Build ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H})", fontsize=15)
+        plt.title(f"Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW H={H})", fontsize=taille_sous_titre)
+    elif chosen_parameter == 'fobj':
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H}", fontsize=taille_sous_titre)
+    else :
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H}", fontsize=taille_sous_titre)
     if chosen_parameter == 'Bmax':
         plt.xlabel(f"$B_{{\mathrm{{max}}}}$ [{chosen_unity}]")
     elif chosen_parameter =='Pfus':
         plt.xlabel(f"$P_{{\mathrm{{fus}}}}$ [{chosen_unity}]")
-    elif chosen_parameter == 'Pw':
-        plt.xlabel(f"$P_{{\mathrm{{w}}}}$ [{chosen_unity}]")
     elif chosen_parameter =='a':
         plt.xlabel(f"a [{chosen_unity}]")
+    elif chosen_parameter =='fobj':
+        plt.xlabel(f"$f_{{\mathrm{{obj}}}}$ [{chosen_unity}]")
+    elif chosen_parameter == 'Pw':
+        plt.xlabel(f"$P_{{\mathrm{{w}}}}$ [{chosen_unity}]")
     else :
         plt.xlabel(f"{chosen_parameter} [{chosen_unity}]")
     plt.ylabel("Length [m]")  # Label pour l'axe y principal
@@ -1109,24 +1142,31 @@ def Plot_cost_function(chosen_parameter,parameter_values,cost_solutions,first_ac
     
     # Plot cost function
     plt.figure(figsize=(8, 6))
+    taille_titre_principal = 16
+    taille_sous_titre = 14
+    plt.suptitle('Cost function', fontsize=taille_titre_principal, fontweight='bold')
     if chosen_parameter == 'H':
-        plt.title(f"Cost function ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T)", fontsize=15)
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T", fontsize=taille_sous_titre)
     elif chosen_parameter == 'Bmax':
-        plt.title(f"Cost function ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H})", fontsize=15)
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H}", fontsize=taille_sous_titre)
     elif chosen_parameter =='Pfus':
-        plt.title(f"Cost function (Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H})", fontsize=15)
+        plt.title(f"Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H}", fontsize=taille_sous_titre)
     elif chosen_parameter == 'Pw':
-        plt.title(f"Cost function (Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW H={H})", fontsize=15)
-    elif chosen_parameter == 'a':
-        plt.title(f"Cost function ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H})", fontsize=15)
+        plt.title(f"Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW H={H})", fontsize=taille_sous_titre)
+    elif chosen_parameter == 'fobj':
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H}", fontsize=taille_sous_titre)
+    else :
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H}", fontsize=taille_sous_titre)
     if chosen_parameter == 'Bmax':
         plt.xlabel(f"$B_{{\mathrm{{max}}}}$ [{chosen_unity}]")
     elif chosen_parameter =='Pfus':
         plt.xlabel(f"$P_{{\mathrm{{fus}}}}$ [{chosen_unity}]")
-    elif chosen_parameter == 'Pw':
-        plt.xlabel(f"$P_{{\mathrm{{w}}}}$ [{chosen_unity}]")
     elif chosen_parameter =='a':
         plt.xlabel(f"a [{chosen_unity}]")
+    elif chosen_parameter =='fobj':
+        plt.xlabel(f"$f_{{\mathrm{{obj}}}}$ [{chosen_unity}]")
+    elif chosen_parameter == 'Pw':
+        plt.xlabel(f"$P_{{\mathrm{{w}}}}$ [{chosen_unity}]")
     else :
         plt.xlabel(f"{chosen_parameter} [{chosen_unity}]")
     plt.ylabel("$V_{\mathrm{T}}$/$P_{\mathrm{E}}$")
@@ -1144,7 +1184,7 @@ def Plot_cost_function(chosen_parameter,parameter_values,cost_solutions,first_ac
     
 def Plot_tableau_valeurs(H,P_fus,P_W,Bmax,κ):
     # New solveur
-    a_solution = Solveur_raffiné(H,Bmax,P_fus,P_W)
+    a_solution = Solveur_raffiné(H,Bmax,P_fus,P_W,f_RF_objectif)
     # Find the value of 'a' for which f_B is equal to f_NC
     #a_solution = Solveur_fb_fnc_fonction_de_a(H,Bmax,P_fus,P_W)
     # Calculate useful values
@@ -1167,8 +1207,7 @@ def Plot_tableau_valeurs(H,P_fus,P_W,Bmax,κ):
         ["$\\tau_E$", tauE_solution, "s"],
         ["$\\beta$", beta_solution, "%"],
         ["$\\beta_N$", betaN, "%"],
-        ["$f_B$", fB_solution, ""],
-        ["$f_{NC}$", fNC_solution, ""],
+        ["$fP_LH$", fRF_solution, ""],
         ["$q_{*}$", qstar_solution, ""],
     ]
     # Affichage
@@ -1181,7 +1220,7 @@ def Plot_tableau_valeurs(H,P_fus,P_W,Bmax,κ):
     # Créer une liste des hauteurs de ligne avec une hauteur uniforme
     row_heights = [0.1] * len(df)
     # Create a figure
-    fig, ax = plt.subplots(figsize=(4, 5))
+    fig, ax = plt.subplots(figsize=(4, 4.5))
     # Hide the axes
     ax.axis('off')
     # Create a table from the DataFrame with increased row heights
@@ -1192,13 +1231,22 @@ def Plot_tableau_valeurs(H,P_fus,P_W,Bmax,κ):
     # Center the text in each cell
     for key, cell in mpl_table._cells.items():
         cell.set_text_props(ha='center', va='center')
+        
+    taille_titre_principal = 11
+    taille_sous_titre = 9
+    plt.suptitle('Main parameters', fontsize=taille_titre_principal, fontweight='bold')
+    plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H}", fontsize=taille_sous_titre)
     # Save the image
-    path_to_save = os.path.join(save_directory, "18T_table.png")
+    path_to_save = os.path.join(save_directory, f"Table for P_fus={int(P_fus/1e9)} f_obj={f_RF_objectif} P_w={int(P_W/1e6)} Bmax={Bmax} H={H}.png")
     plt.savefig(path_to_save, dpi=300, bbox_inches='tight')
     # Display the figure
     plt.show()
     # Réinitialisation des paramètres par défaut
     plt.rcdefaults()
+
+# Test Tableau
+# (H,P_fus,P_W,Bmax,κ)=init(CHOICE)
+# Plot_tableau_valeurs(H,P_fus,P_W,Bmax,κ)
 
 def Plot_radar_chart():
 
@@ -1547,17 +1595,18 @@ chosen_parameter = None
 chosen_unity = None
 
 # Ask the user to choose the parameter to vary
-chosen_parameter = input("Choose the parameter to vary (H, Bmax, Pfus, Pw): ")
+chosen_parameter = input("Choose the parameter to vary (H, Bmax, Pfus, Pw, fobj): ")
 
 # Define ranges and steps for each parameter
 parameter_ranges = {
     'H': np.arange(0.6, 2, 0.01),
     'Bmax': np.arange(10, 25, 0.1),
     'Pfus': np.arange(500.E6, 5000.E6, 100.E6),
-    'Pw': np.arange(1.E6, 5.E6, 1.E5)
+    'Pw': np.arange(1.E6, 5.E6, 1.E5),
+    'fobj' : np.arange(0.0,1.0,0.001)
 }
 
-unit_mapping = {'H': '', 'Bmax': 'T', 'Pfus': 'GW', 'Pw': 'MW/m²'}
+unit_mapping = {'H': '', 'Bmax': 'T', 'Pfus': 'GW', 'Pw': 'MW/m²','fobj': ''}
 chosen_unity = unit_mapping.get(chosen_parameter, '')
 
 # Select the appropriate range for the chosen parameter
@@ -1579,21 +1628,18 @@ if parameter_values is not None:
             P_fus = parameter_value
         elif chosen_parameter == 'Pw':
             P_W = parameter_value
+        elif chosen_parameter == 'fobj':
+            f_RF_objectif = parameter_value
 
         # Find the value of 'a' for which f_B is equal to f_NC
         #a_solution = Solveur_fb_fnc_fonction_de_a(H,Bmax,P_fus,P_W)
         
         # New solver
-        a_solution = Solveur_raffiné(H,Bmax,P_fus,P_W)
+        a_solution = Solveur_raffiné(H,Bmax,P_fus,P_W,f_RF_objectif)
         a_solutions.append(a_solution)
         
         # Calculate useful values
         (R0_solution,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs) = calcul(a_solution, H, Bmax, P_fus, P_W)
-        
-        Bmax_CS = 13 #[T]
-        reCS_free13 = find_required_reCS(R0_solution,Ip_solution,nbar_solution,Tbar,Bmax_CS,a_solution)
-        Bmax_CS = 18 #[T]
-        reCS_free18 = find_required_reCS(R0_solution,Ip_solution,nbar_solution,Tbar,Bmax_CS,a_solution)
         
         # Store the results
         n_solutions.append(n_vec_solution)
@@ -1612,8 +1658,6 @@ if parameter_values is not None:
         R0_a_b_c_solutions.append(R0_a_b_c_solution)
         R0_a_b_c_CS_solutions.append(R0_a_b_c_CS_solution)
         required_BCSs.append(required_Bcs)
-        reCS_free13s.append(reCS_free13)
-        reCS_free18s.append(reCS_free18)
         Ip_solutions.append(Ip_solution)
         fRF_solutions.append(fRF_solution)
 
@@ -1638,8 +1682,6 @@ R0_a_b_solutions = np.array(R0_a_b_solutions)
 R0_a_b_c_solutions = np.array(R0_a_b_c_solutions)
 R0_a_b_c_CS_solutions = np.array(R0_a_b_c_CS_solutions)
 required_BCSs = np.array(required_BCSs)
-reCS_free13s = np.array(reCS_free13s)
-reCS_free18s = np.array(reCS_free18s)
 Ip_solutions = np.array(Ip_solutions)
 fRF_solutions = np.array(fRF_solutions)
 
