@@ -954,7 +954,7 @@ def Plot_radial_build_aesthetic(lengths_upper, names_upper, lengths_lower, names
 # Testing
 # Plot Radial Build Aesthgetic
 # lengths_upper = [1.2,0.5, 0.1, 1, 0.8, 2]
-# names_upper = ['','CS','', 'c', 'b', 'Plasma']
+# names_upper = ['','CS','', 'TFC', 'Blanket', 'Plasma']
 # lengths_lower = [4.6]
 # names_lower = ['R0']
 # Plot_radial_build_aesthetic(lengths_upper, names_upper, lengths_lower, names_lower)
@@ -1740,7 +1740,7 @@ if Working_Point == True:
     
     # Plot Radial Build aesthetic
     lengths_upper = [R0_solution-R0_a_b_c_CS_solution,R0_solution-R0_a_b_c_solution, 0.1, c, b, 2*result.x[0]]
-    names_upper = ['','CS','', 'c', 'b', 'Plasma']
+    names_upper = ['','CS','', 'TFC', 'Blanket', 'Plasma']
     lengths_lower = [R0_solution]
     names_lower = ['R0']
     Plot_radial_build_aesthetic(lengths_upper, names_upper, lengths_lower, names_lower)
