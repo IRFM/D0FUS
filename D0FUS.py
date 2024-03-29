@@ -967,15 +967,15 @@ def Plot_operational_domain(chosen_parameter,parameter_values,first_acceptable_v
     # Plot parameter evolution
     plt.figure(figsize=(8, 6))
     if chosen_parameter == 'H':
-        plt.title(f"Operational domain ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{RF}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T)", fontsize=15)
+        plt.title(f"Operational domain ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T)", fontsize=15)
     elif chosen_parameter == 'a':
-        plt.title(f"Operational domain ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{RF}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H})", fontsize=15)
+        plt.title(f"Operational domain ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H})", fontsize=15)
     elif chosen_parameter == 'Bmax':
-        plt.title(f"Operational domain ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{RF}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H})", fontsize=15)
+        plt.title(f"Operational domain ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H})", fontsize=15)
     elif chosen_parameter =='Pfus':
-        plt.title(f"Operational domain (Bmax={Bmax}T $f_{{\mathrm{{RF}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H})", fontsize=15)
+        plt.title(f"Operational domain (Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H})", fontsize=15)
     elif chosen_parameter == 'Pw':
-        plt.title(f"Operational domain (Bmax={Bmax}T $f_{{\mathrm{{RF}}}}$={f_RF_objectif} $P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW H={H})", fontsize=15)
+        plt.title(f"Operational domain (Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW H={H})", fontsize=15)
     if chosen_parameter == 'Bmax':
         plt.xlabel(f"$B_{{\mathrm{{max}}}}$ [{chosen_unity}]")
     elif chosen_parameter =='Pfus':
@@ -1018,15 +1018,15 @@ def Plot_heat_parameter(chosen_parameter,parameter_values,chosen_unity,heat_solu
     
     plt.figure(figsize=(8, 6))
     if chosen_parameter == 'H':
-        plt.title(f"Heat flux parameter ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{RF}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T)", fontsize=15)
+        plt.title(f"Heat flux parameter ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T)", fontsize=15)
     elif chosen_parameter == 'Bmax':
-        plt.title(f"Heat flux parameter ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{RF}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H})", fontsize=15)
+        plt.title(f"Heat flux parameter ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H})", fontsize=15)
     elif chosen_parameter =='Pfus':
-        plt.title(f"Heat flux parameter (Bmax={Bmax}T $f_{{\mathrm{{RF}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H})", fontsize=15)
+        plt.title(f"Heat flux parameter (Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H})", fontsize=15)
     elif chosen_parameter == 'Pw':
-        plt.title(f"Heat flux parameter (Bmax={Bmax}T $f_{{\mathrm{{RF}}}}$={f_RF_objectif} $P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW H={H})", fontsize=15)
+        plt.title(f"Heat flux parameter (Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW H={H})", fontsize=15)
     elif chosen_parameter == 'a':
-        plt.title(f"Heat flux parameter ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{RF}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H})", fontsize=15)
+        plt.title(f"Heat flux parameter ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H})", fontsize=15)
     if chosen_parameter == 'Bmax':
         plt.xlabel(f"$B_{{\mathrm{{max}}}}$ [{chosen_unity}]")
     elif chosen_parameter =='Pfus':
@@ -1057,15 +1057,15 @@ def Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solution
     
     fig, ax1 = plt.subplots(figsize=(8, 6))
     if chosen_parameter == 'H':
-        plt.title(f"Radial Build ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{RF}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T)", fontsize=15)
+        plt.title(f"Radial Build ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T)", fontsize=15)
     elif chosen_parameter == 'Bmax':
-        plt.title(f"Radial Build ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{RF}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H})", fontsize=15)
+        plt.title(f"Radial Build ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H})", fontsize=15)
     elif chosen_parameter =='Pfus':
-        plt.title(f"Radial Build (Bmax={Bmax}T $f_{{\mathrm{{RF}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H})", fontsize=15)
+        plt.title(f"Radial Build (Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H})", fontsize=15)
     elif chosen_parameter == 'Pw':
-        plt.title(f"Radial Build (Bmax={Bmax}T $f_{{\mathrm{{RF}}}}$={f_RF_objectif} $P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW H={H})", fontsize=15)
+        plt.title(f"Radial Build (Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW H={H})", fontsize=15)
     elif chosen_parameter == 'a':
-        plt.title(f"Radial Build ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{RF}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H})", fontsize=15)
+        plt.title(f"Radial Build ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H})", fontsize=15)
     if chosen_parameter == 'Bmax':
         plt.xlabel(f"$B_{{\mathrm{{max}}}}$ [{chosen_unity}]")
     elif chosen_parameter =='Pfus':
@@ -1110,15 +1110,15 @@ def Plot_cost_function(chosen_parameter,parameter_values,cost_solutions,first_ac
     # Plot cost function
     plt.figure(figsize=(8, 6))
     if chosen_parameter == 'H':
-        plt.title(f"Cost function ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{RF}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T)", fontsize=15)
+        plt.title(f"Cost function ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T)", fontsize=15)
     elif chosen_parameter == 'Bmax':
-        plt.title(f"Cost function ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{RF}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H})", fontsize=15)
+        plt.title(f"Cost function ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H})", fontsize=15)
     elif chosen_parameter =='Pfus':
-        plt.title(f"Cost function (Bmax={Bmax}T $f_{{\mathrm{{RF}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H})", fontsize=15)
+        plt.title(f"Cost function (Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H})", fontsize=15)
     elif chosen_parameter == 'Pw':
-        plt.title(f"Cost function (Bmax={Bmax}T $f_{{\mathrm{{RF}}}}$={f_RF_objectif} $P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW H={H})", fontsize=15)
+        plt.title(f"Cost function (Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW H={H})", fontsize=15)
     elif chosen_parameter == 'a':
-        plt.title(f"Cost function ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{RF}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H})", fontsize=15)
+        plt.title(f"Cost function ($P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H})", fontsize=15)
     if chosen_parameter == 'Bmax':
         plt.xlabel(f"$B_{{\mathrm{{max}}}}$ [{chosen_unity}]")
     elif chosen_parameter =='Pfus':
