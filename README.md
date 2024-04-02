@@ -64,39 +64,32 @@ To get a local copy up and running follow these simple example steps.
 
 D0FUS is a code developed in Python. To open it, the author recommends using Spyder, but any other Python executor will suffice. The code uses the following librarys, which will need to be installed on first execution if not already present:
 
-numpy
-matplotlib
-scipy
-pandas
-warnings
-os
-plotly
-seaborn
-math
+* numpy
+* matplotlib
+* scipy
+* pandas
+* warnings
+* os
+* plotly
+* seaborn
+* math
 
 To do this, if necessary, execute in the console:
 
-* npm
+* CMD
   ```sh
   pip install library_name
   ```
 
 ### Installation
 
-_Below is an example of how you can instruct your audience on installing and setting up your app. This template doesn't rely on any external dependencies or services._
+To create a local copy of this project to use it, here are the necessary steps:
 
-1. Get a free API Key at [https://example.com](https://example.com)
-2. Clone the repo
+1. Dwnload GIT on you machine
+2. Open GIT BASH where you want to clone the project
+3. Clone the project :
    ```sh
-   git clone https://github.com/your_username_/Project-Name.git
-   ```
-3. Install NPM packages
-   ```sh
-   npm install
-   ```
-4. Enter your API in `config.js`
-   ```js
-   const API_KEY = 'ENTER YOUR API';
+   git clone http://irfm-gitlab.intra.cea.fr/TA276941/D0FUS.git
    ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
