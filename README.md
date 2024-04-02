@@ -4,8 +4,17 @@
 
 ## Getting Started
 
-This is an example of how you may give instructions on setting up your project locally.
-To get a local copy up and running follow these simple example steps.
+The code is currently presented as a single Python file comprising a tree of functions allowing for multiple objectives to be achieved:
+
+* A first initialization phase is necessary with the import of libraries, the definition of constants, the creation of a database of main fusion machines, and the initialization of numerical parameters.
+* Then comes the definition of physical and engineering functions, the core of the program, although not the largest part of the code.
+* Other functions, for routine tasks, calculations, and graphical display, are then defined.
+* Finally, modules allowing the production of exploitable results are presented:
+  - Variation of the plasma radius for a given set of input data
+  - Variation of \( H \), \( B_{\text{max}} \), \( P_{\text{fus}} \), \( P_{\text{w}} \), or \( f_{\text{obj}} \) for the rest of the given data
+  - A gradient descent to find the minimum of an arbitrary cost function while keeping the input values of the code between user-selected limits
+  - A robustness test to calculate the outputs of D0FUS for a set of input data, with aesthetic displays
+  - Finally, the possibility to plot a variation of \( R_0 \) as a function of \( B \) for different assumptions.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
