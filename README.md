@@ -36,38 +36,40 @@ To do this, if necessary, execute in the console:
 
 To create a local copy of this project to use it, here are the necessary steps:
 
-1. Dwnload GIT on you machine
+1. Download GIT on you machine
 2. Open GIT BASH where you want to clone the project
-3. Clone the project :
+3. Identification :
+  ```sh
+  git config --global user.name USERNAME
+  ```
+  ```sh
+  git config --global user.email EMAIL
+  ```
+4. Clone the project :
    ```sh
    git clone http://irfm-gitlab.intra.cea.fr/TA276941/D0FUS.git
    ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-## Developers
+## MAIN Developers
 
-<!-- ROADMAP -->
-## Roadmap
-
-- [ ]  Passage sous GIT
-    - [x]  Transfert Eric et Yanick
-    - [ ]  Documents ressources à créer
-
-- [ ]  Débugage massif :
-    - [x]  fb/fnc à fraction recirculante
-    - [ ]  Pfus à Pe , check ce que ça veut dire + bout de note ?
-    - [ ]  Descente de gradient
-    - [ ]  RiCS
-    - [ ]  Test de robustesse
-    - [ ]  R/B
-
-- [ ]  Changement lois d’échelles (Verdolaje 2022)
-- [ ]  Outil de scan avec base de donnée interactive
-
+To update the main branch, here are the steps to follow:
+1. Add the necessary files to the GIT cache :
+  ```sh
+  git add FICHIER.TYPE
+  ```
+2. Commit the necessary files to the local GIT repository :
+  ```sh
+  git commit -m "NEWS MESSAGE"
+  ```
+3. Push the local repository to the server:
+  ```sh
+  git push HEAD:main
+  ```
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-## Contributers
+## Outside Contributers
 
 If you have a suggestion that would make this better, please fork the repository and create a pull request. To do so :
 
@@ -87,6 +89,25 @@ git push origin feature/AmazingFeature
 5. Open a Pull Request
 
 You can also open an issue with the tag "enhancement".
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## Roadmap
+
+- [ ]  Passage sous GIT
+    - [x]  Transfert Eric et Yanick
+    - [ ]  Documents ressources à créer
+
+- [ ]  Débugage massif :
+    - [x]  fb/fnc à fraction recirculante
+    - [ ]  Pfus à Pe , check ce que ça veut dire + bout de note ?
+    - [ ]  Descente de gradient
+    - [ ]  RiCS
+    - [ ]  Test de robustesse
+    - [ ]  R/B
+
+- [ ]  Changement lois d’échelles (Verdolaje 2022)
+- [ ]  Outil de scan avec base de donnée interactive
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
