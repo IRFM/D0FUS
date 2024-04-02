@@ -62,10 +62,23 @@ To get a local copy up and running follow these simple example steps.
 
 ### Prerequisites
 
-This is an example of how to list things you need to use the software and how to install them.
+D0FUS is a code developed in Python. To open it, the author recommends using Spyder, but any other Python executor will suffice. The code uses the following librarys, which will need to be installed on first execution if not already present:
+
+numpy
+matplotlib
+scipy
+pandas
+warnings
+os
+plotly
+seaborn
+math
+
+To do this, if necessary, execute in the console:
+
 * npm
   ```sh
-  npm install npm@latest -g
+  pip install library_name
   ```
 
 ### Installation
