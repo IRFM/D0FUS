@@ -101,6 +101,10 @@ You can also open an issue with the tag "enhancement".
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
+## Server
+
+For users belonging to IRFM, execution on the IRFM JupyterLab server is also possible and convenient. To do this, go to the IRFM website, then navigate to the 'Pratique' tab, and then 'Python IRFM'.
+
 ## Roadmap
 
 - [ ]  Passage sous GIT
