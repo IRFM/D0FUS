@@ -61,7 +61,7 @@ To create a local copy of this project to use it, here are the necessary steps:
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-## MAIN Developers
+## Developers
 
 To update the main branch, here are the steps to follow:
 1. Add the necessary files to the GIT cache :
