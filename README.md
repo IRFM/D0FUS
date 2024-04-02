@@ -46,9 +46,9 @@ To create a local copy of this project to use it, here are the necessary steps:
   git config --global user.email EMAIL
   ```
 4. Clone the project :
-   ```sh
-   git clone http://irfm-gitlab.intra.cea.fr/TA276941/D0FUS.git
-   ```
+  ```sh
+  git clone http://irfm-gitlab.intra.cea.fr/TA276941/D0FUS.git
+  ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -112,6 +112,8 @@ You can also open an issue with the tag "enhancement".
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## License
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Contact
 
