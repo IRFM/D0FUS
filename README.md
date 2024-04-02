@@ -11,10 +11,10 @@ The code is currently presented as a single Python file comprising a tree of fun
 * Other functions, for routine tasks, calculations, and graphical display, are then defined.
 * Finally, modules allowing the production of exploitable results are presented:
   - Variation of the plasma radius for a given set of input data
-  - Variation of \( H \), \( B_{\text{max}} \), \( P_{\text{fus}} \), \( P_{\text{w}} \), or \( f_{\text{obj}} \) for the rest of the given data
+  - Variation of H, B_max, P_fus, P_w, or f_obj for the rest of the given data
   - A gradient descent to find the minimum of an arbitrary cost function while keeping the input values of the code between user-selected limits
   - A robustness test to calculate the outputs of D0FUS for a set of input data, with aesthetic displays
-  - Finally, the possibility to plot a variation of \( R_0 \) as a function of \( B \) for different assumptions.
+  - Finally, the possibility to plot a variation of R_0 as a function of B for different assumptions.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
