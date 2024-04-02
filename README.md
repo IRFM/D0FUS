@@ -125,9 +125,18 @@ Any contributions you make will be greatly appreciated :
 If you have a suggestion that would make this better, please fork the repository and create a pull request. To do so :
 
 1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
+2. Create your Feature Branch 
+   ```sh
+   git checkout -b feature/AmazingFeature
+   ```
+3. Commit your Changes
+```sh
+git commit -m 'Add some AmazingFeature
+```
+4. Push to the Branch
+```sh
+git push origin feature/AmazingFeature
+```
 5. Open a Pull Request
 
 You can also open an issue with the tag "enhancement".
