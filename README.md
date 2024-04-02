@@ -70,7 +70,7 @@ To update the main branch, here are the steps to follow:
   ```
 2. Commit the necessary files to the local GIT repository :
   ```sh
-  git commit -m "NEWS MESSAGE"
+  git commit -m 'Actualisation message'
   ```
 3. Push the local repository to the server:
   ```sh
