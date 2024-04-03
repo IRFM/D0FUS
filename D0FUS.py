@@ -201,6 +201,8 @@ a_max = 2.6
 a_pas = 0.01 # gap between 2 try
 a_init = 1   # Initial value of a in the searches for the zero of the loss function
 
+max_iterations = 10000 # Max iteration for minimum research
+
 def initialize_lists():
     # Initialize lists to store the results
     a_solutions = []
@@ -220,8 +222,6 @@ def initialize_lists():
     R0_a_b_c_CS_solutions = []
     required_BCSs = []
     R0_solutions = []
-    reCS_free13s = []
-    reCS_free18s = []
     Ip_solutions = []
     fRF_solutions = []
     
@@ -243,14 +243,12 @@ def initialize_lists():
         R0_a_b_c_CS_solutions,
         required_BCSs,
         R0_solutions,
-        reCS_free13s,
-        reCS_free18s,
         Ip_solutions,
         fRF_solutions
     )
 
 # Utilisation de la fonction pour initialiser les listes
-(a_solutions, nG_solutions, n_solutions, beta_solutions,  qstar_solutions, fB_solutions, fNC_solutions, cost_solutions, heat_solutions, c_solutions, sol_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,required_BCSs,R0_solutions,reCS_free13s,reCS_free18s,Ip_solutions,fRF_solutions) = initialize_lists()
+(a_solutions, nG_solutions, n_solutions, beta_solutions,  qstar_solutions, fB_solutions, fNC_solutions, cost_solutions, heat_solutions, c_solutions, sol_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,required_BCSs,R0_solutions,Ip_solutions,fRF_solutions) = initialize_lists()
 
 #%% Physical Functions
 
@@ -469,6 +467,8 @@ def f_cost(a,b,R0,c,κ,P_fus):
     V_b = 2*np.pi**2*R0*((a+b)*(κ*a+b)-κ*a**2)
     V_tf = 4*np.pi*c*(2*R0-2*a-2*b-c)*((1+κ)*a+2*b+c)
     VI_Pe = (V_b+V_tf)/P_E
+    if np.isnan(VI_Pe)==True or VI_Pe is None:
+        VI_Pe = 10e-6
     return VI_Pe
 
 def f_heat(B0,R0,P_fus,eta_T):
@@ -614,12 +614,12 @@ def objective_function(x):
     if np.isnan(R0_a_b_c_CS_solution) :
         cost_fct = cost_fct + 10
         
-    # naN verification
-    if np.isnan(cost_fct)==True:
-        cost_fct = 100
-        
     # Minimization of the cost
-    cost_fct = cost_fct + (cost*1.E6)
+    cost_fct = cost_fct + (cost*1e6)
+    
+    # naN verification
+    if np.isnan(cost_fct)==True or cost_fct is None:
+        cost_fct = 100
     
     return cost_fct
 
@@ -663,7 +663,7 @@ def calcul(a,H,Bmax,P_fus,P_W):
 def Variation_a(H,Bmax,P_fus,P_W):
     
     # Utilisation de la fonction pour initialiser les listes
-    (a_solutions, nG_solutions, n_solutions, beta_solutions,  qstar_solutions, fB_solutions, fNC_solutions, cost_solutions, heat_solutions, c_solutions, sol_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,required_BCSs,R0_solutions,reCS_free13s,reCS_free18s,Ip_solutions,fRF_solutions) = initialize_lists()
+    (a_solutions, nG_solutions, n_solutions, beta_solutions,  qstar_solutions, fB_solutions, fNC_solutions, cost_solutions, heat_solutions, c_solutions, sol_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,required_BCSs,R0_solutions,Ip_solutions,fRF_solutions) = initialize_lists()
     
     # Iterate through the values of a
     a_values = np.arange(a_min, a_max, a_pas)
@@ -818,7 +818,7 @@ def Test_working_point(bounds):
         # Solve for 'a' based on given parameters
         a_solution = Solveur_fb_fnc_fonction_de_a(H, Bmax, P_fus, P_W)
         # Calculate useful values
-        (R0_solution, B0_solution, pbar_solution, beta_solution, nbar_solution, tauE_solution, Ip_solution, qstar_solution, nG_solution, eta_CD_solution, fB_solution, fNC_solution, n_vec_solution, c, cost, heat, solenoid, R0_a_solution, R0_a_b_solution, R0_a_b_c_solution, R0_a_b_c_CS_solution, required_Bcs) = calcul(a_solution, H, Bmax, P_fus, P_W)
+        (R0_solution,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs) = calcul(a_solution, H, Bmax, P_fus, P_W)
         
         # Check if conditions for a working point are met
         if (
@@ -944,7 +944,7 @@ def Plot_radial_build_aesthetic(lengths_upper, names_upper, lengths_lower, names
 
     # Central Tick
     ax.vlines(0, ymin=-0.2, ymax=0.4, colors='k', linestyles='dashed')
-    ax.text(0, 0.41, 'Central axis', ha='center', va='bottom', fontsize=12)
+    ax.text(0.2, 0.41, 'Central axis', ha='center', va='bottom', fontsize=12)
     # Modifier la taille de police de l'échelle sur les deux axes (x et y)
     plt.gca().tick_params(axis='both', labelsize=12)
     # Hide Y
@@ -964,7 +964,6 @@ def Plot_radial_build_aesthetic(lengths_upper, names_upper, lengths_lower, names
     plt.rcdefaults()
 
 # Testing
-# Plot Radial Build Aesthgetic
 # lengths_upper = [1.2,0.5, 0.1, 1, 0.8, 2]
 # names_upper = ['','CS','', 'TFC', 'Blanket', 'Plasma']
 # lengths_lower = [4.6]
@@ -981,18 +980,27 @@ def Plot_operational_domain(chosen_parameter,parameter_values,first_acceptable_v
     taille_titre_principal = 16
     taille_sous_titre = 14
     plt.suptitle('Operational domain', fontsize=taille_titre_principal, fontweight='bold')
+    # Arrondir les valeurs à une décimale pour Bmax, Pfus, Pw et H, et à deux décimales pour f_obj
+    Bmax_rounded = round(Bmax, 1)
+    P_fus_rounded = round(P_fus / 1e9, 1)
+    P_W_rounded = round(P_W / 1e6, 1)
+    H_rounded = round(H, 1)
+    f_obj_rounded = round(f_RF_objectif, 2)
+    
+    # Construction du titre en fonction du paramètre choisi
     if chosen_parameter == 'H':
-        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T", fontsize=taille_sous_titre)
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={P_fus_rounded}GW $f_{{\mathrm{{obj}}}}$={f_obj_rounded} $P_{{\mathrm{{w}}}}$={P_W_rounded}MW/m² Bmax={Bmax_rounded}T", fontsize=taille_sous_titre)
     elif chosen_parameter == 'Bmax':
-        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H}", fontsize=taille_sous_titre)
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={P_fus_rounded}GW $f_{{\mathrm{{obj}}}}$={f_obj_rounded} $P_{{\mathrm{{w}}}}$={P_W_rounded}MW/m² H={H_rounded}", fontsize=taille_sous_titre)
     elif chosen_parameter =='Pfus':
-        plt.title(f"Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H}", fontsize=taille_sous_titre)
+        plt.title(f"Bmax={Bmax_rounded}T $f_{{\mathrm{{obj}}}}$={f_obj_rounded} $P_{{\mathrm{{w}}}}$={P_W_rounded}MW/m² H={H_rounded}", fontsize=taille_sous_titre)
     elif chosen_parameter == 'Pw':
-        plt.title(f"Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW H={H})", fontsize=taille_sous_titre)
+        plt.title(f"Bmax={Bmax_rounded}T $f_{{\mathrm{{obj}}}}$={f_obj_rounded} $P_{{\mathrm{{fus}}}}$={P_fus_rounded}GW H={H_rounded})", fontsize=taille_sous_titre)
     elif chosen_parameter == 'fobj':
-        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H}", fontsize=taille_sous_titre)
-    else :
-        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H}", fontsize=taille_sous_titre)
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={P_fus_rounded}GW $P_{{\mathrm{{w}}}}$={P_W_rounded}MW/m² Bmax={Bmax_rounded}T H={H_rounded}", fontsize=taille_sous_titre)
+    else:
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={P_fus_rounded}GW $f_{{\mathrm{{obj}}}}$={f_obj_rounded} $P_{{\mathrm{{w}}}}$={P_W_rounded}MW/m² Bmax={Bmax_rounded}T H={H_rounded}", fontsize=taille_sous_titre)
+
     if chosen_parameter == 'Bmax':
         plt.xlabel(f"$B_{{\mathrm{{max}}}}$ [{chosen_unity}]")
     elif chosen_parameter =='Pfus':
@@ -1030,7 +1038,7 @@ def Plot_operational_domain(chosen_parameter,parameter_values,first_acceptable_v
     # Réinitialisation des paramètres par défaut
     plt.rcdefaults()
     
-def Plot_heat_parameter(chosen_parameter,parameter_values,chosen_unity,heat_solutions):
+def Plot_heat_parameter(chosen_parameter,parameter_values,first_acceptable_value,chosen_unity,heat_solutions):
     
     # Définir la taille de la police par défaut
     plt.rcParams.update({'font.size': 17})
@@ -1039,18 +1047,27 @@ def Plot_heat_parameter(chosen_parameter,parameter_values,chosen_unity,heat_solu
     taille_titre_principal = 16
     taille_sous_titre = 14
     plt.suptitle('Heat Parameter', fontsize=taille_titre_principal, fontweight='bold')
+    # Arrondir les valeurs à une décimale pour Bmax, Pfus, Pw et H, et à deux décimales pour f_obj
+    Bmax_rounded = round(Bmax, 1)
+    P_fus_rounded = round(P_fus / 1e9, 1)
+    P_W_rounded = round(P_W / 1e6, 1)
+    H_rounded = round(H, 1)
+    f_obj_rounded = round(f_RF_objectif, 2)
+    
+    # Construction du titre en fonction du paramètre choisi
     if chosen_parameter == 'H':
-        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T", fontsize=taille_sous_titre)
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={P_fus_rounded}GW $f_{{\mathrm{{obj}}}}$={f_obj_rounded} $P_{{\mathrm{{w}}}}$={P_W_rounded}MW/m² Bmax={Bmax_rounded}T", fontsize=taille_sous_titre)
     elif chosen_parameter == 'Bmax':
-        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H}", fontsize=taille_sous_titre)
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={P_fus_rounded}GW $f_{{\mathrm{{obj}}}}$={f_obj_rounded} $P_{{\mathrm{{w}}}}$={P_W_rounded}MW/m² H={H_rounded}", fontsize=taille_sous_titre)
     elif chosen_parameter =='Pfus':
-        plt.title(f"Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H}", fontsize=taille_sous_titre)
+        plt.title(f"Bmax={Bmax_rounded}T $f_{{\mathrm{{obj}}}}$={f_obj_rounded} $P_{{\mathrm{{w}}}}$={P_W_rounded}MW/m² H={H_rounded}", fontsize=taille_sous_titre)
     elif chosen_parameter == 'Pw':
-        plt.title(f"Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW H={H})", fontsize=taille_sous_titre)
+        plt.title(f"Bmax={Bmax_rounded}T $f_{{\mathrm{{obj}}}}$={f_obj_rounded} $P_{{\mathrm{{fus}}}}$={P_fus_rounded}GW H={H_rounded})", fontsize=taille_sous_titre)
     elif chosen_parameter == 'fobj':
-        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H}", fontsize=taille_sous_titre)
-    else :
-        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H}", fontsize=taille_sous_titre)
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={P_fus_rounded}GW $P_{{\mathrm{{w}}}}$={P_W_rounded}MW/m² Bmax={Bmax_rounded}T H={H_rounded}", fontsize=taille_sous_titre)
+    else:
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={P_fus_rounded}GW $f_{{\mathrm{{obj}}}}$={f_obj_rounded} $P_{{\mathrm{{w}}}}$={P_W_rounded}MW/m² Bmax={Bmax_rounded}T H={H_rounded}", fontsize=taille_sous_titre)
+        
     if chosen_parameter == 'Bmax':
         plt.xlabel(f"$B_{{\mathrm{{max}}}}$ [{chosen_unity}]")
     elif chosen_parameter =='Pfus':
@@ -1076,7 +1093,7 @@ def Plot_heat_parameter(chosen_parameter,parameter_values,chosen_unity,heat_solu
     # Réinitialisation des paramètres par défaut
     plt.rcdefaults()
     
-def Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,reCS_free13s,reCS_free18s,Ip_solutions):
+def Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,Ip_solutions,first_acceptable_value):
     
     # Définir la taille de la police par défaut
     plt.rcParams.update({'font.size': 17})
@@ -1085,18 +1102,27 @@ def Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solution
     taille_titre_principal = 16
     taille_sous_titre = 14
     plt.suptitle('Radial Build', fontsize=taille_titre_principal, fontweight='bold')
+    # Arrondir les valeurs à une décimale pour Bmax, Pfus, Pw et H, et à deux décimales pour f_obj
+    Bmax_rounded = round(Bmax, 1)
+    P_fus_rounded = round(P_fus / 1e9, 1)
+    P_W_rounded = round(P_W / 1e6, 1)
+    H_rounded = round(H, 1)
+    f_obj_rounded = round(f_RF_objectif, 2)
+    
+    # Construction du titre en fonction du paramètre choisi
     if chosen_parameter == 'H':
-        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T", fontsize=taille_sous_titre)
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={P_fus_rounded}GW $f_{{\mathrm{{obj}}}}$={f_obj_rounded} $P_{{\mathrm{{w}}}}$={P_W_rounded}MW/m² Bmax={Bmax_rounded}T", fontsize=taille_sous_titre)
     elif chosen_parameter == 'Bmax':
-        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H}", fontsize=taille_sous_titre)
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={P_fus_rounded}GW $f_{{\mathrm{{obj}}}}$={f_obj_rounded} $P_{{\mathrm{{w}}}}$={P_W_rounded}MW/m² H={H_rounded}", fontsize=taille_sous_titre)
     elif chosen_parameter =='Pfus':
-        plt.title(f"Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H}", fontsize=taille_sous_titre)
+        plt.title(f"Bmax={Bmax_rounded}T $f_{{\mathrm{{obj}}}}$={f_obj_rounded} $P_{{\mathrm{{w}}}}$={P_W_rounded}MW/m² H={H_rounded}", fontsize=taille_sous_titre)
     elif chosen_parameter == 'Pw':
-        plt.title(f"Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW H={H})", fontsize=taille_sous_titre)
+        plt.title(f"Bmax={Bmax_rounded}T $f_{{\mathrm{{obj}}}}$={f_obj_rounded} $P_{{\mathrm{{fus}}}}$={P_fus_rounded}GW H={H_rounded})", fontsize=taille_sous_titre)
     elif chosen_parameter == 'fobj':
-        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H}", fontsize=taille_sous_titre)
-    else :
-        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H}", fontsize=taille_sous_titre)
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={P_fus_rounded}GW $P_{{\mathrm{{w}}}}$={P_W_rounded}MW/m² Bmax={Bmax_rounded}T H={H_rounded}", fontsize=taille_sous_titre)
+    else:
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={P_fus_rounded}GW $f_{{\mathrm{{obj}}}}$={f_obj_rounded} $P_{{\mathrm{{w}}}}$={P_W_rounded}MW/m² Bmax={Bmax_rounded}T H={H_rounded}", fontsize=taille_sous_titre)
+        
     if chosen_parameter == 'Bmax':
         plt.xlabel(f"$B_{{\mathrm{{max}}}}$ [{chosen_unity}]")
     elif chosen_parameter =='Pfus':
@@ -1117,8 +1143,6 @@ def Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solution
     plt.plot(parameter_values, R0_a_solutions, color='blue', label='$R_{\mathrm{0}}$-a')
     plt.plot(parameter_values, R0_a_b_solutions, color='purple', label='$R_{\mathrm{0}}$-a-$\Delta_{blanket}$')
     plt.plot(parameter_values, R0_a_b_c_solutions, color='orange', label='$R_{\mathrm{0}}$-a-$\Delta_{blanket}$-$\Delta_{TFC}$')
-    # plt.plot(parameter_values, reCS_free13s, color='black', linestyle='-', label='$R_{\mathrm{CS}}$ with 13T')
-    # plt.plot(parameter_values, reCS_free18s, color='black', linestyle='--', label='$R_{\mathrm{CS}}$ with 18T')
     plt.plot(parameter_values, R0_a_b_c_CS_solutions, color='c', label='$Ri_{\mathrm{CS}}$')
     plt.legend(loc='upper left', facecolor='lightgrey')
     # Ajouter un deuxième axe y pour Ip_solutions
@@ -1127,6 +1151,9 @@ def Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solution
     ax2.plot(parameter_values, Ip_solutions/1e6, color='red', linestyle='--' ,label='$I_{\mathrm{p}}$')
     ax2.tick_params(axis='y', labelcolor='black')
     ax2.legend(loc='upper right', facecolor='lightgrey')
+    
+    if first_acceptable_value is not None:
+        plt.axvline(x=first_acceptable_value, color='olive', linestyle='--', label='First acceptable value')
     plt.xlim(min(parameter_values), max(parameter_values))
     # Enregistrer l'image
     path_to_save = os.path.join(save_directory, f"Radial_Build_{chosen_parameter}_fRF={f_RF_objectif}_Pw={int(P_W/1e6)}.png")
@@ -1145,18 +1172,27 @@ def Plot_cost_function(chosen_parameter,parameter_values,cost_solutions,first_ac
     taille_titre_principal = 16
     taille_sous_titre = 14
     plt.suptitle('Cost function', fontsize=taille_titre_principal, fontweight='bold')
+    # Arrondir les valeurs à une décimale pour Bmax, Pfus, Pw et H, et à deux décimales pour f_obj
+    Bmax_rounded = round(Bmax, 1)
+    P_fus_rounded = round(P_fus / 1e9, 1)
+    P_W_rounded = round(P_W / 1e6, 1)
+    H_rounded = round(H, 1)
+    f_obj_rounded = round(f_RF_objectif, 2)
+    
+    # Construction du titre en fonction du paramètre choisi
     if chosen_parameter == 'H':
-        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T", fontsize=taille_sous_titre)
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={P_fus_rounded}GW $f_{{\mathrm{{obj}}}}$={f_obj_rounded} $P_{{\mathrm{{w}}}}$={P_W_rounded}MW/m² Bmax={Bmax_rounded}T", fontsize=taille_sous_titre)
     elif chosen_parameter == 'Bmax':
-        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H}", fontsize=taille_sous_titre)
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={P_fus_rounded}GW $f_{{\mathrm{{obj}}}}$={f_obj_rounded} $P_{{\mathrm{{w}}}}$={P_W_rounded}MW/m² H={H_rounded}", fontsize=taille_sous_titre)
     elif chosen_parameter =='Pfus':
-        plt.title(f"Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² H={H}", fontsize=taille_sous_titre)
+        plt.title(f"Bmax={Bmax_rounded}T $f_{{\mathrm{{obj}}}}$={f_obj_rounded} $P_{{\mathrm{{w}}}}$={P_W_rounded}MW/m² H={H_rounded}", fontsize=taille_sous_titre)
     elif chosen_parameter == 'Pw':
-        plt.title(f"Bmax={Bmax}T $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW H={H})", fontsize=taille_sous_titre)
+        plt.title(f"Bmax={Bmax_rounded}T $f_{{\mathrm{{obj}}}}$={f_obj_rounded} $P_{{\mathrm{{fus}}}}$={P_fus_rounded}GW H={H_rounded})", fontsize=taille_sous_titre)
     elif chosen_parameter == 'fobj':
-        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H}", fontsize=taille_sous_titre)
-    else :
-        plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H}", fontsize=taille_sous_titre)
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={P_fus_rounded}GW $P_{{\mathrm{{w}}}}$={P_W_rounded}MW/m² Bmax={Bmax_rounded}T H={H_rounded}", fontsize=taille_sous_titre)
+    else:
+        plt.title(f"$P_{{\mathrm{{fus}}}}$={P_fus_rounded}GW $f_{{\mathrm{{obj}}}}$={f_obj_rounded} $P_{{\mathrm{{w}}}}$={P_W_rounded}MW/m² Bmax={Bmax_rounded}T H={H_rounded}", fontsize=taille_sous_titre)
+        
     if chosen_parameter == 'Bmax':
         plt.xlabel(f"$B_{{\mathrm{{max}}}}$ [{chosen_unity}]")
     elif chosen_parameter =='Pfus':
@@ -1182,11 +1218,8 @@ def Plot_cost_function(chosen_parameter,parameter_values,cost_solutions,first_ac
     # Réinitialisation des paramètres par défaut
     plt.rcdefaults()
     
-def Plot_tableau_valeurs(H,P_fus,P_W,Bmax,κ):
-    # New solveur
-    a_solution = Solveur_raffiné(H,Bmax,P_fus,P_W,f_RF_objectif)
-    # Find the value of 'a' for which f_B is equal to f_NC
-    #a_solution = Solveur_fb_fnc_fonction_de_a(H,Bmax,P_fus,P_W)
+def Plot_tableau_valeurs(H,P_fus,P_W,Bmax,κ,a_solution):
+
     # Calculate useful values
     (R0_solution,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs) = calcul(a_solution, H, Bmax, P_fus, P_W)
     # Données à afficher dans le tableau
@@ -1207,7 +1240,7 @@ def Plot_tableau_valeurs(H,P_fus,P_W,Bmax,κ):
         ["$\\tau_E$", tauE_solution, "s"],
         ["$\\beta$", beta_solution, "%"],
         ["$\\beta_N$", betaN, "%"],
-        ["$fP_LH$", fRF_solution, ""],
+        ["$f_{Pc}$", fRF_solution*100, "%"],
         ["$q_{*}$", qstar_solution, ""],
     ]
     # Affichage
@@ -1235,7 +1268,13 @@ def Plot_tableau_valeurs(H,P_fus,P_W,Bmax,κ):
     taille_titre_principal = 11
     taille_sous_titre = 9
     plt.suptitle('Main parameters', fontsize=taille_titre_principal, fontweight='bold')
-    plt.title(f"$P_{{\mathrm{{fus}}}}$={int(P_fus/1e9)}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={int(P_W/1e6)}MW/m² Bmax={Bmax}T H={H}", fontsize=taille_sous_titre)
+    # Arrondir les valeurs à une décimale pour Bmax, Pfus, Pw et H, et à deux décimales pour f_obj
+    Bmax_rounded = round(Bmax, 1)
+    P_fus_rounded = round(P_fus / 1e9, 1)
+    P_W_rounded = round(P_W / 1e6, 1)
+    H_rounded = round(H, 1)
+    f_obj_rounded = round(f_RF_objectif, 2)
+    plt.title(f"$P_{{\mathrm{{fus}}}}$={P_fus_rounded}GW $f_{{\mathrm{{obj}}}}$={f_obj_rounded} $P_{{\mathrm{{w}}}}$={P_W_rounded}MW/m² Bmax={Bmax_rounded}T H={H_rounded}", fontsize=taille_sous_titre)
     # Save the image
     path_to_save = os.path.join(save_directory, f"Table for P_fus={int(P_fus/1e9)} f_obj={f_RF_objectif} P_w={int(P_W/1e6)} Bmax={Bmax} H={H}.png")
     plt.savefig(path_to_save, dpi=300, bbox_inches='tight')
@@ -1543,7 +1582,7 @@ def Plot_spider_chart():
 #%% Fixed Pfus, Pw, H and Bmax while varying the radius 'a':
 
 # Utilisation de la fonction pour initialiser les listes
-(a_solutions, nG_solutions, n_solutions, beta_solutions,  qstar_solutions, fB_solutions, fNC_solutions, cost_solutions, heat_solutions, c_solutions, sol_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,required_BCSs,R0_solutions,reCS_free13s,reCS_free18s,Ip_solutions,fRF_solutions) = initialize_lists()
+(a_solutions, nG_solutions, n_solutions, beta_solutions,  qstar_solutions, fB_solutions, fNC_solutions, cost_solutions, heat_solutions, c_solutions, sol_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,required_BCSs,R0_solutions,Ip_solutions,fRF_solutions) = initialize_lists()
   
 (H,P_fus,P_W,Bmax,κ)=init(CHOICE)
 
@@ -1579,17 +1618,14 @@ Plot_operational_domain(chosen_parameter,parameter_values,first_acceptable_value
 
 Plot_cost_function(chosen_parameter,parameter_values,cost_solutions,first_acceptable_value,chosen_unity)
 
-Plot_heat_parameter(chosen_parameter,parameter_values,chosen_unity,heat_solutions)
+Plot_heat_parameter(chosen_parameter,parameter_values,first_acceptable_value,chosen_unity,heat_solutions)
 
-Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,reCS_free13s,reCS_free18s,Ip_solutions)
-
-Plot_tableau_valeurs(H,P_fus,P_W,Bmax,κ)
-
+Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,Ip_solutions,first_acceptable_value)
 
 #%% Variation of a chosen parameter and avaluating the optimal (a)
 
 # Utilisation de la fonction pour initialiser les listes
-(a_solutions, nG_solutions, n_solutions, beta_solutions,  qstar_solutions, fB_solutions, fNC_solutions, cost_solutions, heat_solutions, c_solutions, sol_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,required_BCSs,R0_solutions,reCS_free13s,reCS_free18s,Ip_solutions,fRF_solutions) = initialize_lists()
+(a_solutions, nG_solutions, n_solutions, beta_solutions,  qstar_solutions, fB_solutions, fNC_solutions, cost_solutions, heat_solutions, c_solutions, sol_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,required_BCSs,R0_solutions,Ip_solutions,fRF_solutions) = initialize_lists()
 
 chosen_parameter = None
 chosen_unity = None
@@ -1735,16 +1771,14 @@ Plot_operational_domain(chosen_parameter,parameter_values,first_acceptable_value
 
 Plot_cost_function(chosen_parameter,parameter_values,cost_solutions,first_acceptable_value,chosen_unity)
 
-Plot_heat_parameter(chosen_parameter,parameter_values,chosen_unity,heat_solutions)
+Plot_heat_parameter(chosen_parameter,parameter_values,first_acceptable_value,chosen_unity,heat_solutions)
 
-Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,reCS_free13s,reCS_free18s,Ip_solutions)
-
-Plot_tableau_valeurs(1,2e9,4e6,18,1.7)
+Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,Ip_solutions,first_acceptable_value)
 
 #%% Gradient Descent of Parameters to Find the Optimum of the Loss Function
 
 # Utilisation de la fonction pour initialiser les listes
-(a_solutions, nG_solutions, n_solutions, beta_solutions,  qstar_solutions, fB_solutions, fNC_solutions, cost_solutions, heat_solutions, c_solutions, sol_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,required_BCSs,R0_solutions,reCS_free13s,reCS_free18s,Ip_solutions,fRF_solutions) = initialize_lists()
+(a_solutions, nG_solutions, n_solutions, beta_solutions,  qstar_solutions, fB_solutions, fNC_solutions, cost_solutions, heat_solutions, c_solutions, sol_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,required_BCSs,R0_solutions,Ip_solutions,fRF_solutions) = initialize_lists()
 
 # Differential Evolution Method
 bounds = [(0.3, 3),(0.4,1.2), (10, 24),(1e9,2e9),(0.5e6,4e6)] # a,H,Bmax,Pfus,Pw
@@ -1755,33 +1789,37 @@ Working_Point = Test_working_point(bounds)
 if Working_Point == True:
     
     print("There is at least a working point")
-    result = differential_evolution(objective_function, bounds)
+    result = differential_evolution(objective_function, bounds, maxiter=max_iterations)
+    
+    a_solution = result.x[0]
+    H = result.x[1]
+    Bmax = result.x[2]
+    P_fus = result.x[3]
+    P_W = result.x[4]
     
     # Calculate useful values
-    (R0_solution,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs) = calcul(result.x[0], result.x[1], result.x[2], result.x[3], result.x[4])
+    (R0_solution,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs) = calcul(a_solution,H,Bmax,P_fus,P_W)
 
     print("With a cost =", cost * 10**6)
     
     # Call the a_variation function
-    (a_solutions,nG_solutions,n_solutions,beta_solutions,qstar_solutions,fB_solutions,fNC_solutions,cost_solutions,heat_solutions,c_solutions,sol_solutions,R0_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,required_BCSs,Ip_solutions,fRF_solutions) = Variation_a(result.x[1], result.x[2], result.x[3], result.x[4])
+    (a_solutions,nG_solutions,n_solutions,beta_solutions,qstar_solutions,fB_solutions,fNC_solutions,cost_solutions,heat_solutions,c_solutions,sol_solutions,R0_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,required_BCSs,Ip_solutions,fRF_solutions) = Variation_a(H,Bmax,P_fus,P_W)
     
     # Plot with respect to 'a'
     chosen_parameter = 'a'
     parameter_values = a_solutions
     chosen_unity = 'm'
 
-    Plot_operational_domain(chosen_parameter,parameter_values,first_acceptable_value,n_solutions,nG_solutions,beta_solutions,qstar_solutions,fB_solutions,fNC_solutions,chosen_unity)
+    Plot_operational_domain(chosen_parameter,parameter_values,a_solution,n_solutions,nG_solutions,beta_solutions,qstar_solutions,fRF_solutions,chosen_unity)
 
-    Plot_cost_function(chosen_parameter,parameter_values,cost_solutions,first_acceptable_value,chosen_unity)
+    Plot_heat_parameter(chosen_parameter,parameter_values,a_solution,chosen_unity,heat_solutions)
 
-    Plot_heat_parameter(chosen_parameter,parameter_values,chosen_unity,heat_solutions)
-
-    Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,reCS_free13s,reCS_free18s,Ip_solutions)
-
-    Plot_tableau_valeurs(H,P_fus,P_W,Bmax,κ)
+    Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,Ip_solutions,a_solution)
+    
+    Plot_tableau_valeurs(H,P_fus,P_W,Bmax,κ,a_solution)
     
     # Plot Radial Build aesthetic
-    lengths_upper = [R0_solution-R0_a_b_c_CS_solution,R0_solution-R0_a_b_c_solution, 0.1, c, b, 2*result.x[0]]
+    lengths_upper = [R0_a_b_c_CS_solution,solenoid-R0_a_b_c_CS_solution, 0.1, c, b, 2*a_solution]
     names_upper = ['','CS','', 'TFC', 'Blanket', 'Plasma']
     lengths_lower = [R0_solution]
     names_lower = ['R0']
@@ -1834,8 +1872,7 @@ elif  Working_Point == False :
 #%% Robustness test : Results fixing H,Bmax,P_W and Pfus
 
 # Utilisation de la fonction pour initialiser les listes
-(a_solutions, nG_solutions, n_solutions, beta_solutions,  qstar_solutions, fB_solutions, fNC_solutions, cost_solutions, heat_solutions, c_solutions, sol_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,required_BCSs,R0_solutions,reCS_free13s,reCS_free18s,Ip_solutions,fRF_solutions) = initialize_lists()
-
+(a_solutions, nG_solutions, n_solutions, beta_solutions,  qstar_solutions, fB_solutions, fNC_solutions, cost_solutions, heat_solutions, c_solutions, sol_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,required_BCSs,R0_solutions,Ip_solutions,fRF_solutions) = initialize_lists()
 
 COMP = []
 PERSO = []
@@ -1918,11 +1955,11 @@ Plot_operational_domain(chosen_parameter,parameter_values,first_acceptable_value
 
 Plot_cost_function(chosen_parameter,parameter_values,cost_solutions,first_acceptable_value,chosen_unity)
 
-Plot_heat_parameter(chosen_parameter,parameter_values,chosen_unity,heat_solutions)
+Plot_heat_parameter(chosen_parameter,parameter_values,first_acceptable_value,chosen_unity,heat_solutions)
 
-Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,reCS_free13s,reCS_free18s,Ip_solutions)
+Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,Ip_solutions,first_acceptable_value)
 
-Plot_tableau_valeurs(H,P_fus,P_W,Bmax,κ)
+Plot_tableau_valeurs(H,P_fus,P_W,Bmax,κ,chosen_design)
 
 # Calculate useful values
 (R0_solution,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs) = calcul(chosen_design,H,Bmax,P_fus,P_W)
@@ -2004,7 +2041,7 @@ plt.show()
 #%% Plot showing variation of R0 depending on B
 
 # Utilisation de la fonction pour initialiser les listes
-(a_solutions, nG_solutions, n_solutions, beta_solutions,  qstar_solutions, fB_solutions, fNC_solutions, cost_solutions, heat_solutions, c_solutions, sol_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,required_BCSs,R0_solutions,reCS_free13s,reCS_free18s,Ip_solutions,fRF_solutions) = initialize_lists()
+(a_solutions, nG_solutions, n_solutions, beta_solutions,  qstar_solutions, fB_solutions, fNC_solutions, cost_solutions, heat_solutions, c_solutions, sol_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,required_BCSs,R0_solutions,Ip_solutions,fRF_solutions) = initialize_lists()
 
 
 (H,P_fus,P_W,Bmax,κ)=init(CHOICE)
