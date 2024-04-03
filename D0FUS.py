@@ -67,7 +67,7 @@ f_RP   = 0.8  # fraction of klystron power absorbed by plasma
 f_RF_objectif   = 0.1  # RF recirculating power target
 eta_T = 0.4    # Ratio between thermal and electrical power
 AJ_AC = 0.35 #Ratio entre l'aire de Jacket / l'aire de conducteur dans le CS , ici = ITER value
-σcs = 600*10**6  # CS machanical limit [Pa]
+σcs = 400*10**6  # CS machanical limit [Pa]
 
 #%% Database creation
 
@@ -127,7 +127,7 @@ def init(Choice):
         P_fus = float(ITER[0])*10**6
         P_W = float(ITER[-3])*10**6
         Bmax = float(ITER[-4])
-        κ = float(ITER[7])
+        κ = float(ITER[6])
     
     # Choix 2: ARC
     elif Choice == 2:
@@ -135,7 +135,7 @@ def init(Choice):
         P_fus = float(ARC[0])*10**6
         P_W = float(ARC[-3])*10**6
         Bmax = float(ARC[-4])
-        κ = float(ARC[7])
+        κ = float(ARC[6])
     
     # Choix 3: EU_DEMO_A3
     elif Choice == 3:
@@ -143,7 +143,7 @@ def init(Choice):
         P_fus = float(EU_DEMO_A3[0])*10**6
         P_W = float(EU_DEMO_A3[-3])*10**6
         Bmax = float(EU_DEMO_A3[-4])
-        κ = float(EU_DEMO_A3[7])
+        κ = float(EU_DEMO_A3[6])
     
     # Choix 4: EU_DEMO_A4
     elif Choice == 4:
@@ -151,7 +151,7 @@ def init(Choice):
         P_fus = float(EU_DEMO_A4[0])*10**6
         P_W = float(EU_DEMO_A4[-3])*10**6
         Bmax = float(EU_DEMO_A4[-4])
-        κ = float(EU_DEMO_A4[7])
+        κ = float(EU_DEMO_A4[6])
     
     # Choix 5: EU_DEMO2
     elif Choice == 5:
@@ -159,7 +159,7 @@ def init(Choice):
         P_fus = float(EU_DEMO2[0])*10**6
         P_W = float(EU_DEMO2[-3])*10**6
         Bmax = float(EU_DEMO2[-4])
-        κ = float(EU_DEMO2[7])
+        κ = float(EU_DEMO2[6])
     
     # Choix 6: K_DEMO_DN
     elif Choice == 6:
@@ -167,7 +167,7 @@ def init(Choice):
         P_fus = float(K_DEMO_DN[0])*10**6
         P_W = float(K_DEMO_DN[-3])*10**6
         Bmax = float(K_DEMO_DN[-4])
-        κ = float(K_DEMO_DN[7])
+        κ = float(K_DEMO_DN[6])
     
     # Choix 7: CFDTR_DEMO
     elif Choice == 7:
@@ -175,7 +175,7 @@ def init(Choice):
         P_fus = float(CFDTR_DEMO[0])*10**6
         P_W = float(CFDTR_DEMO[-3])*10**6
         Bmax = float(CFDTR_DEMO[-4])
-        κ = float(CFDTR_DEMO[7])
+        κ = float(CFDTR_DEMO[6])
     
     return(H,P_fus,P_W,Bmax,κ)
 
@@ -481,13 +481,13 @@ def f_slnd(R0,a,b,c):
     reCS = R0-a-b-c-0.1
     return reCS
 
-def f_beta_p_th(Cw,ne,Te,Ip):
+def f_beta_p_th(Cw,ne,Te,Ip,a):
     L = 2 * np.pi * (a**2 + (κ*a)**2)**(1/2)
     βp = 4/μ0 * Cw * ne * (Te*1000) * k / Ip**2 * L**2
     return(βp)
 
 # Function to calculate the plateau duration
-def f_plateau_duration(Bcs,R0,reCS,riCS,ne,Te,Ip,IBS):
+def f_plateau_duration(Bcs,R0,reCS,riCS,ne,Te,Ip,IBS,a):
     
     L = LCFS(a) # Length of the last closed flux surface
     βp = 4/μ0 * Cw * L**2 * (ne*k*Te) / Ip**2 # 0.62 for ITER
@@ -586,6 +586,45 @@ def Solveur_raffiné(H,Bmax,P_fus,P_W,f_RF_objectif):
                 break 
         if optimal_a_raffine is not None and not np.isnan(optimal_a_raffine):
             optimal_a = optimal_a_raffine
+        return (optimal_a-delta)
+    
+def Solveur_archaique(H,Bmax,P_fus,P_W,f_RF_objectif):
+    delta = 0.002 # Finesse de la détection (en mètres)
+    def To_solve_archaique(a):
+        (R0_solution,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs) = calcul(a,H,Bmax,P_fus,P_W)
+        return max(fRF_solution / f_RF_objectif ,n_vec_solution / nG_solution,beta_solution / betaN,q / qstar_solution)
+    # Définir les limites de la recherche pour 'a'
+    bounds = (lower_bound_a, upper_bound_a)
+    # Minimiser la valeur maximale en utilisant minimize_scalar
+    result = minimize_scalar(To_solve_archaique, bounds=bounds)
+    # La valeur optimale de 'a' sera dans result.x
+    optimal_a = result.x
+    
+    # Si nan : retour nan
+    if To_solve_archaique(optimal_a) is None or np.isnan(To_solve_archaique(optimal_a)):
+        return np.nan
+    
+    # Si L'une des 4 limites supérieur à 1 alors on retourne a minisant le max des limites
+    elif To_solve_archaique(optimal_a)>1:
+            return optimal_a
+    
+    # Si il existe une solution :
+    elif To_solve_archaique(optimal_a)<=1:
+        # Boucle parcourant les valeurs de a
+        while optimal_a <= 4:
+            # Évaluer les valeurs en fonction de 'a'
+            (R0_solution,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs) = calcul(optimal_a, H, Bmax, P_fus, P_W)
+            # Vérifier si toutes les conditions sont satisfaites
+            if (
+                n_vec_solution / nG_solution < 1 and
+                beta_solution / betaN < 1 and
+                q / qstar_solution < 1 and
+                fRF_solution / f_RF_objectif < 1
+            ):
+                optimal_a += delta
+            else:
+                # Si une des conditions n'est pas satisfaite, sortir de la boucle avec la dernière valeur satisfaisant les conditions
+                break 
         return (optimal_a-delta)
             
 # Cost function to minimize
@@ -970,7 +1009,7 @@ def Plot_radial_build_aesthetic(lengths_upper, names_upper, lengths_lower, names
 # names_lower = ['R0']
 # Plot_radial_build_aesthetic(lengths_upper, names_upper, lengths_lower, names_lower)
 
-def Plot_operational_domain(chosen_parameter,parameter_values,first_acceptable_value,n_solutions,nG_solutions,beta_solutions,qstar_solutions,fRF_solutions,chosen_unity):
+def Plot_operational_domain(chosen_parameter,parameter_values,first_acceptable_value,n_solutions,nG_solutions,beta_solutions,qstar_solutions,fRF_solutions,chosen_unity,chosen_design):
 
     # Définir la taille de la police par défaut
     plt.rcParams.update({'font.size': 17})
@@ -1016,10 +1055,12 @@ def Plot_operational_domain(chosen_parameter,parameter_values,first_acceptable_v
     plt.ylabel("Normalized Values")
     if chosen_parameter == 'Pw':
         if first_acceptable_value is not None:
-            plt.axvline(x=first_acceptable_value, color='olive', linestyle='--', label='Last acceptable value')
+            plt.axvline(x=first_acceptable_value, color='olive', linestyle=':', label='Last acceptable value')
     else:
         if first_acceptable_value is not None:
-            plt.axvline(x=first_acceptable_value, color='olive', linestyle='--', label='Last acceptable value')
+            plt.axvline(x=first_acceptable_value, color='olive', linestyle=':', label='First acceptable value')
+    if chosen_design is not None:
+        plt.axvline(x=chosen_design, color='red', linestyle=':', label='chosen design')
     plt.plot(parameter_values, n_solutions / nG_solutions, 'k-', label='n/$n_{\mathrm{G}}$')
     plt.plot(parameter_values, beta_solutions / betaN, 'r-', label= r'$\beta$/$\beta_{\text{T}}$')
     plt.plot(parameter_values, q / qstar_solutions, 'g-', label='$q_{\mathrm{K}}$ / $q_{\mathrm{*}}$')
@@ -1038,7 +1079,7 @@ def Plot_operational_domain(chosen_parameter,parameter_values,first_acceptable_v
     # Réinitialisation des paramètres par défaut
     plt.rcdefaults()
     
-def Plot_heat_parameter(chosen_parameter,parameter_values,first_acceptable_value,chosen_unity,heat_solutions):
+def Plot_heat_parameter(chosen_parameter,parameter_values,first_acceptable_value,chosen_unity,heat_solutions,chosen_design):
     
     # Définir la taille de la police par défaut
     plt.rcParams.update({'font.size': 17})
@@ -1082,7 +1123,9 @@ def Plot_heat_parameter(chosen_parameter,parameter_values,first_acceptable_value
         plt.xlabel(f"{chosen_parameter} [{chosen_unity}]")
     plt.ylabel("Q//")
     if first_acceptable_value is not None:
-        plt.axvline(x=first_acceptable_value, color='olive', linestyle='--', label='First acceptable value')
+        plt.axvline(x=first_acceptable_value, color='olive', linestyle=':', label='First acceptable value')
+    if chosen_design is not None:
+        plt.axvline(x=chosen_design, color='red', linestyle=':', label='chosen design')
     plt.plot(parameter_values, heat_solutions, 'k-')
     plt.xlim(min(parameter_values), max(parameter_values))
     plt.grid()
@@ -1093,7 +1136,7 @@ def Plot_heat_parameter(chosen_parameter,parameter_values,first_acceptable_value
     # Réinitialisation des paramètres par défaut
     plt.rcdefaults()
     
-def Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,Ip_solutions,first_acceptable_value):
+def Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,Ip_solutions,first_acceptable_value,chosen_design):
     
     # Définir la taille de la police par défaut
     plt.rcParams.update({'font.size': 17})
@@ -1153,7 +1196,9 @@ def Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solution
     ax2.legend(loc='upper right', facecolor='lightgrey')
     
     if first_acceptable_value is not None:
-        plt.axvline(x=first_acceptable_value, color='olive', linestyle='--', label='First acceptable value')
+        plt.axvline(x=first_acceptable_value, color='olive', linestyle=':', label='First acceptable value')
+    if chosen_design is not None:
+        plt.axvline(x=chosen_design, color='red', linestyle=':', label='chosen design')
     plt.xlim(min(parameter_values), max(parameter_values))
     # Enregistrer l'image
     path_to_save = os.path.join(save_directory, f"Radial_Build_{chosen_parameter}_fRF={f_RF_objectif}_Pw={int(P_W/1e6)}.png")
@@ -1162,7 +1207,7 @@ def Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solution
     # Réinitialisation des paramètres par défaut
     plt.rcdefaults()
     
-def Plot_cost_function(chosen_parameter,parameter_values,cost_solutions,first_acceptable_value,chosen_unity):
+def Plot_cost_function(chosen_parameter,parameter_values,cost_solutions,first_acceptable_value,chosen_unity,chosen_design):
     
     # Définir la taille de la police par défaut
     plt.rcParams.update({'font.size': 17})
@@ -1207,7 +1252,9 @@ def Plot_cost_function(chosen_parameter,parameter_values,cost_solutions,first_ac
         plt.xlabel(f"{chosen_parameter} [{chosen_unity}]")
     plt.ylabel("$V_{\mathrm{T}}$/$P_{\mathrm{E}}$")
     if first_acceptable_value is not None:
-        plt.axvline(x=first_acceptable_value, color='olive', linestyle='--', label='First acceptable value')
+        plt.axvline(x=first_acceptable_value, color='olive', linestyle=':', label='First acceptable value')
+    if chosen_design is not None:
+        plt.axvline(x=chosen_design, color='red', linestyle=':', label='chosen design')
     plt.plot(parameter_values, cost_solutions*1e6, 'k-')
     plt.xlim(min(parameter_values), max(parameter_values))
     plt.grid()
@@ -1218,8 +1265,9 @@ def Plot_cost_function(chosen_parameter,parameter_values,cost_solutions,first_ac
     # Réinitialisation des paramètres par défaut
     plt.rcdefaults()
     
-def Plot_tableau_valeurs(H,P_fus,P_W,Bmax,κ,a_solution):
+def Plot_tableau_valeurs(H,P_fus,P_W,Bmax,κ,chosen_design):
 
+    a_solution = chosen_design
     # Calculate useful values
     (R0_solution,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs) = calcul(a_solution, H, Bmax, P_fus, P_W)
     # Données à afficher dans le tableau
@@ -1613,14 +1661,15 @@ else:
 chosen_parameter = 'a'
 parameter_values = a_solutions
 chosen_unity = 'm'
+chosen_design = None
 
-Plot_operational_domain(chosen_parameter,parameter_values,first_acceptable_value,n_solutions,nG_solutions,beta_solutions,qstar_solutions,fRF_solutions,chosen_unity)
+Plot_operational_domain(chosen_parameter,parameter_values,first_acceptable_value,n_solutions,nG_solutions,beta_solutions,qstar_solutions,fRF_solutions,chosen_unity,chosen_design)
 
-Plot_cost_function(chosen_parameter,parameter_values,cost_solutions,first_acceptable_value,chosen_unity)
+Plot_cost_function(chosen_parameter,parameter_values,cost_solutions,first_acceptable_value,chosen_unity,chosen_design)
 
-Plot_heat_parameter(chosen_parameter,parameter_values,first_acceptable_value,chosen_unity,heat_solutions)
+Plot_heat_parameter(chosen_parameter,parameter_values,first_acceptable_value,chosen_unity,heat_solutions,chosen_design)
 
-Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,Ip_solutions,first_acceptable_value)
+Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,Ip_solutions,first_acceptable_value,chosen_design)
 
 #%% Variation of a chosen parameter and avaluating the optimal (a)
 
@@ -1766,16 +1815,18 @@ if Plot_choice == 'Yes':
             print("No acceptable value was found.")
 else :
     first_acceptable_value = None
+    
+chosen_design = None
 
-Plot_operational_domain(chosen_parameter,parameter_values,first_acceptable_value,n_solutions,nG_solutions,beta_solutions,qstar_solutions,fRF_solutions,chosen_unity)
+Plot_operational_domain(chosen_parameter,parameter_values,first_acceptable_value,n_solutions,nG_solutions,beta_solutions,qstar_solutions,fRF_solutions,chosen_unity,chosen_design)
 
-Plot_cost_function(chosen_parameter,parameter_values,cost_solutions,first_acceptable_value,chosen_unity)
+Plot_cost_function(chosen_parameter,parameter_values,cost_solutions,first_acceptable_value,chosen_unity,chosen_design)
 
-Plot_heat_parameter(chosen_parameter,parameter_values,first_acceptable_value,chosen_unity,heat_solutions)
+Plot_heat_parameter(chosen_parameter,parameter_values,first_acceptable_value,chosen_unity,heat_solutions,chosen_design)
 
-Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,Ip_solutions,first_acceptable_value)
+Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,Ip_solutions,first_acceptable_value,chosen_design)
 
-#%% Gradient Descent of Parameters to Find the Optimum of the Loss Function
+#%% Gradient Descent of Parameters to find the optimum of the Loss Function
 
 # Utilisation de la fonction pour initialiser les listes
 (a_solutions, nG_solutions, n_solutions, beta_solutions,  qstar_solutions, fB_solutions, fNC_solutions, cost_solutions, heat_solutions, c_solutions, sol_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,required_BCSs,R0_solutions,Ip_solutions,fRF_solutions) = initialize_lists()
@@ -1809,14 +1860,16 @@ if Working_Point == True:
     chosen_parameter = 'a'
     parameter_values = a_solutions
     chosen_unity = 'm'
+    chosen_design = a_solution
+    first_acceptable_value = None
 
-    Plot_operational_domain(chosen_parameter,parameter_values,a_solution,n_solutions,nG_solutions,beta_solutions,qstar_solutions,fRF_solutions,chosen_unity)
+    Plot_operational_domain(chosen_parameter,parameter_values,first_acceptable_value,n_solutions,nG_solutions,beta_solutions,qstar_solutions,fRF_solutions,chosen_unity,chosen_design)
 
-    Plot_heat_parameter(chosen_parameter,parameter_values,a_solution,chosen_unity,heat_solutions)
+    Plot_heat_parameter(chosen_parameter,parameter_values,first_acceptable_value,chosen_unity,heat_solutions,chosen_design)
 
-    Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,Ip_solutions,a_solution)
+    Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,Ip_solutions,first_acceptable_value,chosen_design)
     
-    Plot_tableau_valeurs(H,P_fus,P_W,Bmax,κ,a_solution)
+    Plot_tableau_valeurs(H,P_fus,P_W,Bmax,κ,chosen_design)
     
     # Plot Radial Build aesthetic
     lengths_upper = [R0_a_b_c_CS_solution,solenoid-R0_a_b_c_CS_solution, 0.1, c, b, 2*a_solution]
@@ -1926,38 +1979,19 @@ else:
 
 (a_solutions,nG_solutions,n_solutions,beta_solutions,qstar_solutions,fB_solutions,fNC_solutions,cost_solutions,heat_solutions,c_solutions,sol_solutions,R0_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,required_BCSs,Ip_solutions,fRF_solutions)=Variation_a(H,Bmax,P_fus,P_W)
 
-# Initialize a variable to store the first acceptable value
 first_acceptable_value = None
-# Iterate over the results
-for i in range(len(a_solutions)):
-    # Check if all values are less than 1
-    if (
-        n_solutions[i] / nG_solutions[i] < 1 and
-        beta_solutions[i] / betaN < 1 and
-        q / qstar_solutions[i] < 1 and
-        fRF_solutions[i]/f_RF_objectif < 1
-    ):
-        # Save the first acceptable value
-        first_acceptable_value = a_solutions[i]
-        break  # Exit the loop as soon as a value is found
-# Check if a value has been found
-if first_acceptable_value is not None:
-    print("The first acceptable value is:", first_acceptable_value)
-else:
-    print("No acceptable value was found.")
-
 # Plot with respect to 'a'
 chosen_parameter = 'a'
 parameter_values = a_solutions
 chosen_unity = 'm'
 
-Plot_operational_domain(chosen_parameter,parameter_values,first_acceptable_value,n_solutions,nG_solutions,beta_solutions,qstar_solutions,fB_solutions,fNC_solutions,chosen_unity)
+Plot_operational_domain(chosen_parameter,parameter_values,first_acceptable_value,n_solutions,nG_solutions,beta_solutions,qstar_solutions,fRF_solutions,chosen_unity,chosen_design)
 
-Plot_cost_function(chosen_parameter,parameter_values,cost_solutions,first_acceptable_value,chosen_unity)
+Plot_cost_function(chosen_parameter,parameter_values,cost_solutions,first_acceptable_value,chosen_unity,chosen_design)
 
-Plot_heat_parameter(chosen_parameter,parameter_values,first_acceptable_value,chosen_unity,heat_solutions)
+Plot_heat_parameter(chosen_parameter,parameter_values,first_acceptable_value,chosen_unity,heat_solutions,chosen_design)
 
-Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,Ip_solutions,first_acceptable_value)
+Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,Ip_solutions,first_acceptable_value,chosen_design)
 
 Plot_tableau_valeurs(H,P_fus,P_W,Bmax,κ,chosen_design)
 
@@ -2036,106 +2070,70 @@ path_to_save = os.path.join(save_directory,"Radar.png")
 plt.savefig(path_to_save, dpi=300, bbox_inches='tight')
 plt.show()
 
-plt.show()
+# Réinitialisation des paramètres par défaut
+plt.rcdefaults()
 
 #%% Plot showing variation of R0 depending on B
 
 # Utilisation de la fonction pour initialiser les listes
 (a_solutions, nG_solutions, n_solutions, beta_solutions,  qstar_solutions, fB_solutions, fNC_solutions, cost_solutions, heat_solutions, c_solutions, sol_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,required_BCSs,R0_solutions,Ip_solutions,fRF_solutions) = initialize_lists()
 
+a_physic_solutions = []
+R0_physics_solutions = []
+
+# Define ranges and steps for B parameter
+chosen_unity = 'T'
+parameter_values = np.arange(10, 25, 0.1)
 
 (H,P_fus,P_W,Bmax,κ)=init(CHOICE)
 
-R0_solutions = []
-B0_solutions = []
-a_solutions = []
-
-R0_solutions2 = []
-B0_solutions2 = []
-a_solutions2 = []
-
-# Select the appropriate range for the chosen parameter
-B_vec = np.linspace(10,30,50)
-a_vec = np.linspace(0.5,3,300)
-
-for Bmax in B_vec :
-    a_min = 15
-    a_min2 = 15
-    for a in a_vec :
-        # Calculate the useful values
-        R0_solution = f_R0(a, P_fus, P_W, eta_T, κ)
-        B0_solution = f_B0(Bmax, a, b, R0_solution)
-        pbar_solution = f_pbar(Tbar, nu_n, nu_T, R0_solution, a, κ, P_fus, eta_T, nx)
-        nbar_solution = f_nbar(pbar_solution, Tbar, nu_n, nu_T)
-        tauE_solution = f_tauE(pbar_solution, R0_solution, a, κ, eta_T, P_fus)
-        Ip_solution = f_Ip(SL_choice, H, tauE_solution, R0_solution, a, κ, nbar_solution, B0_solution, A, eta_T, P_fus)
-        beta_solution = f_beta(pbar_solution, B0_solution,a,Ip_solution)
-        qstar_solution = f_qstar(a, B0_solution, R0_solution, Ip_solution, κ)
-        nG_solution = f_nG(Ip_solution, a)
-        eta_CD_solution = f_etaCD(a, R0_solution, B0_solution, nbar_solution, Tbar, nu_n, nu_T, nx)
-        fNC_solution = f_fNC(a, κ, pbar_solution, R0_solution, Ip_solution, nx)
-        fB_solution = f_fB(eta_CD_solution, R0_solution, Ip_solution, nbar_solution, eta_RF, f_RP, f_RF_objectif, P_fus)
-        fRF_solution = f_fRF(fNC_solution,eta_CD_solution,R0_solution,Ip_solution,nbar_solution,eta_RF,f_RP,P_fus)
-        n_vec_solution = nbar_solution*1.E-20
-        c = f_coil(a,b,R0_solution,B0_solution,Sigm_max,μ0,J_max)
-        cost = f_cost(a,b,R0_solution,c,κ,P_fus)
-        heat = f_heat(B0_solution,R0_solution,P_fus,eta_T)
-        R0_a_solution = R0_solution - a
-        R0_a_b_solution = R0_solution - a - b
-        R0_a_b_c_solution = R0_solution - a - b - c
-        solenoid = f_slnd(R0_solution,a,b,c)
-        # Find the required Bcs
-        required_Bcs = find_required_Bcs(solenoid,R0_solution,Ip_solution,nbar_solution,Tbar,Bmax,a)
-        # Calculate riCS for the required Bcs
-        riCS_required = calculate_riCS(required_Bcs,solenoid)
-        R0_a_b_c_CS_solution = riCS_required
-        
-        if (
-            n_vec_solution / nG_solution < 1 and
-            beta_solution / betaN < 1 and
-            q / qstar_solution < 1 and
-            fRF_solution /f_RF_objectif < 1 and 
-            a_min > a
-        ):
-            a_min = a
-            # Store the results
-            a_solutions.append(a)
-            R0_solutions.append(R0_solution)
-            B0_solutions.append(B0_solution)
-
-        if (
-            n_vec_solution / nG_solution < 1 and
-            beta_solution / betaN < 1 and
-            q / qstar_solution < 1 and
-            fRF_solution /f_RF_objectif < 1 and 
-            a_min2 > a and
-            not np.isnan(R0_a_b_c_CS_solution)
-        ):
-            a_min2 = a
-            # Store the results
-            a_solutions2.append(a)
-            R0_solutions2.append(R0_solution)
-            B0_solutions2.append(B0_solution)
-
+for Bmax in parameter_values:
+    
+    # New solver
+    a_solution = Solveur_raffiné(H,Bmax,P_fus,P_W,f_RF_objectif)
+    # Calculate useful values
+    (R0_solution,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs) = calcul(a_solution, H, Bmax, P_fus, P_W)
+    # Store archaique values
+    a_solutions.append(a_solution)
+    R0_solutions.append(R0_solution)
+    
+    # Simple solver
+    a_physic_solution = Solveur_archaique(H,Bmax,P_fus,P_W,f_RF_objectif)
+    # Calculate useful values
+    (R0_physics_solution,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs) = calcul(a_physic_solution, H, Bmax, P_fus, P_W)
+    # Store new values
+    a_physic_solutions.append(a_physic_solution)
+    R0_physics_solutions.append(R0_physics_solution)
 
 # Convert lists to NumPy arrays
-B0_solutions = np.array(B0_solutions)
-R0_solutions = np.array(R0_solutions)
+a_physic_solutions = np.array(a_physic_solutions)
 a_solutions = np.array(a_solutions)
-B0_solutions2 = np.array(B0_solutions2)
-R0_solutions2 = np.array(R0_solutions2)
-a_solutions2 = np.array(a_solutions2)
+R0_solutions = np.array(R0_solutions)
+R0_physics_solutions = np.array(R0_physics_solutions)
 
-# Plot parameter evolution
+# Nice graphics
+plt.rcParams.update({'font.size': 17})
 plt.figure(figsize=(8, 6))
-plt.title("R0 evolving with B0")
-plt.xlabel("B0[T]")
-plt.ylabel("R0[m]")
-plt.plot(B0_solutions, R0_solutions, 'b-', label='Only Physics Considerations')
-plt.plot(B0_solutions2, R0_solutions2, 'r-', label='Rad Build constraints')
-plt.legend()
+taille_titre_principal = 16
+taille_sous_titre = 14
+# Titles
+plt.suptitle('R0 minimisation with Bmax', fontsize=taille_titre_principal, fontweight='bold')
+plt.title(f"$P_{{\mathrm{{fus}}}}$={P_fus/1e9}GW $f_{{\mathrm{{obj}}}}$={f_RF_objectif} $P_{{\mathrm{{w}}}}$={P_W/1e6}MW/m² H={H}", fontsize=taille_sous_titre)
+# Labels
+plt.xlabel(f"$B_{{\mathrm{{max}}}}$ [{chosen_unity}]")
+plt.ylabel("R0 [m]")
+# Plotting
+plt.plot(parameter_values, R0_physics_solutions,color='blue',label='Pure Physics')
+plt.plot(parameter_values, R0_solutions, color='red', linestyle='--',label='Physics and Radial Build')
+plt.legend(loc='upper right', facecolor='lightgrey')
+# Limits
+plt.xlim(min(parameter_values), max(parameter_values))
 plt.grid()
 # Save the image
-path_to_save = os.path.join(save_directory,"R0_depending_Bmax.png")
+path_to_save = os.path.join(save_directory,"R0_minimisation_with_Bmax.png")
 plt.savefig(path_to_save, dpi=300, bbox_inches='tight')
 plt.show()
+# Réinitialisation des paramètres par défaut
+plt.rcdefaults()
+
+
