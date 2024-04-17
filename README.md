@@ -105,25 +105,6 @@ You can also open an issue with the tag "enhancement".
 
 For users belonging to IRFM, execution on the IRFM JupyterLab server is also possible and convenient. To do this, go to the IRFM website, then navigate to the 'Pratique' tab, and then 'Python IRFM'.
 
-## Roadmap
-
-- [ ]  Passage sous GIT
-    - [x]  Transfert Eric et Yanick
-    - [ ]  Documents ressources à créer
-
-- [ ]  Débugage massif :
-    - [x]  fb/fnc à fraction recirculante
-    - [ ]  Pfus à Pe , check ce que ça veut dire + bout de note ?
-    - [ ]  Descente de gradient
-    - [ ]  RiCS
-    - [ ]  Test de robustesse
-    - [ ]  R/B
-
-- [ ]  Changement lois d’échelles (Verdolaje 2022)
-- [ ]  Outil de scan avec base de donnée interactive
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
 ## License
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
