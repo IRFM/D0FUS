@@ -21,6 +21,10 @@ import seaborn as sns  # improves plot aesthetics
 from scipy.optimize import root_scalar
 import math
 from scipy.optimize import minimize_scalar
+import matplotlib.cm as cm
+from tqdm import tqdm
+from joblib import Parallel, delayed
+import matplotlib.lines as mlines
 
 #%% Definition of constants
 
@@ -64,10 +68,10 @@ Sigm_max = 600.E6   # Mechanical limit of the steel considered in [Pa]
 J_max = 20.E6       #A/m²
 eta_RF = 0.5  # conversion efficiency from wall power to klystron
 f_RP   = 0.8  # fraction of klystron power absorbed by plasma
-f_RF_objectif   = 0.1  # RF recirculating power target
+f_RF_objectif   = 1  # RF recirculating power target
 eta_T = 0.4    # Ratio between thermal and electrical power
 AJ_AC = 0.35 #Ratio entre l'aire de Jacket / l'aire de conducteur dans le CS , ici = ITER value
-σcs = 400*10**6  # CS machanical limit [Pa]
+σcs = 600*10**6  # CS machanical limit [Pa]
 
 #%% Database creation
 
@@ -195,7 +199,7 @@ os.makedirs(save_directory, exist_ok=True)
    
 # Set parameters related to a (radius)
 na = 1000
-nx = 2000  # Number of points for approximations
+nx = 1800  # Number of points for approximations
 a_min = 0.4 # range of a for a chosen scan
 a_max = 2.6
 a_pas = 0.01 # gap between 2 try
@@ -274,7 +278,7 @@ def f_Tprof(Tbar,nu_T,rho):
     return temp
 
 def f_nprof(nbar,nu_n,rho):
-    one_m_rho2 = 1.-rho*rho
+    one_m_rho2 = 1.-rho**2
     dens = nbar*(1+nu_n)*one_m_rho2**nu_n
     return dens
 
@@ -285,8 +289,7 @@ def f_power(P_fus):
 def f_pbar(Tbar,nu_n,nu_T,R0,a,κ,P_fus,eta_T,nx):
     P_E = f_power(P_fus)
     nu_p = nu_n+nu_T
-    pbar = 2*Tbar*(1+nu_T)/(np.pi*(1+nu_p))
-    pbar = pbar * np.sqrt(P_E/(eta_T*E_F*R0*a*a*κ))
+    pbar = 2*Tbar*(1+nu_T)/(np.pi*(1+nu_p)) * np.sqrt(P_E/(eta_T*E_F*R0*a*a*κ))
     [rho,drho] = f_rho(nx)
     temp = f_Tprof(Tbar,nu_T,rho)
     one_m_rho2  = 1.-rho*rho
@@ -542,7 +545,138 @@ def Solveur_fb_fnc_fonction_de_a(H,Bmax,P_fus,P_W):
     a = a if a is not None else np.nan
     return(a)
 
+def Solveur_parrallel(H,Bmax,P_fus,P_W,f_RF_objectif):
+    delta = 0.002 # Finesse de la détection (en mètres)
+    a_start = 0.4 # Valeur initiale de a 
+    a_limite = 4.01 # Valeur max de a autorisée
+    def To_solve_raffiné(a):
+        (R0_solution,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs) = calcul(a,H,Bmax,P_fus,P_W)
+        return max(fRF_solution / f_RF_objectif ,n_vec_solution / nG_solution,beta_solution / betaN,q / qstar_solution)
+    # Définir les limites de la recherche pour 'a'
+    bounds = (lower_bound_a, upper_bound_a)
+    # Minimiser la valeur maximale en utilisant minimize_scalar
+    result = minimize_scalar(To_solve_raffiné, bounds=bounds)
+    # La valeur optimale de 'a' sera dans result.x
+    optimal_a = result.x
+    optimal_a_raffine = np.nan
+    
+    # Si nan : retour nan
+    if To_solve_raffiné(optimal_a) is None or np.isnan(To_solve_raffiné(optimal_a)):
+        return np.nan
+    
+    # Si L'une des 4 limites supérieur à 1 alors on retourne a minisant le max des limites
+    elif To_solve_raffiné(optimal_a)>1:
+            return optimal_a
+        
+    # Si il existe une solution :
+    elif To_solve_raffiné(optimal_a)<=1:
+        # Variables de cout
+        min_cost_Radial = 100
+        min_cost_Plasma = 100
+        # Boucle parcourant les valeurs de a
+        for a in np.arange(a_start,a_limite,delta) :
+            # Evaluation des différentes valeurs utiles
+            (R0_solution,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs) = calcul(a,H,Bmax,P_fus,P_W)
+            cost = cost*1e6
+            # Vérifier si toutes les conditions sont satisfaites
+            if (
+                n_vec_solution / nG_solution < 1 and
+                beta_solution / betaN < 1 and
+                q / qstar_solution < 1 and
+                fRF_solution / f_RF_objectif < 1
+            ):
+                # Si oui :
+                # Minimisation d'une fonction de cout souhaité, ici R0
+                if min_cost_Plasma>R0_solution:
+                    optimal_a = a
+                    min_cost_Plasma = R0_solution
+                # Si en plus, le Radial build est possible :
+                if not np.isnan(R0_a_b_c_CS_solution):
+                    # Minimisation d'une fonction de cout souhaité, ici R0
+                    if min_cost_Radial>R0_solution:
+                        optimal_a_raffine = a
+                        min_cost_Radial = R0_solution
+        
+        # Si une solution avec radial build est possible , alors à favoriser
+        if optimal_a_raffine is not None and not np.isnan(optimal_a_raffine):
+            optimal_a = optimal_a_raffine
+        
+        return (optimal_a)
+
 def Solveur_raffiné(H,Bmax,P_fus,P_W,f_RF_objectif):
+
+    def To_solve_raffiné(a):
+        (R0_solution,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs) = calcul(a,H,Bmax,P_fus,P_W)
+        return max(fRF_solution / f_RF_objectif ,n_vec_solution / nG_solution,beta_solution / betaN,q / qstar_solution)
+    
+    # Définir la fonction objectif à minimiser
+    def objective_function_optimiseur(a):
+        
+        cost_fct = 0
+        
+        # Calculer les résultats pour le paramètre 'a' donné
+        (R0_solution,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs) = calcul(a,H,Bmax,P_fus,P_W)
+        
+        # Consideration of limits
+        if n_vec_solution / nG_solution > 1:
+            cost_fct = cost_fct + (n_vec_solution / nG_solution)**100
+        if beta_solution / betaN > 1:
+            cost_fct = cost_fct + (beta_solution / betaN)**100
+        if q / qstar_solution > 1:
+            cost_fct = cost_fct + (q / qstar_solution)**100
+        if fRF_solution / f_RF_objectif > 1:
+            cost_fct = cost_fct + (fRF_solution / f_RF_objectif)**100
+        # solenoid consideration
+        if np.isnan(R0_a_b_c_CS_solution) or R0_a_b_c_CS_solution<0 :
+            cost_fct = cost_fct + 100
+            
+        # Minimization of the cost
+        cost_fct = cost_fct + cost*1e6 #(cost*1e6) or R0_solution
+        
+        # naN verification
+        if np.isnan(cost_fct)==True or cost_fct is None:
+            cost_fct = 100
+            
+        return(cost_fct)
+    
+    
+    # Définir les limites de la recherche pour 'a'
+    bounds = (lower_bound_a, upper_bound_a)
+    # Minimiser la valeur maximale en utilisant minimize_scalar
+    result_minim = minimize_scalar(To_solve_raffiné, bounds=bounds)
+    
+    # Vérifier si l'optimisation a réussi et obtenir la valeur optimale de 'a'
+    if result_minim.success:
+        optimal_a = result_minim.x
+    else:
+        return np.nan  # Retourner NaN si minimize_scalar échoue
+    
+    # Si nan : retour nan
+    if To_solve_raffiné(optimal_a) is None or np.isnan(To_solve_raffiné(optimal_a)):
+        return np.nan
+    
+    # Si L'une des 4 limites supérieur à 1 alors on retourne a minisant le max des limites
+    elif To_solve_raffiné(optimal_a)>1:
+            return optimal_a
+        
+    # Si il existe une solution :
+    elif To_solve_raffiné(optimal_a)<=1:
+        
+        # Définir les bornes pour le paramètre 'a' seulement
+        bounds_a = [(lower_bound_a, upper_bound_a)]  # Limite pour 'a'
+
+        # Utiliser la méthode de Differential Evolution pour minimiser la fonction
+        result_grad = differential_evolution(objective_function_optimiseur, bounds=bounds_a, maxiter=max_iterations, tol=1e-3)
+        
+            # Vérifier si l'optimisation avec differential_evolution a réussi et obtenir la valeur optimale de 'a'
+        if result_grad.success:
+            optimal_a = result_grad.x[0]
+        else:
+            return np.nan  # Retourner NaN si differential_evolution échoue
+        
+        return (optimal_a)
+
+def Solveur_historique(H,Bmax,P_fus,P_W,f_RF_objectif):
     delta = 0.002 # Finesse de la détection (en mètres)
     def To_solve_raffiné(a):
         (R0_solution,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs) = calcul(a,H,Bmax,P_fus,P_W)
@@ -587,7 +721,8 @@ def Solveur_raffiné(H,Bmax,P_fus,P_W,f_RF_objectif):
         if optimal_a_raffine is not None and not np.isnan(optimal_a_raffine):
             optimal_a = optimal_a_raffine
         return (optimal_a-delta)
-    
+
+
 def Solveur_archaique(H,Bmax,P_fus,P_W,f_RF_objectif):
     delta = 0.002 # Finesse de la détection (en mètres)
     def To_solve_archaique(a):
@@ -650,7 +785,7 @@ def objective_function(x):
     # if solenoid < Slnd:
     #     cost_fct = cost_fct + ((solenoid*solenoid+1)**1000)
     # solenoid consideration
-    if np.isnan(R0_a_b_c_CS_solution) :
+    if np.isnan(R0_a_b_c_CS_solution) or R0_a_b_c_CS_solution<0 :
         cost_fct = cost_fct + 10
         
     # Minimization of the cost
@@ -662,41 +797,34 @@ def objective_function(x):
     
     return cost_fct
 
-# Function to calculate useful values
-def calcul(a,H,Bmax,P_fus,P_W):
-    
-    # Calculate the useful values
+def calcul(a, H, Bmax, P_fus, P_W):
+    # Calculate useful values
     R0_solution = f_R0(a, P_fus, P_W, eta_T, κ)
     B0_solution = f_B0(Bmax, a, b, R0_solution)
     pbar_solution = f_pbar(Tbar, nu_n, nu_T, R0_solution, a, κ, P_fus, eta_T, nx)
     nbar_solution = f_nbar(pbar_solution, Tbar, nu_n, nu_T)
-    tauE_solution = f_tauE(pbar_solution, R0_solution, a, κ, eta_T, P_fus)
-    Ip_solution = f_Ip(SL_choice, H, tauE_solution, R0_solution, a, κ, nbar_solution, B0_solution, A, eta_T, P_fus)
-    beta_solution = f_beta(pbar_solution, B0_solution,a,Ip_solution)
+    Ip_solution = f_Ip(SL_choice, H, f_tauE(pbar_solution, R0_solution, a, κ, eta_T, P_fus), R0_solution, a, κ, nbar_solution, B0_solution, A, eta_T, P_fus)
+    beta_solution = f_beta(pbar_solution, B0_solution, a, Ip_solution)
     qstar_solution = f_qstar(a, B0_solution, R0_solution, Ip_solution, κ)
     nG_solution = f_nG(Ip_solution, a)
     eta_CD_solution = f_etaCD(a, R0_solution, B0_solution, nbar_solution, Tbar, nu_n, nu_T, nx)
     fNC_solution = f_fNC(a, κ, pbar_solution, R0_solution, Ip_solution, nx)
     fB_solution = f_fB(eta_CD_solution, R0_solution, Ip_solution, nbar_solution, eta_RF, f_RP, f_RF_objectif, P_fus)
-    fRF_solution = f_fRF(fNC_solution,eta_CD_solution,R0_solution,Ip_solution,nbar_solution,eta_RF,f_RP,P_fus)
-    n_vec_solution = nbar_solution*1.E-20
-    c = f_coil(a,b,R0_solution,B0_solution,Sigm_max,μ0,J_max)
-    cost = f_cost(a,b,R0_solution,c,κ,P_fus)
-    heat = f_heat(B0_solution,R0_solution,P_fus,eta_T)
-    R0_a_solution = R0_solution - a
-    R0_a_b_solution = R0_solution - a - b
-    R0_a_b_c_solution = R0_solution - a - b - c
-    solenoid = f_slnd(R0_solution,a,b,c)
+    fRF_solution = f_fRF(fNC_solution, eta_CD_solution, R0_solution, Ip_solution, nbar_solution, eta_RF, f_RP, P_fus)
+    n_vec_solution = nbar_solution * 1.E-20
+    c = f_coil(a, b, R0_solution, B0_solution, Sigm_max, μ0, J_max)
+    cost = f_cost(a, b, R0_solution, c, κ, P_fus)
+    heat = f_heat(B0_solution, R0_solution, P_fus, eta_T)
+    solenoid = f_slnd(R0_solution, a, b, c)
+    required_Bcs = find_required_Bcs(solenoid, R0_solution, Ip_solution, nbar_solution, Tbar, Bmax, a)
+    R0_a_b_c_CS_solution = calculate_riCS(required_Bcs, solenoid)
     
-    
-    # Find the required Bcs
-    required_Bcs = find_required_Bcs(solenoid,R0_solution,Ip_solution,nbar_solution,Tbar,Bmax,a)
-    # Calculate riCS for the required Bcs
-    riCS_required = calculate_riCS(required_Bcs,solenoid)
-    
-    R0_a_b_c_CS_solution = riCS_required
-    
-    return(R0_solution,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs)
+    return (R0_solution, B0_solution, pbar_solution, beta_solution, nbar_solution,
+            f_tauE(pbar_solution, R0_solution, a, κ, eta_T, P_fus), Ip_solution,
+            qstar_solution, nG_solution, eta_CD_solution, fB_solution, fNC_solution,
+            fRF_solution, n_vec_solution, c, cost, heat, solenoid, R0_solution - a,
+            R0_solution - a - b, R0_solution - a - b - c, R0_a_b_c_CS_solution, required_Bcs)
+
 
 # Scan on a
 def Variation_a(H,Bmax,P_fus,P_W):
@@ -761,7 +889,7 @@ def Variation_a(H,Bmax,P_fus,P_W):
 # Function to calculate riCS for a given Bcs
 def calculate_riCS(Bcs,reCS):
     # Calculate riCS based on Bcs
-    riCS = μ0 * AJ_AC * σcs * reCS / (Bcs**2 + μ0 * AJ_AC * σcs)
+    riCS = (μ0 * AJ_AC * σcs * reCS) / (Bcs**2 + μ0 * AJ_AC * σcs)
     return riCS
 
 def find_required_reCS(R0,Ip,ne,Te,Bmax,a):
@@ -1186,7 +1314,7 @@ def Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_solution
     plt.plot(parameter_values, R0_a_solutions, color='blue', label='$R_{\mathrm{0}}$-a')
     plt.plot(parameter_values, R0_a_b_solutions, color='purple', label='$R_{\mathrm{0}}$-a-$\Delta_{blanket}$')
     plt.plot(parameter_values, R0_a_b_c_solutions, color='orange', label='$R_{\mathrm{0}}$-a-$\Delta_{blanket}$-$\Delta_{TFC}$')
-    plt.plot(parameter_values, R0_a_b_c_CS_solutions, color='c', label='$Ri_{\mathrm{CS}}$')
+    plt.plot(parameter_values, R0_a_b_c_CS_solutions, color='c', label='$R_{\mathrm{CSi}}$')
     plt.legend(loc='upper left', facecolor='lightgrey')
     # Ajouter un deuxième axe y pour Ip_solutions
     ax2 = ax1.twinx()
@@ -1688,7 +1816,7 @@ parameter_ranges = {
     'Bmax': np.arange(10, 25, 0.1),
     'Pfus': np.arange(500.E6, 5000.E6, 100.E6),
     'Pw': np.arange(1.E6, 5.E6, 1.E5),
-    'fobj' : np.arange(0.0,1.0,0.001)
+    'fobj' : np.arange(0.01,1.0,0.01)
 }
 
 unit_mapping = {'H': '', 'Bmax': 'T', 'Pfus': 'GW', 'Pw': 'MW/m²','fobj': ''}
@@ -1702,7 +1830,7 @@ a_vec = np.arange(a_min, a_max, 1/na)
 (H,P_fus,P_W,Bmax,κ)=init(CHOICE)
 
 if parameter_values is not None:
-    for parameter_value in parameter_values:
+    for parameter_value in tqdm(parameter_values, desc='Processing parameters'):
         
         # Update the chosen parameter
         if chosen_parameter == 'H':
@@ -1716,11 +1844,12 @@ if parameter_values is not None:
         elif chosen_parameter == 'fobj':
             f_RF_objectif = parameter_value
 
-        # Find the value of 'a' for which f_B is equal to f_NC
-        #a_solution = Solveur_fb_fnc_fonction_de_a(H,Bmax,P_fus,P_W)
+        # Historical solver
+        # a_solution = Solveur_historique(H,Bmax,P_fus,P_W,f_RF_objectif)
         
         # New solver
         a_solution = Solveur_raffiné(H,Bmax,P_fus,P_W,f_RF_objectif)
+        
         a_solutions.append(a_solution)
         
         # Calculate useful values
@@ -1934,8 +2063,8 @@ PERSO = []
 Reactor = input("Entrez la machine que vous souhaitez étudier : (ITER,ARC,EUdemo_A3,EUdemo_A4,CFDTR,EUDEMO2,K_DEMO) or if you want to enter new value (New) :")
 if Reactor == "New" :
     H = float(input("Entrez la valeur de H : "))
-    P_F = float(input("Entrez la valeur de P_F : "))*10**6
-    P_W = float(input("Entrez la valeur de P_W : "))*10**6
+    P_F = float(input("Entrez la valeur de P_F : "))
+    P_W = float(input("Entrez la valeur de P_W : "))
     Bmax = float(input("Entrez la valeur de Bmax : "))
     # Demander à l'utilisateur la valeur choisie pour le design
     chosen_design = float(input("Entrez la valeur choisie pour le design : ")) 
@@ -2086,6 +2215,7 @@ chosen_unity = 'T'
 parameter_values = np.arange(10, 25, 0.1)
 
 (H,P_fus,P_W,Bmax,κ)=init(CHOICE)
+P_W = 0.5e6
 
 for Bmax in parameter_values:
     
@@ -2136,4 +2266,162 @@ plt.show()
 # Réinitialisation des paramètres par défaut
 plt.rcdefaults()
 
+
+#%% Variation of 1 chosen parameter and mapping the a space
+
+chosen_parameter = None
+chosen_unity = None
+
+# Ask the user to choose the parameter to vary
+chosen_parameter = input("Choose the parameter to vary (H, Bmax, Pfus, Pw, fobj): ")
+
+# Define ranges and steps for each parameter
+parameter_ranges = {
+    'H': np.arange(0.6, 2, 0.01),
+    'Bmax': np.arange(5, 25, 0.2),
+    'Pfus': np.arange(500.E6, 5000.E6, 100.E6),
+    'Pw': np.arange(1.E6, 5.E6, 1.E5),
+    'fobj' : np.arange(0.01,1.0,0.01)
+}
+unit_mapping = {'H': '', 'Bmax': 'T', 'Pfus': 'GW', 'Pw': 'MW/m²','fobj': ''}
+chosen_unity = unit_mapping.get(chosen_parameter, '')
+a_min_choice = {'H':0.5, 'Bmax':0.3, 'Pfus':0.5, 'Pw':0.5,'fobj':0.5}
+a_min = a_min_choice.get(chosen_parameter,)
+a_max_choice = {'H':2, 'Bmax':2.3, 'Pfus':3.5, 'Pw':4.7,'fobj':2}
+a_max = a_max_choice.get(chosen_parameter,)
+parameter_values = parameter_ranges.get(chosen_parameter)
+a_vec = np.arange(a_min,a_max,0.05)
+max_limits_matrix = np.zeros((len(a_vec),len(parameter_values)))
+radial_build_matrix = np.zeros((len(a_vec),len(parameter_values)))
+
+(H,P_fus,P_W,Bmax,κ)=init(CHOICE)
+
+x = 0
+y = 0
+
+if parameter_values is not None:
+    for parameter_value in tqdm(parameter_values, desc='Processing parameters'):
+        
+        # Update the chosen parameter
+        if chosen_parameter == 'H':
+            H = parameter_value
+        elif chosen_parameter == 'Bmax':
+            Bmax = parameter_value
+        elif chosen_parameter == 'Pfus':
+            P_fus = parameter_value
+        elif chosen_parameter == 'Pw':
+            P_W = parameter_value
+        elif chosen_parameter == 'fobj':
+            f_RF_objectif = parameter_value
+        
+        y = 0
+        
+        for a_solution in a_vec :
+        
+            # Calculate useful values
+            (R0_solution,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs) = calcul(a_solution, H, Bmax, P_fus, P_W)
+            
+            # Vérifier les conditions
+            n_condition = n_vec_solution / nG_solution
+            beta_condition = beta_solution / betaN
+            q_condition = q / qstar_solution
+            fRF_condition = fRF_solution / f_RF_objectif
+            
+            max_limit = max(n_condition, beta_condition, q_condition, fRF_condition)
+            
+            if np.isnan(max_limit) or max_limit > 2 :
+                max_limit = np.nan
+            
+            radial_build = np.nan
+            if not np.isnan(R0_a_b_c_CS_solution) and not np.isnan(max_limit) and max_limit<1 :
+                radial_build = R0_solution
+            
+            # Store the value in the matrix
+            max_limits_matrix[y, x] = max_limit
+            radial_build_matrix[y,x] = radial_build        
+            
+            y = y+1
+            
+        x = x+1
+        
+
+else:
+    print("Invalid chosen parameter. Please choose from 'H', 'Bmax', 'Pfus', 'Pw'.")
+
+# Inverser l'ordre des lignes de max_limits_matrix
+inverted_matrix_plasma_limit = max_limits_matrix[::-1, :]
+# Inverser l'ordre des lignes de max_limits_matrix
+inverted_matrix_radial_build = radial_build_matrix[::-1, :]
+
+# Créer une figure
+plt.figure(figsize=(10, 6))
+
+color_choice_plasma = 'turbo'
+# Other good choices : 'coolwarm' , 'jet' , 'gist_rainbow'
+color_choice_radial = 'bone'
+# Other good choice : 'plasma' , 'winter'
+
+# Afficher le heatmap pour inverted_matrix_plasma_limit avec imshow et stocker l'objet mappable retourné
+im_plasma_limit = plt.imshow(inverted_matrix_plasma_limit, cmap=color_choice_plasma, aspect='auto', interpolation='nearest') #lorsque plus de points disponibles, 'bilinear' possible afin d'interpoler de manière plus esthétique
+# Définir la valeur seuil pour distinguer les deux plages de valeurs
+threshold = 1.0
+# Ajouter des contours pour marquer la ligne de démarcation pour inverted_matrix_plasma_limit
+plt.contour(inverted_matrix_plasma_limit, levels=[threshold], colors='black', linestyles='dashed')
+# Ajouter une barre de couleur avec une étiquette pour inverted_matrix_plasma_limit
+cbar_plasma_limit = plt.colorbar(im_plasma_limit, label='max_limit')
+
+# Limiter le nombre de valeurs affichées sur l'axe y
+max_display_y = 20  # Nombre maximal de valeurs à afficher sur l'axe y
+y_indices = np.linspace(0, len(a_vec) - 1, max_display_y, dtype=int)
+y_labels = [round(a_vec[len(a_vec) - 1 - i], 1) for i in y_indices]  # Arrondir chaque valeur à un décimale
+plt.yticks(y_indices, y_labels)
+# Limiter le nombre de valeurs affichées sur l'axe x
+max_display_x = 15  # Nombre maximal de valeurs à afficher sur l'axe x
+x_indices = np.linspace(0, len(parameter_values) - 1, max_display_x, dtype=int)
+if chosen_parameter == 'Pfus':
+    x_labels = [round(parameter_values[i]*1e-9, 1) for i in x_indices]  # Arrondir chaque valeur à une décimale
+elif chosen_parameter == 'Pw':
+    x_labels = [round(parameter_values[i]*1e-6, 1) for i in x_indices]  # Arrondir chaque valeur à une décimale
+else :
+    x_labels = [round(parameter_values[i], 1) for i in x_indices]  # Arrondir chaque valeur à une décimale
+plt.xticks(x_indices, x_labels)
+
+# # Afficher inverted_matrix_radial_build avec une colormap et stocker l'objet mappable retourné
+# im_radial_build = plt.imshow(inverted_matrix_radial_build, cmap=color_choice_radial, alpha=0.8, aspect='auto', interpolation='nearest')
+# # Ajouter une colorbar avec une étiquette pour inverted_matrix_radial_build
+# cbar_radial_build = plt.colorbar(im_radial_build, label='R0')
+
+# Créer une copie de la matrice pour définir les niveaux de contour
+filled_matrix = np.where(np.isnan(inverted_matrix_radial_build), -1, 1)  # Remplacer NaN par -1 et les autres par 1
+# Tracer les contours autour des valeurs de transition pour inverted_matrix_radial_build
+contour_level = [0.9]  # Niveau pour les contours
+plt.contour(filled_matrix, levels=contour_level, colors='white')
+# Définir les niveaux et les couleurs pour les contours
+levels = np.arange(1, 25)  # Définit les niveaux de 1 à 24
+# Ajouter des contours pour chaque niveau avec une couleur différente
+contour_lines = plt.contour(inverted_matrix_radial_build, levels=levels, colors='white')
+# Filtrer les niveaux pour n'afficher que ceux inférieurs à 10
+filtered_levels = [level for level in contour_lines.levels if level <= 10]
+# Ajouter les valeurs des niveaux à côté des contours
+plt.clabel(contour_lines, filtered_levels, inline=True, fmt='%d', fontsize=8)
+# Créer une ligne blanche avec une légende
+white_line = mlines.Line2D([], [], color='white', label='Topological Map of R0')
+# Ajouter la ligne à la légende
+handles, labels = plt.gca().get_legend_handles_labels()
+handles.append(white_line)
+plt.legend(handles=handles, loc='upper right', facecolor='lightgrey', fontsize=10)
+
+# Personnaliser les axes et le titre
+plt.xlabel(f"{chosen_parameter} [{chosen_unity}]")
+plt.ylabel('a')
+plt.title('2D Color Map based on plasma limits')
+
+# Save the image
+path_to_save = os.path.join(save_directory,f'2D_map_{chosen_parameter}')
+plt.savefig(path_to_save, dpi=300, bbox_inches='tight')
+# Afficher la figure
+plt.show()
+
+# Réinitialisation des paramètres par défaut
+plt.rcdefaults()
 
