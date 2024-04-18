@@ -58,7 +58,7 @@ lower_bound_a = 0.3
 upper_bound_a = 3
 
 # Scaling law choice
-SL_choice = 2
+SL_choice = 1
 #HIPB98
 #DS03
 #LIPB98
