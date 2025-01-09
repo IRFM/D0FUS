@@ -54,6 +54,8 @@ To do this, if necessary, execute in the console:
 
 ## Installation
 
+**Classical :**
+
 To create a local copy of this project to use it, here are the necessary steps:
 
 1. Download GIT on you machine
@@ -69,14 +71,15 @@ To create a local copy of this project to use it, here are the necessary steps:
   ```sh
   git clone http://irfm-gitlab.intra.cea.fr/projets/pepr-suprafusion/D0FUS.git
   ```
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-Alternative :
+**Alternative :**
 
 Download all the folders from the git repository
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ## Developers
+
+**Classical :**
 
 To update the main branch, here are the steps to follow:
 1. Add the necessary files to the GIT cache :
@@ -91,13 +94,15 @@ To update the main branch, here are the steps to follow:
   ```sh
   git push HEAD:main
   ```
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-Alternative :
+**Alternative :**
 
 Modify the code in the GIT interface and save as a new commit with associated message.
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ## Outside Contributers
+
+**Classical :**
 
 If you have a suggestion that would make this better, please fork the repository and create a pull request. To do so :
 
@@ -118,12 +123,12 @@ git push origin feature/AmazingFeature
 
 You can also open an issue with the tag "enhancement".
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-Alternative :
+**Alternative :**
 
 From the GIT user interface create a new Branch.
 Modify the code in the GIT interface and save as a new commit with associated message.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Server
 
