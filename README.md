@@ -4,17 +4,20 @@
 
 ## Getting Started
 
-The code is currently presented as a single Python file comprising a tree of functions allowing for multiple objectives to be achieved:
+The code is currently presented as a Python library comprising a tree of .py scripts for multiple objectives:
+* D0FUS_import: Import all the necessary libraries
+* D0FUS_parametrization: Panel control of the code, with the definition of all the constants
+* D0FUS_physical_functions: Definition of all the physical functions
+* D0FUS_radial_build_functions: Definition of the functions allowing for the different width calculations
+* D0FUS_run: Major function definition, allowing for the calculation of a complete design point
+* D0FUS_plot: Aesthetic functions
 
-* A first initialization phase is necessary with the import of libraries, the definition of constants, the creation of a database of main fusion machines, and the initialization of numerical parameters.
-* Then comes the definition of physical and engineering functions, the core of the program, although not the largest part of the code.
-* Other functions, for routine tasks, calculations, and graphical display, are then defined.
-* Finally, modules allowing the production of exploitable results are presented:
-  - Variation of the plasma radius for a given set of input data
-  - Variation of H, B_max, P_fus, P_w, or f_obj for the rest of the given data
-  - A gradient descent to find the minimum of an arbitrary cost function while keeping the input values of the code between user-selected limits
-  - A robustness test to calculate the outputs of D0FUS for a set of input data, with aesthetic displays
-  - Finally, the possibility to plot a variation of R_0 as a function of B for different assumptions.
+Additionally, the 'main' files, utilizing the previously presented library, are representative of the possible and current uses of the code:
+* D0FUS_Benchmark: Provides a benchmark with several machines
+* D0FUS_Gradient: Enables the search for an optimized point using various gradient descent techniques (mainly genetic algorithms)
+* D0FUS_Scan_1D: 1D scan (typically on major or minor radius)
+* D0FUS_Scan_2D: 2D scan (typically on major and minor radius). Major use of the code and the most refined script. Allows for complex visualization, choosing between several parameter plots.
+* D0FUS_Scan_3D: 3D scan (typically on major and minor radius + magnetic field)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
