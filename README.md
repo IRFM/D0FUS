@@ -22,15 +22,21 @@ The code is currently presented as a single Python file comprising a tree of fun
 
 D0FUS is a code developed in Python. To open it, the author recommends using Spyder, but any other Python executor will suffice. The code uses the following librarys, which will need to be installed on first execution if not already present:
 
+* os
+* math
+* time
+* warnings
+* sys
+* importlib
 * numpy
 * matplotlib
 * scipy
 * pandas
-* warnings
-* os
 * plotly
 * seaborn
-* math
+* tqdm
+* plotly
+* imageio
 
 To do this, if necessary, execute in the console:
 
