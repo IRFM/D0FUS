@@ -56,7 +56,7 @@ To create a local copy of this project to use it, here are the necessary steps:
   ```
 4. Clone the project :
   ```sh
-  git clone http://irfm-gitlab.intra.cea.fr/TA276941/D0FUS.git
+  git clone http://irfm-gitlab.intra.cea.fr/projets/pepr-suprafusion/D0FUS.git
   ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
