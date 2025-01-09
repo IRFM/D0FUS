@@ -19,6 +19,8 @@ Additionally, the 'main' files, utilizing the previously presented library, are 
 * D0FUS_Scan_2D: 2D scan (typically on major and minor radius). Major use of the code and the most refined script. Allows for complex visualization, choosing between several parameter plots.
 * D0FUS_Scan_3D: 3D scan (typically on major and minor radius + magnetic field)
 
+Please note that currently, not all the 'main' files are fully operational.
+
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Prerequisites
