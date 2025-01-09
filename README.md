@@ -21,6 +21,12 @@ Additionally, the 'main' files, utilizing the previously presented library, are 
 
 Please note that currently, not all the 'main' files are fully operational.
 
+Additionally, and for more details, useful papers and notes on the code are grouped in the 'Reference Papers' file:
+
+[Reference Papers/D0FUS_Auclair_Timothe_FED_Submission_29.11.24.pdf](Reference%20Papers/paper1.pdf)
+[Reference Papers/D0FUS_Auclair_Timothe_Radial_Build_09.01.2024.pdf](Reference%20Papers/paper2.pdf)
+
+
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Prerequisites
