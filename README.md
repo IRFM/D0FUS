@@ -67,6 +67,10 @@ To create a local copy of this project to use it, here are the necessary steps:
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
+Alternative :
+
+Download all the folders from the git repository
+
 ## Developers
 
 To update the main branch, here are the steps to follow:
@@ -83,6 +87,10 @@ To update the main branch, here are the steps to follow:
   git push HEAD:main
   ```
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+Alternative :
+
+Modify the code in the GIT interface and save as a new commit with associated message.
 
 ## Outside Contributers
 
@@ -107,9 +115,14 @@ You can also open an issue with the tag "enhancement".
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
+Alternative :
+
+From the GIT user interface create a new Branch.
+Modify the code in the GIT interface and save as a new commit with associated message.
+
 ## Server
 
-For users belonging to IRFM, execution on the IRFM JupyterLab server is also possible and convenient. To do this, go to the IRFM website, then navigate to the 'Pratique' tab, and then 'Python IRFM'.
+For users belonging to IRFM, execution on the IRFM JupyterLab server is also possible and convenient. To do so, go to the IRFM website, then navigate to the 'Pratique' tab, and then 'Python IRFM'.
 
 ## License
 
@@ -119,6 +132,6 @@ For users belonging to IRFM, execution on the IRFM JupyterLab server is also pos
 
 Auclair Timothe - timothe.auclair@cea.fr
 
-Project Link: [http://irfm-gitlab.intra.cea.fr/TA276941/D0FUS.git]
+Project Link: [http://irfm-gitlab.intra.cea.fr/projets/pepr-suprafusion/D0FUS/.git]
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
