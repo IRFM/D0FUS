@@ -116,28 +116,23 @@ def calcul(a, R0, Bmax, P_fus):
     else :
         print('Choose a valid Scaling for L-H transition')
     
-    # Mechanical choice
-    if Choice_Buck_Wedg == 'Bucking':
-        (c,Dilution_solution, TF_ratio) = f_TF_winding_pack(a, b, R0, B0_solution, σ_TF, μ0, J_max_TF_conducteur, F_CClamp, Bmax, Choice_Buck_Wedg)
-        (d,Alpha,B_CS) = f_CS_coil(a, b, c, R0, B0_solution, σ_CS, μ0, J_max_CS_conducteur, 'Bucking', Tbar, nbar_solution, Ip_solution, Ib_solution)
-    elif Choice_Buck_Wedg == 'Wedging':
-        (c ,TF_ratio) = f_TF_coil_freidberg(a, b, R0, B0_solution, σ_TF, μ0, J_max_TF_cable)
-        (d,Alpha,B_CS) = f_CS_coil(a, b, c, R0, B0_solution, σ_CS, μ0, J_max_CS_conducteur, 'Wedging', Tbar, nbar_solution, Ip_solution, Ib_solution)
-    else :
-        print('Choose between bucking and wedging')
-        
+    # Radial Build
+    (c, Winding_pack_thickness, Winding_pack_dilution, Winding_pack_centering_ratio, Nose_thickness) = f_TF_DOFUS(a, b, R0, B0_solution, σ_TF, μ0, J_max_TF_conducteur, F_CClamp, Bmax, Choice_Buck_Wedg)
+    (d,Alpha,B_CS) = f_CS_DOFUS_polynomiale(a, b, c, R0, B0_solution, σ_CS, μ0, J_max_CS_conducteur, Choice_Buck_Wedg, Tbar, nbar_solution, Ip_solution, Ib_solution)
+    # f_CS_DOFUS_convergence(a, b, c, R0, B0_solution, σ_CS, μ0, J_max_CS_conducteur, Choice_Buck_Wedg, Tbar, nbar_solution, Ip_solution, Ib_solution)
+    
     cost = f_cost(a,b,c,d,R0,κ,Q_solution)
     
     return (B0_solution, B_CS, tauE_solution, Q_solution, Ip_solution, nbar_solution,
             beta_solution, qstar_solution, q95_solution, nG_solution, 
-            P_CD, P_sep, P_Thresh, cost, heat, Gamma_n, f_alpha_solution, TF_ratio,
+            P_CD, P_sep, P_Thresh, cost, heat, Gamma_n, f_alpha_solution, Winding_pack_centering_ratio,
             R0-a, R0-a-b, R0-a-b-c, R0-a-b-c-d)
 
 if __name__ == "__main__":
     # Appeler la fonction de calcul
     # Benchmark
-    R0 = 9
-    a = 3
+    R0 = 7.2
+    a = 1.2
     Pfus = 2000
     Bmax = 20
     # End Benchmark parameters
