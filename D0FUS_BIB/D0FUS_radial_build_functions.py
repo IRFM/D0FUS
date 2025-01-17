@@ -36,7 +36,7 @@ def f_TF_winding_pack_bucking_convergence(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_
     tuple: A tuple containing the calculated values :
     (c, Dilution_solution, TF_ratio_bucking)
     With
-    c : TF width
+    c_winding_pack : Winding pack width
     Dilution_solution : % of conductor
     TF_ratio_bucking : % of centering stress in the tresca
     
@@ -127,7 +127,7 @@ def f_TF_winding_pack_bucking_polynomiale(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_
     tuple: A tuple containing the calculated values :
     (c, Dilution_solution, TF_ratio_bucking)
     With
-    c : TF width
+    c_winding_pack : Winding pack width
     Dilution_solution : % of conductor
     TF_ratio_bucking : % of centering stress in the tresca
     
@@ -258,10 +258,11 @@ def f_TF_winding_pack_wedging_convergence(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_
     Returns:
     tuple: A tuple containing the calculated values :
     (c, Dilution_solution, TF_ratio_bucking)
-    With
-    c : TF width
+    With :
+
+    c_winding_pack : Winding pack thickness
     Dilution_solution : % of conductor
-    TF_ratio_bucking : % of centering stress in the tresca
+    TF_ratio_wedging : % of centering stress in the tresca
     
     """
 
@@ -320,12 +321,12 @@ def f_TF_winding_pack_wedging_convergence(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_
             (2 - 2 * (a + b) / R0 - (r1 - r2) / R0)**-1 -
             (2 + 2 * (a + b) / R0 + (r1 - r2) / R0)**-1
         )
-        TF_ratio_bucking = Sigma_C / (Sigma_C + Sigma_T)
+        TF_ratio_wedging = Sigma_C / (Sigma_C + Sigma_T)
         
         # Calculate associated thickness
         c_winding_pack = r1 - r2
 
-        return (c_winding_pack, Dilution_solution,TF_ratio_bucking)
+        return (c_winding_pack, Dilution_solution,TF_ratio_wedging)
 
     except Exception as e:
         return (np.nan, np.nan, np.nan)
@@ -351,9 +352,10 @@ def f_TF_winding_pack_wedging_polynomiale(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_
     tuple: A tuple containing the calculated values :
     (c, Dilution_solution, TF_ratio_bucking)
     With
-    c : TF width
+
+    c_winding_pack : Winding pack width [m]
     Dilution_solution : % of conductor
-    TF_ratio_bucking : % of centering stress in the tresca
+    TF_ratio_wedging : % of centering stress in the tresca
     
     """
 
@@ -466,12 +468,12 @@ def f_TF_winding_pack_wedging_polynomiale(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_
             (2 - 2 * (a + b) / R0 - (r1 - r2) / R0)**-1 -
             (2 + 2 * (a + b) / R0 + (r1 - r2) / R0)**-1
         )
-        TF_ratio_bucking = Sigma_C / (Sigma_C + Sigma_T)
+        TF_ratio_wedging = Sigma_C / (Sigma_C + Sigma_T)
         
         # Calculate associated thickness
         c_winding_pack = r1 - r2
 
-        return (c_winding_pack, Dilution_solution,TF_ratio_bucking)
+        return (c_winding_pack, Dilution_solution,TF_ratio_wedging)
 
     except Exception as e:
         return (np.nan, np.nan, np.nan)
@@ -518,8 +520,11 @@ def f_TF_DOFUS(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_CClamp, Bmax, Choice_Buck_W
     tuple: A tuple containing the calculated values :
     (c, TF_ratio_bucking)
     With
-    c : TF width
-    TF_ratio_wedging : % of centering stress in the tresca
+    c : TF width [m]
+    Winding_pack_thickness : Winding pack thickness (can be the whole coil thickness) [m]
+    Winding_pack_dilution : dilution factor between supra and steel [%]
+    Winding_pack_centering_ratio : % of centering stress in the tresca [%]
+    Nose_thickness : Nose thickness (can be 0) [m]
     
     """
     
@@ -655,10 +660,9 @@ if __name__ == "__main__":
     J_max_TF = 50 * 1e6
     Bmax = 12
     F_CClamp = 0
-    Choice_Buck_Wedg = "Wedging"
 
     # Test the function
-    result4 = f_TF_DOFUS(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_CClamp, Bmax, Choice_Buck_Wedg)
+    result4 = f_TF_DOFUS(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_CClamp, Bmax, "Wedging")
     print(f"TF D0FUS test : {result4}")
     result5 = f_TF_coil_freidberg(a, b, R0, B0, σ_TF, μ0, 20e6)
     print(f"TF freidberg test : {result5}")
@@ -687,7 +691,7 @@ def f_CS_DOFUS_convergence(a, b, c, R0, B0, σ_CS, μ0, J_max_CS, Choice_Buck_We
     tuple: A tuple containing the calculated values :
     (d, Alpha, B_CS)
     With
-    c : TF width
+    d : CS width
     Alpha : % of conductor
     B_CS : CS magnetic field
     
@@ -843,7 +847,7 @@ def f_CS_DOFUS_polynomiale(a, b, c, R0, B0, σ_CS, μ0, J_max_CS, Choice_Buck_We
     tuple: A tuple containing the calculated values :
     (d, Alpha, B_CS)
     With
-    c : TF width
+    d : CS width
     Alpha : % of conductor
     B_CS : CS magnetic field
     
@@ -1012,8 +1016,6 @@ def f_CS_DOFUS_polynomiale(a, b, c, R0, B0, σ_CS, μ0, J_max_CS, Choice_Buck_We
             return (np.nan, np.nan, np.nan)
         if B_CS > Bmax or B_CS < 0:
             return (np.nan, np.nan, np.nan)
-        if RCS_int_solution < 0:
-            return (np.nan, np.nan, np.nan)
         else:
             d = RCS_ext - RCS_int_solution
             return (d, Alpha, B_CS)
@@ -1051,11 +1053,10 @@ def f_CS_DOFUS_polynomiale(a, b, c, R0, B0, σ_CS, μ0, J_max_CS, Choice_Buck_We
 
         Alpha = (3 * abs(ΨPI + ΨRampUp + Ψplateau - ΨPF)) / (Flux_CS_Utile * 2 * math.pi * μ0 * J_max_CS * (RCS_ext**3 - RCS_int_solution**3))
         B_CS = μ0 * (J_max_CS * Alpha) * (RCS_ext - RCS_int_solution)
+        
         if Alpha > 1 or Alpha < 0:
             return (np.nan, np.nan, np.nan)
         if B_CS > Bmax or B_CS < 0:
-            return (np.nan, np.nan, np.nan)
-        if RCS_int_solution < 0:
             return (np.nan, np.nan, np.nan)
         else:
             d = RCS_ext - RCS_int_solution
