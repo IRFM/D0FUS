@@ -12,7 +12,238 @@ from D0FUS_physical_functions import *
 # Ajouter le répertoire 'D0FUS_BIB' au chemin de recherche de Python
 sys.path.append(os.path.join(os.path.dirname(__file__), 'D0FUS_BIB'))
 
-#%% Radial Build functions
+#%%
+
+##################################################### TF Model ##########################################################
+
+if __name__ == "__main__":
+    print("##################################################### TF Model ##########################################################")
+
+#%% Modèles historiques Freidberg
+
+def f_TF_coil_wedging_freidberg(a, b, R0, B0, σ_TF, μ0, J_max_TF):
+    """
+    Calculate the thickness and stress ratio for the TF coil using the historical 
+    Freidberg model, in wedging
+
+    Parameters:
+    a : Minor radius (m)
+    b : 1rst Wall + Breeding Blanket + Neutron Shield + Gaps (m)
+    R0 : Major radius (m)
+    B0 : Central magnetic field (m)
+    σ_TF : Yield strength of the TF steel (MPa)
+    μ0 : Magnetic permeability of free space
+    J_max_TF : Maximum current density of the chosen Supra + Cu + He (A)
+
+    Returns:
+    tuple: A tuple containing the calculated values :
+    (c, TF_ratio_bucking)
+    With
+    c : TF width
+    TF_ratio_wedging : % of centering stress in the tresca
+    
+    """
+
+    # Calculate the strain parameter eps_B
+    eps_B = (a + b) / R0
+
+    # Calculate the magnetic stress parameter alpha_M
+    alpha_M = (B0**2 / (μ0 * σ_TF)) * (
+        (2 * eps_B) / (1 + eps_B) + 0.5 * np.log((1 + eps_B) / (1 - eps_B))
+    )
+
+    # Calculate the current density stress parameter alpha_J
+    alpha_J = (2 * B0) / (μ0 * R0 * J_max_TF)
+
+    # Calculate the thickness of the magnetic layer cM
+    cM = R0 * (1 - eps_B - np.sqrt((1 - eps_B)**2 - alpha_M))
+
+    # Calculate the thickness of the current density layer cJ
+    cJ = R0 * (1 - eps_B - np.sqrt((1 - eps_B)**2 - alpha_J))
+
+    # Calculate the total thickness c
+    c = cM + cJ
+
+    # Calculate the strain parameter eps_M
+    eps_M = cM / R0
+
+    # Calculate the tangential stress Sigma_T
+    Sigma_T = (B0**2 / (2 * μ0)) * np.log((1 + eps_B) / (1 - eps_B)) / (eps_M * (2 - 2 * eps_B - eps_M))
+
+    # Calculate the compressive stress Sigma_C
+    Sigma_C = (B0**2 / (μ0 * eps_M)) * (2 / (2 - 2 * eps_B - eps_M)) * (eps_B / (1 + eps_B))
+
+    # Calculate the TF ratio for wedging
+    TF_ratio_wedging = Sigma_C / (Sigma_C + Sigma_T)
+
+    return (c, TF_ratio_wedging)
+
+if __name__ == "__main__":
+    
+    # Test parameters for ITER case
+    a_freidberg = 2
+    b_freidberg = 1.45
+    R0_freidberg = 6.2
+    B0_freidberg = 5.3
+    σ_TF_freidberg = 660e6
+    μ0_freidberg = 4 * np.pi * 1e-7
+    J_max_freidberg = 20 * 1e6
+    Bmax_freidberg = 12
+    
+    result_freidberg_wedging = f_TF_coil_wedging_freidberg(a_freidberg, b_freidberg, R0_freidberg, B0_freidberg, σ_TF_freidberg, μ0_freidberg, J_max_freidberg)
+    print(f"TF freidberg model wedging : {result_freidberg_wedging}")
+    
+    
+#%% Modèles CEA Torre
+
+def f_TF_Torre_wedging(a, b, R0, B0, σ_TF, μ0, J_max_TF, Bmax):
+    
+    """
+    Calculate the thickness of the TF coil using the Torre model in wedging
+
+    Parameters:
+    a : Minor radius (m)
+    b : 1rst Wall + Breeding Blanket + Neutron Shield + Gaps (m)
+    R0 : Major radius (m)
+    B0 : Central magnetic field (m)
+    σ_TF : Yield strength of the TF steel (MPa)
+    μ0 : Magnetic permeability of free space
+    J_max_TF : Maximum current density of the chosen Supra + Cu + He (A)
+    Bmax : Maximum magnetic field (T)
+
+    Returns:
+    c : TF width
+    
+    """
+    
+    R1_0 = R0 - a - b # Jambe interne
+    R2 = R0 + a + b # Jambe externe
+    
+    NI = 2*np.pi*R0*B0/μ0
+    
+    S_cond = NI/J_max_TF
+    
+    c1 = R1_0-np.sqrt(R1_0**2-S_cond/np.pi)
+    
+    R1 = R1_0 - c1
+    
+    T = (np.pi*B0**2*R0**2)/(2*μ0)*math.log(R2/R1)
+    P = (B0**2*R0**2)/(2*μ0*R1**2)
+    
+    c2 = (B0**2*R0**2)/(2*μ0*R1*σ_TF)*(1+math.log(R2/R1)/2) # Valable si R1>>c
+
+    c  = c1 + c2
+
+    return(c)
+
+def f_TF_Torre_bucking(a, b, R0, B0, σ_TF, μ0, J_max_TF, Bmax):
+    
+    """
+    Calculate the thickness of the TF coil using the Torre model in bucking
+
+    Parameters:
+    a : Minor radius (m)
+    b : 1rst Wall + Breeding Blanket + Neutron Shield + Gaps (m)
+    R0 : Major radius (m)
+    B0 : Central magnetic field (m)
+    σ_TF : Yield strength of the TF steel (MPa)
+    μ0 : Magnetic permeability of free space
+    J_max_TF : Maximum current density of the chosen Supra + Cu + He (A)
+    Bmax : Maximum magnetic field (T)
+
+    Returns:
+    c : TF width
+    
+    """
+    
+    R1_0 = R0 - a - b # Jambe interne
+    R2 = R0 + a + b # Jambe externe
+    
+    NI = 2*np.pi*R0*B0/μ0
+    
+    S_cond = NI/J_max_TF
+    
+    c1 = R1_0-np.sqrt(R1_0**2-S_cond/np.pi)
+    
+    R1 = R1_0 - c1
+    
+    T = (np.pi*B0**2*R0**2)/(2*μ0)*math.log(R2/R1)
+    P = (B0**2*R0**2)/(2*μ0*R1**2)
+    
+    c2 = (B0**2*R0**2)*math.log(R2/R1)/(2*μ0*2*R1*(σ_TF-P)) # Valable si R1>>c
+
+    c  = c1 + c2
+
+    return(c)
+
+def f_TF_Torre_dilution_wedging(a, b, R0, B0, σ_TF, μ0, J_max_TF, Bmax):
+    
+    R1 = R0 - a - b # Jambe interne
+    R2 = R0 + a + b # Jambe externe
+    
+    NI = 2*np.pi*R0*B0/μ0
+    S_cond = NI/J_max_TF
+    
+    T = (np.pi*B0**2*R0**2)/(2*μ0)*math.log(R2/R1)
+    P = (B0**2*R0**2)/(2*μ0*R1**2)
+    
+    fb = (2*np.sqrt(S_cond)-P*R1)/σ_TF
+    fc = (-T/σ_TF-2*P*R1*np.sqrt(S_cond))/σ_TF
+    Delta = fb**2 - 4*fc
+    
+    c1 = (-fb+np.sqrt(Delta))/2 + np.sqrt(S_cond)
+    c2 = (-fb-np.sqrt(Delta))/2 + np.sqrt(S_cond)
+    
+    c = min(c1,c2)
+
+    return(c)
+
+def f_TF_Torre_dilution_bucking(a, b, R0, B0, σ_TF, μ0, J_max_TF, Bmax):
+    
+    R1 = R0 - a - b # Jambe interne
+    R2 = R0 + a + b # Jambe externe
+    
+    NI = 2*np.pi*R0*B0/μ0
+    S_cond = NI/J_max_TF
+    
+    T = (np.pi*B0**2*R0**2)/(2*μ0)*math.log(R2/R1)
+    P = (B0**2*R0**2)/(2*μ0*R1**2)
+    
+    fb = (P*3*np.sqrt(S_cond)-σ_TF*2*np.sqrt(S_cond))/P-σ_TF
+    fc = (R1+2*P*np.sqrt(S_cond)**2)/P-σ_TF
+    Delta = fb**2 - 4*fc
+    
+    c1 = (-fb+np.sqrt(Delta))/2 + np.sqrt(S_cond)
+    c2 = (-fb-np.sqrt(Delta))/2 + np.sqrt(S_cond)
+    
+    c = min(c1,c2)
+
+    return(c)
+
+if __name__ == "__main__":
+    
+    # ITER test parameters
+    a_Torre = 2
+    b_Torre = 1.45
+    R0_Torre = 6.2
+    B0_Torre = 5.3
+    σ_TF_Torre = 660e6
+    μ0_Torre = 4 * np.pi * 1e-7
+    J_max_TF_Torre = 50 * 1e6
+    Bmax_Torre = 12
+
+    # Test the function
+    result_Torre_wedging = f_TF_Torre_wedging(a_Torre, b_Torre, R0_Torre, B0_Torre, σ_TF_Torre, μ0_Torre, J_max_TF_Torre, Bmax_Torre)
+    print(f"TF Torre wedging : {result_Torre_wedging}")
+    result_Torre_bucking = f_TF_Torre_bucking(a_Torre, b_Torre, R0_Torre, B0_Torre, σ_TF_Torre, μ0_Torre, J_max_TF_Torre, Bmax_Torre)
+    print(f"TF Torre bucking : {result_Torre_bucking}")
+    result_Torre_wedging_dilution = f_TF_Torre_dilution_wedging(a_Torre, b_Torre, R0_Torre, B0_Torre, σ_TF_Torre, μ0_Torre, J_max_TF_Torre, Bmax_Torre)
+    print(f"TF Torre wedging dilution : {result_Torre_wedging_dilution}")
+    result_Torre_bucking_dilution = f_TF_Torre_dilution_bucking(a_Torre, b_Torre, R0_Torre, B0_Torre, σ_TF_Torre, μ0_Torre, J_max_TF_Torre, Bmax_Torre)
+    print(f"TF Torre bucking dilution : {result_Torre_bucking_dilution}")
+
+#%% Modèles D0FUS Auclair
+
 
 def f_TF_winding_pack_bucking_convergence(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_CClamp, Bmax):
     """
@@ -62,11 +293,11 @@ def f_TF_winding_pack_bucking_convergence(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_
         
         # Sigma_T
         F_z = (np.pi / μ0) * B0**2 * R0**2 * np.log((1 + (a + b) / R0) / (1 - (a + b) / R0))
-        F_T = max(abs(F_z - F_CClamp), abs(F_CClamp)) / 2
+        F_T = np.nanmax([abs(F_z - F_CClamp), abs(F_CClamp)]) / 2
         Sigma_T = F_T / (np.pi * (r1**2 - r2**2))
 
         # Sigma_C
-        Sigma_C = (2 * B0**2 * R0) / (μ0 * r2) * (
+        Sigma_C = ( B0**2 * R0) / (μ0 * r2) * (
             (2 - 2 * (a + b) / R0 - (r1 - r2) / R0)**-1 -
             (2 + 2 * (a + b) / R0 + (r1 - r2) / R0)**-1
         )
@@ -90,9 +321,9 @@ def f_TF_winding_pack_bucking_convergence(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_
         
         # Calculate Sigma ratio
         F_z = (np.pi / μ0) * B0**2 * R0**2 * np.log((1 + (a + b) / R0) / (1 - (a + b) / R0))
-        F_T = max(abs(F_z - F_CClamp), abs(F_CClamp)) / 2
+        F_T = np.nanmax([abs(F_z - F_CClamp), abs(F_CClamp)]) / 2
         Sigma_T = F_T / (np.pi * (r1**2 - r2**2))
-        Sigma_C = (2 * B0**2 * R0) / (μ0 * r2) * (
+        Sigma_C = ( B0**2 * R0) / (μ0 * r2) * (
             (2 - 2 * (a + b) / R0 - (r1 - r2) / R0)**-1 -
             (2 + 2 * (a + b) / R0 + (r1 - r2) / R0)**-1
         )
@@ -136,7 +367,7 @@ def f_TF_winding_pack_bucking_polynomiale(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_
     # Preliminary results
     r1 = R0 - a - b
     F_z = (np.pi / μ0) * B0**2 * R0**2 * np.log((1 + (a + b) / R0) / (1 - (a + b) / R0))
-    F_T = max(abs(F_z - F_CClamp), abs(F_CClamp)) / 2
+    F_T = np.nanmax([abs(F_z - F_CClamp), abs(F_CClamp)]) / 2
     epsilon_B = (a+b)/R0
     
     try:
@@ -154,7 +385,7 @@ def f_TF_winding_pack_bucking_polynomiale(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_
         
         # r2**3
         cste_c = (
-            4 * np.pi * B0**2 * J_max_TF * R0**2
+            2 * np.pi * B0**2 * J_max_TF * R0**2
             + 4 * np.pi * Bmax * R0 * σ_TF * epsilon_B
             + np.pi * Bmax * σ_TF * r1
             - F_T * J_max_TF * μ0
@@ -165,8 +396,8 @@ def f_TF_winding_pack_bucking_polynomiale(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_
         
         # r2**2
         cste_d = (
-            -8 * np.pi * B0**2 * J_max_TF * R0**3 * epsilon_B
-            - 4 * np.pi * B0**2 * J_max_TF * R0**2 * r1
+            -4 * np.pi * B0**2 * J_max_TF * R0**3 * epsilon_B
+            - 2 * np.pi * B0**2 * J_max_TF * R0**2 * r1
             - 4 * np.pi * Bmax * R0**2 * σ_TF * epsilon_B**2
             + 4 * np.pi * Bmax * R0**2 * σ_TF
             + np.pi * Bmax * σ_TF * r1**2
@@ -178,7 +409,7 @@ def f_TF_winding_pack_bucking_polynomiale(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_
         
         # r2**1
         cste_e = (
-            -4 * np.pi * B0**2 * J_max_TF * R0**2 * r1**2
+            -2 * np.pi * B0**2 * J_max_TF * R0**2 * r1**2
             - 4 * np.pi * Bmax * R0**2 * σ_TF * epsilon_B**2 * r1
             + 4 * np.pi * Bmax * R0**2 * σ_TF * r1
             - 4 * np.pi * Bmax * R0 * σ_TF * epsilon_B * r1**2
@@ -194,7 +425,7 @@ def f_TF_winding_pack_bucking_polynomiale(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_
         ) / (J_max_TF * R0**2)
         
         # r2**0
-        cste_f = 8 * np.pi * B0**2 * R0 * epsilon_B * r1**2 + 4 * np.pi * B0**2 * r1**3
+        cste_f = 4 * np.pi * B0**2 * R0 * epsilon_B * r1**2 + 2 * np.pi * B0**2 * r1**3
         # Coefficients du polynôme
         coefficients = [cste_a, cste_b, cste_c, cste_d, cste_e, cste_f]
 
@@ -203,11 +434,11 @@ def f_TF_winding_pack_bucking_polynomiale(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_
             return (np.nan,np.nan,np.nan)
 
         # Résolution du polynôme
-        solutions = np.roots(coefficients)
+        solutions_bucking = np.roots(coefficients)
         
         # Sélectionner la plus grande racine réelle inférieure à r1 et supérieure à 0
         largest_real_root_under_r1 = max(
-            [sol.real for sol in solutions if np.isclose(sol.imag, 0) and sol.real < r1-0.01  and sol.real > 0], 
+            [sol.real for sol in solutions_bucking if np.isclose(sol.imag, 0) and sol.real < r1-0.01  and sol.real > 0], 
             default=np.nan
         )
         
@@ -220,7 +451,7 @@ def f_TF_winding_pack_bucking_polynomiale(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_
 
         # Calculate Sigma ratio
         F_z = (np.pi / μ0) * B0**2 * R0**2 * np.log((1 + (a + b) / R0) / (1 - (a + b) / R0))
-        F_T = max(abs(F_z - F_CClamp), abs(F_CClamp)) / 2
+        F_T = np.nanmax([abs(F_z - F_CClamp), abs(F_CClamp)]) / 2
         Sigma_T = F_T / (np.pi * (r1**2 - r2**2))
         Sigma_C = (2 * B0**2 * R0) / (μ0 * r2) * (
             (2 - 2 * (a + b) / R0 - (r1 - r2) / R0)**-1 -
@@ -286,7 +517,7 @@ def f_TF_winding_pack_wedging_convergence(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_
         
         # Sigma_T
         F_z = (np.pi / μ0) * B0**2 * R0**2 * np.log((1 + (a + b) / R0) / (1 - (a + b) / R0))
-        F_T = max(abs(F_z - F_CClamp), abs(F_CClamp)) / 2
+        F_T = np.nanmax([abs(F_z - F_CClamp), abs(F_CClamp)]) / 2
         Sigma_T = F_T / (np.pi * (r1**2 - r2**2))
 
         # Sigma_C
@@ -315,7 +546,7 @@ def f_TF_winding_pack_wedging_convergence(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_
         
         # Calculate Sigma ratio
         F_z = (np.pi / μ0) * B0**2 * R0**2 * np.log((1 + (a + b) / R0) / (1 - (a + b) / R0))
-        F_T = max(abs(F_z - F_CClamp), abs(F_CClamp)) / 2
+        F_T = np.nanmax([abs(F_z - F_CClamp), abs(F_CClamp)]) / 2
         Sigma_T = F_T / (np.pi * (r1**2 - r2**2))
         Sigma_C = (B0**2 * R0) / (μ0 * (r1-r2)) * (
             (2 - 2 * (a + b) / R0 - (r1 - r2) / R0)**-1 -
@@ -362,7 +593,7 @@ def f_TF_winding_pack_wedging_polynomiale(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_
     # Preliminary results
     r1 = R0 - a - b
     F_z = (np.pi / μ0) * B0**2 * R0**2 * np.log((1 + (a + b) / R0) / (1 - (a + b) / R0))
-    F_T = max(abs(F_z - F_CClamp), abs(F_CClamp)) / 2
+    F_T = np.nanmax([abs(F_z - F_CClamp), abs(F_CClamp)]) / 2
     epsilon_B = (a+b)/R0
     
     try:
@@ -462,12 +693,14 @@ def f_TF_winding_pack_wedging_polynomiale(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_
 
         # Calculate Sigma ratio
         F_z = (np.pi / μ0) * B0**2 * R0**2 * np.log((1 + (a + b) / R0) / (1 - (a + b) / R0))
-        F_T = max(abs(F_z - F_CClamp), abs(F_CClamp)) / 2
+        F_T = np.nanmax([abs(F_z - F_CClamp), abs(F_CClamp)]) / 2
         Sigma_T = F_T / (np.pi * (r1**2 - r2**2))
+        
         Sigma_C = (B0**2 * R0) / (μ0 * (r1-r2)) * (
             (2 - 2 * (a + b) / R0 - (r1 - r2) / R0)**-1 -
             (2 + 2 * (a + b) / R0 + (r1 - r2) / R0)**-1
         )
+        
         TF_ratio_wedging = Sigma_C / (Sigma_C + Sigma_T)
         
         # Calculate associated thickness
@@ -480,27 +713,28 @@ def f_TF_winding_pack_wedging_polynomiale(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_
 
 
 if __name__ == "__main__":
+    
     # ITER test parameters
-    a = 2
-    b = 1.45
-    R0 = 6.2
-    B0 = 5.3
-    σ_TF = 600e6
-    μ0 = 4 * np.pi * 1e-7
-    J_max_TF = 50 * 1e6
-    F_CClamp = 0
-    Bmax = 12
+    a_D0FUS = 2
+    b_D0FUS = 1.19
+    R0_D0FUS = 6.2
+    B0_D0FUS = 5.3
+    σ_TF_D0FUS = 660e6
+    μ0_D0FUS = 4 * np.pi * 1e-7
+    J_max_TF_D0FUS = 50 * 1e6
+    F_CClamp_D0FUS = 0
+    Bmax_D0FUS = 12
 
     # Test the function
-    result = f_TF_winding_pack_bucking_convergence(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_CClamp, Bmax)
-    print(f"TF D0FUS bucking winding pack convergence test : {result}")
-    result2 = f_TF_winding_pack_bucking_polynomiale(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_CClamp, Bmax)
-    print(f"TF D0FUS bucking winding pack polynomial test : {result2}")
-    result3 = f_TF_winding_pack_wedging_convergence(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_CClamp, Bmax)
-    print(f"TF D0FUS wedging winding pack convergence : {result3}")
-    result6 = f_TF_winding_pack_wedging_polynomiale(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_CClamp, Bmax)
-    print(f"TF D0FUS wedging winding pack polynomiale : {result6}")
-    
+    result_D0FUS_1 = f_TF_winding_pack_bucking_convergence(a_D0FUS, b_D0FUS, R0_D0FUS, B0_D0FUS, σ_TF_D0FUS, μ0_D0FUS, J_max_TF_D0FUS, F_CClamp_D0FUS, Bmax_D0FUS)
+    print(f"TF D0FUS bucking winding pack convergence : {result_D0FUS_1}")
+    result_D0FUS_2 = f_TF_winding_pack_bucking_polynomiale(a_D0FUS, b_D0FUS, R0_D0FUS, B0_D0FUS, σ_TF_D0FUS, μ0_D0FUS, J_max_TF_D0FUS, F_CClamp_D0FUS, Bmax_D0FUS)
+    print(f"TF D0FUS bucking winding pack polynomial : {result_D0FUS_2}")
+    result_D0FUS_3 = f_TF_winding_pack_wedging_convergence(a_D0FUS, b_D0FUS, R0_D0FUS, B0_D0FUS, σ_TF_D0FUS, μ0_D0FUS, J_max_TF_D0FUS, F_CClamp_D0FUS, Bmax_D0FUS)
+    print(f"TF D0FUS wedging winding pack convergence : {result_D0FUS_3}")
+    result_D0FUS_4 = f_TF_winding_pack_wedging_polynomiale(a_D0FUS, b_D0FUS, R0_D0FUS, B0_D0FUS, σ_TF_D0FUS, μ0_D0FUS, J_max_TF_D0FUS, F_CClamp_D0FUS, Bmax_D0FUS)
+    print(f"TF D0FUS wedging winding pack polynomiale : {result_D0FUS_4}")
+
     
 def f_TF_DOFUS(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_CClamp, Bmax, Choice_Buck_Wedg):
     """
@@ -532,13 +766,13 @@ def f_TF_DOFUS(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_CClamp, Bmax, Choice_Buck_W
 
     if Choice_Buck_Wedg == 'Bucking':
         
-        winding_pack = f_TF_winding_pack_bucking_polynomiale(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_CClamp, Bmax)
+        winding_pack = f_TF_winding_pack_bucking_convergence(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_CClamp, Bmax)
         
         # In bucking, only winding pack is considered
 
         Winding_pack_thickness = winding_pack[0]
-        if Winding_pack_thickness == 0:
-                return(np.nan,np.nan,np.nan,np.nan)
+        if np.isnan(Winding_pack_thickness) or Winding_pack_thickness <= 0:
+            return (np.nan, np.nan, np.nan, np.nan, np.nan)
         Winding_pack_dilution = winding_pack[1]
         Winding_pack_centering_ratio = winding_pack[2]
         Nose_thickness = np.nan
@@ -551,11 +785,11 @@ def f_TF_DOFUS(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_CClamp, Bmax, Choice_Buck_W
         if Mechanical_model == 'Winding_pack_and_Nose': # Full_winding_pack or Winding_pack_and_Nose
         
             # In wedging, one need to add the steel nose to the bucking winding pack
-            winding_pack = f_TF_winding_pack_bucking_polynomiale(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_CClamp, Bmax)
+            winding_pack = f_TF_winding_pack_bucking_convergence(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_CClamp, Bmax)
             
             # Extraction des résultats du winding pack
             Winding_pack_thickness = winding_pack[0]
-            if Winding_pack_thickness == 0:
+            if Winding_pack_thickness <= 0:
                     return(np.nan,np.nan,np.nan,np.nan)
             Winding_pack_dilution = winding_pack[1]
             Winding_pack_centering_ratio = winding_pack[2]
@@ -575,7 +809,7 @@ def f_TF_DOFUS(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_CClamp, Bmax, Choice_Buck_W
         
             # A single winding pack is dimensionned taking into account the vault effect
             # winding_pack = f_TF_winding_pack_wedging_polynomiale(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_CClamp, Bmax)
-            winding_pack = f_TF_winding_pack_wedging_polynomiale(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_CClamp, Bmax)
+            winding_pack = f_TF_winding_pack_wedging_convergence(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_CClamp, Bmax)
 
             Winding_pack_thickness = winding_pack[0]
             if Winding_pack_thickness == 0:
@@ -592,80 +826,17 @@ def f_TF_DOFUS(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_CClamp, Bmax, Choice_Buck_W
 
     else:
         print("Please provide a valid argument : Wedging or Bucking")
+        
+        
+#%%
 
-def f_TF_coil_freidberg(a, b, R0, B0, σ_TF, μ0, J_max_TF):
-    """
-    Calculate the thickness and stress ratio for the TF coil using the Freidberg model
-
-    Parameters:
-    a : Minor radius (m)
-    b : 1rst Wall + Breeding Blanket + Neutron Shield + Gaps (m)
-    R0 : Major radius (m)
-    B0 : Central magnetic field (m)
-    σ_TF : Yield strength of the TF steel (MPa)
-    μ0 : Magnetic permeability of free space
-    J_max_TF : Maximum current density of the chosen Supra + Cu + He (A)
-
-    Returns:
-    tuple: A tuple containing the calculated values :
-    (c, TF_ratio_bucking)
-    With
-    c : TF width
-    TF_ratio_wedging : % of centering stress in the tresca
-    
-    """
-
-    # Calculate the strain parameter eps_B
-    eps_B = (a + b) / R0
-
-    # Calculate the magnetic stress parameter alpha_M
-    alpha_M = (B0**2 / (μ0 * σ_TF)) * (
-        (2 * eps_B) / (1 + eps_B) + 0.5 * np.log((1 + eps_B) / (1 - eps_B))
-    )
-
-    # Calculate the current density stress parameter alpha_J
-    alpha_J = (2 * B0) / (μ0 * R0 * J_max_TF)
-
-    # Calculate the thickness of the magnetic layer cM
-    cM = R0 * (1 - eps_B - np.sqrt((1 - eps_B)**2 - alpha_M))
-
-    # Calculate the thickness of the current density layer cJ
-    cJ = R0 * (1 - eps_B - np.sqrt((1 - eps_B)**2 - alpha_J))
-
-    # Calculate the total thickness c
-    c = cM + cJ
-
-    # Calculate the strain parameter eps_M
-    eps_M = cM / R0
-
-    # Calculate the tangential stress Sigma_T
-    Sigma_T = (B0**2 / (2 * μ0)) * np.log((1 + eps_B) / (1 - eps_B)) / (eps_M * (2 - 2 * eps_B - eps_M))
-
-    # Calculate the compressive stress Sigma_C
-    Sigma_C = (B0**2 / (μ0 * eps_M)) * (2 / (2 - 2 * eps_B - eps_M)) * (eps_B / (1 + eps_B))
-
-    # Calculate the TF ratio for wedging
-    TF_ratio_wedging = Sigma_C / (Sigma_C + Sigma_T)
-
-    return (c, TF_ratio_wedging)
-
+##################################################### CS Model ##########################################################
+        
 if __name__ == "__main__":
-    # Test parameters for ITER case
-    a = 2
-    b = 1.45
-    R0 = 6.2
-    B0 = 5.3
-    σ_TF = 600e6
-    μ0 = 4 * np.pi * 1e-7
-    J_max_TF = 50 * 1e6
-    Bmax = 12
-    F_CClamp = 0
+    print("##################################################### CS Model ##########################################################")
 
-    # Test the function
-    result4 = f_TF_DOFUS(a, b, R0, B0, σ_TF, μ0, J_max_TF, F_CClamp, Bmax, "Wedging")
-    print(f"TF D0FUS test : {result4}")
-    result5 = f_TF_coil_freidberg(a, b, R0, B0, σ_TF, μ0, 20e6)
-    print(f"TF freidberg test : {result5}")
+#%% CS D0FUS model 
+
     
 def f_CS_DOFUS_convergence(a, b, c, R0, B0, σ_CS, μ0, J_max_CS, Choice_Buck_Wedg, Tbar, nbar, Ip, Ib):
     """
@@ -775,7 +946,7 @@ def f_CS_DOFUS_convergence(a, b, c, R0, B0, σ_CS, μ0, J_max_CS, Choice_Buck_We
         )
 
         if Choice_Buck_Wedg == 'Bucking':
-            Sigma_CS = max(Sigma_centering, abs(Sigma_JB - Sigma_centering))
+            Sigma_CS = np.nanmax([Sigma_centering, abs(Sigma_JB - Sigma_centering)])
             
             # Test parameter to check the mechanical configuration
             # if Sigma_centering > abs(Sigma_JB - Sigma_centering):
@@ -975,17 +1146,16 @@ def f_CS_DOFUS_polynomiale(a, b, c, R0, B0, σ_CS, μ0, J_max_CS, Choice_Buck_We
         def calculate_rCS_int_solution_Sigma_JB_Sigma_C(B0, R0, μ0, σ_CS, RCS_ext, J_max_CS, Ψ, P):
         
             # Définition des coefficients
-            coef_7 = -8 * np.pi**3 * B0**2 * J_max_CS * P * R0 * μ0
-            coef_6 = -16 * np.pi**3 * B0**2 * J_max_CS * P * R0 * RCS_ext * μ0
-            coef_5 = -24 * np.pi**3 * B0**2 * J_max_CS * P * R0 * RCS_ext**2 * μ0
-            coef_4 = -8 * np.pi**3 * B0**2 * J_max_CS * P * R0 * RCS_ext**3 * μ0 + 18 * np.pi * J_max_CS * Ψ**2 * μ0
-            coef_3 = 8 * np.pi**3 * B0**2 * J_max_CS * P * R0 * RCS_ext**4 * μ0 - 2 * np.pi * J_max_CS * μ0 * σ_CS
-            coef_2 = 24 * np.pi**3 * B0**2 * J_max_CS * P * R0 * RCS_ext**5 * μ0
-            coef_1 = 16 * np.pi**3 * B0**2 * J_max_CS * P * R0 * RCS_ext**6 * μ0 - 18 * np.pi * J_max_CS * Ψ**2 * RCS_ext**3 * μ0
-            coef_0 = 8 * np.pi**3 * B0**2 * J_max_CS * P * R0 * RCS_ext**7 * μ0 + 2 * np.pi * J_max_CS * RCS_ext**3 * μ0 * σ_CS - 3 * Ψ * σ_CS
-                  
+            coef_6 = 4 * np.pi**2 * J_max_CS**2 * μ0**2 * σ_CS
+            coef_5 = -2 * np.pi * B0**2 * J_max_CS * P * R0
+            coef_4 = -2 * np.pi * B0**2 * J_max_CS * P * R0 * RCS_ext
+            coef_3 = -2 * np.pi * B0**2 * J_max_CS * P * R0 * RCS_ext**2 - 8 * np.pi**2 * J_max_CS**2 * RCS_ext**3 * μ0**2 * σ_CS + 6 * np.pi * J_max_CS * Ψ * μ0 * σ_CS
+            coef_2 = 2 * np.pi * B0**2 * J_max_CS * P * R0 * RCS_ext**3 + 9 * J_max_CS**2 * Ψ**2 * μ0
+            coef_1 = 2 * np.pi * B0**2 * J_max_CS * P * R0 * RCS_ext**4 - 9 * J_max_CS**2 * RCS_ext * Ψ**2 * μ0
+            coef_0 = 2 * np.pi * B0**2 * J_max_CS * P * R0 * RCS_ext**5 + 4 * np.pi**2 * J_max_CS**2 * RCS_ext**6 * μ0**2 * σ_CS - 6 * np.pi * J_max_CS * RCS_ext**3 * Ψ * μ0 * σ_CS
+
             # Coefficients du polynôme
-            coefficients = [coef_7,coef_6,coef_5,coef_4, coef_3, coef_2, coef_1, coef_0]
+            coefficients = [coef_6,coef_5,coef_4, coef_3, coef_2, coef_1, coef_0]
             
             # Use numpy.roots to calculate the roots
             if np.isnan(coefficients).any() or np.isinf(coefficients).any(): # Nan or infinit check
@@ -1004,7 +1174,7 @@ def f_CS_DOFUS_polynomiale(a, b, c, R0, B0, σ_CS, μ0, J_max_CS, Choice_Buck_We
         solution_sigma_C = calculate_rCS_int_solutions_Sigma_C(B0, R0, μ0, σ_CS, RCS_ext, J_max_CS, Ψ, P)
         solution_sigma_JB_sigma_C = calculate_rCS_int_solution_Sigma_JB_Sigma_C(B0, R0, μ0, σ_CS, RCS_ext, J_max_CS, Ψ, P)
         
-        RCS_int_solution = max(solution_sigma_C,solution_sigma_JB_sigma_C)
+        RCS_int_solution = np.nanmax([solution_sigma_C,solution_sigma_JB_sigma_C])
         
         if RCS_int_solution is np.nan or None:
             return (np.nan, np.nan, np.nan)
@@ -1068,27 +1238,27 @@ def f_CS_DOFUS_polynomiale(a, b, c, R0, B0, σ_CS, μ0, J_max_CS, Choice_Buck_We
 
 if __name__ == "__main__":
     
-    # # Test parameters JB-Centering
-    # a = 0.5
-    # b = 0.2
-    # c = 0.2
-    # R0 = 4
-    # B0 = 2
-    # σ_CS = 600e6
-    # μ0 = 4 * np.pi * 1e-7
-    # J_max_CS = 50e6
-    # Tbar = 14
-    # nbar = 1
-    # Ip = 6
-    # Ib = 3
+    # Test parameters JB-Centering
+    a = 0.5
+    b = 0.2
+    c = 0.2
+    R0 = 4
+    B0 = 2
+    σ_CS = 600e6
+    μ0 = 4 * np.pi * 1e-7
+    J_max_CS = 50e6
+    Tbar = 14
+    nbar = 1
+    Ip = 6
+    Ib = 3
     
-    # Test parameters Centering
+    # Test parameters Centering (ITER)
     a = 2
     b = 1.45
     c = 0.9
     R0 = 6.2
     B0 = 5.3
-    σ_CS = 600e6
+    σ_CS = 660e6
     μ0 = 4 * np.pi * 1e-7
     J_max_CS = 50e6
     Tbar = 14
