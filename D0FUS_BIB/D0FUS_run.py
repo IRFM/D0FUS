@@ -117,24 +117,49 @@ def calcul(a, R0, Bmax, P_fus):
         print('Choose a valid Scaling for L-H transition')
     
     # Radial Build
-    (c, Winding_pack_thickness, Winding_pack_dilution, Winding_pack_centering_ratio, Nose_thickness) = f_TF_DOFUS(a, b, R0, B0_solution, σ_TF, μ0, J_max_TF_conducteur, F_CClamp, Bmax, Choice_Buck_Wedg)
-    (d,Alpha,B_CS) = f_CS_DOFUS_polynomiale(a, b, c, R0, B0_solution, σ_CS, μ0, J_max_CS_conducteur, Choice_Buck_Wedg, Tbar, nbar_solution, Ip_solution, Ib_solution)
-    # f_CS_DOFUS_convergence(a, b, c, R0, B0_solution, σ_CS, μ0, J_max_CS_conducteur, Choice_Buck_Wedg, Tbar, nbar_solution, Ip_solution, Ib_solution)
+    Radial_build_model = "2_layers_simple" 
+    # Choose between "2_layers_simple"  , "1_layer_ideal" , "1_layer_realistic" , "1_layer_thick_realistic"
+    
+    if Radial_build_model == "2_layers_simple" :
+        
+        if Choice_Buck_Wedg == 'Wedging' :
+            (c, Winding_pack_tension_ratio, σ_theta, σ_z) = f_TF_Torre_wedging(a, b, R0, B0_solution, σ_TF, μ0, J_max_TF_conducteur, Bmax)
+            (d,Alpha,B_CS) = f_CS_2_layers_convergence(a, b, c, R0, B0_solution, σ_CS, μ0, J_max_CS_conducteur, Choice_Buck_Wedg, Tbar, nbar_solution, Ip_solution, Ib_solution)
+        
+        elif Choice_Buck_Wedg == "Bucking" :
+            (c, Winding_pack_tension_ratio, σ_theta, σ_z) = f_TF_Torre_bucking(a, b, R0, B0_solution, σ_TF, μ0, J_max_TF_conducteur, Bmax)
+            (d,Alpha,B_CS) = f_CS_2_layers_convergence(a, b, c, R0, B0_solution, σ_CS, μ0, J_max_CS_conducteur, Choice_Buck_Wedg, Tbar, nbar_solution, Ip_solution, Ib_solution)
+        else : 
+            print( "Choose a valid mechanical configuration" )
+            
+    elif Radial_build_model == "1_layer_ideal" :
+        
+        if Choice_Buck_Wedg == 'Wedging' :
+            (c, Winding_pack_thickness, Winding_pack_dilution, Winding_pack_tension_ratio, Nose_thickness) = f_TF_DOFUS(a, b, R0, B0_solution, σ_TF, μ0, J_max_TF_conducteur, F_CClamp, Bmax, Choice_Buck_Wedg)
+            (d,Alpha,B_CS) = f_CS_DOFUS_polynomiale(a, b, c, R0, B0_solution, σ_CS, μ0, J_max_CS_conducteur, Choice_Buck_Wedg, Tbar, nbar_solution, Ip_solution, Ib_solution)
+            
+        elif Choice_Buck_Wedg == "Bucking" :
+            (c, Winding_pack_thickness, Winding_pack_dilution, Winding_pack_tension_ratio, Nose_thickness) = f_TF_DOFUS(a, b, R0, B0_solution, σ_TF, μ0, J_max_TF_conducteur, F_CClamp, Bmax, Choice_Buck_Wedg)
+            (d,Alpha,B_CS) = f_CS_DOFUS_polynomiale(a, b, c, R0, B0_solution, σ_CS, μ0, J_max_CS_conducteur, Choice_Buck_Wedg, Tbar, nbar_solution, Ip_solution, Ib_solution)
+            
+        else : 
+            print( "Choose a valid mechanical configuration" )
     
     cost = f_cost(a,b,c,d,R0,κ,Q_solution)
     
     return (B0_solution, B_CS, tauE_solution, Q_solution, Ip_solution, nbar_solution,
             beta_solution, qstar_solution, q95_solution, nG_solution, 
-            P_CD, P_sep, P_Thresh, cost, heat, Gamma_n, f_alpha_solution, Winding_pack_centering_ratio,
+            P_CD, P_sep, P_Thresh, cost, heat, Gamma_n, f_alpha_solution, Winding_pack_tension_ratio,
             R0-a, R0-a-b, R0-a-b-c, R0-a-b-c-d)
 
 if __name__ == "__main__":
     # Appeler la fonction de calcul
     # Benchmark
-    R0 = 7.2
-    a = 1.2
+    R0 = 6.2
+    a = 2
     Pfus = 2000
-    Bmax = 20
+    Bmax = 12
+    b = 1.45
     # End Benchmark parameters
     B0_solution, B_CS, tauE_solution, Q_solution, Ip_solution, nbar_solution, \
     beta_solution, qstar_solution, q95_solution, nG_solution, \
