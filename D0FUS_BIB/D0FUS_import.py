@@ -25,7 +25,12 @@ from scipy.optimize import (
     root_scalar,
     minimize_scalar,
     minimize,
-    bisect
+    bisect,
+    root,
+    basinhopping,
+    brentq,
+    bisect,
+    root
 )
 from scipy.interpolate import griddata
 from scipy.integrate import quad
