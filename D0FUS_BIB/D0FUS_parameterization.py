@@ -37,7 +37,9 @@ nu_T  = 1. # Temperature profile parameter
 C_Alpha = 5 # Helium dilution tuning parameter
 
 # Flux consumptions assumtions
+Gap = 0.1 # Gap between wedging and bucking CS and TF
 Ce = 0.45 # Ejima constants
+Temps_Plateau = 0 # Plateautime [?]
 Li = 0.85 # Internal inductance of the plasma
 ITERPI = 20 # ITER plasma induction current [Wb]
 Flux_CS_Utile = 0.95 #0.85 # pourcentage disponible, laissant une partie libre pour le controle du plasma , arbitrairement à 0.85, la litterature propose plusieurs values allant de 0.85 à 1
@@ -61,6 +63,7 @@ F_CClamp = 0 # Typical value if considered, of 60e6 from [Bachmann (2023) FED]
 # Parameterization
 H = 1.0 # H factor
 Choice_Buck_Wedg = 'Wedging' # Wedging or Bucking
+Mechanical_model = 'Full_winding_pack' # Full_winding_pack or Winding_pack_and_Nose
 Option_Kappa = 'Wenninger' # Choose between Stambaugh, Freidberg or Wenninger
 L_H_Scaling_choice = 'New_Ip' # 'Martin' , 'New_S', 'New_Ip'
 Q_convergence_choice = 'Fast' #'Fast' or 'Slow'
