@@ -17,8 +17,7 @@ if "D0FUS_parameterization" in sys.modules:
     importlib.reload(sys.modules['D0FUS_parameterization'])
     # Mettre à jour les variables globales
     globals().update({k: getattr(sys.modules['D0FUS_parameterization'], k) for k in dir(sys.modules['D0FUS_parameterization']) if not k.startswith('_')})
-    importlib.reload(sys.modules['D0FUS_core'])
-    importlib.reload(sys.modules['D0FUS_plot'])
+    from D0FUS_initialisation import *
     print("-----D0FUS Reloaded-----")
 else:
     # Le module n'est pas encore importé, l'importer
@@ -26,19 +25,19 @@ else:
     print("-----D0FUS loaded-----")
     
 # Attention, lors de toute modification de fichiers exterieurs, il est conseillé, malgré l'implémentation de la fonction reaload, de redémarrer le Kernel.
-# Python est capricieux avec le stockage des variables et seul un redmérage du kernel puis import (de nouveau) de labibliothèque est sur à 100%
+# Python est capricieux avec le stockage des variables et seul un redémarage du kernel puis import des bibliothèques est sur à 100%
 # Le rechargement d'un module (importlib.reload) ne met en effet pas forcément à jour les références existantes dans d'autres modules importés précédemment
-# La fonction reload est cependant , du moins dans les versions python de 3.1 à 3.3 permettre de palier à ce problème
+# La fonction reload doit cependant , du moins dans les versions python de 3.1 à 3.3, permettre de palier à ce problème
     
 #%% Variation of 1 chosen parameter and mapping the a space
 # 2D matrix calculation
 
 def R0_a_scan(Bmax,P_fus,κ,δ):
     
-    a_min = 0.2
+    a_min = 0
     a_max = 3
-    a_values = np.arange(a_min,a_max,0.05)
-    R0_values = np.arange(2,10,0.1)
+    a_values = np.arange(a_min,a_max,0.1)
+    R0_values = np.arange(2,9,0.2)
      
     # Matrix creations
     max_limits_density = np.zeros((len(a_values),len(R0_values)))
@@ -55,6 +54,8 @@ def R0_a_scan(Bmax,P_fus,κ,δ):
     L_H_matrix = np.zeros((len(a_values),len(R0_values)))
     f_alpha_matrix = np.zeros((len(a_values),len(R0_values)))
     TF_ratio_matrix = np.zeros((len(a_values),len(R0_values)))
+    c_matrix = np.zeros((len(a_values),len(R0_values)))
+    d_matrix = np.zeros((len(a_values),len(R0_values)))
     
     Ip_matrix = np.zeros((len(a_values),len(R0_values)))
     n_matrix = np.zeros((len(a_values),len(R0_values)))
@@ -62,6 +63,7 @@ def R0_a_scan(Bmax,P_fus,κ,δ):
     q95_matrix = np.zeros((len(a_values),len(R0_values)))
     B0_matrix = np.zeros((len(a_values),len(R0_values)))
     BCS_matrix = np.zeros((len(a_values),len(R0_values)))
+    
     
     # Initialisation
     x = 0
@@ -140,6 +142,8 @@ def R0_a_scan(Bmax,P_fus,κ,δ):
             L_H_matrix[y,x] = P_sep/P_Thresh
             f_alpha_matrix[y,x] = f_alpha_solution*100
             TF_ratio_matrix[y,x] = TF_ratio*100
+            c_matrix[y,x] = R0_a_b_solution - R0_a_b_c_solution
+            d_matrix[y,x] = R0_a_b_c_solution - R0_a_b_c_d_solution
             
             y = y+1
             
@@ -165,6 +169,8 @@ def R0_a_scan(Bmax,P_fus,κ,δ):
     inverted_q95_matrix = q95_matrix[::-1, :]
     inverted_B0_matrix = B0_matrix[::-1, :]
     inverted_BCS_matrix = BCS_matrix[::-1, :]
+    inverted_c_matrix = c_matrix[::-1, :]
+    inverted_d_matrix = d_matrix[::-1, :]
     
     inverted_Ip_matrix_mask = inverted_Ip_matrix
     inverted_n_matrix_mask = inverted_n_matrix
@@ -172,6 +178,8 @@ def R0_a_scan(Bmax,P_fus,κ,δ):
     inverted_q95_matrix_mask = inverted_q95_matrix
     inverted_B0_matrix_mask = inverted_B0_matrix
     inverted_BCS_matrix_mask = inverted_BCS_matrix
+    inverted_c_matrix_mask = inverted_c_matrix
+    inverted_d_matrix_mask = inverted_d_matrix
     # Créez un masque pour les valeurs NaN dans les matrices associées au Radial build
     mask = np.isnan(inverted_matrix_radial_build)
     # Appliquez ce masque à la nouvelle matrice
@@ -181,6 +189,8 @@ def R0_a_scan(Bmax,P_fus,κ,δ):
     inverted_q95_matrix_mask[mask] = np.nan
     inverted_B0_matrix_mask[mask] = np.nan
     inverted_BCS_matrix_mask[mask] = np.nan
+    inverted_c_matrix_mask[mask] = np.nan
+    inverted_d_matrix_mask[mask] = np.nan
    
     inverted_Heat_matrix = Heat_matrix[::-1, :]
     inverted_Cost_matrix = Cost_matrix[::-1, :]
@@ -192,7 +202,7 @@ def R0_a_scan(Bmax,P_fus,κ,δ):
     inverted_TF_ratio_matrix = TF_ratio_matrix[::-1, :]
 
     # Ask the user to choose the second topologic map :
-    chosen_isocontour = input("Choose the Iso parameter (Ip, n, beta, q95, B0, BCS): ")
+    chosen_isocontour = input("Choose the Iso parameter (Ip, n, beta, q95, B0, BCS, c, d): ")
     chosen_topologic = input("Choose the background parameter (Heat, Cost, Q, Gamma_n, L_H, Alpha, TF): ")
     
     # Créer une figure et un axe principal
@@ -299,6 +309,14 @@ def R0_a_scan(Bmax,P_fus,κ,δ):
         contour_lines = ax.contour(inverted_BCS_matrix_mask, levels=np.arange(1, 100 ,2), colors='#555555')
         ax.clabel(contour_lines, inline=True, fmt='%.1f', fontsize=taille_police_topological_map)
         grey_line = mlines.Line2D([], [], color='#555555', label='$B_{CS}$ [T]')
+    elif chosen_isocontour == 'c':
+        contour_lines = ax.contour(inverted_c_matrix_mask, levels=np.arange(0, 10 ,0.05), colors='#555555')
+        ax.clabel(contour_lines, inline=True, fmt='%.2f', fontsize=taille_police_topological_map)
+        grey_line = mlines.Line2D([], [], color='#555555', label='$TF$ width [m]')
+    elif chosen_isocontour == 'd':
+        contour_lines = ax.contour(inverted_d_matrix_mask, levels=np.arange(0, 10 ,0.05), colors='#555555')
+        ax.clabel(contour_lines, inline=True, fmt='%.2f', fontsize=taille_police_topological_map)
+        grey_line = mlines.Line2D([], [], color='#555555', label='$CS$ width [m]')
     else:
         print('Choose a relevant Iso parameter')
 
@@ -336,13 +354,13 @@ def R0_a_scan(Bmax,P_fus,κ,δ):
         # TF ratio contours
         contour_lines_TF = ax.contour(inverted_TF_ratio_matrix, levels=np.arange(0, 100,5), colors='white')
         ax.clabel(contour_lines_TF, inline=True, fmt='%d', fontsize=taille_police_background_map)
-        white_line = mlines.Line2D([], [], color='white', label='TF centering fraction [%]')
+        white_line = mlines.Line2D([], [], color='white', label='TF tension fraction [%]')
     else :
         print('Choose a relevant background parameter')
     # Légende
-    ax.legend(handles=[grey_line,white_line, grey_dashed_line,black_line], loc='upper left', facecolor='lightgrey', fontsize=taille_police_legende)
-
-    # Save the image
+    ax.legend(handles=[grey_line,white_line, grey_dashed_line], loc='upper left', facecolor='lightgrey', fontsize=taille_police_legende)
+    
+    # Save the image ,black_line
     # Remplacer les virgules par des points dans svg
     svg = svg.replace('.', ',')
     path_to_save = os.path.join(save_directory,f"a_and_R0_scan_with_{svg}.png")
