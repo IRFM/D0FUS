@@ -32,7 +32,7 @@ else:
 #%% Variation of 1 chosen parameter and mapping the a space
 # 2D matrix calculation
 
-def R0_a_scan(Bmax,P_fus,κ,δ):
+def R0_a_scan(Bmax, P_fus, κ, δ, Tbar_init):
     
     a_min = 0
     a_max = 3
@@ -82,7 +82,7 @@ def R0_a_scan(Bmax,P_fus,κ,δ):
             (B0_solution, B_CS, tauE_solution, Q_solution, Ip_solution, n_solution,
             beta_solution, qstar_solution, q95_solution, nG_solution, 
             P_CD, P_sep, P_Thresh, cost, heat, Gamma_n, f_alpha_solution, TF_ratio,
-            R0_a_solution, R0_a_b_solution, R0_a_b_c_solution, R0_a_b_c_d_solution) = calcul(a,R0, Bmax,P_fus)
+            R0_a_solution, R0_a_b_solution, R0_a_b_c_solution, R0_a_b_c_d_solution) = calcul(a, R0, Bmax, P_fus, Tbar_init)
             
             # Verifier les conditions
             n_condition = n_solution / nG_solution
@@ -372,8 +372,9 @@ def R0_a_scan(Bmax,P_fus,κ,δ):
     plt.rcdefaults()
         
 if __name__ == "__main__":
-    Bmax = 12
+    # Best individual from genetic algorithm: [0.5909985466545535, 5.987959172778427, 11.346385941918145, 34.22664020500923, 1.6192373666347222]
+    Bmax = 20
     P_fus = 2000
-    R0_a_scan(Bmax,P_fus,κ,δ)
+    R0_a_scan(Bmax,P_fus,κ,δ, Tbar_init)
         
         
