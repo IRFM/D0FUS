@@ -14,15 +14,22 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'D0FUS_BIB'))
 
 #%% Main Function
 
-def calcul(a, R0, Bmax, P_fus):
+def calcul(a, R0, Bmax, P_fus, Tbar):
     
     # κ = f_Kappa(R0/a,Option_Kappa)
     B0_solution = f_B0(Bmax,a,b,R0)
     
+    # # Brut force operation
+    # P_CD = 10
+    # Q_solution = P_fus/P_CD
+    # f_alpha_solution = 0
+    # nbar_solution = f_nbar(P_fus,R0,a,κ,nu_n,nu_T,f_alpha_solution,Tbar)
+    # pbar_solution = f_pbar(nu_n,nu_T,nbar_solution,Tbar,f_alpha_solution)
+    
     # f_alpha convergence
     def to_solve_f_Alpha(f_alpha):
     
-        nbar_alpha = f_nbar(P_fus,R0,a,κ,nu_n,nu_T,f_alpha)
+        nbar_alpha = f_nbar(P_fus,R0,a,κ,nu_n,nu_T,f_alpha,Tbar)
         pbar_alpha = f_pbar(nu_n,nu_T,nbar_alpha,Tbar,f_alpha)
         
         Q_alpha_init = 50
@@ -55,13 +62,14 @@ def calcul(a, R0, Bmax, P_fus):
         # print(f"Erreur rencontrée : {e}")
         f_alpha_solution = np.nan
     
-    nbar_solution = f_nbar(P_fus,R0,a,κ,nu_n,nu_T,f_alpha_solution)
+    nbar_solution = f_nbar(P_fus,R0,a,κ,nu_n,nu_T,f_alpha_solution,Tbar)
     pbar_solution = f_pbar(nu_n,nu_T,nbar_solution,Tbar,f_alpha_solution)
     eta_CD = f_etaCD(a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T)
     
     # Q convergence 
     # Définir l'équation à résoudre pour Q
     def to_solve_Q(Q):
+
         tau_E = f_tauE(pbar_solution,R0,a,κ,P_fus,Q)
         # print("Tau_E : ",tau_E)
         Ip = f_Ip(tau_E,R0,a,κ,nbar_solution,B0_solution,Atomic_mass,P_fus,Q)
@@ -117,8 +125,6 @@ def calcul(a, R0, Bmax, P_fus):
         print('Choose a valid Scaling for L-H transition')
     
     # Radial Build
-    Radial_build_model = "2_layers_simple" 
-    # Choose between "2_layers_simple"  , "1_layer_ideal" , "1_layer_realistic" , "1_layer_thick_realistic"
     
     if Radial_build_model == "2_layers_simple" :
         
@@ -146,7 +152,7 @@ def calcul(a, R0, Bmax, P_fus):
             print( "Choose a valid mechanical configuration" )
     
     cost = f_cost(a,b,c,d,R0,κ,Q_solution)
-    
+
     return (B0_solution, B_CS, tauE_solution, Q_solution, Ip_solution, nbar_solution,
             beta_solution, qstar_solution, q95_solution, nG_solution, 
             P_CD, P_sep, P_Thresh, cost, heat, Gamma_n, f_alpha_solution, Winding_pack_tension_ratio,
@@ -155,16 +161,17 @@ def calcul(a, R0, Bmax, P_fus):
 if __name__ == "__main__":
     # Appeler la fonction de calcul
     # Benchmark
-    R0 = 6.2
-    a = 2
-    Pfus = 2000
-    Bmax = 12
-    b = 1.45
+    R0 = 6.8
+    a = 1.1
+    Pfus = 3500
+    Bmax = 20.5
+    b = 1.2
+    Tbar = 17
     # End Benchmark parameters
     B0_solution, B_CS, tauE_solution, Q_solution, Ip_solution, nbar_solution, \
     beta_solution, qstar_solution, q95_solution, nG_solution, \
     P_CD, P_sep, P_Thresh, cost, heat, Gamma_n, f_alpha_solution, TF_ratio, \
-    r_minor, r_sep, r_c, r_d = calcul(a, R0, Bmax, Pfus)
+    r_minor, r_sep, r_c, r_d = calcul(a, R0, Bmax, Pfus, Tbar)
 
     # Affichage propre des résultats
     print("============================================================")
