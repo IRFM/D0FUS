@@ -31,7 +31,7 @@ betaN = 2.8  # in % (Beta Tryon limit)
 q = 2.5 # Security factor limit
 
 # Density and Temperature parameters
-Tbar  = 14 # keV Mean Temperature
+Tbar_init  = 14 # keV Mean Temperature
 nu_n  = 0.1  # Density profile parameter
 nu_T  = 1. # Temperature profile parameter
 C_Alpha = 5 # Helium dilution tuning parameter
@@ -67,6 +67,7 @@ Mechanical_model = 'Full_winding_pack' # Full_winding_pack or Winding_pack_and_N
 Option_Kappa = 'Wenninger' # Choose between Stambaugh, Freidberg or Wenninger
 L_H_Scaling_choice = 'New_Ip' # 'Martin' , 'New_S', 'New_Ip'
 Q_convergence_choice = 'Fast' #'Fast' or 'Slow'
+Radial_build_model = "2_layers_simple"  # Choose between "2_layers_simple"  , "1_layer_ideal" , "1_layer_realistic" , "1_layer_thick_realistic"
 
 #%% Benchmark
 
