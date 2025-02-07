@@ -133,6 +133,21 @@ def f_TF_Torre_wedging(a, b, R0, B0, σ_TF, μ0, J_max_TF, Bmax):
     c2 = (B0**2*R0**2)/(2*μ0*R1*σ_TF)*(1+math.log(R2/R1)/2) # Valable si R1>>c
     
     σ_theta = P*R1/c2
+    # print(f"σ_theta Alex : {σ_theta/1e6}")
+    # r1 = R1
+    # r2 = R1-c2
+    # σ_theta_epais = 2*P*r1**2/(r1**2-r2**2)
+    # print(f"σ_theta épais : {σ_theta_epais/1e6}")
+    # σ_theta_feidberg = (B0**2 * R0) / (μ0 * (r1-r2)) * (
+    #     (2 - 2 * (a + b) / R0 - (r1 - r2) / R0)**-1 -
+    #     (2 + 2 * (a + b) / R0 + (r1 - r2) / R0)**-1
+    # )
+    # print(f"σ_theta Freidberg : {σ_theta_feidberg/1e6}")
+    # σ_theta_feidberg_in = (B0**2 * R0) / (μ0 * (r1-r2)) * (
+    #     (2 - 2 * (a + b) / R0 - (r1 - r2) / R0)**-1
+    # )
+    # print(f"σ_theta Freidberg without F_out : {σ_theta_feidberg_in/1e6}")
+        
     σ_z = T/(2*np.pi*R1*c2)
     
     ratio_tension = σ_z/(σ_theta+σ_z)
@@ -303,6 +318,10 @@ def f_TF_epais_dilution_wedging(a, b, R0, B0, σ_TF, μ0, J_max_TF, Bmax):
             return (np.nan)
         
         ri = ri_solution[0]  # fsolve returns an array, we need the single value
+        
+        P = (B0**2 * R0**2) / (2 * μ0 * ri_solution**2)
+        σ_theta = (2 * P * ri_cond**2) / (ri_solution**2 - ri**2)
+        print(f"σ_theta cylindre épais : {σ_theta/1e6}")
         
         return(re-ri)
     
@@ -1232,7 +1251,7 @@ def f_CS_2_layers_convergence(a, b, c, R0, B0, σ_CS, μ0, J_max_CS, Choice_Buck
     # Theoretical expression of CS flux
     # ΨCS = 2 (math.pi * μ0 * J_max_CS * Alpha) / 3 * (RCS_ext**3 - RCS_int**3)
     
-    ri_c = np.cbrt(RCS_ext**3 - ( 3 * abs(ΨPI + ΨRampUp + Ψplateau - ΨPF)) / (2 * np.pi * μ0 * J_max_CS * Flux_CS_Utile))
+    ri_c = np.cbrt(RCS_ext**3 - (( 3 * abs(ΨPI + ΨRampUp + Ψplateau - ΨPF)) / (2 * np.pi * μ0 * J_max_CS * Flux_CS_Utile)))
     B_CS = μ0 * (J_max_CS) * (RCS_ext - ri_c)
 #---------------------------------------------------------------------------------------------------------------------------------------- 
     #### Solving RCS_int ####
@@ -1246,7 +1265,7 @@ def f_CS_2_layers_convergence(a, b, c, R0, B0, σ_CS, μ0, J_max_CS, Choice_Buck
         Sigma_JB = μ0 * J_max_CS**2 * (ri_c - RCS_int) * RCS_int
 
         # Centering
-        P = (B0**2*R0**2)/(2*μ0*(R0-a-b)**2)
+        P = Bmax**2/(2*μ0)
         Sigma_centering = P * RCS_int / d_SS
 
         if Choice_Buck_Wedg == 'Bucking':
@@ -1267,10 +1286,8 @@ def f_CS_2_layers_convergence(a, b, c, R0, B0, σ_CS, μ0, J_max_CS, Choice_Buck
         if Choice_Buck_Wedg == 'Bucking':
             
             d_SS_initial_guess = 0.5
-            
             # Appliquer la méthode de résolution
             result = root(CS_to_solve, d_SS_initial_guess, method='lm') # Levenberg-Marquardt method
-            
             # Récupérer la solution
             d_SS_solution = result.x[0]
             
@@ -1588,7 +1605,298 @@ if __name__ == "__main__":
     print(f"CS test polynomiale Bucking : {result_CS4}")
     result_CS6 = f_CS_2_layers_convergence(a, b, c, R0, B0, σ_CS, μ0, J_max_CS, 'Bucking', Tbar, nbar, Ip, Ib)
     print(f"CS simple model Bucking : {result_CS6}")
+
+#%% CIRCEE 0D
+
+def MD1v2(ri, r0, re, Enmoins1, En, nu, J0, B0, J1, B1, Pi, config):
+    """
+    Calcul des contraintes et déplacements pour un cylindre épais avec body load en multi-couches.
+    """
+    K1nmoins1 = J0 * B0 / (r0 - ri)
+    K1n = J1 * B1 / (re - r0)
     
+    if config[0] == 1:
+        K2nmoins1 = -J0 * B0 * ri / (r0 - ri)
+    else:
+        K2nmoins1 = -J0 * B0 * r0 / (r0 - ri)
+    
+    if config[1] == 1:
+        K2n = -J1 * B1 * r0 / (re - r0)
+    else:
+        K2n = -J1 * B1 * re / (re - r0)
+    
+    MD1 = (1 + nu) / En * re**2 * (K1n * (nu + 3) / 8 + K2n * (nu + 2) / (3 * (re + r0))) + \
+      (1 - nu) / En * ((K2n * (nu + 2) / 3) * (re**2 + r0**2 + re * r0) / (re + r0) + \
+      (re**2 + r0**2) * K1n * (nu + 3) / 8) - \
+      (1 + nu) / Enmoins1 * ri**2 * (K1nmoins1 * (nu + 3) / 8 + K2nmoins1 * (nu + 2) / (3 * (r0 + ri))) - \
+      (1 - nu) / Enmoins1 * ((K2nmoins1 * (nu + 2) / 3) * (r0**2 + ri**2 + r0 * ri) / (r0 + ri) + \
+      (r0**2 + ri**2) * K1nmoins1 * (nu + 3) / 8) + \
+      (1 - nu**2) / 8 * r0**2 * (K1nmoins1 / Enmoins1 - K1n / En) + \
+      (1 - nu**2) / 3 * r0 * (K2nmoins1 / Enmoins1 - K2n / En) - \
+          Pi * (-2 * ri**2) / (Enmoins1 * (r0**2 - ri**2))
+
+    return MD1
+
+def MDendv2(ri, r0, re, Enmoins1, En, nu, J0, B0, J1, B1, Pe, config):
+    """
+    Calcul des contraintes et déplacements pour un cylindre épais avec body load en multi-couches.
+    """
+    K1nmoins1 = J0 * B0 / (r0 - ri)
+    K1n = J1 * B1 / (re - r0)
+    
+    if config[0] == 1:
+        K2nmoins1 = -J0 * B0 * ri / (r0 - ri)
+    else:
+        K2nmoins1 = -J0 * B0 * r0 / (r0 - ri)
+    
+    if config[1] == 1:
+        K2n = -J1 * B1 * r0 / (re - r0)
+    else:
+        K2n = -J1 * B1 * re / (re - r0)
+    
+    MDend = (1 + nu) / En * re**2 * (K1n * (nu + 3) / 8 + K2n * (nu + 2) / (3 * (re + r0))) + \
+        (1 - nu) / En * ((K2n * (nu + 2) / 3) * (re**2 + r0**2 + re * r0) / (re + r0) + \
+        (re**2 + r0**2) * K1n * (nu + 3) / 8) - \
+        (1 + nu) / Enmoins1 * ri**2 * (K1nmoins1 * (nu + 3) / 8 + K2nmoins1 * (nu + 2) / (3 * (r0 + ri))) - \
+        (1 - nu) / Enmoins1 * ((K2nmoins1 * (nu + 2) / 3) * (r0**2 + ri**2 + r0 * ri) / (r0 + ri) + \
+        (r0**2 + ri**2) * K1nmoins1 * (nu + 3) / 8) + \
+        (1 - nu**2) / 8 * r0**2 * (K1nmoins1 / Enmoins1 - K1n / En) + \
+        (1 - nu**2) / 3 * r0 * (K2nmoins1 / Enmoins1 - K2n / En) - \
+        Pe * (-2 * re**2) / (En * (re**2 - r0**2))
+
+    return MDend
+
+def MDv2(ri, r0, re, Enmoins1, En, nu, J0, B0, J1, B1, config):
+    """
+    Calcul des contraintes et déplacements pour un cylindre épais avec body load en multi-couches.
+    """
+    K1nmoins1 = J0 * B0 / (r0 - ri)
+    K1n = J1 * B1 / (re - r0)
+    
+    if config[0] == 1:
+        K2nmoins1 = -J0 * B0 * ri / (r0 - ri)
+    else:
+        K2nmoins1 = -J0 * B0 * r0 / (r0 - ri)
+    
+    if config[1] == 1:
+        K2n = -J1 * B1 * r0 / (re - r0)
+    else:
+        K2n = -J1 * B1 * re / (re - r0)
+    
+    MD = (1 + nu) / En * re**2 * (K1n * (nu + 3) / 8 + K2n * (nu + 2) / (3 * (re + r0))) + \
+     (1 - nu) / En * ((K2n * (nu + 2) / 3) * (re**2 + r0**2 + re * r0) / (re + r0) + \
+     (re**2 + r0**2) * K1n * (nu + 3) / 8) - \
+     (1 + nu) / Enmoins1 * ri**2 * (K1nmoins1 * (nu + 3) / 8 + K2nmoins1 * (nu + 2) / (3 * (r0 + ri))) - \
+     (1 - nu) / Enmoins1 * ((K2nmoins1 * (nu + 2) / 3) * (r0**2 + ri**2 + r0 * ri) / (r0 + ri) + \
+     (r0**2 + ri**2) * K1nmoins1 * (nu + 3) / 8) + \
+     (1 - nu**2) / 8 * r0**2 * (K1nmoins1 / Enmoins1 - K1n / En) + \
+     (1 - nu**2) / 3 * r0 * (K2nmoins1 / Enmoins1 - K2n / En)
+
+    return MD
+
+def MG1v2(ri, r0, re, Enmoins1, En, nu):
+    """
+    Calcul des coefficients de la matrice de rigidité pour un cylindre épais avec body load en multi-couches.
+    """
+    MG1 = [(((1 + nu) * re**2 + (1 - nu) * r0**2) / (En * (re**2 - r0**2))) + \
+       (((1 + nu) * ri**2 + (1 - nu) * r0**2) / (Enmoins1 * (r0**2 - ri**2))),
+       (-2*re**2)/(En*(re**2-r0**2)) ]
+    
+    return MG1
+    
+def MGendv2(ri, r0, re, Enmoins1, En, nu):
+    """
+    Calcul des coefficients de la matrice de rigidité pour un cylindre épais avec body load en multi-couches.
+    """
+    MGendv2 = [(-2 * ri**2) / (Enmoins1 * (r0**2 - ri**2)), \
+         (((1 + nu) * re**2 + (1 - nu) * r0**2) / (En * (re**2 - r0**2))) + \
+         (((1 + nu) * ri**2 + (1 - nu) * r0**2) / (Enmoins1 * (r0**2 - ri**2)))]
+
+    return MGendv2
+
+def MGv2(ri, r0, re, Enmoins1, En, nu):
+    """
+    Calcul des coefficients de la matrice de rigidité pour un cylindre épais avec body load en multi-couches.
+    """
+    MG = [(-2 * ri**2) / (Enmoins1 * (r0**2 - ri**2)), \
+      (((1 + nu) * re**2 + (1 - nu) * r0**2) / (En * (re**2 - r0**2))) + \
+      (((1 + nu) * ri**2 + (1 - nu) * r0**2) / (Enmoins1 * (r0**2 - ri**2))),\
+         (-2*re**2)/(En*(re**2-r0**2)) ]
+
+    return MG
+   
+    
+
+def F_CIRCE0D(disR, R, J, B, Pi, Pe, E, nu, config):
+    """
+    F_CIRCE0D Summary of this function goes here
+    Essai d'implémentation du calcul de cylindre épais avec body load en
+    multi-couches
+    """
+    
+   
+    nlayer = len(E)
+
+    if nlayer == 1:        
+
+        SigRtot = []
+        SigTtot = []
+        urtot = []
+        P = [Pi, Pe]
+        Rvec = []
+        
+    elif nlayer == 2:
+        ri = R[0]
+        r0 = R[1]
+        re = R[2]
+        Enmoins1 = E[0]
+        En = E[1]
+        J0 = J[0]
+        J1 = J[1]
+        B0 = B[0]
+        B1 = B[1]
+        K1nmoins1 = J[0] * B[0] / (R[1] -R[0])
+        K1n = J1 * B1 / (re - r0)
+   
+        if config[0] == 1:
+            K2nmoins1 = -J0 * B0 * ri / (r0 - ri)
+        else:
+            K2nmoins1 = -J0 * B0 * r0 / (r0 - ri)
+        
+        if config[1] == 1:
+              K2n = -J1 * B1 * r0 / (re - r0)
+        else:
+            K2n = -J1 * B1 * re / (re - r0)
+        
+        MGtot = np.array([[((1 + nu) * re**2 + (1 - nu) * r0**2) / (En * (re**2 - r0**2)) + \
+                           (((1 + nu) * ri**2 + (1 - nu) * r0**2) / (Enmoins1 * (r0**2 - ri**2)))]])
+        
+        MDtot = np.array([[(1 + nu) / En * re**2 * (K1n * (nu + 3) / 8 + K2n * (nu + 2) / (3 * (re + r0))) + \
+                           (1 - nu) / En * ((K2n * (nu + 2) / 3) * (re**2 + r0**2 + re * r0) / (re + r0) + \
+                           (re**2 + r0**2) * K1n * (nu + 3) / 8) - \
+                       (1 + nu) / Enmoins1 * ri**2 * (K1nmoins1 * (nu + 3) / 8 + K2nmoins1 * (nu + 2) / (3 * (r0 + ri))) - \
+                       (1 - nu) / Enmoins1 * ((K2nmoins1 * (nu + 2) / 3) * (r0**2 + ri**2 + r0 * ri) / (r0 + ri) + \
+                       (r0**2 + ri**2) * K1nmoins1 * (nu + 3) / 8) + \
+                       (1 - nu**2) / 8 * r0**2 * (K1nmoins1 / Enmoins1 - K1n / En) + \
+                       (1 - nu**2) / 3 * r0 * (K2nmoins1 / Enmoins1 - K2n / En) - \
+                       Pi * (-2 * ri**2) / (Enmoins1 * (r0**2 - ri**2)) - \
+                       Pe * (-2 * re**2) / (En * (re**2 - r0**2))]])
+    
+        P = np.linalg.inv(MGtot) @ MDtot
+        SigRtot = []
+        SigTtot = []
+        urtot = []
+        P = [Pi, P[0], Pe]
+        Rvec = []
+        
+
+    else:
+        MDtot = np.zeros((nlayer - 1, 1))
+        MGtot = np.zeros((nlayer - 1, nlayer - 1))
+    
+        for ilayer in range(2, nlayer+1):
+            if ilayer == 2:
+                MGtot[ilayer - 2, ilayer - 2:ilayer ] = MG1v2(R[ilayer - 2], R[ilayer - 1], R[ilayer],
+                                                               E[ilayer - 2], E[ilayer - 1], nu)
+                MDtot[ilayer - 2] = MD1v2(R[ilayer - 2], R[ilayer - 1], R[ilayer], E[ilayer - 2], E[ilayer - 1], nu,
+                                         J[ilayer - 2], B[ilayer - 2], J[ilayer - 1], B[ilayer - 1], Pi,
+                                         [config[ilayer - 2], config[ilayer - 1]])
+            elif ilayer == nlayer:
+                MGtot[ilayer - 2, ilayer - 3:ilayer - 1] = MGendv2(R[ilayer - 2], R[ilayer - 1], R[ilayer],
+                                                                 E[ilayer - 2], E[ilayer - 1], nu)
+                MDtot[ilayer - 2] = MDendv2(R[ilayer - 2], R[ilayer - 1], R[ilayer], E[ilayer - 2], E[ilayer - 1], nu,
+                                            J[ilayer - 2], B[ilayer - 2], J[ilayer - 1], B[ilayer - 1], Pe,
+                                            [config[ilayer - 2], config[ilayer - 1]])
+            else:
+                MGtot[ilayer - 2, ilayer - 3 : ilayer] = MGv2(R[ilayer - 2], R[ilayer - 1], R[ilayer],
+                                                               E[ilayer - 2], E[ilayer - 1], nu)
+                MDtot[ilayer - 2] = MDv2(R[ilayer - 2], R[ilayer - 1], R[ilayer], E[ilayer - 2], E[ilayer - 1], nu,
+                                         J[ilayer - 2], B[ilayer - 2], J[ilayer - 1], B[ilayer - 1],
+                                         [config[ilayer - 2], config[ilayer - 1]])
+    
+        print(MGtot)
+        print(MDtot)
+
+        P = np.linalg.inv(MGtot) @ MDtot
+        SigRtot = []
+        SigTtot = []
+        urtot = []
+        P = [[Pi], P,[ Pe]]
+        Rvec = []
+        P = np.vstack(P)
+        print(P)
+
+    for ilayer in range(nlayer):
+        K1 = J[ilayer] * B[ilayer] / (R[ilayer + 1] - R[ilayer])
+        if config[ilayer] == 1:
+            K2 = -J[ilayer] * B[ilayer] * R[ilayer] / (R[ilayer + 1] - R[ilayer])
+        else:
+            K2 = -J[ilayer] * B[ilayer] * R[ilayer + 1] / (R[ilayer + 1] - R[ilayer])
+
+        re = R[ilayer + 1]
+        ri = R[ilayer]
+        r = np.linspace(R[ilayer], R[ilayer + 1],  disR)
+        
+        C1 = K1 * (nu + 3) / 8 + K2 * (nu + 2) / (3 * (re + ri)) - (P[ilayer] - P[ilayer + 1]) / (re**2 - ri**2)
+        C2 = (K2 * (nu + 2) / 3) * ((re**2 + ri**2 + re * ri) / (re + ri)) + \
+             (P[ilayer + 1] * re**2 - P[ilayer] * ri**2) / (re**2 - ri**2) + \
+             (re**2 + ri**2) * K1 * (nu + 3) / 8
+        
+        SigR = re**2 * ri**2 / r**2 * C1 + K1 * (nu + 3) / 8 * r**2 + K2 * (nu + 2) / 3 * r - C2
+        SigT = -re**2 * ri**2 / r**2 * C1 + K1 * (3 * nu + 1) / 8 * r**2 + K2 * (2 * nu + 1) / 3 * r - C2
+        ur = r / E[ilayer] * (-re**2 * ri**2 / r**2 * C1 * (1 + nu) + (1 - nu**2) / 8 * K1 * r**2 + \
+                               (1 - nu**2) / 3 * K2 * r - C2 * (1 - nu))
+        
+        SigRtot.append(SigR)
+        SigTtot.append(SigT)
+        urtot.append(ur)
+        Rvec.append(r)
+      
+    SigRtot = np.concatenate(SigRtot)
+    SigTtot = np.concatenate(SigTtot)
+    urtot = np.concatenate(urtot)
+    Rvec = np.concatenate(Rvec)  
+
+    return SigRtot, SigTtot, urtot, Rvec, P
+
+#  Définir les valeurs d'entrée pour le cas 'ITER'
+
+if __name__ == "__main__":
+    
+    disR = 100  # Pas de discrétisation
+    R = np.array([1.317,2.057])  # Radii
+    J = np.array([6*554*40000/((R[1]-R[0])*12.6)])  # Current densities
+    B = np.array([13])  # Magnetic fields
+    Pi = 0  # Internal pressure
+    Pe = 50e6  # External pressure
+    E = np.array([120e9])  # Young's moduli
+    nu = 0.29  # Poisson's ratio
+    config = np.array([0])  # Loading configs
+    # Appeler la fonction principale
+    SigRtot, SigTtot, urtot, Rvec, P = F_CIRCE0D(disR, R, J, B, Pi, Pe, E, nu, config)
+    # Tracer les résultats le long des valeurs de grand rayon R
+    plt.figure(figsize=(12, 6))
+    # Tracer les contraintes radiales
+    plt.plot(Rvec, np.abs(SigRtot/1e6), label='Radial Stresses (SigRtot)')
+    plt.plot(Rvec, np.abs( SigTtot/1e6), label='Tangential Stresses (SigTtot)')
+    plt.plot(Rvec, np.abs(SigRtot/1e6)+np.abs(SigTtot/1e6), label='Tresca')
+    plt.xlabel('Radius')
+    plt.ylabel('Radial Stress (MPa)')
+    plt.title('Radial Stresses vs Radius')
+    plt.legend()
+    plt.grid(True)
+    
+    # Tracer les déplacements radiaux
+    plt.figure(figsize=(12, 6))
+    plt.plot(Rvec, urtot, label='Radial Displacements (urtot)')
+    plt.xlabel('Radius')
+    plt.ylabel('Radial Displacement (m)')
+    plt.title('Radial Displacements vs Radius')
+    plt.legend()
+    plt.grid(True)
+    # Afficher les plots
+    plt.show()
+
 #%% Print
 
 print("D0FUS_radial_build_functions loaded")
