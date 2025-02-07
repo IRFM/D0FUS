@@ -31,329 +31,133 @@ else:
 # Le rechargement d'un module (importlib.reload) ne met en effet pas forcément à jour les références existantes dans d'autres modules importés précédemment
 # La fonction reload est cependant , du moins dans les versions python de 3.1 à 3.3 permettre de palier à ce problème
 
-#%% Gradient Descent of Parameters to find the optimum of the Loss Function
+#%% Algos
 
-Grad_choice = 'H_fixed'
+# Fonction de coût à minimiser
+def fitness_function(individual):
+    a, R0, Bmax, P_fus, T_bar = individual
+    results = calcul(a, R0, Bmax, P_fus, T_bar)
+    nbar_solution = results[5]
+    nG_solution = results[9]
+    beta_solution = results[6]
+    qstar_solution = results[7]
+    R0_abcd = results[21]
+    cost = results[13]
 
-def gradient_descent(min_a,max_a,min_H,max_H,min_B,max_B,min_P,max_P,min_R,max_R):
+
+    if cost < 0 or np.isnan(cost) or R0_abcd < 0 or np.isnan(R0_abcd) or qstar_solution < 0 or np.isnan(qstar_solution) or beta_solution < 0 or np.isnan(beta_solution) or nbar_solution < 0 or np.isnan(nbar_solution) :
+        return (float('inf'),)  # Retourne un tuple
     
-    # Utilisation de la fonction pour initialiser les listes
-    (a_solutions, nG_solutions, n_solutions, beta_solutions,  qstar_solutions, fB_solutions, fNC_solutions, cost_solutions, heat_solutions, c_solutions, sol_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,required_BCSs,R0_solutions,Ip_solutions,fRF_solutions,P_W_solutions) = initialize_lists()
-    
-    try:
-        
-        if Grad_choice == 'All_free':
-            bounds = [(min_a, max_a),(min_H,max_H), (min_B, max_B),(min_P,max_P),(min_R,max_R)] # a,H,Bmax,Pfus,Pw
-        elif Grad_choice == 'H_fixed':
-            H = 1 # H fixed at 1 also in DàFUS core
-            bounds = [(min_a, max_a), (min_B, max_B),(min_P,max_P),(min_R,max_R)] # a,H,Bmax,Pfus,Pw
-        elif Grad_choice == 'H_P_fixed':
-            H = 1 # H fixed at 1 also in DàFUS core
-            P_fus = 2e9
-            bounds = [(min_a, max_a), (min_B, max_B),(min_R,max_R)] # a,H,Bmax,Pfus,Pw
-        else :
-            print('Choose a gradient choice')
-        
-        # Cost function to minimize
-        def objective_function(x):
+    if nbar_solution > nG_solution :
+        return (((nbar_solution / nG_solution ) + 1)**10,)  # Retourne un tuple
 
-            cost_fct = 0    
+    if beta_solution > betaN :
+        return (((beta_solution / betaN ) + 1)**10,)  # Retourne un tuple
 
-            if Grad_choice == 'All_free':
-                # x[0] corresponds to a, x[1] to H, x[2] to Bmax, x[3] to Pfus, and x[4] to Pw
-                a , H , Bmax , P_fus , R0 = x
-            elif Grad_choice == 'H_fixed':
-                # x[0] corresponds to a, x[1] to Bmax, x[2] to Pfus, and x[3] to Pw
-                a , Bmax , P_fus , R0 = x
-                H = 1
-            elif Grad_choice == 'H_P_fixed':
-                # x[0] corresponds to a, x[1] to Bmax, x[2] to Pfus, and x[3] to Pw
-                a , Bmax , R0 = x
-                H = 1
-                P_fus = 2e9
-                
-            # Calculate useful values
-            (P_W,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Q_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs) = calcul(a, H, Bmax, P_fus, R0)
+    if qstar_solution < q  :
+        return (((q / qstar_solution ) + 1)**10,)  # Retourne un tuple
 
-            # Consideration of limits
-            if n_vec_solution / nG_solution > 1:
-                cost_fct = cost_fct + (n_vec_solution / nG_solution)**10
-            if beta_solution / betaN > 1:
-                cost_fct = cost_fct + (beta_solution / betaN)**10
-            if q / qstar_solution > 1:
-                cost_fct = cost_fct + (q / qstar_solution)**10
-            if fRF_solution / f_RF_objectif > 1:
-                cost_fct = cost_fct + (fRF_solution / f_RF_objectif)**10
-            # if solenoid < Slnd:
-            #     cost_fct = cost_fct + ((solenoid*solenoid+1)**1000)
-            # solenoid consideration
-            if np.isnan(R0_a_b_c_CS_solution) or R0_a_b_c_CS_solution<0 :
-                cost_fct = cost_fct + 10
-                
-            # Minimization of the cost
-            cost_fct = (cost_fct + (cost*1e7))
-            
-            # naN verification
-            if np.isnan(cost_fct)==True or cost_fct is None:
-                cost_fct = 100
-            
-            return cost_fct
-        
-        result = differential_evolution(objective_function, bounds, maxiter=max_iterations)
-        
-        if not result.success:
-                raise ValueError(f"Differential evolution did not converge: {result.message}")
-        
-        if Grad_choice == 'All_free':
-            a_solution = result.x[0]
-            H = result.x[1]
-            Bmax = result.x[2]
-            P_fus = result.x[3]
-            R0 = result.x[4]
-        elif Grad_choice == 'H_fixed':
-            a_solution = result.x[0]
-            H = 1
-            Bmax = result.x[1]
-            P_fus = result.x[2]
-            R0 = result.x[3]
-        elif Grad_choice == 'H_P_fixed':
-            a_solution = result.x[0]
-            H = 1
-            Bmax = result.x[1]
-            P_fus = 2e9
-            R0 = result.x[2]
-        else :
-            print('Choose a gradient descent parameter')
-        
-        
-        # Calculate useful values
-        (P_W,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Q_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs) = calcul(a_solution,H,Bmax,P_fus,R0)
-        
-        print("With a cost =", cost * 10**6)
-        # Call the a_variation function
-        (a_solutions,nG_solutions,n_solutions,beta_solutions,qstar_solutions,fB_solutions,fNC_solutions,cost_solutions,heat_solutions,c_solutions,sol_solutions,P_W_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,required_BCSs,Ip_solutions,fRF_solutions) = Variation_a(H, Bmax, P_fus, R0)
-        
-        # Plot with respect to 'a'
-        chosen_parameter = 'a'
-        parameter_values = a_solutions
-        chosen_unity = 'm'
-        chosen_design = a_solution
-        first_acceptable_value = None
-        
-        Plot_operational_domain(chosen_parameter,parameter_values,first_acceptable_value,n_solutions,nG_solutions,beta_solutions,qstar_solutions,fRF_solutions,chosen_unity,chosen_design)
-        
-        Plot_cost_function(chosen_parameter,parameter_values,cost_solutions,first_acceptable_value,chosen_unity,chosen_design)
-        
-        Plot_heat_parameter(chosen_parameter,parameter_values,first_acceptable_value,chosen_unity,heat_solutions,chosen_design)
-        
-        R0_list = [R0] * len(R0_a_solutions)
-        
-        Plot_radial_build(chosen_parameter,parameter_values,chosen_unity,R0_list,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,Ip_solutions,first_acceptable_value,chosen_design)
-        
-        Plot_tableau_valeurs(H,P_fus,R0,Bmax,κ,chosen_design)
-        
-        # Plot Radial Build aesthetic
-        lengths_upper = [R0_a_b_c_CS_solution,solenoid-R0_a_b_c_CS_solution, 0.1, c, b, 2*a_solution]
-        names_upper = ['','CS','', 'TFC', 'Blanket', 'Plasma']
-        lengths_lower = [R0]
-        names_lower = ['R0']
-        Plot_radial_build_aesthetic(lengths_upper, names_upper, lengths_lower, names_lower)
-        
-        if Grad_choice == 'All_free':
-            # Pe = Pe Freidberg = très approximatif
-            PERSO = [round(result.x[3]*10**-6, 1), round(f_power(result.x[3])*10**-6, 1), round(10, 1),
-                     round(R0, 1), round(result.x[0], 1), round(R0/result.x[0], 1), 1.7,
-                     round(B0_solution, 1), round(result.x[2], 1), round(result.x[4]*10**-6, 1), round(result.x[1], 1),
-                     round(Ip_solution*10**-6, 1)]
-            
-        elif Grad_choice == 'H_fixed':
-            # Pe = Pe Freidberg = très approximatif
-            PERSO = [round(result.x[2]*10**-6, 1), round(f_power(result.x[2])*10**-6, 1), round(10, 1),
-                     round(R0, 1), round(result.x[0], 1), round(R0/result.x[0], 1), 1.7,
-                     round(B0_solution, 1), round(result.x[1], 1), round(result.x[3]*10**-6, 1), round(1, 1),
-                     round(Ip_solution*10**-6, 1)]
-            
-        elif Grad_choice == 'H_P_fixed':
-            # Pe = Pe Freidberg = très approximatif
-            PERSO = [round(P_fus*10**-6, 1), round(f_power(P_fus)*10**-6, 1), round(10, 1),
-                     round(R0, 1), round(result.x[0], 1), round(R0/result.x[0], 1), 1.7,
-                     round(B0_solution, 1), round(result.x[1], 1), round(result.x[2]*10**-6, 1), round(1, 1),
-                     round(Ip_solution*10**-6, 1)]
-            
-        # Create a DataFrame with pandas
-        df = pd.DataFrame({
-            'Initials': Initials,
-            'Description': Description,
-            'ITER': ITER,
-            'ARC': ARC,
-            'EUdemo A3': EU_DEMO_A3,
-            'EUdemo A4': EU_DEMO_A4,
-            'CFDTR': CFDTR_DEMO,
-            'EUDEMO2': EU_DEMO2,
-            'K DEMO': K_DEMO_DN,
-            'Prediction': PERSO,
-            'Unit': Unit
-        })
-        
-        # Create a figure
-        fig, ax = plt.subplots(figsize=(8, 4))
-        # Hide the axes
-        ax.axis('off')
-        # Create a table from the DataFrame
-        tbl = table(ax, df, loc='center', colWidths=[0.08, 0.2, 0.12, 0.12, 0.12, 0.12,0.12,0.12,0.12, 0.12, 0.12])
-        # Format the table
-        tbl.auto_set_font_size(False)
-        tbl.set_fontsize(10)
-        tbl.scale(1.2, 1.2)
-        # Center the text in each cell
-        for key, cell in tbl.get_celld().items():
-            cell.set_text_props(ha='center', va='center')
-        # Save the image
-        path_to_save = os.path.join(save_directory,"table_optimized.png")
-        plt.savefig(path_to_save, dpi=300, bbox_inches='tight')
-        # Display the figure
-        plt.show()
-    
-    except Exception as e:
-            print(f"An error occurred on the gradient descent : {e}")
+    return (cost,)  # Retourne un tuple contenant le coût
 
+Choice_research = "Genetic"
 
-if __name__ == "__main__":
-    Grad_choice = 'H_P_fixed'
-    gradient_descent(0.6,4,0.5,1,10,24,0.2e9,2e9,2,10)
-    
-#%% Personnal Genetic algorythm
+# Benchmark results :
+# Genetic (most flexible and fast ~ 1 min)
+# Differential (most precise but ~ 10 min)
+# Annealing (failed)
+# Powell (failed)
+# NelderMead (failed)
+# PSO (failed)
 
-from deap import base, creator, tools, algorithms
+# Définir les bornes pour chaque variable
+bounds = [(0, 3), (3, 9), (6, 24), (1000, 10000), (6, 24)] # a, R0, Bmax, Pfus, T
 
-def evaluate_physic(individual, H, Bmax, P_fus, P_W):
-    a, Aspect_ratio = individual
-    (R0_solution,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs) = calcul_aspect_ratio(a, H, Bmax, P_fus, P_W, Aspect_ratio)
-    
-    if qstar_solution > 1:
-        return R0_solution,
-    else:
-        return 1e6,  # Une pénalité élevée si la contrainte n'est pas respectée
-    
-def evaluate_heat(individual, H, Bmax, P_fus, P_W):
-    a, Aspect_ratio = individual
-    (R0_solution,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs) = calcul_aspect_ratio(a, H, Bmax, P_fus, P_W, Aspect_ratio)
-    
-    if qstar_solution > 1 and heat < heat_flux_limit :
-        return R0_solution,
-    else:
-        return 1e6,  # Une pénalité élevée si la contrainte n'est pas respectée
-    
-def evaluate_radial(individual, H, Bmax, P_fus, P_W):
-    a, Aspect_ratio = individual
-    (R0_solution,B0_solution,pbar_solution,beta_solution,nbar_solution,tauE_solution,Ip_solution,qstar_solution,nG_solution,eta_CD_solution,fB_solution,fNC_solution,fRF_solution,n_vec_solution,c,cost,heat,solenoid,R0_a_solution,R0_a_b_solution,R0_a_b_c_solution,R0_a_b_c_CS_solution,required_Bcs) = calcul_aspect_ratio(a, H, Bmax, P_fus, P_W, Aspect_ratio)
-    
-    if qstar_solution > 1 and heat < heat_flux_limit and not np.isnan(R0_a_b_c_CS_solution):
-        return R0_solution,
-    else:
-        return 1e6,  # Une pénalité élevée si la contrainte n'est pas respectée
+if Choice_research == "Genetic":
 
-def optimize_aspect_ratio_physic(H, Bmax, P_fus, P_W):
+    # Paramètres de l'algorithme génétique
     creator.create("FitnessMin", base.Fitness, weights=(-1.0,))
     creator.create("Individual", list, fitness=creator.FitnessMin)
     
     toolbox = base.Toolbox()
     
-    def generate_aspect_ratio():
-        return np.random.uniform(2.5, 4)
+    # Initialiser les individus avec des valeurs dans les bornes spécifiées pour chaque paramètre
+    toolbox.register("attr_a", np.random.uniform, bounds[0][0], bounds[0][1])
+    toolbox.register("attr_R0", np.random.uniform, bounds[1][0], bounds[1][1])
+    toolbox.register("attr_Bmax", np.random.uniform, bounds[2][0], bounds[2][1])
+    toolbox.register("attr_P_fus", np.random.uniform, bounds[3][0], bounds[3][1])
+    toolbox.register("attr_T_bar", np.random.uniform, bounds[4][0], bounds[4][1])
     
-    toolbox.register("attr_float", generate_aspect_ratio)  # Générer des valeurs aléatoires entre 2.5 et 4 pour l'aspect ratio
-    toolbox.register("attr_float_a", np.random.uniform, 1, 4)  # Générer des valeurs aléatoires entre 1 et 4 pour a
-    toolbox.register("individual", tools.initCycle, creator.Individual, (toolbox.attr_float_a, toolbox.attr_float))  # Créer un individu avec deux paramètres
-    toolbox.register("population", tools.initRepeat, list, toolbox.individual)  # Créer une population d'individus
-    toolbox.register("mate", tools.cxBlend, alpha=0.5)  # Croisement Blend
-    toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=0.2, indpb=0.2)  # Mutation gaussienne
-    toolbox.register("select", tools.selTournament, tournsize=3)  # Sélection par tournoi
-    toolbox.register("evaluate", evaluate_physic, H=H, Bmax=Bmax, P_fus=P_fus, P_W=P_W)  # Évaluation de la fonction objective
+    # Créer un individu en regroupant ces attributs
+    toolbox.register("individual", tools.initCycle, creator.Individual, 
+                     (toolbox.attr_a, toolbox.attr_R0, toolbox.attr_Bmax, toolbox.attr_P_fus, toolbox.attr_T_bar), n=1)
+    
+    # Définir une population
+    toolbox.register("population", tools.initRepeat, list, toolbox.individual)
+    
+    toolbox.register("mate", tools.cxBlend, alpha=0.5)
+    toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=0.2, indpb=0.2)
+    toolbox.register("select", tools.selTournament, tournsize=3)
+    toolbox.register("evaluate", fitness_function)
+    
+    def genetic_algorithm():
+        pop = toolbox.population(n=200)
+        hof = tools.HallOfFame(1)
+        stats = tools.Statistics(lambda ind: ind.fitness.values)
+        stats.register("avg", np.mean)
+        stats.register("min", np.min)
+        stats.register("max", np.max)
+        algorithms.eaSimple(pop, toolbox, cxpb=0.5, mutpb=0.2, ngen=50, stats=stats, halloffame=hof, verbose=True)
+        best_individual = hof[0]
+        print("Best individual from genetic algorithm:", best_individual)
+    
+    genetic_algorithm()
+        
+elif Choice_research == "Differential":
+    result = differential_evolution(fitness_function, bounds)
+    print("Best result from differential evolution:", result)
 
-    pop = toolbox.population(n=200)  # Taille de la population
-    hof = tools.HallOfFame(1)  # Meilleur individu
-    stats = tools.Statistics(lambda ind: ind.fitness.values)  # Statistiques
-    stats.register("min", np.min)  # Minimum
-    
-    algorithms.eaSimple(pop, toolbox, cxpb=0.5, mutpb=0.2, ngen=100, stats=stats, halloffame=hof, verbose=False)  # Algorithme génétique
-    
-    best_individual = hof[0]
-    best_a, best_Aspect_ratio = best_individual
-    best_fitness = best_individual.fitness.values[0]
-    
-    return best_a, best_Aspect_ratio, best_fitness
+elif Choice_research == "SimulatedAnnealing":
+    result = minimize(fitness_function, x0=[1.5, 3.5, 9, 25, 13], bounds=bounds, method='anneal')
+    print("Best result from Simulated Annealing:", result)
 
-def optimize_aspect_ratio_radial(H, Bmax, P_fus, P_W):
-    creator.create("FitnessMin", base.Fitness, weights=(-1.0,))
-    creator.create("Individual", list, fitness=creator.FitnessMin)
-    
-    toolbox = base.Toolbox()
-    
-    def generate_aspect_ratio():
-        return np.random.uniform(2.5, 4)
-    
-    toolbox.register("attr_float", generate_aspect_ratio)  # Générer des valeurs aléatoires entre 2.5 et 4 pour l'aspect ratio
-    toolbox.register("attr_float_a", np.random.uniform, 1, 4)  # Générer des valeurs aléatoires entre 1 et 4 pour a
-    toolbox.register("individual", tools.initCycle, creator.Individual, (toolbox.attr_float_a, toolbox.attr_float))  # Créer un individu avec deux paramètres
-    toolbox.register("population", tools.initRepeat, list, toolbox.individual)  # Créer une population d'individus
-    toolbox.register("mate", tools.cxBlend, alpha=0.5)  # Croisement Blend
-    toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=0.2, indpb=0.2)  # Mutation gaussienne
-    toolbox.register("select", tools.selTournament, tournsize=3)  # Sélection par tournoi
-    toolbox.register("evaluate", evaluate_radial, H=H, Bmax=Bmax, P_fus=P_fus, P_W=P_W)  # Évaluation de la fonction objective
+elif Choice_research == "Powell":
+    result = minimize(fitness_function, x0=[1.5, 3.5, 9, 25, 13], bounds=bounds, method='Powell')
+    print("Best result from Powell optimization:", result)
 
-    pop = toolbox.population(n=200)  # Taille de la population
-    hof = tools.HallOfFame(1)  # Meilleur individu
-    stats = tools.Statistics(lambda ind: ind.fitness.values)  # Statistiques
-    stats.register("min", np.min)  # Minimum
-    
-    algorithms.eaSimple(pop, toolbox, cxpb=0.5, mutpb=0.2, ngen=100, stats=stats, halloffame=hof, verbose=False)  # Algorithme génétique
-    
-    best_individual = hof[0]
-    best_a, best_Aspect_ratio = best_individual
-    best_fitness = best_individual.fitness.values[0]
-    
-    return best_a, best_Aspect_ratio, best_fitness
+elif Choice_research == "NelderMead":
+    result = minimize(fitness_function, x0=[1.5, 3.5, 9, 25, 13], bounds=bounds, method='Nelder-Mead')
+    print("Best result from Nelder-Mead optimization:", result)
 
-def optimize_aspect_ratio_heat(H, Bmax, P_fus, P_W):
-    creator.create("FitnessMin", base.Fitness, weights=(-1.0,))
-    creator.create("Individual", list, fitness=creator.FitnessMin)
+elif Choice_research == "PSO":
+    lb = [b[0] for b in bounds]
+    ub = [b[1] for b in bounds]
+    result, _ = pso(fitness_function, lb, ub)
+    print("Best result from Particle Swarm Optimization:", result)
     
-    toolbox = base.Toolbox()
+# if __name__ == "__main__":
+#     methods = {
+#         "Genetic": genetic_algorithm,
+#         "Differential": lambda: differential_evolution(fitness_function, bounds),
+#         "SimulatedAnnealing": lambda: minimize(fitness_function, x0=[1.5, 3.5, 9, 25, 13], bounds=bounds, method='anneal'),
+#         "Powell": lambda: minimize(fitness_function, x0=[1.5, 3.5, 9, 25, 13], bounds=bounds, method='Powell'),
+#         "NelderMead": lambda: minimize(fitness_function, x0=[1.5, 3.5, 9, 25, 13], bounds=bounds, method='Nelder-Mead'),
+#         "PSO": lambda: pso(fitness_function, [b[0] for b in bounds], [b[1] for b in bounds])
+#     }
     
-    def generate_aspect_ratio():
-        return np.random.uniform(2.5, 4)
+#     results = {}
+#     for method, func in methods.items():
+#         start_time = time.time()
+#         try:
+#             result = func()
+#             execution_time = time.time() - start_time
+#             results[method] = (result, execution_time)
+#         except Exception as e:
+#             results[method] = (None, None, str(e))
     
-    toolbox.register("attr_float", generate_aspect_ratio)  # Générer des valeurs aléatoires entre 2.5 et 4 pour l'aspect ratio
-    toolbox.register("attr_float_a", np.random.uniform, 1, 4)  # Générer des valeurs aléatoires entre 1 et 4 pour a
-    toolbox.register("individual", tools.initCycle, creator.Individual, (toolbox.attr_float_a, toolbox.attr_float))  # Créer un individu avec deux paramètres
-    toolbox.register("population", tools.initRepeat, list, toolbox.individual)  # Créer une population d'individus
-    toolbox.register("mate", tools.cxBlend, alpha=0.5)  # Croisement Blend
-    toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=0.2, indpb=0.2)  # Mutation gaussienne
-    toolbox.register("select", tools.selTournament, tournsize=3)  # Sélection par tournoi
-    toolbox.register("evaluate", evaluate_heat, H=H, Bmax=Bmax, P_fus=P_fus, P_W=P_W)  # Évaluation de la fonction objective
+#     for method, (result, exec_time, *error) in results.items():
+#         if error:
+#             print(f"{method} failed: {error[0]}")
+#         else:
+#             print(f"{method} completed in {exec_time:.4f} seconds. Best result: {result}")
 
-    pop = toolbox.population(n=200)  # Taille de la population
-    hof = tools.HallOfFame(1)  # Meilleur individu
-    stats = tools.Statistics(lambda ind: ind.fitness.values)  # Statistiques
-    stats.register("min", np.min)  # Minimum
-    
-    algorithms.eaSimple(pop, toolbox, cxpb=0.5, mutpb=0.2, ngen=100, stats=stats, halloffame=hof, verbose=False)  # Algorithme génétique
-    
-    best_individual = hof[0]
-    best_a, best_Aspect_ratio = best_individual
-    best_fitness = best_individual.fitness.values[0]
-    
-    return best_a, best_Aspect_ratio, best_fitness
 
-# # Exemple d'utilisation
-# H = 1.0  # Exemple, doit être ajusté selon votre contexte
-# Bmax = 15.0  # Exemple, doit être ajusté selon votre contexte
-# P_fus = 2e9  # Exemple, doit être ajusté selon votre contexte
-# P_W = 4e6  # Exemple, doit être ajusté selon votre contexte
-
-# best_a, best_Aspect_ratio, best_fitness = optimize_aspect_ratio_physic(H, Bmax, P_fus, P_W)
-
-# print(f"Best a: {best_a}")
-# print(f"Best Aspect_ratio: {best_Aspect_ratio}")
-# print(f"Best fitness: {best_fitness}")
