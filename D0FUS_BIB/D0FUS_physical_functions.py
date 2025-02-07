@@ -58,7 +58,7 @@ def f_B0(Bmax, a, b, R0):
 
     Returns
     -------
-    B0 : The estimated central magnetic field
+    B0 : The estimated central magnetic field [T]
     
     """
     B0 = Bmax*(1-((a+b)/R0))
@@ -138,7 +138,7 @@ def f_sigmav(T):
     
     return sigma_v
 
-def f_nbar(P_fus,R0,a,κ,nu_n,nu_T,f_alpha):
+def f_nbar(P_fus,R0,a,κ,nu_n,nu_T,f_alpha,Tbar):
     """
     
     Allows for the calculation of the mean electronic density needed for the fusion power chosen by the user
@@ -370,14 +370,14 @@ def f_Ip(tauE,R0,a,κ,nbar,B0,Atomic_mass,P_fus,Q):
     
     """
     
-    P_alpha = E_ALPHA*P_fus/(E_ALPHA+E_N) * (1+5/Q)
+    P = (E_ALPHA*P_fus)/(E_ALPHA+E_N) * (1+5/Q)
     Epsilon = a/R0
     
     # A creuser
     Suspect = B0**alpha_B
     partie_reelle = Suspect.real
     
-    Denominateur = H* C_SL * R0**alpha_R * Epsilon**alpha_epsilon * κ**alpha_kappa * (nbar*10)**alpha_n * partie_reelle * Atomic_mass**alpha_M * P_alpha**alpha_P * (1 + δ)**alpha_delta
+    Denominateur = H* C_SL * R0**alpha_R * Epsilon**alpha_epsilon * κ**alpha_kappa * (nbar*10)**alpha_n * partie_reelle * Atomic_mass**alpha_M * P**alpha_P * (1 + δ)**alpha_delta
     inv_cI  = 1./alpha_I
     
     Ip = ((tauE/Denominateur)**inv_cI) # in MA
