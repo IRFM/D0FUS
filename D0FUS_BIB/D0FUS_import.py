@@ -34,6 +34,8 @@ from scipy.optimize import (
 )
 from scipy.interpolate import griddata
 from scipy.integrate import quad
+from deap import base, creator, tools, algorithms
+from pyswarm import pso  # Nécessite l'installation de pyswarm
 
 # Importations de bibliothèques de visualisation
 import matplotlib.pyplot as plt
