@@ -29,15 +29,19 @@ else:
 # Le rechargement d'un module (importlib.reload) ne met en effet pas forcément à jour les références existantes dans d'autres modules importés précédemment
 # La fonction reload doit cependant , du moins dans les versions python de 3.1 à 3.3, permettre de palier à ce problème
     
-#%% Variation of 1 chosen parameter and mapping the a space
+#%% a and R0 scan
 # 2D matrix calculation
 
 def R0_a_scan(Bmax, P_fus, κ, δ, Tbar_init):
     
     a_min = 0
     a_max = 3
-    a_values = np.arange(a_min,a_max,0.1)
-    R0_values = np.arange(2,9,0.2)
+    a_step = 0.1
+    a_values = np.arange(a_min,a_max,a_step)
+    R0_min = 0
+    R0_max = 9
+    R0_step = 0.2
+    R0_values = np.arange(R0_min,R0_max,R0_step)
      
     # Matrix creations
     max_limits_density = np.zeros((len(a_values),len(R0_values)))
@@ -191,6 +195,7 @@ def R0_a_scan(Bmax, P_fus, κ, δ, Tbar_init):
     inverted_BCS_matrix_mask[mask] = np.nan
     inverted_c_matrix_mask[mask] = np.nan
     inverted_d_matrix_mask[mask] = np.nan
+    inverted_c_d_matrix_mask = inverted_c_matrix_mask + inverted_d_matrix_mask
    
     inverted_Heat_matrix = Heat_matrix[::-1, :]
     inverted_Cost_matrix = Cost_matrix[::-1, :]
@@ -202,7 +207,7 @@ def R0_a_scan(Bmax, P_fus, κ, δ, Tbar_init):
     inverted_TF_ratio_matrix = TF_ratio_matrix[::-1, :]
 
     # Ask the user to choose the second topologic map :
-    chosen_isocontour = input("Choose the Iso parameter (Ip, n, beta, q95, B0, BCS, c, d): ")
+    chosen_isocontour = input("Choose the Iso parameter (Ip, n, beta, q95, B0, BCS, c, d, c&d): ")
     chosen_topologic = input("Choose the background parameter (Heat, Cost, Q, Gamma_n, L_H, Alpha, TF): ")
     
     # Créer une figure et un axe principal
@@ -317,6 +322,10 @@ def R0_a_scan(Bmax, P_fus, κ, δ, Tbar_init):
         contour_lines = ax.contour(inverted_d_matrix_mask, levels=np.arange(0, 10 ,0.05), colors='#555555')
         ax.clabel(contour_lines, inline=True, fmt='%.2f', fontsize=taille_police_topological_map)
         grey_line = mlines.Line2D([], [], color='#555555', label='$CS$ width [m]')
+    elif chosen_isocontour == 'c&d':
+        contour_lines = ax.contour(inverted_c_d_matrix_mask, levels=np.arange(0, 10 ,0.05), colors='#555555')
+        ax.clabel(contour_lines, inline=True, fmt='%.2f', fontsize=taille_police_topological_map)
+        grey_line = mlines.Line2D([], [], color='#555555', label='CS + TF width [m]')
     else:
         print('Choose a relevant Iso parameter')
 
@@ -373,7 +382,7 @@ def R0_a_scan(Bmax, P_fus, κ, δ, Tbar_init):
         
 if __name__ == "__main__":
     # Best individual from genetic algorithm: [0.5909985466545535, 5.987959172778427, 11.346385941918145, 34.22664020500923, 1.6192373666347222]
-    Bmax = 20
+    Bmax = 12
     P_fus = 2000
     R0_a_scan(Bmax,P_fus,κ,δ, Tbar_init)
         
