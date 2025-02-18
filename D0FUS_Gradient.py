@@ -18,18 +18,17 @@ if "D0FUS_parameterization" in sys.modules:
     importlib.reload(sys.modules['D0FUS_parameterization'])
     # Mettre à jour les variables globales
     globals().update({k: getattr(sys.modules['D0FUS_parameterization'], k) for k in dir(sys.modules['D0FUS_parameterization']) if not k.startswith('_')})
-    importlib.reload(sys.modules['D0FUS_core'])
-    importlib.reload(sys.modules['D0FUS_plot'])
-    print("D0FUS Reloaded")
+    from D0FUS_initialisation import *
+    print("-----D0FUS Reloaded-----")
 else:
     # Le module n'est pas encore importé, l'importer
     from D0FUS_initialisation import *
-    print("D0FUS loaded")
+    print("-----D0FUS loaded-----")
     
 # Attention, lors de toute modification de fichiers exterieurs, il est conseillé, malgré l'implémentation de la fonction reaload, de redémarrer le Kernel.
-# Python est capricieux avec le stockage des variables et seul un redmérage du kernel puis import (de nouveau) de labibliothèque est sur à 100%
+# Python est capricieux avec le stockage des variables et seul un redémarage du kernel puis import des bibliothèques est sur à 100%
 # Le rechargement d'un module (importlib.reload) ne met en effet pas forcément à jour les références existantes dans d'autres modules importés précédemment
-# La fonction reload est cependant , du moins dans les versions python de 3.1 à 3.3 permettre de palier à ce problème
+# La fonction reload doit cependant , du moins dans les versions python de 3.1 à 3.3, permettre de palier à ce problème
 
 #%% Algos
 
@@ -49,13 +48,13 @@ def fitness_function(individual):
         return (float('inf'),)  # Retourne un tuple
     
     if nbar_solution > nG_solution :
-        return (((nbar_solution / nG_solution ) + 1)**10,)  # Retourne un tuple
+        return (cost+((nbar_solution / nG_solution ) + 1)**10,)  # Retourne un tuple
 
     if beta_solution > betaN :
-        return (((beta_solution / betaN ) + 1)**10,)  # Retourne un tuple
+        return (cost+((beta_solution / betaN ) + 1)**10,)  # Retourne un tuple
 
     if qstar_solution < q  :
-        return (((q / qstar_solution ) + 1)**10,)  # Retourne un tuple
+        return (cost+((q / qstar_solution ) + 1)**10,)  # Retourne un tuple
 
     return (cost,)  # Retourne un tuple contenant le coût
 
@@ -70,7 +69,8 @@ Choice_research = "Genetic"
 # PSO (failed)
 
 # Définir les bornes pour chaque variable
-bounds = [(0, 3), (3, 9), (6, 24), (1000, 10000), (6, 24)] # a, R0, Bmax, Pfus, T
+bounds = [(0, 2), (3, 7), (6, 20), (1000, 2000), (5, 20)] # a, R0, Bmax, Pfus, T
+# Best individual from genetic algorithm: [1.0267922161988503, 5.646477064593668, 19.02073188421982, 2089.274846909817, 12.343712356747329]
 
 if Choice_research == "Genetic":
 
