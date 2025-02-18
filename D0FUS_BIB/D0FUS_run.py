@@ -19,88 +19,51 @@ def calcul(a, R0, Bmax, P_fus, Tbar):
     # κ = f_Kappa(R0/a,Option_Kappa)
     B0_solution = f_B0(Bmax,a,b,R0)
     
-    # # Brut force operation
-    # P_CD = 10
-    # Q_solution = P_fus/P_CD
-    # f_alpha_solution = 0
-    # nbar_solution = f_nbar(P_fus,R0,a,κ,nu_n,nu_T,f_alpha_solution,Tbar)
-    # pbar_solution = f_pbar(nu_n,nu_T,nbar_solution,Tbar,f_alpha_solution)
-    
-    # f_alpha convergence
-    def to_solve_f_Alpha(f_alpha):
-    
-        nbar_alpha = f_nbar(P_fus,R0,a,κ,nu_n,nu_T,f_alpha,Tbar)
-        pbar_alpha = f_pbar(nu_n,nu_T,nbar_alpha,Tbar,f_alpha)
+    # Function to solve for both f_alpha and Q
+    def to_solve_f_alpha_and_Q(vars):
         
-        Q_alpha_init = 50
-        tau_E_init = f_tauE(pbar_alpha,R0,a,κ,P_fus,Q_alpha_init)
-        Ip_init = f_Ip(tau_E_init,R0,a,κ,nbar_alpha,B0_solution,Atomic_mass,P_fus,Q_alpha_init)
-        Ib_init = f_Ib(R0, a, κ, pbar_alpha, Ip_init)
-        eta_CD_init = f_etaCD(a, R0, B0_solution, nbar_alpha, Tbar, nu_n, nu_T)
-        P_CD_init = f_PCD(R0,nbar_alpha,Ip_init,Ib_init,eta_CD_init)
-        Q_alpha = P_fus/P_CD_init #Q refinement for f_alpha evaluation
-        
-        tau_E_alpha = f_tauE(pbar_alpha, R0, a, κ, P_fus, Q_alpha)
-        new_f_alpha = f_He_fraction(nbar_alpha,Tbar,tau_E_alpha,C_Alpha)
-        
-        return(new_f_alpha - f_alpha)
+        f_alpha, Q = vars
     
-    # Point initial pour la recherche de solution
-    f_alpha_initial_guess = 0.1  # Choisir une estimation de départ
+        # Calculate intermediate values
+        nbar_alpha = f_nbar(P_fus, R0, a, κ, nu_n, nu_T, f_alpha, Tbar)
+        pbar_alpha = f_pbar(nu_n, nu_T, nbar_alpha, Tbar, f_alpha)
+        tau_E_alpha = f_tauE(pbar_alpha, R0, a, κ, P_fus, Q)
+        Ip_alpha = f_Ip(tau_E_alpha, R0, a, κ, nbar_alpha, B0_solution, Atomic_mass, P_fus, Q)
+        Ib_alpha = f_Ib(R0, a, κ, pbar_alpha, Ip_alpha)
+        eta_CD_alpha = f_etaCD(a, R0, B0_solution, nbar_alpha, Tbar, nu_n, nu_T)
+        P_CD_alpha = f_PCD(R0, nbar_alpha, Ip_alpha, Ib_alpha, eta_CD_alpha)
+    
+        # Calculate new f_alpha
+        new_f_alpha = f_He_fraction(nbar_alpha, Tbar, tau_E_alpha, C_Alpha)
+    
+        # Calculate the residuals
+        f_alpha_residual = new_f_alpha - f_alpha
+        Q_residual = (Q - P_fus / P_CD_alpha) * 100 / (P_fus / P_CD_alpha)
+    
+        return [f_alpha_residual, Q_residual]
+    
+    # Initial guesses for f_alpha and Q
+    initial_guess = [0.1, 1000]
+    
+    # Solve the system of equations
     try:
-        f_alpha_solution, info, ier, msg = fsolve(to_solve_f_Alpha, f_alpha_initial_guess, xtol=1e-3, full_output=True)
-        
-        if ier == 1:  # ier == 1 signifie que la solution a convergé
-            f_alpha_solution = f_alpha_solution[0]  # fsolve retourne une liste, on prend la première valeur
+        solution, info, ier, msg = fsolve(to_solve_f_alpha_and_Q, initial_guess, xtol=1e-3, full_output=True)
+        if ier != 1:
+            f_alpha_solution = np.nan
+            Q_solution = np.nan
+        else:
+            f_alpha_solution, Q_solution = solution
             if f_alpha_solution > 1 or f_alpha_solution < 0:
                 f_alpha_solution = np.nan
-        else:
-            # Si la convergence n'a pas abouti :
-            # print('f_alpha research did not converge')
-            f_alpha_solution = np.nan
+            if Q_solution < 0:
+                Q_solution = np.nan
     except ValueError as e:
-        # print(f"Erreur rencontrée : {e}")
-        f_alpha_solution = np.nan
-    
+        f_alpha_solution, Q_solution = np.nan, np.nan
+
+    # Une fois Q déterminé, calcul des autres paramètres
     nbar_solution = f_nbar(P_fus,R0,a,κ,nu_n,nu_T,f_alpha_solution,Tbar)
     pbar_solution = f_pbar(nu_n,nu_T,nbar_solution,Tbar,f_alpha_solution)
     eta_CD = f_etaCD(a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T)
-    
-    # Q convergence 
-    # Définir l'équation à résoudre pour Q
-    def to_solve_Q(Q):
-
-        tau_E = f_tauE(pbar_solution,R0,a,κ,P_fus,Q)
-        # print("Tau_E : ",tau_E)
-        Ip = f_Ip(tau_E,R0,a,κ,nbar_solution,B0_solution,Atomic_mass,P_fus,Q)
-        # print("Ip : ",Ip)
-        Ib = f_Ib(R0, a, κ, pbar_solution, Ip)
-        # print("Ib : ",Ib)
-        eta_CD = f_etaCD(a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T)
-        # print("eta_CD : ",eta_CD)
-        P_CD = f_PCD(R0,nbar_solution,Ip,Ib,eta_CD)
-        # print("P_CD :",P_CD)
-        to_solve_Q = (Q - P_fus/P_CD)*100/(P_fus/P_CD) # Difference in %
-        return to_solve_Q
-    
-    # Point initial pour la recherche de solution
-    Q_initial_guess = 1000  # Choisir une estimation de départ
-    try:
-        Q_solution, info, ier, msg = fsolve(to_solve_Q, Q_initial_guess, xtol=2, full_output=True)
-        
-        if ier == 1:  # ier == 1 signifie que la solution a convergé
-            Q_solution = Q_solution[0]  # fsolve retourne une liste, on prend la première valeur
-            if Q_solution < 0:
-                Q_solution = np.nan
-        else:
-            # Si la convergence n'a pas abouti :
-            # print('Q research did not converge')
-            Q_solution = np.nan
-    except ValueError as e:
-        # print(f"Erreur rencontrée : {e}")
-        Q_solution = np.nan
-
-    # Une fois Q déterminé, calcul des autres paramètres
     tauE_solution = f_tauE(pbar_solution,R0,a,κ,P_fus,Q_solution)
     Ip_solution = f_Ip(tauE_solution,R0,a,κ,nbar_solution,B0_solution,Atomic_mass,P_fus,Q_solution)
     Ib_solution = f_Ib(R0, a, κ, pbar_solution, Ip_solution)
@@ -126,31 +89,20 @@ def calcul(a, R0, Bmax, P_fus, Tbar):
     
     # Radial Build
     
-    if Radial_build_model == "2_layers_simple" :
+    if Radial_build_model == "academic" :
         
-        if Choice_Buck_Wedg == 'Wedging' :
-            (c, Winding_pack_tension_ratio, σ_theta, σ_z) = f_TF_Torre_wedging(a, b, R0, B0_solution, σ_TF, μ0, J_max_TF_conducteur, Bmax)
-            (d,Alpha,B_CS) = f_CS_2_layers_convergence(a, b, c, R0, B0_solution, σ_CS, μ0, J_max_CS_conducteur, Choice_Buck_Wedg, Tbar, nbar_solution, Ip_solution, Ib_solution)
+        (c, Winding_pack_tension_ratio) = f_TF_academic(a, b, R0, B0_solution, σ_TF, μ0, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg)
+        (d,Alpha,B_CS) = f_CS_academic_convergence(a, b, c, R0, B0_solution, σ_CS, μ0, J_max_CS_conducteur, Choice_Buck_Wedg, Tbar, nbar_solution, Ip_solution, Ib_solution)
+            
+    elif Radial_build_model == "simple" :
         
-        elif Choice_Buck_Wedg == "Bucking" :
-            (c, Winding_pack_tension_ratio, σ_theta, σ_z) = f_TF_Torre_bucking(a, b, R0, B0_solution, σ_TF, μ0, J_max_TF_conducteur, Bmax)
-            (d,Alpha,B_CS) = f_CS_2_layers_convergence(a, b, c, R0, B0_solution, σ_CS, μ0, J_max_CS_conducteur, Choice_Buck_Wedg, Tbar, nbar_solution, Ip_solution, Ib_solution)
-        else : 
-            print( "Choose a valid mechanical configuration" )
-            
-    elif Radial_build_model == "1_layer_ideal" :
-        
-        if Choice_Buck_Wedg == 'Wedging' :
-            (c, Winding_pack_thickness, Winding_pack_dilution, Winding_pack_tension_ratio, Nose_thickness) = f_TF_DOFUS(a, b, R0, B0_solution, σ_TF, μ0, J_max_TF_conducteur, F_CClamp, Bmax, Choice_Buck_Wedg)
-            (d,Alpha,B_CS) = f_CS_DOFUS_polynomiale(a, b, c, R0, B0_solution, σ_CS, μ0, J_max_CS_conducteur, Choice_Buck_Wedg, Tbar, nbar_solution, Ip_solution, Ib_solution)
-            
-        elif Choice_Buck_Wedg == "Bucking" :
-            (c, Winding_pack_thickness, Winding_pack_dilution, Winding_pack_tension_ratio, Nose_thickness) = f_TF_DOFUS(a, b, R0, B0_solution, σ_TF, μ0, J_max_TF_conducteur, F_CClamp, Bmax, Choice_Buck_Wedg)
-            (d,Alpha,B_CS) = f_CS_DOFUS_polynomiale(a, b, c, R0, B0_solution, σ_CS, μ0, J_max_CS_conducteur, Choice_Buck_Wedg, Tbar, nbar_solution, Ip_solution, Ib_solution)
-            
-        else : 
-            print( "Choose a valid mechanical configuration" )
+        (c, Winding_pack_tension_ratio) = f_TF_simple(a, b, R0, B0_solution, σ_TF, μ0, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg)
+        (d,Alpha,B_CS) = f_CS_simple_convergence(a, b, c, R0, B0_solution, σ_CS, μ0, J_max_CS_conducteur, Choice_Buck_Wedg, Tbar, nbar_solution, Ip_solution, Ib_solution)
     
+    #elif Radial_build_model == "realistic" :
+    else :
+        print('Choose a valid mechanical model')
+
     cost = f_cost(a,b,c,d,R0,κ,Q_solution)
 
     return (B0_solution, B_CS, tauE_solution, Q_solution, Ip_solution, nbar_solution,
@@ -161,12 +113,12 @@ def calcul(a, R0, Bmax, P_fus, Tbar):
 if __name__ == "__main__":
     # Appeler la fonction de calcul
     # Benchmark
-    R0 = 6.8
-    a = 1.1
-    Pfus = 3500
-    Bmax = 20.5
+    R0 = 6
+    a = 1.5
+    Pfus = 2000
+    Bmax = 20
     b = 1.2
-    Tbar = 17
+    Tbar = 14
     # End Benchmark parameters
     B0_solution, B_CS, tauE_solution, Q_solution, Ip_solution, nbar_solution, \
     beta_solution, qstar_solution, q95_solution, nG_solution, \
