@@ -45,7 +45,7 @@ ITERPI = 20 # ITER plasma induction current [Wb]
 Flux_CS_Utile = 0.95 #0.85 # pourcentage disponible, laissant une partie libre pour le controle du plasma , arbitrairement à 0.85, la litterature propose plusieurs values allant de 0.85 à 1
 
 # Geometric parameters
-κ = 2.1  # elongation
+κ = 1.8  # elongation
 δ = 0.5 # Triangularity
 b = 1.2 # BB+1rst Wall+N shields+ Gaps
 
@@ -53,7 +53,6 @@ b = 1.2 # BB+1rst Wall+N shields+ Gaps
 σ_TF = 660.E6   # Mechanical limit of the steel considered in [Pa]
 σ_CS = 660.E6   # CS machanical limit [Pa] 
 J_max_TF_conducteur = 50.E6       # A/m² from ITER values
-J_max_TF_cable = 20e6  # Taken from ITER
 J_max_CS_conducteur = 50.E6       # A/m² from ITER values
 eta_RF = 0.5  # conversion efficiency from wall power to klystron
 f_RP   = 0.8  # fraction of klystron power absorbed by plasma
@@ -62,12 +61,13 @@ F_CClamp = 0 # Typical value if considered, of 60e6 from [Bachmann (2023) FED]
 
 # Parameterization
 H = 1.0 # H factor
+valeur_cible_Q = 50
 Choice_Buck_Wedg = 'Wedging' # Wedging or Bucking
-Mechanical_model = 'Full_winding_pack' # Full_winding_pack or Winding_pack_and_Nose
+Choice_solving_CS_method = "brentq" # CS solving method between root, brentz , manual and fsolve
 Option_Kappa = 'Wenninger' # Choose between Stambaugh, Freidberg or Wenninger
 L_H_Scaling_choice = 'New_Ip' # 'Martin' , 'New_S', 'New_Ip'
 Q_convergence_choice = 'Fast' #'Fast' or 'Slow'
-Radial_build_model = "2_layers_simple"  # Choose between "2_layers_simple"  , "1_layer_ideal" , "1_layer_realistic" , "1_layer_thick_realistic"
+Radial_build_model = "simple"  # Choose between "academic" , "simple" , "realistic"
 
 #%% Benchmark
 
