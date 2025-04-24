@@ -29,6 +29,7 @@ Atomic_mass  = 2.5  # average atomic mass in AMU
 # Plasma stability
 betaN = 2.8  # in % (Beta Tryon limit)
 q = 2.5 # Security factor limit
+H = 1 # H factor
 
 # Density and Temperature parameters
 Tbar_init  = 14 # keV Mean Temperature
@@ -45,33 +46,34 @@ ITERPI = 20 # ITER plasma induction current [Wb]
 Flux_CS_Utile = 0.95 #0.85 # pourcentage disponible, laissant une partie libre pour le controle du plasma , arbitrairement à 0.85, la litterature propose plusieurs values allant de 0.85 à 1
 
 # Geometric parameters
-κ = 1.8  # elongation
+κ = 2.1  # elongation
 δ = 0.5 # Triangularity
 b = 1.2 # BB+1rst Wall+N shields+ Gaps
 
 # Engineer constraints
 σ_TF = 660.E6   # Mechanical limit of the steel considered in [Pa]
-σ_CS = 660.E6   # CS machanical limit [Pa] 
+σ_CS = 660.E6   # CS machanical limit [Pa]
 J_max_TF_conducteur = 50.E6       # A/m² from ITER values
 J_max_CS_conducteur = 50.E6       # A/m² from ITER values
 eta_RF = 0.5  # conversion efficiency from wall power to klystron
 f_RP   = 0.8  # fraction of klystron power absorbed by plasma
 eta_T = 0.4    # Ratio between thermal and electrical power
-F_CClamp = 0 # Typical value if considered, of 60e6 from [Bachmann (2023) FED]
+F_CClamp = 0e6 # C-Clamp limit in N , max order of magnitude from DDD : 30e6 N and of 60e6 N from [Bachmann (2023) FED] 
+gamma_TF = 1/2       # fraction d'acier pouvant soutenir les efforts suivant r 
+gamma_CS = 1/2
+# (peut être vu comme un facteur de concentration de contrainte dépendant de la géométrie du CICC)
+beta_TF = 1/2     # fraction de la tension aloué au WP
+# valeur ITER, cf DDD TF p.97
 
 # Parameterization
-H = 1.0 # H factor
-valeur_cible_Q = 50
+valeur_cible_Q = 30 # For cost evaluation
 Choice_Buck_Wedg = 'Wedging' # Wedging or Bucking
-Choice_solving_CS_method = "brentq" # CS solving method between root, brentz , manual and fsolve
+Choice_solving_CS_method = "brentq" # CS solving method between root, brentq , manual and fsolve
 Option_Kappa = 'Wenninger' # Choose between Stambaugh, Freidberg or Wenninger
 L_H_Scaling_choice = 'New_Ip' # 'Martin' , 'New_S', 'New_Ip'
-Q_convergence_choice = 'Fast' #'Fast' or 'Slow'
-Radial_build_model = "simple"  # Choose between "academic" , "simple" , "realistic"
+Radial_build_model = "complex"  # Choose between "academic" , "simple" , "complex"
 
 #%% Benchmark
-
-
 
 #%% Scaling Law
 
