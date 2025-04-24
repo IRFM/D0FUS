@@ -91,14 +91,19 @@ def calcul(a, R0, Bmax, P_fus, Tbar):
     
     if Radial_build_model == "academic" :
         
-        (c, Winding_pack_tension_ratio) = f_TF_academic(a, b, R0, B0_solution, σ_TF, μ0, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg)
-        (d,Alpha,B_CS) = f_CS_academic_convergence(a, b, c, R0, B0_solution, σ_CS, μ0, J_max_CS_conducteur, Choice_Buck_Wedg, Tbar, nbar_solution, Ip_solution, Ib_solution)
+        (c, Winding_pack_tension_ratio) = f_TF_academic(a, b, R0, σ_TF, μ0, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg)
+        (d,Alpha,B_CS) = f_CS_academic_convergence(a, b, c, R0, Bmax, σ_CS, μ0, J_max_CS_conducteur, Choice_Buck_Wedg, Tbar, nbar_solution, Ip_solution, Ib_solution)
             
     elif Radial_build_model == "simple" :
         
-        (c, Winding_pack_tension_ratio) = f_TF_simple(a, b, R0, B0_solution, σ_TF, μ0, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg)
-        (d,Alpha,B_CS) = f_CS_simple_convergence(a, b, c, R0, B0_solution, σ_CS, μ0, J_max_CS_conducteur, Choice_Buck_Wedg, Tbar, nbar_solution, Ip_solution, Ib_solution)
+        (c, Winding_pack_tension_ratio) = f_TF_simple(a, b, R0, σ_TF, μ0, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg)
+        (d,Alpha,B_CS) = f_CS_simple_convergence(a, b, c, R0, Bmax, σ_CS, μ0, J_max_CS_conducteur, Choice_Buck_Wedg, Tbar, nbar_solution, Ip_solution, Ib_solution)
     
+    elif Radial_build_model == "complex" :
+
+        (c, Winding_pack_tension_ratio) = Winding_Pack_complex(R0, a, b, σ_TF, J_max_TF_conducteur, μ0, Bmax, gamma_TF, beta_TF)
+        (d,Alpha,B_CS) = f_CS_complex_convergence(a, b, c, R0, Bmax, σ_CS, μ0, J_max_CS_conducteur, Choice_Buck_Wedg, Tbar, nbar_solution, Ip_solution, Ib_solution, gamma_CS)
+
     #elif Radial_build_model == "realistic" :
     else :
         print('Choose a valid mechanical model')
@@ -114,9 +119,9 @@ if __name__ == "__main__":
     # Appeler la fonction de calcul
     # Benchmark
     R0 = 6
-    a = 1.5
-    Pfus = 2000
-    Bmax = 20
+    a = 2
+    Pfus = 1000
+    Bmax = 12
     b = 1.2
     Tbar = 14
     # End Benchmark parameters
