@@ -32,15 +32,15 @@ else:
 #%% a and R0 scan
 # 2D matrix calculation
 
-def R0_a_scan(Bmax, P_fus, κ, δ, Tbar_init):
+def R0_a_scan(Bmax, P_fus, δ, Tbar_init):
     
-    a_min = 0
+    a_min = 0.5
     a_max = 3
     a_step = 0.1
     a_values = np.arange(a_min,a_max,a_step)
-    R0_min = 0
+    R0_min = 1.5
     R0_max = 9
-    R0_step = 0.2
+    R0_step = 0.25
     R0_values = np.arange(R0_min,R0_max,R0_step)
      
     # Matrix creations
@@ -83,14 +83,24 @@ def R0_a_scan(Bmax, P_fus, κ, δ, Tbar_init):
         for a in a_values :
             
             # Main calcul
-            (B0_solution, B_CS, tauE_solution, Q_solution, Ip_solution, n_solution,
-            beta_solution, qstar_solution, q95_solution, nG_solution, 
-            P_CD, P_sep, P_Thresh, cost, heat, Gamma_n, f_alpha_solution, TF_ratio,
-            R0_a_solution, R0_a_b_solution, R0_a_b_c_solution, R0_a_b_c_d_solution) = calcul(a, R0, Bmax, P_fus, Tbar_init)
+            (B0_solution, B_CS, B_pol_solution,
+            tauE_solution,
+            Q_solution,
+            Ip_solution, Ib_solution,
+            n_solution, nG_solution,
+            betaN_solution, betaT_solution, betaP_solution,
+            qstar_solution, q95_solution, 
+            P_CD, P_sep, P_Thresh, eta_CD,
+            cost,
+            heat, heat_par_solution, heat_pol_solution, lambda_q_Eich_m, q_target_Eich,
+            Gamma_n,
+            f_alpha_solution,
+            J_max_TF_conducteur, J_max_CS_conducteur,
+            TF_ratio, R0_a_solution, R0_a_b_solution, R0_a_b_c_solution, R0_a_b_c_d_solution, κ) = calcul(a, R0, Bmax, P_fus, Tbar_init)
             
             # Verifier les conditions
             n_condition = n_solution / nG_solution
-            beta_condition = beta_solution / betaN
+            beta_condition = betaN_solution / betaN
             q_condition = q / qstar_solution
             
             max_limit = max(n_condition, beta_condition, q_condition)
@@ -133,7 +143,7 @@ def R0_a_scan(Bmax, P_fus, κ, δ, Tbar_init):
             # Details
             Ip_matrix[y,x] = Ip_solution
             n_matrix[y,x] = n_solution
-            beta_matrix[y,x] = beta_solution
+            beta_matrix[y,x] = betaN_solution
             q95_matrix[y,x] = q95_solution
             B0_matrix[y,x] = B0_solution
             BCS_matrix[y,x] = B_CS
@@ -153,9 +163,10 @@ def R0_a_scan(Bmax, P_fus, κ, δ, Tbar_init):
             
         x = x+1
         
-    taille_police_topological_map = 15
-    taille_police_background_map = 15
-    taille_police_legende = 15
+    taille_police_topological_map = 20 # typical value of 15, for prensentation : 20
+    taille_police_background_map = 20 # typical value of 15, for prensentation : 20
+    taille_police_subtitle = 15
+    taille_police_legende = 20 # typical value of 15, for prensentation : 20
     taille_police_other = 15
     taille_titre = 22
     plt.rcParams.update({'font.size': taille_police_other})
@@ -211,9 +222,9 @@ def R0_a_scan(Bmax, P_fus, κ, δ, Tbar_init):
     chosen_topologic = input("Choose the background parameter (Heat, Cost, Q, Gamma_n, L_H, Alpha, TF): ")
     
     # Créer une figure et un axe principal
-    fig, ax = plt.subplots(figsize=(10, 12))
-    svg = f"Bmax={Bmax}_Pfus={P_fus}_scaling_law={law}_Elongation={κ}_Triangularity={δ}_Hfactor={H}_Meca={Choice_Buck_Wedg}_"
-    plt.title(f"$B_{{\mathrm{{max}}}}$ = {Bmax} [T], $P_{{\mathrm{{fus}}}}$ = {P_fus} [MW], scaling law : {law}",fontsize=taille_police_legende)
+    fig, ax = plt.subplots(figsize=(10, 13))
+    svg = f"Bmax={Bmax}_Pfus={P_fus}_scaling_law={law}_Triangularity={δ}_Hfactor={H}_Meca={Choice_Buck_Wedg}_"
+    plt.title(f"$B_{{\mathrm{{max}}}}$ = {Bmax} [T], $P_{{\mathrm{{fus}}}}$ = {P_fus} [MW], scaling law : {law}",fontsize=taille_police_subtitle)
     title_parameter = '$\mathbf{R_{0}}$'
     plt.suptitle(f"Parameter space : a , {title_parameter}", fontsize=taille_titre,y=0.94, fontweight='bold')
 
@@ -235,24 +246,24 @@ def R0_a_scan(Bmax, P_fus, κ, δ, Tbar_init):
     grey_dashed_line = mlines.Line2D([], [], color='#555555', linestyle='dashed', label='Plasma stability boundary')
 
     # Personnaliser les axes et le titre
-    plt.xlabel('$R_0$ [m]')
-    plt.ylabel('a [m]')
+    plt.xlabel('$R_0$ [m]', fontsize = taille_police_legende)
+    plt.ylabel('a [m]', fontsize = taille_police_legende)
 
     ### Color Bars
 
     # Créer un axe supplémentaire en dessous de l'axe principal pour les colorbars
     divider = make_axes_locatable(ax)
-    cax1 = divider.append_axes("bottom", size="5%", pad=0.9)
+    cax1 = divider.append_axes("bottom", size="5%", pad=1)
     cax2 = divider.append_axes("bottom", size="5%", pad=0.1, sharex=cax1)
     cax3 = divider.append_axes("bottom", size="5%", pad=0.1, sharex=cax1)
-
+    
     # Ajouter des annotations textuelles à côté des colorbars
-    cax1.annotate('n/$n_{\mathrm{G}}$', xy=(-0.01, 0.5), xycoords='axes fraction', ha='right', va='center', fontsize=taille_police_legende)
-    cax2.annotate(r'$\beta$/$\beta_{T}}$', xy=(-0.01, 0.5), xycoords='axes fraction', ha='right', va='center', fontsize=taille_police_legende)
-    cax3.annotate('$q_{\mathrm{K}}$/$q_{\mathrm{*}}$', xy=(-0.01, 0.5), xycoords='axes fraction', ha='right', va='center', fontsize=taille_police_legende)
-
+    cax1.annotate('n/$n_{\mathrm{G}}$', xy=(-0.01, 0.5), xycoords='axes fraction', ha='right', va='center', fontsize=taille_police_other)
+    cax2.annotate(r'$\beta$/$\beta_{T}}$', xy=(-0.01, 0.5), xycoords='axes fraction', ha='right', va='center', fontsize=taille_police_other)
+    cax3.annotate('$q_{\mathrm{K}}$/$q_{\mathrm{*}}$', xy=(-0.01, 0.5), xycoords='axes fraction', ha='right', va='center', fontsize=taille_police_other)
+    
     # Créer les colorbars avec les orientations désirées
-    cbar_density = plt.colorbar(im_density, cax=cax1,orientation='horizontal')
+    cbar_density = plt.colorbar(im_density, cax=cax1, orientation='horizontal')
     tick_labels = cbar_density.ax.xaxis.get_ticklabels()
     tick_labels[-1].set_visible(False)
     cbar_beta = plt.colorbar(im_beta, cax=cax2, orientation='horizontal')
@@ -260,19 +271,23 @@ def R0_a_scan(Bmax, P_fus, κ, δ, Tbar_init):
     tick_labels[-1].set_visible(False)
     cbar_security = plt.colorbar(im_security, cax=cax3, orientation='horizontal')
     tick_labels = cbar_security.ax.xaxis.get_ticklabels()
+    
+    # Ajouter les traits en pointillé à la valeur 1 pour chaque color bar
+    for cax in [cax1, cax2, cax3]:
+        cax.axvline(x=1, color='#333333', linestyle='--', linewidth=1, dashes=(5, 3))
 
     ### Definition des axes
 
     # Axe y (a_values)
-    y_indices = np.arange(0, len(a_values), 4)  # Sélectionner les indices des ticks
-    ax.set_yticks(y_indices)  # Positions
-    ax.set_yticklabels(np.round((a_max+a_min)-a_values[y_indices],2)) # Etiquettes
-
+    y_indices = np.arange(0, len(a_values), int(0.5/a_step)) # Sélectionner les indices
+    ax.set_yticks(y_indices) # Positions
+    ax.set_yticklabels(np.round((a_max+a_min)-a_values[y_indices],2), fontsize = taille_police_legende) # Etiquettes
+    
     # Axe x (R0_values)
-    x_indices = np.arange(0, len(R0_values), 5)  # Sélectionner les indices
-    ax.set_xticks(x_indices)  # Positions
-    x_labels = [round(R0_values[i],2) for i in x_indices]  # Arrondir chaque valeur à une decimale
-    ax.set_xticklabels(x_labels, rotation=45, ha='right')  # Etiquettes
+    x_indices = np.arange(0, len(R0_values), int(1/R0_step)) # Sélectionner les indices
+    ax.set_xticks(x_indices) # Positions
+    x_labels = [round(R0_values[i],2) for i in x_indices] # Arrondir chaque valeur à une decimale
+    ax.set_xticklabels(x_labels, rotation=45, ha='right', fontsize = taille_police_legende)
 
     ### Ajouter des contours
 
@@ -315,15 +330,15 @@ def R0_a_scan(Bmax, P_fus, κ, δ, Tbar_init):
         ax.clabel(contour_lines, inline=True, fmt='%.1f', fontsize=taille_police_topological_map)
         grey_line = mlines.Line2D([], [], color='#555555', label='$B_{CS}$ [T]')
     elif chosen_isocontour == 'c':
-        contour_lines = ax.contour(inverted_c_matrix_mask, levels=np.arange(0, 10 ,0.05), colors='#555555')
+        contour_lines = ax.contour(inverted_c_matrix_mask, levels=np.arange(0, 10 ,0.1), colors='#555555')
         ax.clabel(contour_lines, inline=True, fmt='%.2f', fontsize=taille_police_topological_map)
         grey_line = mlines.Line2D([], [], color='#555555', label='$TF$ width [m]')
     elif chosen_isocontour == 'd':
-        contour_lines = ax.contour(inverted_d_matrix_mask, levels=np.arange(0, 10 ,0.05), colors='#555555')
+        contour_lines = ax.contour(inverted_d_matrix_mask, levels=np.arange(0, 10 ,0.1), colors='#555555')
         ax.clabel(contour_lines, inline=True, fmt='%.2f', fontsize=taille_police_topological_map)
         grey_line = mlines.Line2D([], [], color='#555555', label='$CS$ width [m]')
     elif chosen_isocontour == 'c&d':
-        contour_lines = ax.contour(inverted_c_d_matrix_mask, levels=np.arange(0, 10 ,0.05), colors='#555555')
+        contour_lines = ax.contour(inverted_c_d_matrix_mask, levels=np.arange(0, 10 ,0.1), colors='#555555')
         ax.clabel(contour_lines, inline=True, fmt='%.2f', fontsize=taille_police_topological_map)
         grey_line = mlines.Line2D([], [], color='#555555', label='CS + TF width [m]')
     else:
@@ -381,9 +396,8 @@ def R0_a_scan(Bmax, P_fus, κ, δ, Tbar_init):
     plt.rcdefaults()
         
 if __name__ == "__main__":
-    # Best individual from genetic algorithm: [0.5909985466545535, 5.987959172778427, 11.346385941918145, 34.22664020500923, 1.6192373666347222]
     Bmax = 12
     P_fus = 2000
-    R0_a_scan(Bmax,P_fus,κ,δ, Tbar_init)
+    R0_a_scan(Bmax,P_fus,δ, Tbar_init)
         
         
