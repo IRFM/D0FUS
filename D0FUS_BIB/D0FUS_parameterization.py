@@ -13,65 +13,138 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'D0FUS_BIB'))
 
 #%% Definition of constants
 
+# Parameterization
+Choice_Buck_Wedg = 'Bucking'        # Wedging or Bucking
+Choice_solving_CS_method = "brentq" # CS solving method : default = "brentq" or "manual" for debuging
+Option_Kappa = 'Wenninger'          # Choose between Stambaugh, Freidberg , Wenninger or Manual
+L_H_Scaling_choice = 'New_Ip'       # 'Martin' , 'New_S', 'New_Ip'
+Radial_build_model = 'D0FUS'        # Choose between "academic" , "D0FUS" , "CIRCEE"
+Supra_choice = 'HTS'             # Choose between 'Manual' , 'HTS' or 'LTS'
+
 # Physical constants
 E_ELEM  = 1.6e-19           # Electron charge [Coulomb]
 M_E     = 9.1094E-31        # kg
 M_I     = 2 * 1.6726E-27    # kg
-μ0    = 4.*np.pi*1.E-7    # Henri/m
+μ0    = 4.*np.pi*1.E-7      # Henri/m
 EPS_0   = 8.8542E-12        # Farad/m
 
 # Fusion constants
 E_ALPHA = 3.5 *1.E6*E_ELEM  # Joule
 E_N     = 14.1*1.E6*E_ELEM  # Joule
 E_F     = 22.4*1.E6*E_ELEM  # Joule (considering all N react with Li)
-Atomic_mass  = 2.5  # average atomic mass in AMU
+Atomic_mass  = 2.5          # average atomic mass in AMU
 
 # Plasma stability
-betaN = 2.8  # in % (Beta Tryon limit)
-q = 2.5 # Security factor limit
-H = 1 # H factor
+betaN = 2.8  # Beta Tryon limit
+q = 2.5      # Security factor limit
+H = 1        # H factor
 
 # Density and Temperature parameters
-Tbar_init  = 14 # keV Mean Temperature
-nu_n  = 0.1  # Density profile parameter
-nu_T  = 1. # Temperature profile parameter
-C_Alpha = 5 # Helium dilution tuning parameter
+Tbar_init  = 14 # Mean Temperature keV
+nu_n  = 0.1     # Density profile parameter
+nu_T  = 1       # Temperature profile parameter
+C_Alpha = 5     # Helium dilution tuning parameter
 
 # Flux consumptions assumtions
-Gap = 0.1 # Gap between wedging and bucking CS and TF
-Ce = 0.45 # Ejima constants
-Temps_Plateau = 0 # Plateautime [?]
-Li = 0.85 # Internal inductance of the plasma
-ITERPI = 20 # ITER plasma induction current [Wb]
-Flux_CS_Utile = 0.95 #0.85 # pourcentage disponible, laissant une partie libre pour le controle du plasma , arbitrairement à 0.85, la litterature propose plusieurs values allant de 0.85 à 1
+Ce = 0.45            # Ejima constants
+Temps_Plateau = 0    # Plateau time
+Li = 0.85            # Internal inductance of the plasma -> To be replaced with proper model
+ITERPI = 20          # ITER plasma induction current [Wb]
 
 # Geometric parameters
-κ = 2.1  # elongation
-δ = 0.5 # Triangularity
-b = 1.2 # BB+1rst Wall+N shields+ Gaps
+δ = 0.5  # Triangularity
+b = 1.2  # BB+1rst Wall+N shields+ Gaps
+
+# Engineer constraints TF
+σ_TF = 660.E6        # Mechanical limit of the steel considered in [Pa]
+F_CClamp = 0e6       # C-Clamp limit in N , max order of magnitude from DDD : 30e6 N and of 60e6 N from [Bachmann (2023) FED]
+gamma_TF = 1/2       # fraction d'acier pouvant soutenir les efforts suivant l'axe considéré (r ou theta) = facteur de concentration de contrainte dépendant de la géométrie du CICC
+if Choice_Buck_Wedg == "Wedging" :
+    beta_TF = 1/2        # fraction de la tension aloué au WP (valeur fixe prise à partir de ITER: DDD TF p.97)
+elif Choice_Buck_Wedg == "Bucking" :
+    beta_TF = 1          # fraction de la tension aloué au WP , en bucking = 1
+coef_inboard_tension = 1/2 # Facteur de répartition de la tension entre jambe interne et externe
+
+# Engineer constraints CS
+Gap = 0.1            # Gap between wedging and bucking CS and TF [m]
+σ_CS = 660.E6        # CS machanical limit [Pa]
+gamma_CS = 1/2       # fraction d'acier pouvant soutenir les efforts suivant l'axe considéré (r ou theta) = facteur de concentration de contrainte dépendant de la géométrie du CICC
 
 # Engineer constraints
-σ_TF = 660.E6   # Mechanical limit of the steel considered in [Pa]
-σ_CS = 660.E6   # CS machanical limit [Pa]
-J_max_TF_conducteur = 50.E6       # A/m² from ITER values
-J_max_CS_conducteur = 50.E6       # A/m² from ITER values
-eta_RF = 0.5  # conversion efficiency from wall power to klystron
-f_RP   = 0.8  # fraction of klystron power absorbed by plasma
-eta_T = 0.4    # Ratio between thermal and electrical power
-F_CClamp = 0e6 # C-Clamp limit in N , max order of magnitude from DDD : 30e6 N and of 60e6 N from [Bachmann (2023) FED] 
-gamma_TF = 1/2       # fraction d'acier pouvant soutenir les efforts suivant r 
-gamma_CS = 1/2
-# (peut être vu comme un facteur de concentration de contrainte dépendant de la géométrie du CICC)
-beta_TF = 1/2     # fraction de la tension aloué au WP
-# valeur ITER, cf DDD TF p.97
+eta_RF = 0.5         # conversion efficiency from wall power to klystron
+f_RP   = 0.8         # fraction of klystron power absorbed by plasma
+eta_T = 0.4          # Ratio between thermal and electrical power
+theta_deg = 2.7      # Angle d'incidence sur les PFU pour calcul du flux de chaleur
+# Source 1: T. R. Reiter, “Basic Fusion Boundary Plasma Physics,” ITER School Lecture Notes, Jan. 21 2019
+# Source 2: “SOLPS-ITER simulations of the ITER divertor with improved plasma conditions,” Journal of Nuclear Materials (2024)
 
-# Parameterization
-valeur_cible_Q = 30 # For cost evaluation
-Choice_Buck_Wedg = 'Wedging' # Wedging or Bucking
-Choice_solving_CS_method = "brentq" # CS solving method between root, brentq , manual and fsolve
-Option_Kappa = 'Wenninger' # Choose between Stambaugh, Freidberg or Wenninger
-L_H_Scaling_choice = 'New_Ip' # 'Martin' , 'New_S', 'New_Ip'
-Radial_build_model = "complex"  # Choose between "academic" , "simple" , "complex"
+#%% Current density scaling
+
+T_helium = 4.2 #○ K temeprature de l'helium considéré
+Marge_T_Helium = 0.3 # Puisque l'helium est à 10 barre, il est poussé à 0.3 K au dessus de la consigne
+
+if Supra_choice == "LTS"  :
+
+    # Nb3Sn TFEU4 parameters LTS
+    Nb3Sn_PARAMS = {
+        'Ca1': 44.48,
+        'Ca2': 0.0,
+        'Eps0a': 0.00256,
+        'Epsm': -0.00049,
+        'Bc2m': 32.97,
+        'Tcm': 16.06,
+        'C1': 19922.0,
+        'p': 0.63,
+        'q': 2.1,
+        'dbrin': 0.82e-3,
+        'CuNCu': 1.01,
+    }
+    
+    # tipical Déformation
+    Eps = -0.6 / 100
+    Marge_T_LTS = 1 #K
+    
+elif Supra_choice == "HTS"  :
+
+    # Paramètres par défaut pour REBCO (CERN 2014)
+    REBCO_PARAMS = {
+        'trebco': 1.5e-6,   # épaisseur de la couche supraconductrice [m]
+        'w': 4e-3,          # largeur du ruban [m]
+        'Tc0': 93.0,        # température critique zéro champ [K]
+        'n': 1.0,
+        'Bi0c': 140.0,      # [T]
+        'Alfc': 1.41e12,    # [A/m^2]
+        'pc': 0.313,
+        'qc': 0.867,
+        'gamc': 3.09,
+        'Bi0ab': 250.0,     # [T]
+        'Alfab': 83.8e12,   # [A/m^2]
+        'pab': 1.023,
+        'qab': 4.45,
+        'gamab': 4.73,
+        'n1': 1.77,
+        'n2': 4.1,
+        'a': 0.1,
+        'Nu': 0.857,
+        'g0': -0.0056,
+        'g1': 0.0944,
+        'g2': -0.0008,
+        'g3': 0.00388,
+    }
+    
+    # HTS orientation (pessimistic one)
+    Tet = 0
+    Marge_T_HTS = 5 #K
+    
+elif Supra_choice == "Manual"  :
+    
+    J_max_CS_conducteur_manual = 50.E6       # A/m² from ITER values
+    
+    J_max_TF_conducteur_manual = 50.E6       # A/m² from ITER values
+    
+else :
+    print("Please choose a proper superconductor")
+    
 
 #%% Benchmark
 
@@ -210,55 +283,6 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 # save_directory = "Graphs"
 save_directory = "C:/Users/TA276941/Desktop/D0Fus/Graphs/Données brutes/"
 os.makedirs(save_directory, exist_ok=True)
-
-def initialize_lists():
-    # Initialize lists to store the results
-    a_solutions = []
-    nG_solutions = []
-    n_solutions = []
-    beta_solutions = []
-    qstar_solutions = []
-    fB_solutions = []
-    fNC_solutions = []
-    cost_solutions = []
-    heat_solutions = []
-    c_solutions = []
-    sol_solutions = []
-    R0_a_solutions = []
-    R0_a_b_solutions = []
-    R0_a_b_c_solutions = []
-    R0_a_b_c_CS_solutions = []
-    required_BCSs = []
-    R0_solutions = []
-    Ip_solutions = []
-    fRF_solutions = []
-    P_W_solutions = []
-    
-    return (
-        a_solutions, 
-        nG_solutions, 
-        n_solutions, 
-        beta_solutions, 
-        qstar_solutions, 
-        fB_solutions, 
-        fNC_solutions, 
-        cost_solutions, 
-        heat_solutions, 
-        c_solutions, 
-        sol_solutions,
-        R0_a_solutions,
-        R0_a_b_solutions,
-        R0_a_b_c_solutions,
-        R0_a_b_c_CS_solutions,
-        required_BCSs,
-        R0_solutions,
-        Ip_solutions,
-        fRF_solutions,
-        P_W_solutions
-    )
-
-# Utilisation de la fonction pour initialiser les listes
-(a_solutions, nG_solutions, n_solutions, beta_solutions,  qstar_solutions, fB_solutions, fNC_solutions, cost_solutions, heat_solutions, c_solutions, sol_solutions,R0_a_solutions,R0_a_b_solutions,R0_a_b_c_solutions,R0_a_b_c_CS_solutions,required_BCSs,R0_solutions,Ip_solutions,fRF_solutions,P_W_solutions) = initialize_lists()
 
 #%%
 
