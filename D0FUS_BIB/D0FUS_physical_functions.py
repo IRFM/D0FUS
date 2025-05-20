@@ -41,6 +41,9 @@ def f_Kappa(A,Option_Kappa):
     elif Option_Kappa == 'Wenninger':
         ms = 0.2
         κ = 1.12*((18.84-0.87*A-np.sqrt(4.84*A**2-28.77*A+52.52+14.74*ms))/7.37)
+    if Option_Kappa == 'Manual' :
+        κ = 2.1  # Elongation
+    
     return(κ)
 
 
@@ -193,27 +196,129 @@ def f_pbar(nu_n,nu_T,n_bar,Tbar,f_alpha):
     p_bar = (2-f_alpha)*((1+nu_T)*(1+nu_n)/(1+nu_n+nu_T))*(n_bar*1e20)*(Tbar*E_ELEM*1e3)/1e6
     return p_bar
 
-def f_beta(pbar,B0,a,Ip):
+def f_beta_T(pbar_MPa, B0):
     """
-    
-    Calculation of the normalized plasma beta
-    Normalized ratio of the plasma pressure and the magnetic pressure
-    Represent the 'efficiency' of the confinement
-    
+    Calculate the toroidal plasma beta.
+
+    The normalized ratio of the plasma pressure and the toroidal magnetic pressure,
+    representing the 'efficiency' of the toroidal confinement.
+
     Parameters
     ----------
-    pbar : Mean pressure [MPa]
-    B0 : The central magnetic field [T]
-    a : Minor radius [m]
-    Ip : Plasma current [MA]
-        
+    pbar_MPa : float
+        Volume‐averaged plasma pressure in MPa.
+    B0 : float
+        Central toroidal magnetic field in tesla [T].
+
     Returns
     -------
-    beta : The plasma beta
-    
+    beta_T : float
+        Toroidal beta (dimensionless).
     """
-    beta = 2*μ0*pbar*a/(B0*Ip/1e6) * 100. # in %
+    # Convert pressure from MPa to Pa
+    pbar = pbar_MPa * 1e6
+    
+    beta_T = 2 * μ0 * pbar / B0**2
+    
+    return beta_T
+
+
+def f_beta_P(a, κ, pbar_MPa, Ip_MA):
+    """
+    Calcule le beta poloidal à partir de la pression moyenne volumique (pbar).
+
+    Paramètres
+    ----------
+    a : float
+        Rayon mineur du plasma [m]
+    κ : float
+        Allongement du plasma (kappa)
+    pbar_MPa : float
+        Pression moyenne du plasma en MPa (Mégapascal)
+    Ip_MA : float
+        Courant plasma en MA (Mégaampères)
+
+    Retourne
+    --------
+    beta_P : float
+        Beta poloidal (sans dimension)
+
+    Remarque
+    --------
+    Le champ magnétique poloïdal moyen B_pol n'est pas explicitement entré,
+    mais estimé indirectement via la loi d'Ampère :
+
+        B_pol ≈ μ₀ * I_p / L
+
+    avec L une longueur caractéristique représentant un périmètre effectif
+    de la section transversale du plasma. Cette approximation permet de relier
+    le confinement magnétique au courant plasma sans résoudre l'équilibre MHD.
+    """
+
+    # Conversion des unités
+    pbar_SI = pbar_MPa * 1e6  # MPa → Pa (N/m²)
+    Ip_SI = Ip_MA * 1e6       # MA → A
+
+    # Longueur caractéristique du périmètre (approx. ellipse)
+    L = np.pi * np.sqrt(2 * (a**2 + (κ * a)**2))
+
+    # Formule de beta poloidal
+    beta_P = (2 * L**2 * pbar_SI) / (μ0 * Ip_SI**2)
+
+    return beta_P
+
+def f_beta(beta_P, beta_T):
+    """
+    Calculate the total-field plasma beta via harmonic mean.
+
+    Only valid if B0^2 = B_T^2 + B_P^2, i.e., when combining orthogonal toroidal
+    and poloidal field contributions to the total magnetic pressure.
+
+    Parameters
+    ----------
+    beta_P : float
+        Poloidal beta (dimensionless).
+    beta_T : float
+        Toroidal beta (dimensionless).
+
+    Returns
+    -------
+    beta : float
+        Total-field beta (dimensionless).
+    """
+    beta = 1.0 / ((1.0 / beta_P) + (1.0 / beta_T))
+    
     return beta
+
+
+def f_beta_N(beta, a, B0, Ip_MA):
+    """
+    Calculate the normalized plasma beta.
+
+    The beta normalized to plasma geometry and current, often quoted in percent.
+
+    Parameters
+    ----------
+    beta : float
+        Total-field beta (dimensionless).
+    a : float
+        Plasma minor radius in meters [m].
+    B0 : float
+        Reference magnetic field in tesla [T].
+    Ip_MA : float
+        Plasma current in mega‐amperes [MA].
+
+    Returns
+    -------
+    beta_N : float
+        Normalized beta in percent [%].
+    """
+    # Convert plasma current from MA to A
+    
+    beta_N = beta * a * B0 / Ip_MA * 100
+    
+    return beta_N
+
 
 def f_Gamma_n(a, P_fus, R0, κ):
     """
@@ -299,17 +404,32 @@ def f_cost(a,b,c,d,R0,κ,Q):
     V_BB = 2*(b*2*np.pi*((R0+a+b)**2-(R0-a-b)**2))+(4*κ*a*np.pi)*((R0-a)**2+(R0+a+b)**2-(R0-a-b)**2-(R0+a)**2) # Cylindrical BB model
     V_TF = 8*np.pi*(R0-a-b-(c/2))*c*((κ+1)*a+(2*b)+c) # Rectangular TF model coil
     V_CS = 2*np.pi*((R0-a-b-c)**2-(R0-a-b-c-d)**2)*(2*(a*κ+b+c)) # h approx to 2*(a*κ+b+c) and cylindrical model
-    cost = (V_BB+V_TF+V_CS)/Q
+    
+    cost = (V_BB+V_TF+V_CS) / Q
     return cost
 
-def f_heat(B0,R0,P_fus):
+def f_P_sep(P_fus, P_CD):
+    """
+    Calculate the separatrix power (P_sep) based on the given fusion power (P_fus),
+    current drive power (P_CD), alpha particle energy (E_ALPHA), and neutron energy (E_N).
+
+    Parameters:
+    P_fus (float): Fusion power in megawatts (MW).
+    P_CD (float): Current drive power in megawatts (MW).
+    E_ALPHA (float): Energy of alpha particles in megaelectronvolts (MeV).
+    E_N (float): Energy of neutrons in megaelectronvolts (MeV).
+
+    Returns:
+    float: Separator power (P_sep) in megawatts (MW).
+    """
+    P_sep = P_CD + (P_fus * E_ALPHA / (E_ALPHA + E_N))
+    
+    return P_sep
+
+def f_heat_D0FUS(R0,P_sep):
     """
     
-    Calculation of the heat parameter
-    For now it is just the Alpha power divided by the length of the separatrix 
-    One can also choos to pultiply by lambda_q to approximate the surface deposition
-    But current scallings as the Martin one seems inaccurate on vast scans
-    To see as an indicator to compare designs
+    Calculation of the heat parameter (robust version)
     
     Parameters
     ----------
@@ -322,8 +442,112 @@ def f_heat(B0,R0,P_fus):
     heat : heat parameter [MW/m]
     
     """
-    heat = (E_ALPHA*P_fus)/(E_ALPHA+E_N)/2*np.pi*R0
+    heat = P_sep / R0
+    
     return heat
+
+def f_heat_par(R0,B0,P_sep):
+    """
+    
+    Calculation of the parralel heat parameter as defined in Freidberg paper
+    
+    Parameters
+    ----------
+    B0 : The central magnetic field [T]
+    R0 : Major radius [m]
+    P_fus : The Fusion power [MW]
+        
+    Returns
+    -------
+    heat : heat parameter [MW/m]
+    
+    """
+    heat =  P_sep * B0 / R0
+    return heat
+
+def f_heat_pol(R0,B0,P_sep,a,q95):
+    """
+    
+    Calculation of the poloidal heat parameter as defined in Siccinion 2019
+    
+    Parameters
+    ----------
+    B0 : The central magnetic field [T]
+    R0 : Major radius [m]
+    P_fus : The Fusion power [MW]
+        
+    Returns
+    -------
+    heat : heat parameter [MW/m]
+    
+    """
+    A = R0 / a
+    heat =  (P_sep * B0) / (q95 * R0 * A * R0) 
+    return heat
+
+def f_Bpol(q95, B_tor, a, R):
+    """
+    Calcule le champ magnétique poloidal B_pol à partir du facteur de sécurité q95.
+
+    Relation approximative (Wesson 2004):
+      q95 = (a * B_tor) / (R * B_pol)
+    donc
+      B_pol = (a * B_tor) / (R * q95)
+
+    Paramètres :
+      q95   : facteur de sécurité au bord
+      B_tor : champ magnétique toroidal à l'axe médian (T)
+      a     : rayon mineur du plasma (m)
+      R     : rayon majeur du tokamak (m)
+
+    Retour :
+      B_pol : champ magnétique poloidal (T)
+    """
+    B_pol = (a * B_tor) / (R * q95)
+    
+    return B_pol
+
+
+def f_heat_PFU_Eich(
+    P_sol,          # Puissance franchissant la séparatrice (en MW)
+    B_pol,          # Champ poloidal à l’axe médian (en T)
+    R,              # Rayon majeur (en m)
+    eps,            # Aspect ratio inverse (a/R)
+    theta_deg       # Angle d’incidence sur le PFU (en degrés)
+):
+    """
+    Calcule à partir du scaling de Eich :
+      - lambda_q (m) : largeur de décroissance de la puissance SOL
+      - q_parallel0   (MW/m²) : pic de flux parallèle
+      - q_target      (MW/m²) : flux sur la PFU (incidence theta)
+
+    Scaling de Eich (Eich+2013) :
+      lambda_q [mm] = 1.35 * R^0.04 * B_pol^(-0.92) * eps^0.42 * P_sol^(-0.02)
+
+    Formules :
+      lambda_q_m   = lambda_q_mm * 1e-3
+      q_parallel0  = (P_sol) / (2 * np.pi * R * lambda_q_m)
+      q_target     = q_parallel0 * np.sin(theta)
+
+    Remarque :
+      On travaille en MW pour P_sol et on renvoie directement q en MW/m².
+
+    Retours :
+      lambda_q_m, q_parallel0, q_target
+    """
+    # conversion de l'angle en radians
+    theta = np.deg2rad(theta_deg)
+
+    # calcul de lambda_q en mm puis m
+    lambda_q_mm = 1.35 * R**0.04 * B_pol**(-0.92) * eps**0.42 * P_sol**(-0.02)
+    lambda_q_m = lambda_q_mm * 1e-3
+
+    # pic de flux parallèle en MW/m²
+    q_parallel0 = P_sol / (2 * np.pi * R * lambda_q_m)
+    # flux sur la PFU en MW/m²
+    q_target = q_parallel0 * np.sin(theta)
+
+    return lambda_q_m, q_parallel0, q_target
 
 def f_tauE(pbar,R0,a,κ,P_fus,Q):
     """
@@ -443,7 +667,7 @@ def f_etaCD(a, R0, B0, nbar, Tbar, nu_n, nu_T):
         
     Returns
     -------
-    eta_CD : Current drive efficienty [MA]
+    eta_CD : Current drive efficienty [MA/MW-m²]
     
     """
     rho_m = 0.8
@@ -556,6 +780,8 @@ def P_Thresh_Martin(n_bar, B0, a, R0, κ, Atomic_mass):
 
 # Test ITER :
 # P_Thresh_Martin(1, 5.3, 2, 6, 1.7, 2.5)
+# Test WEST :
+# print(P_Thresh_Martin(0.6, 3.7, 0.72, 2.4, 1.3, 2))
 
 def P_Thresh_New_S(n_bar, B0, a, R0, κ, Atomic_mass):
     """
@@ -596,6 +822,7 @@ def P_Thresh_New_S(n_bar, B0, a, R0, κ, Atomic_mass):
 
 # Test ITER :
 # P_Thresh_New_S(1, 5.3, 2, 6, 1.7, 2.5)
+# print(P_Thresh_New_S(0.6, 3.7, 0.72, 2.4, 1.3, 2))
 
 def P_Thresh_New_Ip(n_bar, B0, a, R0, κ, Ip, Atomic_mass):
     """
