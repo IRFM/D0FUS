@@ -43,6 +43,9 @@ def f_Kappa(A,Option_Kappa):
         κ = 1.12*((18.84-0.87*A-np.sqrt(4.84*A**2-28.77*A+52.52+14.74*ms))/7.37)
     if Option_Kappa == 'Manual' :
         κ = 2.1  # Elongation
+        
+    if κ <=0 :
+        κ = np.nan
     
     return(κ)
 
@@ -922,6 +925,47 @@ def f_He_fraction(n_bar,T_bar,tauE,C_Alpha):
 # Test
 # print(f"ITER Helium fraction: {round(f_He_fraction(1, 9, 3.1, 5),3)}") # ITER : ?%
 # print(f"EU-DEMO Helium fraction: {round(f_He_fraction(1.2, 12.5, 4.6, 5),3)}") # DEMO : 16%
+
+def f_surface_premiere_paroi(kappa, R0, a):
+    """
+    Calcule la surface de la première paroi dans un tokamak
+    à partir de l'élongation (kappa), du grand rayon (R0) et du petit rayon (a).
+    
+    Paramètres :
+    - kappa : élongation (sans unité)
+    - R0 : grand rayon en mètres
+    - a : petit rayon en mètres
+
+    Retour :
+    - Surface en mètres carrés (float)
+    """
+
+    # Approximation du périmètre de l'ellipse (section plasma) par Ramanujan
+    Pe = math.pi * a * (3 * (1 + kappa) - math.sqrt((3 + kappa) * (1 + 3 * kappa)))
+
+    # Surface de la première paroi
+    S = 2 * math.pi * R0 * Pe
+
+    return S
+
+def f_P_elec(P_fus, P_LH, eta_T, eta_RF):
+    """
+    Calcule la puissance électrique nette P_elec à partir de :
+      - P_fus : puissance de fusion (en MW, ou unité cohérente)
+      - P_LH  : puissance RF pour la drive du courant (Lower Hybrid)
+      - eta_T : rendement de conversion thermique (défaut 0.4)
+      - eta_RF: rendement klystron→plasma (défaut 0.4)
+
+    Formule :
+      P_elec = eta_T * P_fus - P_LH / eta_RF
+
+    Retour :
+      P_elec (même unité que P_fus et P_LH)
+    """
+    
+    P_elec = eta_T * P_fus - P_LH / eta_RF
+    
+    return P_elec
 
 #%%
 
