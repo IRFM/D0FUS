@@ -90,9 +90,10 @@ def R0_a_scan(Bmax, P_fus, δ, Tbar_init):
             n_solution, nG_solution,
             betaN_solution, betaT_solution, betaP_solution,
             qstar_solution, q95_solution, 
-            P_CD, P_sep, P_Thresh, eta_CD,
+            P_CD, P_sep, P_Thresh, eta_CD, P_elec_solution,
             cost,
             heat, heat_par_solution, heat_pol_solution, lambda_q_Eich_m, q_target_Eich,
+            P_1rst_wall_Hmod, P_1rst_wall_Lmod,
             Gamma_n,
             f_alpha_solution,
             J_max_TF_conducteur, J_max_CS_conducteur,
@@ -259,7 +260,7 @@ def R0_a_scan(Bmax, P_fus, δ, Tbar_init):
     
     # Ajouter des annotations textuelles à côté des colorbars
     cax1.annotate('n/$n_{\mathrm{G}}$', xy=(-0.01, 0.5), xycoords='axes fraction', ha='right', va='center', fontsize=taille_police_other)
-    cax2.annotate(r'$\beta$/$\beta_{T}}$', xy=(-0.01, 0.5), xycoords='axes fraction', ha='right', va='center', fontsize=taille_police_other)
+    cax2.annotate(r'$\beta$/$\beta_{T}$', xy=(-0.01, 0.5), xycoords='axes fraction', ha='right', va='center', fontsize=taille_police_other)
     cax3.annotate('$q_{\mathrm{K}}$/$q_{\mathrm{*}}$', xy=(-0.01, 0.5), xycoords='axes fraction', ha='right', va='center', fontsize=taille_police_other)
     
     # Créer les colorbars avec les orientations désirées
@@ -396,7 +397,7 @@ def R0_a_scan(Bmax, P_fus, δ, Tbar_init):
     plt.rcdefaults()
         
 if __name__ == "__main__":
-    Bmax = 12
+    Bmax = 20
     P_fus = 2000
     R0_a_scan(Bmax,P_fus,δ, Tbar_init)
         
