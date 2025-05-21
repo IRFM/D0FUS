@@ -14,7 +14,33 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'D0FUS_BIB'))
 
 #%% Main Function
 
-def calcul(a, R0, Bmax, P_fus, Tbar):
+def run( a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau, δ, b ,
+        Supra_choice, Chosen_Steel , Radial_build_model , Choice_Buck_Wedg , Option_Kappa , L_H_Scaling_choice):
+    
+    ########################################### Initialisation ###########################################
+    
+    # Steel
+    if Chosen_Steel == '316L':
+        σ_TF = 660.E6        # Mechanical limit of the steel considered in [Pa]
+        σ_CS = 660.E6        # CS machanical limit [Pa]
+    elif Chosen_Steel == 'NH50':
+        σ_TF = 1000.E6        # Mechanical limit of the steel considered in [Pa]
+        σ_CS = 1000.E6        # CS machanical limit [Pa]
+    elif Chosen_Steel == 'Manual':
+        σ_TF = 1000.E6        # Mechanical limit of the steel considered in [Pa]
+        σ_CS = 660.E6        # CS machanical limit [Pa]
+    else : 
+        print('Choose a valid steel')
+    
+    # Tension fraction
+    if Choice_Buck_Wedg == "Wedging" :
+        beta_TF = 1/2        # fraction de la tension aloué au WP (valeur fixe prise à partir de ITER: DDD TF p.97)
+    elif Choice_Buck_Wedg == "Bucking" :
+        beta_TF = 1          # fraction de la tension aloué au WP , en bucking = 1
+    else : 
+        print('Chosse a valid mechanical configuration')
+    
+    ########################################### Main calculus ###########################################
     
     # Elongation
     κ = f_Kappa(R0/a,Option_Kappa)
@@ -178,7 +204,9 @@ if __name__ == "__main__":
     Gamma_n,
     f_alpha_solution,
     J_max_TF_conducteur, J_max_CS_conducteur,
-    TF_ratio, r_minor, r_sep, r_c, r_d , κ ) = calcul(a, R0, Bmax, Pfus, Tbar)
+    TF_ratio, r_minor, r_sep, r_c, r_d , κ ) = run( a, R0, Bmax, Pfus, Tbar, H, Temps_Plateau, δ, b ,
+                                                   Supra_choice, Chosen_Steel , Radial_build_model , 
+                                                   Choice_Buck_Wedg , Option_Kappa , L_H_Scaling_choice)
 
     # Clean display of results
     print("=========================================================================")
