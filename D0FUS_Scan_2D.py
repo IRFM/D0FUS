@@ -9,25 +9,34 @@ import sys
 import os
 import importlib
 
-# Ajouter le répertoire 'D0FUS_BIB' au chemin de recherche de Python
-sys.path.append(os.path.join(os.path.dirname(__file__), 'D0FUS_BIB'))
+# Répertoire des modules
+base_dir = os.path.dirname(__file__)
+dofus_dir = os.path.join(base_dir, 'D0FUS_BIB')
 
-if "D0FUS_parameterization" in sys.modules:
-    # Le module est déjà importé, le recharger
-    importlib.reload(sys.modules['D0FUS_parameterization'])
-    # Mettre à jour les variables globales
-    globals().update({k: getattr(sys.modules['D0FUS_parameterization'], k) for k in dir(sys.modules['D0FUS_parameterization']) if not k.startswith('_')})
-    from D0FUS_initialisation import *
-    print("-----D0FUS Reloaded-----")
-else:
-    # Le module n'est pas encore importé, l'importer
-    from D0FUS_initialisation import *
-    print("-----D0FUS loaded-----")
-    
-# Attention, lors de toute modification de fichiers exterieurs, il est conseillé, malgré l'implémentation de la fonction reaload, de redémarrer le Kernel.
-# Python est capricieux avec le stockage des variables et seul un redémarage du kernel puis import des bibliothèques est sur à 100%
-# Le rechargement d'un module (importlib.reload) ne met en effet pas forcément à jour les références existantes dans d'autres modules importés précédemment
-# La fonction reload doit cependant , du moins dans les versions python de 3.1 à 3.3, permettre de palier à ce problème
+# Ajouter le répertoire au sys.path s’il n’y est pas déjà
+if dofus_dir not in sys.path:
+    sys.path.append(dofus_dir)
+
+# Trouver tous les fichiers .py dans D0FUS_BIB (hors __init__.py)
+module_files = [
+    f for f in os.listdir(dofus_dir)
+    if f.endswith('.py') and f != '__init__.py'
+]
+
+# Convertir les noms de fichiers en noms de modules
+module_names = [os.path.splitext(f)[0] for f in module_files]
+
+# Supprimer les modules du cache (sys.modules)
+for mod in module_names:
+    full_mod_name = mod  # Ex: 'D0FUS_parameterization'
+    if full_mod_name in sys.modules:
+        del sys.modules[full_mod_name]
+
+# Recharger dynamiquement chaque module avec import *
+for mod in module_names:
+    exec(f'from {mod} import *')
+
+print("----- D0FUS reloaded -----")
     
 #%% a and R0 scan
 # 2D matrix calculation
@@ -97,7 +106,9 @@ def R0_a_scan(Bmax, P_fus, δ, Tbar_init):
             Gamma_n,
             f_alpha_solution,
             J_max_TF_conducteur, J_max_CS_conducteur,
-            TF_ratio, R0_a_solution, R0_a_b_solution, R0_a_b_c_solution, R0_a_b_c_d_solution, κ) = calcul(a, R0, Bmax, P_fus, Tbar_init)
+            TF_ratio, R0_a_solution, R0_a_b_solution, R0_a_b_c_solution, R0_a_b_c_d_solution, κ) = run( a, R0, Bmax, Pfus, Tbar, H, Temps_Plateau, δ, b ,
+                                                           Supra_choice, Chosen_Steel , Radial_build_model , 
+                                                           Choice_Buck_Wedg , Option_Kappa , L_H_Scaling_choice)
             
             # Verifier les conditions
             n_condition = n_solution / nG_solution
