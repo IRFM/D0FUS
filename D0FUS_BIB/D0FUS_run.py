@@ -86,6 +86,10 @@ def calcul(a, R0, Bmax, P_fus, Tbar):
     heat_par_solution = f_heat_par(R0,B0_solution,P_sep_solution)
     heat_pol_solution = f_heat_pol(R0,B0_solution,P_sep_solution,a,q95_solution)
     lambda_q_Eich_m, q_parallel0_Eich, q_target_Eich = f_heat_PFU_Eich(P_sep_solution, B_pol_solution, R0, a/R0, theta_deg)
+    surface_1rst_wall_solution = f_surface_premiere_paroi(κ, R0, a)
+    P_1rst_wall_Hmod = (P_sep_solution-P_CD_solution)/surface_1rst_wall_solution
+    P_1rst_wall_Lmod = P_sep_solution/surface_1rst_wall_solution
+    P_elec_solution = f_P_elec(P_fus, P_CD_solution, eta_T, eta_RF)
 
     # L-H scaling :
     if L_H_Scaling_choice == 'Martin':
@@ -121,7 +125,7 @@ def calcul(a, R0, Bmax, P_fus, Tbar):
     else :
         print('Choose a valid mechanical model')
     
-    cost = f_cost(a,b,c,d,R0,κ,Q_solution)
+    cost_solution = f_cost(a,b,c,d,R0,κ,Q_solution)
 
     return (B0_solution, B_CS, B_pol_solution,
             tauE_solution,
@@ -130,9 +134,10 @@ def calcul(a, R0, Bmax, P_fus, Tbar):
             nbar_solution, nG_solution,
             betaN_solution, betaT_solution, betaP_solution,
             qstar_solution, q95_solution,
-            P_CD_solution, P_sep_solution, P_Thresh, eta_CD, 
-            cost,
+            P_CD_solution, P_sep_solution, P_Thresh, eta_CD, P_elec_solution,
+            cost_solution,
             heat_D0FUS_solution, heat_par_solution, heat_pol_solution, lambda_q_Eich_m, q_target_Eich,
+            P_1rst_wall_Hmod, P_1rst_wall_Lmod,
             Gamma_n_solution,
             f_alpha_solution,
             J_max_TF_conducteur, J_max_CS_conducteur,
@@ -166,9 +171,10 @@ if __name__ == "__main__":
     nbar_solution, nG_solution,
     betaN_solution, betaT_solution, betaP_solution,
     qstar_solution, q95_solution,
-    P_CD, P_sep, P_Thresh, eta_CD,
+    P_CD, P_sep, P_Thresh, eta_CD, P_elec_solution,
     cost,
     heat_D0FUS_solution, heat_par_solution, heat_pol_solution, lambda_q_Eich_m, q_target_Eich,
+    P_1rst_wall_Hmod, P_1rst_wall_Lmod,
     Gamma_n,
     f_alpha_solution,
     J_max_TF_conducteur, J_max_CS_conducteur,
@@ -215,10 +221,13 @@ if __name__ == "__main__":
     print(f"[O] P_CD (CD Power)                                 : {P_CD:.3f} [MW]")
     print(f"[O] eta_CD (CD Efficiency)                          : {eta_CD:.3f} [MA/MW-m²]")
     print(f"[O] Q (Energy Gain Factor)                          : {Q_solution:.3f}")
+    print(f"[O] P_elec (Electrical Power)                       : {P_elec_solution:.3f} [MW]")
     print(f"[O] Cost ((V_BB+V_TF+V_CS)/Q)                       : {cost:.3f} [m^3]")
     print("-------------------------------------------------------------------------")
     print(f"[O] P_sep (Separatrix Power)                        : {P_sep:.3f} [MW]")
     print(f"[O] P_Thresh (L-H Power Threshold)                  : {P_Thresh:.3f} [MW]")
+    print(f"[O] (P_sep - P_thresh) / S                          : {P_1rst_wall_Hmod:.3f} [MW/m²]")
+    print(f"[O] P_sep / S                                       : {P_1rst_wall_Lmod:.3f} [MW/m²]")
     print(f"[O] Heat scaling (P_sep / R0)                       : {heat_D0FUS_solution:.3f} [MW/m]")
     print(f"[O] Parallel Heat Flux (P_sep*B0 / R0)              : {heat_par_solution:.3f} [MW-T/m]")
     print(f"[O] Poloidal Heat Flux (P_sep*B0) / (q95*R0*A*R0)   : {heat_pol_solution:.3f} [MW-T/m]")
