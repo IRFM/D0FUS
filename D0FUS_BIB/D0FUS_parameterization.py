@@ -11,15 +11,26 @@ from D0FUS_import import *
 # Ajouter le répertoire 'D0FUS_BIB' au chemin de recherche de Python
 sys.path.append(os.path.join(os.path.dirname(__file__), 'D0FUS_BIB'))
 
-#%% Definition of constants
+#%% Panel control
 
 # Parameterization
-Choice_Buck_Wedg = 'Bucking'        # Wedging or Bucking
-Choice_solving_CS_method = "brentq" # CS solving method : default = "brentq" or "manual" for debuging
-Option_Kappa = 'Wenninger'          # Choose between Stambaugh, Freidberg , Wenninger or Manual
+Supra_choice = 'HTS'                # 'Manual' , 'HTS' or 'LTS'
+Chosen_Steel = '316L'               # '316L' , 'NH50' or 'Manual'
+Radial_build_model = 'D0FUS'        # "academic" , "D0FUS" , "CIRCEE"
+Choice_Buck_Wedg = 'Wedging'        # 'Wedging' or 'Bucking'
+Option_Kappa = 'Wenninger'          # 'Stambaugh' , 'Freidberg' , 'Wenninger' or 'Manual'
 L_H_Scaling_choice = 'New_Ip'       # 'Martin' , 'New_S', 'New_Ip'
-Radial_build_model = 'D0FUS'        # Choose between "academic" , "D0FUS" , "CIRCEE"
-Supra_choice = 'HTS'             # Choose between 'Manual' , 'HTS' or 'LTS'
+
+# Inputs
+H = 1                               # H factor
+Tbar  = 14                     # Mean Temperature keV
+Temps_Plateau = 0                   # Plateau time
+δ = 0.5                             # Triangularity
+b = 1.2                             # BB + 1rst Wall + N shields + Gaps
+
+#%% Constants initialisation
+
+Choice_solving_CS_method = "brentq" # "brentq" or "manual" for debuging
 
 # Physical constants
 E_ELEM  = 1.6e-19           # Electron charge [Coulomb]
@@ -37,43 +48,34 @@ Atomic_mass  = 2.5          # average atomic mass in AMU
 # Plasma stability
 betaN = 2.8  # Beta Tryon limit
 q = 2.5      # Security factor limit
-H = 1        # H factor
 
 # Density and Temperature parameters
-Tbar_init  = 14 # Mean Temperature keV
 nu_n  = 0.1     # Density profile parameter
 nu_T  = 1       # Temperature profile parameter
 C_Alpha = 5     # Helium dilution tuning parameter
 
-# Flux consumptions assumtions
+# Flux
 Ce = 0.45            # Ejima constants
-Temps_Plateau = 0    # Plateau time
 Li = 0.85            # Internal inductance of the plasma -> To be replaced with proper model
 ITERPI = 20          # ITER plasma induction current [Wb]
 
-# Geometric parameters
-δ = 0.5  # Triangularity
-b = 1.2  # BB+1rst Wall+N shields+ Gaps
-
-# Engineer constraints TF
-σ_TF = 660.E6        # Mechanical limit of the steel considered in [Pa]
-F_CClamp = 0e6       # C-Clamp limit in N , max order of magnitude from DDD : 30e6 N and of 60e6 N from [Bachmann (2023) FED]
+# TF
 gamma_TF = 1/2       # fraction d'acier pouvant soutenir les efforts suivant l'axe considéré (r ou theta) = facteur de concentration de contrainte dépendant de la géométrie du CICC
-if Choice_Buck_Wedg == "Wedging" :
-    beta_TF = 1/2        # fraction de la tension aloué au WP (valeur fixe prise à partir de ITER: DDD TF p.97)
-elif Choice_Buck_Wedg == "Bucking" :
-    beta_TF = 1          # fraction de la tension aloué au WP , en bucking = 1
 coef_inboard_tension = 1/2 # Facteur de répartition de la tension entre jambe interne et externe
+F_CClamp = 0e6       # C-Clamp limit in N , max order of magnitude from DDD : 30e6 N and of 60e6 N from [Bachmann (2023) FED]
 
-# Engineer constraints CS
+# CS
 Gap = 0.1            # Gap between wedging and bucking CS and TF [m]
-σ_CS = 660.E6        # CS machanical limit [Pa]
 gamma_CS = 1/2       # fraction d'acier pouvant soutenir les efforts suivant l'axe considéré (r ou theta) = facteur de concentration de contrainte dépendant de la géométrie du CICC
 
-# Engineer constraints      
+# Efficienty      
 eta_T = 0.4          # Ratio between thermal and electrical power
 eta_RF = 0.8 * 0.5   # fraction of klystron power absorbed by plasma * conversion efficiency from wall power to klystron
-theta_deg = 2.7      # Angle d'incidence sur les PFU pour calcul du flux de chaleur( Source 1: T. R. Reiter, “Basic Fusion Boundary Plasma Physics,” ITER School Lecture Notes, Jan. 21 2019 & Source 2: “SOLPS-ITER simulations of the ITER divertor with improved plasma conditions,” Journal of Nuclear Materials (2024) )
+
+# PFU
+theta_deg = 2.7      # Angle d'incidence sur les PFU pour calcul du flux de chaleur
+# Source 1: T. R. Reiter, “Basic Fusion Boundary Plasma Physics,” ITER School Lecture Notes, Jan. 21 2019
+# Source 2: “SOLPS-ITER simulations of the ITER divertor with improved plasma conditions,” Journal of Nuclear Materials (2024) )
 
 #%% Current density scaling
 
