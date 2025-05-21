@@ -50,10 +50,17 @@ D0FUS is a code developed in Python. To open it, the author recommends using Spy
 
 To do this, if necessary, execute in the console:
 
+
 * CMD
   ```sh
   pip install library_name
   ```
+
+If you want to install every librarys in one single command :
+
+* CMD
+  ```sh
+  pip install numpy pandas sympy scipy deap matplotlib seaborn tqdm plotly imageio
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
