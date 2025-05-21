@@ -70,13 +70,10 @@ Gap = 0.1            # Gap between wedging and bucking CS and TF [m]
 σ_CS = 660.E6        # CS machanical limit [Pa]
 gamma_CS = 1/2       # fraction d'acier pouvant soutenir les efforts suivant l'axe considéré (r ou theta) = facteur de concentration de contrainte dépendant de la géométrie du CICC
 
-# Engineer constraints
-eta_RF = 0.5         # conversion efficiency from wall power to klystron
-f_RP   = 0.8         # fraction of klystron power absorbed by plasma
+# Engineer constraints      
 eta_T = 0.4          # Ratio between thermal and electrical power
-theta_deg = 2.7      # Angle d'incidence sur les PFU pour calcul du flux de chaleur
-# Source 1: T. R. Reiter, “Basic Fusion Boundary Plasma Physics,” ITER School Lecture Notes, Jan. 21 2019
-# Source 2: “SOLPS-ITER simulations of the ITER divertor with improved plasma conditions,” Journal of Nuclear Materials (2024)
+eta_RF = 0.8 * 0.5   # fraction of klystron power absorbed by plasma * conversion efficiency from wall power to klystron
+theta_deg = 2.7      # Angle d'incidence sur les PFU pour calcul du flux de chaleur( Source 1: T. R. Reiter, “Basic Fusion Boundary Plasma Physics,” ITER School Lecture Notes, Jan. 21 2019 & Source 2: “SOLPS-ITER simulations of the ITER divertor with improved plasma conditions,” Journal of Nuclear Materials (2024) )
 
 #%% Current density scaling
 
@@ -281,7 +278,8 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 # Create a directory to save images if it doesn't exist
 # save_directory = "Graphs"
-save_directory = "C:/Users/TA276941/Desktop/D0Fus/Graphs/Données brutes/"
+save_directory = os.path.join(os.getcwd(), "Graphs", "Données brutes")
+
 os.makedirs(save_directory, exist_ok=True)
 
 #%%
