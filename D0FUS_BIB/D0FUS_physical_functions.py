@@ -963,7 +963,8 @@ def f_P_elec(P_fus, P_LH, eta_T, eta_RF):
       P_elec (même unité que P_fus et P_LH)
     """
     
-    P_elec = eta_T * P_fus - P_LH / eta_RF
+    P_th = P_fus * E_F / (E_ALPHA + E_N)
+    P_elec = eta_T * P_th - P_LH / eta_RF
     
     return P_elec
 
