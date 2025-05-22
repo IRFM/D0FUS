@@ -7,7 +7,6 @@ Created on Tue Apr 23 15:08:01 2024
 #%% Import
 import sys
 import os
-import importlib
 
 # Répertoire des modules
 base_dir = os.path.dirname(__file__)
@@ -41,7 +40,7 @@ print("----- D0FUS reloaded -----")
 #%% a and R0 scan
 # 2D matrix calculation
 
-def R0_a_scan(Bmax, P_fus, δ, Tbar_init):
+def R0_a_scan(Bmax, P_fus):
     
     a_min = 0.5
     a_max = 3
@@ -106,9 +105,12 @@ def R0_a_scan(Bmax, P_fus, δ, Tbar_init):
             Gamma_n,
             f_alpha_solution,
             J_max_TF_conducteur, J_max_CS_conducteur,
-            TF_ratio, R0_a_solution, R0_a_b_solution, R0_a_b_c_solution, R0_a_b_c_d_solution, κ) = run( a, R0, Bmax, Pfus, Tbar, H, Temps_Plateau, δ, b ,
-                                                           Supra_choice, Chosen_Steel , Radial_build_model , 
-                                                           Choice_Buck_Wedg , Option_Kappa , L_H_Scaling_choice)
+            TF_ratio, R0_a_solution, R0_a_b_solution, R0_a_b_c_solution, R0_a_b_c_d_solution,
+            κ) = run( a, R0, Bmax, Pfus, 
+            Tbar, H, Temps_Plateau, δ, b , nu_n, nu_T,
+            Supra_choice, Chosen_Steel , Radial_build_model , 
+            Choice_Buck_Wedg , Option_Kappa , 
+            L_H_Scaling_choice, Scaling_Law)
             
             # Verifier les conditions
             n_condition = n_solution / nG_solution
@@ -235,8 +237,8 @@ def R0_a_scan(Bmax, P_fus, δ, Tbar_init):
     
     # Créer une figure et un axe principal
     fig, ax = plt.subplots(figsize=(10, 13))
-    svg = f"Bmax={Bmax}_Pfus={P_fus}_scaling_law={law}_Triangularity={δ}_Hfactor={H}_Meca={Choice_Buck_Wedg}_"
-    plt.title(f"$B_{{\mathrm{{max}}}}$ = {Bmax} [T], $P_{{\mathrm{{fus}}}}$ = {P_fus} [MW], scaling law : {law}",fontsize=taille_police_subtitle)
+    svg = f"Bmax={Bmax}_Pfus={P_fus}_scaling_law={Scaling_Law}_Triangularity={δ}_Hfactor={H}_Meca={Choice_Buck_Wedg}_"
+    plt.title(f"$B_{{\mathrm{{max}}}}$ = {Bmax} [T], $P_{{\mathrm{{fus}}}}$ = {P_fus} [MW], scaling law : {Scaling_Law}",fontsize=taille_police_subtitle)
     title_parameter = '$\mathbf{R_{0}}$'
     plt.suptitle(f"Parameter space : a , {title_parameter}", fontsize=taille_titre,y=0.94, fontweight='bold')
 
@@ -410,6 +412,6 @@ def R0_a_scan(Bmax, P_fus, δ, Tbar_init):
 if __name__ == "__main__":
     Bmax = 20
     P_fus = 2000
-    R0_a_scan(Bmax,P_fus,δ, Tbar_init)
+    R0_a_scan(Bmax,P_fus)
         
         
