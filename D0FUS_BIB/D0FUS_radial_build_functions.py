@@ -19,7 +19,7 @@ if __name__ == "__main__":
 
 #%% Current density
 
-def Jc_LTS(B, T):
+def Jc_LTS(B, T, Nb3Sn_PARAMS, Eps):
     """
     Calcule la densité de courant critique Jc pour un fil Nb3Sn TFEU4 donnée
     en fonction du champ magnétique B (en T), de la température T (en K)
@@ -81,7 +81,7 @@ def Jc_LTS(B, T):
 
     return Jc
 
-def Jc_HTS(B, T):
+def Jc_HTS(B, T, REBCO_PARAMS, Tet):
     """
     Calcul de la densité de courant critique Jc pour un ruban REBCO selon le scaling CERN2014.
 
