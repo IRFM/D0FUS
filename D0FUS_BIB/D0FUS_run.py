@@ -14,8 +14,10 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'D0FUS_BIB'))
 
 #%% Main Function
 
-def run( a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau, δ, b ,
-        Supra_choice, Chosen_Steel , Radial_build_model , Choice_Buck_Wedg , Option_Kappa , L_H_Scaling_choice):
+def run( a, R0, Bmax, P_fus,
+        Tbar, H, Temps_Plateau, δ, b , nu_n, nu_T,
+        Supra_choice, Chosen_Steel , Radial_build_model , Choice_Buck_Wedg , 
+        Option_Kappa , L_H_Scaling_choice, Scaling_Law):
     
     ########################################### Initialisation ###########################################
     
@@ -40,6 +42,196 @@ def run( a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau, δ, b ,
     else : 
         print('Chosse a valid mechanical configuration')
     
+    # Current density
+    if Supra_choice == "LTS"  :
+
+        # Nb3Sn TFEU4 parameters LTS
+        Nb3Sn_PARAMS = {
+            'Ca1': 44.48,
+            'Ca2': 0.0,
+            'Eps0a': 0.00256,
+            'Epsm': -0.00049,
+            'Bc2m': 32.97,
+            'Tcm': 16.06,
+            'C1': 19922.0,
+            'p': 0.63,
+            'q': 2.1,
+            'dbrin': 0.82e-3,
+            'CuNCu': 1.01,
+        }
+        
+        # tipical Déformation
+        Eps = -0.6 / 100
+        Marge_T_LTS = 1 #K
+        
+        J_max_TF_conducteur = Jc_LTS(Bmax, T_helium + Marge_T_LTS + Marge_T_Helium, Nb3Sn_PARAMS, Eps)
+        J_max_CS_conducteur = Jc_LTS(Bmax, T_helium + Marge_T_LTS + Marge_T_Helium, Nb3Sn_PARAMS, Eps)
+        
+    elif Supra_choice == "HTS"  :
+
+        # Paramètres par défaut pour REBCO (CERN 2014)
+        REBCO_PARAMS = {
+            'trebco': 1.5e-6,   # épaisseur de la couche supraconductrice [m]
+            'w': 4e-3,          # largeur du ruban [m]
+            'Tc0': 93.0,        # température critique zéro champ [K]
+            'n': 1.0,
+            'Bi0c': 140.0,      # [T]
+            'Alfc': 1.41e12,    # [A/m^2]
+            'pc': 0.313,
+            'qc': 0.867,
+            'gamc': 3.09,
+            'Bi0ab': 250.0,     # [T]
+            'Alfab': 83.8e12,   # [A/m^2]
+            'pab': 1.023,
+            'qab': 4.45,
+            'gamab': 4.73,
+            'n1': 1.77,
+            'n2': 4.1,
+            'a': 0.1,
+            'Nu': 0.857,
+            'g0': -0.0056,
+            'g1': 0.0944,
+            'g2': -0.0008,
+            'g3': 0.00388,
+        }
+        
+        # HTS orientation (pessimistic one)
+        Tet = 0
+        Marge_T_HTS = 5 #K
+        
+        J_max_TF_conducteur = Jc_HTS(Bmax, T_helium + Marge_T_HTS + Marge_T_Helium, REBCO_PARAMS, Tet)
+        J_max_CS_conducteur = Jc_HTS(Bmax, T_helium + Marge_T_HTS + Marge_T_Helium, REBCO_PARAMS, Tet)
+        
+    elif Supra_choice == "Manual"  :
+
+        J_max_CS_conducteur_manual = 50.E6       # A/m² from ITER values
+        J_max_TF_conducteur_manual = 50.E6       # A/m² from ITER values
+        
+    else :
+        print("Please choose a proper superconductor")
+
+        
+    # Confinement time scaling law
+    
+    # Considering :
+        # B the toroidal magnetic field on R0 (T)
+        # R0 the geometrcial majopr radius (m)
+        # Kappa the elongation
+        # M or A  the average atomic mass (AMU)
+        # Epsilon the inverse aspect ratio
+        # n the density (10**19/m cube)
+        # I plasma current (MA)
+        # P the absorbed power (MW)
+        # H an amplification factor = Taue/Taue_Hmode
+
+    # Definition des valeurs pour chaque loi
+    param_values = {
+        'IPB98(y,2)': {
+            'C_SL': 0.0562,
+            'alpha_(1+delta)': 0,
+            'alpha_M': 0.19,
+            'alpha_kappa': 0.78,
+            'alpha_epsilon': 0.58,
+            'alpha_R': 1.97,
+            'alpha_B': 0.15,
+            'alpha_n': 0.41,
+            'alpha_I': 0.93,
+            'alpha_P': -0.69
+        },
+        'ITPA20-IL': {
+            'C_SL': 0.067,
+            'alpha_(1+delta)': 0.56,
+            'alpha_M': 0.3,
+            'alpha_kappa': 0.67,
+            'alpha_epsilon': 0,
+            'alpha_R': 1.19,
+            'alpha_B': -0.13,
+            'alpha_n': 0.147,
+            'alpha_I': 1.29,
+            'alpha_P': -0.644
+        },
+        'ITPA20': {
+            'C_SL': 0.053,
+            'alpha_(1+delta)': 0.36,
+            'alpha_M': 0.2,
+            'alpha_kappa': 0.8,
+            'alpha_epsilon': 0.35,
+            'alpha_R': 1.71,
+            'alpha_B': 0.22,
+            'alpha_n': 0.24,
+            'alpha_I': 0.98,
+            'alpha_P': -0.669
+        },
+        'DS03': {
+            'C_SL': 0.028,
+            'alpha_(1+delta)': 0,
+            'alpha_M': 0.14,
+            'alpha_kappa': 0.75,
+            'alpha_epsilon': 0.3,
+            'alpha_R': 2.11,
+            'alpha_B': 0.07,
+            'alpha_n': 0.49,
+            'alpha_I': 0.83,
+            'alpha_P': -0.55
+        },
+        'L-mode': {
+            'C_SL': 0.023,
+            'alpha_(1+delta)': 0,
+            'alpha_M': 0.2,
+            'alpha_kappa': 0.64,
+            'alpha_epsilon': -0.06,
+            'alpha_R': 1.83,
+            'alpha_B': 0.03,
+            'alpha_n': 0.4,
+            'alpha_I': 0.96,
+            'alpha_P': -0.73
+        },
+        'L-mode OK': {
+            'C_SL': 0.023,
+            'alpha_(1+delta)': 0,
+            'alpha_M': 0.2,
+            'alpha_kappa': 0.64,
+            'alpha_epsilon': -0.06,
+            'alpha_R': 1.78,
+            'alpha_B': 0.03,
+            'alpha_n': 0.4,
+            'alpha_I': 0.96,
+            'alpha_P': -0.73
+        },
+        'ITER89-P': {
+            'C_SL': 0.048,
+            'alpha_(1+delta)': 0,
+            'alpha_M': 0.5,
+            'alpha_kappa': 0.5,
+            'alpha_epsilon': 0.3,
+            'alpha_R': 1.2,
+            'alpha_B': 0.2,
+            'alpha_n': 0.08,
+            'alpha_I': 0.85,
+            'alpha_P': -0.5
+        }
+    }
+
+    # Fonction pour recuperer les valeurs en fonction de la loi choisie
+    def get_parameter_value_scaling_law(Scaling_Law):
+        if Scaling_Law in param_values:
+            C_SL = param_values[Scaling_Law]['C_SL']
+            alpha_delta = param_values[Scaling_Law]['alpha_(1+delta)']
+            alpha_M = param_values[Scaling_Law]['alpha_M']
+            alpha_kappa = param_values[Scaling_Law]['alpha_kappa']
+            alpha_epsilon = param_values[Scaling_Law]['alpha_epsilon']
+            alpha_R = param_values[Scaling_Law]['alpha_R']
+            alpha_B = param_values[Scaling_Law]['alpha_B']
+            alpha_n = param_values[Scaling_Law]['alpha_n']
+            alpha_I = param_values[Scaling_Law]['alpha_I']
+            alpha_P = param_values[Scaling_Law]['alpha_P']
+            return C_SL,alpha_delta,alpha_M,alpha_kappa,alpha_epsilon,alpha_R,alpha_B,alpha_n,alpha_I,alpha_P
+        else:
+            raise ValueError(f"La loi {Scaling_Law} n'existe pas.")
+            
+    (C_SL,alpha_delta,alpha_M,alpha_kappa,alpha_epsilon,
+     alpha_R,alpha_B,alpha_n,alpha_I,alpha_P) = get_parameter_value_scaling_law(Scaling_Law)
+    
     ########################################### Main calculus ###########################################
     
     # Elongation
@@ -54,20 +246,21 @@ def run( a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau, δ, b ,
         f_alpha, Q = vars
     
         # Calculate intermediate values
-        nbar_alpha = f_nbar(P_fus, R0, a, κ, nu_n, nu_T, f_alpha, Tbar)
-        pbar_alpha = f_pbar(nu_n, nu_T, nbar_alpha, Tbar, f_alpha)
-        tau_E_alpha = f_tauE(pbar_alpha, R0, a, κ, P_fus, Q)
-        Ip_alpha = f_Ip(tau_E_alpha, R0, a, κ, nbar_alpha, B0_solution, Atomic_mass, P_fus, Q)
-        Ib_alpha = f_Ib(R0, a, κ, pbar_alpha, Ip_alpha)
+        nbar_alpha   = f_nbar(P_fus, R0, a, κ, nu_n, nu_T, f_alpha, Tbar)
+        pbar_alpha   = f_pbar(nu_n, nu_T, nbar_alpha, Tbar, f_alpha)
+        tau_E_alpha  = f_tauE(pbar_alpha, R0, a, κ, P_fus, Q)
+        Ip_alpha     = f_Ip(tau_E_alpha, R0, a, κ, δ, nbar_alpha, B0_solution, Atomic_mass, P_fus, Q, H, C_SL,
+                     alpha_delta,alpha_M,alpha_kappa,alpha_epsilon, alpha_R,alpha_B,alpha_n,alpha_I,alpha_P)
+        Ib_alpha     = f_Ib(R0, a, κ, pbar_alpha, Ip_alpha)
         eta_CD_alpha = f_etaCD(a, R0, B0_solution, nbar_alpha, Tbar, nu_n, nu_T)
-        P_CD_alpha = f_PCD(R0, nbar_alpha, Ip_alpha, Ib_alpha, eta_CD_alpha)
+        P_CD_alpha   = f_PCD(R0, nbar_alpha, Ip_alpha, Ib_alpha, eta_CD_alpha)
     
         # Calculate new f_alpha
-        new_f_alpha = f_He_fraction(nbar_alpha, Tbar, tau_E_alpha, C_Alpha)
+        new_f_alpha  = f_He_fraction(nbar_alpha, Tbar, tau_E_alpha, C_Alpha)
     
         # Calculate the residuals
         f_alpha_residual = new_f_alpha - f_alpha
-        Q_residual = (Q - P_fus / P_CD_alpha) * 100 / (P_fus / P_CD_alpha)
+        Q_residual       = (Q - P_fus / P_CD_alpha) * 100 / (P_fus / P_CD_alpha)
     
         return [f_alpha_residual, Q_residual]
     
@@ -90,32 +283,33 @@ def run( a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau, δ, b ,
         f_alpha_solution, Q_solution = np.nan, np.nan
 
     # Une fois Q déterminé, calcul des autres paramètres
-    nbar_solution = f_nbar(P_fus,R0,a,κ,nu_n,nu_T,f_alpha_solution,Tbar)
-    pbar_solution = f_pbar(nu_n,nu_T,nbar_solution,Tbar,f_alpha_solution)
-    eta_CD = f_etaCD(a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T)
-    tauE_solution = f_tauE(pbar_solution,R0,a,κ,P_fus,Q_solution)
-    Ip_solution = f_Ip(tauE_solution,R0,a,κ,nbar_solution,B0_solution,Atomic_mass,P_fus,Q_solution)
-    Ib_solution = f_Ib(R0, a, κ, pbar_solution, Ip_solution)
-    qstar_solution = f_qstar(a, B0_solution, R0, Ip_solution, κ)
-    q95_solution = f_q95(B0_solution,Ip_solution,R0,a,κ,δ)
-    B_pol_solution = f_Bpol(q95_solution, B0_solution, a, R0)
-    betaT_solution = f_beta_T(pbar_solution,B0_solution)
-    betaP_solution = f_beta_P(a, κ, pbar_solution, Ip_solution)
-    beta_solution = f_beta(betaP_solution, betaT_solution)
-    betaN_solution = f_beta_N(betaT_solution, B0_solution, a, Ip_solution)
-    nG_solution = f_nG(Ip_solution, a)
-    eta_CD_solution = f_etaCD(a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T)
-    P_CD_solution = f_PCD(R0,nbar_solution,Ip_solution,Ib_solution,eta_CD_solution)
-    P_sep_solution = f_P_sep(P_fus, P_CD_solution)
-    Gamma_n_solution = f_Gamma_n(a, P_fus, R0, κ)
-    heat_D0FUS_solution = f_heat_D0FUS(R0,P_sep_solution)
-    heat_par_solution = f_heat_par(R0,B0_solution,P_sep_solution)
-    heat_pol_solution = f_heat_pol(R0,B0_solution,P_sep_solution,a,q95_solution)
+    nbar_solution         = f_nbar(P_fus,R0,a,κ,nu_n,nu_T,f_alpha_solution,Tbar)
+    pbar_solution         = f_pbar(nu_n,nu_T,nbar_solution,Tbar,f_alpha_solution)
+    eta_CD                = f_etaCD(a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T)
+    tauE_solution         = f_tauE(pbar_solution,R0,a,κ,P_fus,Q_solution)
+    Ip_solution           = f_Ip(tauE_solution, R0, a, κ, δ, nbar_solution, B0_solution, Atomic_mass, P_fus, Q_solution, H, C_SL,
+                          alpha_delta,alpha_M,alpha_kappa,alpha_epsilon, alpha_R,alpha_B,alpha_n,alpha_I,alpha_P)
+    Ib_solution           = f_Ib(R0, a, κ, pbar_solution, Ip_solution)
+    qstar_solution        = f_qstar(a, B0_solution, R0, Ip_solution, κ)
+    q95_solution          = f_q95(B0_solution,Ip_solution,R0,a,κ,δ)
+    B_pol_solution        = f_Bpol(q95_solution, B0_solution, a, R0)
+    betaT_solution        = f_beta_T(pbar_solution,B0_solution)
+    betaP_solution        = f_beta_P(a, κ, pbar_solution, Ip_solution)
+    beta_solution         = f_beta(betaP_solution, betaT_solution)
+    betaN_solution        = f_beta_N(betaT_solution, B0_solution, a, Ip_solution)
+    nG_solution           = f_nG(Ip_solution, a)
+    eta_CD_solution       = f_etaCD(a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T)
+    P_CD_solution         = f_PCD(R0,nbar_solution,Ip_solution,Ib_solution,eta_CD_solution)
+    P_sep_solution        = f_P_sep(P_fus, P_CD_solution)
+    Gamma_n_solution      = f_Gamma_n(a, P_fus, R0, κ)
+    heat_D0FUS_solution   = f_heat_D0FUS(R0,P_sep_solution)
+    heat_par_solution     = f_heat_par(R0,B0_solution,P_sep_solution)
+    heat_pol_solution     = f_heat_pol(R0,B0_solution,P_sep_solution,a,q95_solution)
     lambda_q_Eich_m, q_parallel0_Eich, q_target_Eich = f_heat_PFU_Eich(P_sep_solution, B_pol_solution, R0, a/R0, theta_deg)
     surface_1rst_wall_solution = f_surface_premiere_paroi(κ, R0, a)
-    P_1rst_wall_Hmod = (P_sep_solution-P_CD_solution)/surface_1rst_wall_solution
-    P_1rst_wall_Lmod = P_sep_solution/surface_1rst_wall_solution
-    P_elec_solution = f_P_elec(P_fus, P_CD_solution, eta_T, eta_RF)
+    P_1rst_wall_Hmod      = (P_sep_solution-P_CD_solution)/surface_1rst_wall_solution
+    P_1rst_wall_Lmod      = P_sep_solution/surface_1rst_wall_solution
+    P_elec_solution       = f_P_elec(P_fus, P_CD_solution, eta_T, eta_RF)
 
     # L-H scaling :
     if L_H_Scaling_choice == 'Martin':
@@ -128,20 +322,6 @@ def run( a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau, δ, b ,
         print('Choose a valid Scaling for L-H transition')
     
     # Radial Build
-    #J_e scaling
-    if Supra_choice == "LTS"  :
-        J_max_TF_conducteur = Jc_LTS(Bmax, T_helium + Marge_T_LTS + Marge_T_Helium)
-        J_max_CS_conducteur = Jc_LTS(Bmax, T_helium + Marge_T_LTS + Marge_T_Helium)
-    elif Supra_choice == "HTS"  :
-        J_max_TF_conducteur = Jc_HTS(Bmax, T_helium + Marge_T_HTS + Marge_T_Helium)
-        J_max_CS_conducteur = Jc_HTS(Bmax, T_helium + Marge_T_HTS + Marge_T_Helium)
-    elif Supra_choice == "Manual"  :
-        J_max_TF_conducteur = J_max_TF_conducteur_manual
-        J_max_CS_conducteur = J_max_CS_conducteur_manual
-    else :
-        print('Choose a valid supra model')
-    
-    # Tf and Cs width
     if Radial_build_model == "academic" :
         (c, Winding_pack_tension_ratio) = f_TF_academic(a, b, R0, σ_TF, μ0, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg)
         (d,Alpha,B_CS) = f_CS_academic(a, b, c, R0, κ, Bmax, σ_CS, μ0, J_max_CS_conducteur, Choice_Buck_Wedg, Tbar, nbar_solution, Ip_solution, Ib_solution)
@@ -204,9 +384,11 @@ if __name__ == "__main__":
     Gamma_n,
     f_alpha_solution,
     J_max_TF_conducteur, J_max_CS_conducteur,
-    TF_ratio, r_minor, r_sep, r_c, r_d , κ ) = run( a, R0, Bmax, Pfus, Tbar, H, Temps_Plateau, δ, b ,
+    TF_ratio, r_minor, r_sep, r_c, r_d , κ ) = run( a, R0, Bmax, Pfus,
+                                                   Tbar, H, Temps_Plateau, δ, b , nu_n, nu_T,
                                                    Supra_choice, Chosen_Steel , Radial_build_model , 
-                                                   Choice_Buck_Wedg , Option_Kappa , L_H_Scaling_choice)
+                                                   Choice_Buck_Wedg , Option_Kappa , 
+                                                   L_H_Scaling_choice, Scaling_Law)
 
     # Clean display of results
     print("=========================================================================")
