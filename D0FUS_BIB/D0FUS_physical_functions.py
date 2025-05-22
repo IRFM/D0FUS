@@ -340,10 +340,12 @@ def f_Gamma_n(a, P_fus, R0, κ):
     Gamma_n : The neutron flux [MW/m²]
     
     """
+    
     Gamma_n = (E_N * P_fus / (E_ALPHA + E_N)) / (4*np.pi**2*R0*a*np.sqrt((1 + κ**2)/2))
+    
     return Gamma_n
 
-def f_nG(Ip,a):
+def f_nG(Ip, a):
     """
     
     Calculation of the Greenwal density limit
@@ -358,10 +360,11 @@ def f_nG(Ip,a):
     nG : The Greenwald fraction [1e20p/m^3]
     
     """
-    nG = Ip/(np.pi*a**2)
+    nG = Ip / (np.pi * a**2)
+    
     return nG
 
-def f_qstar(a,B0,R0,Ip,κ):
+def f_qstar(a, B0, R0, Ip, κ):
     """
     
     Calculation of the safety factor
@@ -379,7 +382,9 @@ def f_qstar(a,B0,R0,Ip,κ):
     qstar : The safety factor
     
     """
-    qstar = (np.pi*a**2*B0*(1+κ**2))/(μ0*R0*Ip*1e6)
+    
+    qstar = (np.pi * a**2 * B0 * (1 + κ**2)) / (μ0 * R0 * Ip*1e6)
+    
     return qstar
 
 def f_cost(a,b,c,d,R0,κ,Q):
@@ -429,7 +434,7 @@ def f_P_sep(P_fus, P_CD):
     
     return P_sep
 
-def f_heat_D0FUS(R0,P_sep):
+def f_heat_D0FUS(R0, P_sep):
     """
     
     Calculation of the heat parameter (robust version)
@@ -449,7 +454,7 @@ def f_heat_D0FUS(R0,P_sep):
     
     return heat
 
-def f_heat_par(R0,B0,P_sep):
+def f_heat_par(R0, B0, P_sep):
     """
     
     Calculation of the parralel heat parameter as defined in Freidberg paper
@@ -468,7 +473,7 @@ def f_heat_par(R0,B0,P_sep):
     heat =  P_sep * B0 / R0
     return heat
 
-def f_heat_pol(R0,B0,P_sep,a,q95):
+def f_heat_pol(R0, B0, P_sep, a, q95):
     """
     
     Calculation of the poloidal heat parameter as defined in Siccinion 2019
@@ -509,7 +514,6 @@ def f_Bpol(q95, B_tor, a, R):
     B_pol = (a * B_tor) / (R * q95)
     
     return B_pol
-
 
 def f_heat_PFU_Eich(
     P_sol,          # Puissance franchissant la séparatrice (en MW)
@@ -552,7 +556,7 @@ def f_heat_PFU_Eich(
 
     return lambda_q_m, q_parallel0, q_target
 
-def f_tauE(pbar,R0,a,κ,P_fus,Q):
+def f_tauE(pbar, R0, a, κ, P_fus, Q):
     """
     
     Calculation of the confinement time from the power balance
@@ -571,10 +575,13 @@ def f_tauE(pbar,R0,a,κ,P_fus,Q):
     tauE : Confinement time [s]
     
     """
-    tauE = pbar*1e6*3.*np.pi**2*R0*a**2*κ*(E_N+E_ALPHA)/(E_ALPHA*P_fus*1e6) *(1/(1+5/Q))
+    
+    tauE = pbar*1e6 * 3. * np.pi**2 * R0 * a**2 * κ * (E_N+E_ALPHA)/(E_ALPHA*P_fus*1e6) * (1/(1+5/Q))
+    
     return tauE
         
-def f_Ip(tauE,R0,a,κ,nbar,B0,Atomic_mass,P_fus,Q):
+def f_Ip(tauE, R0, a, κ, δ, nbar, B0, Atomic_mass, P_fus, Q, H, C_SL,
+         alpha_delta,alpha_M,alpha_kappa,alpha_epsilon, alpha_R,alpha_B,alpha_n,alpha_I,alpha_P):
     """
     
     Calculation of the plasma current using a tau_E scaling law
@@ -687,7 +694,7 @@ def f_etaCD(a, R0, B0, nbar, Tbar, nu_n, nu_T):
     eta_CD = 1.2 / (n_parall**2)
     return eta_CD
 
-def f_PCD(R0,nbar,Ip,Ib,eta_CD):
+def f_PCD(R0, nbar, Ip, Ib, eta_CD):
     """
     
     Estimate the Currend Drive (CD) power needed
@@ -710,7 +717,7 @@ def f_PCD(R0,nbar,Ip,Ib,eta_CD):
     P_CD = R0*nbar*abs(Ip-Ib)/eta_CD
     return P_CD
 
-def f_PLH(eta_RF,f_RP,P_CD):
+def f_PLH(eta_RF, f_RP, P_CD):
     """
     
     Estimate the Lower Hybrid Electrical Power
@@ -865,7 +872,7 @@ def P_Thresh_New_Ip(n_bar, B0, a, R0, κ, Ip, Atomic_mass):
 # Test ITER :
 # P_Thresh_New_Ip(1, 5.3, 2, 6, 1.7,15, 2.5)
 
-def f_q95(B0,Ip,R0,a,κ,δ):
+def f_q95(B0, Ip, R0, a, κ, δ):
     """
     
     Estimate the safety factor at 95% of the separatrix q_95
@@ -890,7 +897,7 @@ def f_q95(B0,Ip,R0,a,κ,δ):
     q95 = (2 * np.pi * a**2 * B0) / (μ0  * Ip*1e6 * R0) * (1.17-0.65/Aspect_ratio)/(1-1/Aspect_ratio**2)*(1+κ**2*(1+2*δ**2-1.2*δ**3))/2
     return q95
 
-def f_He_fraction(n_bar,T_bar,tauE,C_Alpha):
+def f_He_fraction(n_bar, T_bar, tauE, C_Alpha):
     """
     
     Estimate the fraction of Alpha particles
