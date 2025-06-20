@@ -64,6 +64,8 @@ If you want to install every librarys in one single command :
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
+Attntion : pip install might not work, then use conda install.
+
 ## Installation
 
 **Classical :**
