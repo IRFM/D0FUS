@@ -15,14 +15,10 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'D0FUS_BIB'))
 
 #%% Physical Functions
 
-# Inputs : Pfus[MW] Bmax[T] R0[m] a[m]
-
 def f_Kappa(A,Option_Kappa):
     """
     
     Estimate the maximum elongation as a function of the aspect ratio
-    None of these scalings are satisfactory during large parameter scans
-    In practice, elongation is often manually fixed
     
     Parameters
     ----------
@@ -49,11 +45,138 @@ def f_Kappa(A,Option_Kappa):
     
     return(κ)
 
+def f_Kappa_95(kappa):
+    """
+    
+    Estimate the elongation at 95% of the poloidal flux (kappa_95) 
+    from the total elongation (kappa).
+
+    The 95% elongation typically reflects the shape of the inner plasma
+    and is slightly lower than the total elongation measured at the last 
+    closed flux surface (LCFS).
+    Scaling taken from 1989 ITER guidelines
+
+    Parameters
+    ----------
+    kappa : Total elongation (dimensionless)
+
+    Returns:
+    -------
+    kappa_95 : Estimated elongation at 95% poloidal flux (dimensionless)
+    
+    """
+    kappa_95 = kappa / 1.12
+    return kappa_95
+
+
+def f_Delta(kappa):
+    """
+    
+    Estimate the maximum triangularity (delta) from the total elongation (kappa).
+
+    This empirical relationship approximates the maximum triangularity 
+    Scaling taken from TREND [31,32] p 53
+
+    Parameters:
+    -------
+    kappa : Total elongation (dimensionless)
+
+    Returns:
+    -------
+    delta: Estimated maximum triangularity (delta, dimensionless)
+    
+    """
+    delta = 0.6 * (kappa - 1)
+    return delta
+
+
+def f_Delta_95(delta):
+    """
+    
+    Estimate the triangularity at 95% of the poloidal flux (delta_95) 
+    from the maximum triangularity (delta).
+
+    This is useful to characterize the inner shape of the plasma where 
+    confinement and stability are more critical.
+    Scaling taken from 1989 ITER guidelines
+
+    Parameters:
+    -------    
+    delta : Maximum triangularity (dimensionless)
+
+    Returns:
+    -------
+    delta_95: Estimated triangularity at 95% poloidal flux
+    
+    """
+    delta_95 = delta / 1.5
+    return delta_95
+
+def f_li(nu_n, nu_T):
+    """
+    
+    Estimate the internal inductance (li) of a plasma using an empirical formula
+    based on current profile shape parameters.
+
+    The formula is derived from an empirical relationship of D3D founded in the Wesson.
+
+    Parameters:
+    -------
+    nu_n : Density profile exponent (e.g., from n(r) ∝ (1 - r^2)^nu_n)
+    nu_T : Temperature profile exponent (e.g., from T(r) ∝ (1 - r^2)^nu_T)
+
+    Returns:
+    -------
+    li : Estimated internal inductance (dimensionless)
+
+    Notes:
+    The effective current profile exponent is approximated as:
+    nu_J = 0.453 - 0.1 * (nu_p - 1.5)
+    where nu_p = nu_n + nu_T
+    Taken from Eq 36 from [Segal Pulsed vs Steady State]
+    
+    """
+    
+    nu_p = nu_n + nu_T
+    nu_J = 0.453 - 0.1 * (nu_p - 1.5)
+    li = np.log(1.65 + 0.89 * nu_J)
+    
+    return li
+
+# Typical test (ITER ~ 0.8)
+# print(f_li(0.1,1))
+
+def f_plasma_volume(R0, a, kappa, delta):
+    """
+    
+    Calculate the volume of an axisymmetric tokamak plasma 
+    using elongation (κ) and triangularity (δ).
+
+    Parameters:
+    -------
+    R0 : Major radius [m]
+    a : Minor radius [m]
+    kappa : Elongation 
+    delta : Triangularity
+
+    Returns:
+    -------
+    float: Volume du plasma [m³]
+
+    Notes:
+    D-shape approximation, no squareness is taken into account
+    
+    """
+    
+    V = 2 * (np.pi**2) * R0 * (a**2) * kappa * (1 + 0.5 * (delta**2))
+    
+    return V
+
 
 def f_B0(Bmax, a, b, R0):
     """
     
-    Estimate the magnetif field in the centre of the plasma
+    Estimate the magnetic field in the centre of the plasma
     
     Parameters
     ----------
@@ -201,6 +324,7 @@ def f_pbar(nu_n,nu_T,n_bar,Tbar,f_alpha):
 
 def f_beta_T(pbar_MPa, B0):
     """
+    
     Calculate the toroidal plasma beta.
 
     The normalized ratio of the plasma pressure and the toroidal magnetic pressure,
@@ -208,15 +332,13 @@ def f_beta_T(pbar_MPa, B0):
 
     Parameters
     ----------
-    pbar_MPa : float
-        Volume‐averaged plasma pressure in MPa.
-    B0 : float
-        Central toroidal magnetic field in tesla [T].
+    pbar_MPa : Volume‐averaged plasma pressure [MPa]
+    B0 : Central toroidal magnetic field [T]
 
     Returns
     -------
-    beta_T : float
-        Toroidal beta (dimensionless).
+    beta_T : Toroidal beta (dimensionless)
+    
     """
     # Convert pressure from MPa to Pa
     pbar = pbar_MPa * 1e6
@@ -228,34 +350,29 @@ def f_beta_T(pbar_MPa, B0):
 
 def f_beta_P(a, κ, pbar_MPa, Ip_MA):
     """
-    Calcule le beta poloidal à partir de la pression moyenne volumique (pbar).
 
-    Paramètres
+    Calculates the poloidal beta from the volume-averaged plasma pressure (pbar).
+
+    Parameters
     ----------
-    a : float
-        Rayon mineur du plasma [m]
-    κ : float
-        Allongement du plasma (kappa)
-    pbar_MPa : float
-        Pression moyenne du plasma en MPa (Mégapascal)
-    Ip_MA : float
-        Courant plasma en MA (Mégaampères)
+    a : Plasma minor radius [m]
+    kappa : Plasma elongation
+    pbar_MPa : Volume-averaged plasma pressure [MPa]
+    Ip_MA : Plasma current [MA]
 
-    Retourne
-    --------
-    beta_P : float
-        Beta poloidal (sans dimension)
+    Returns
+    -------
+    beta_P : Poloidal beta (dimensionless)
 
-    Remarque
-    --------
-    Le champ magnétique poloïdal moyen B_pol n'est pas explicitement entré,
-    mais estimé indirectement via la loi d'Ampère :
-
-        B_pol ≈ μ₀ * I_p / L
-
-    avec L une longueur caractéristique représentant un périmètre effectif
-    de la section transversale du plasma. Cette approximation permet de relier
-    le confinement magnétique au courant plasma sans résoudre l'équilibre MHD.
+    Note
+    ----
+    The average poloidal magnetic field B_pol is not explicitly entered,
+    but is estimated indirectly via Ampere's law: B_pol ≈ μ₀ * I_p / L
+    where L is a characteristic length representing an effective perimeter
+    of the plasma cross-section. This approximation allows relating 
+    the magnetic confinement to the plasma current without solving 
+    the MHD equilibrium.
+    
     """
 
     # Conversion des unités
@@ -279,15 +396,13 @@ def f_beta(beta_P, beta_T):
 
     Parameters
     ----------
-    beta_P : float
-        Poloidal beta (dimensionless).
-    beta_T : float
-        Toroidal beta (dimensionless).
+    beta_P : Poloidal beta (dimensionless).
+    beta_T : Toroidal beta (dimensionless).
 
     Returns
     -------
-    beta : float
-        Total-field beta (dimensionless).
+    beta : Total-field beta (dimensionless)
+        
     """
     beta = 1.0 / ((1.0 / beta_P) + (1.0 / beta_T))
     
@@ -313,8 +428,8 @@ def f_beta_N(beta, a, B0, Ip_MA):
 
     Returns
     -------
-    beta_N : float
-        Normalized beta in percent [%].
+    beta_N : Normalized beta in percent [%]
+        
     """
     # Convert plasma current from MA to A
     
@@ -422,13 +537,14 @@ def f_P_sep(P_fus, P_CD):
     current drive power (P_CD), alpha particle energy (E_ALPHA), and neutron energy (E_N).
 
     Parameters:
-    P_fus (float): Fusion power in megawatts (MW).
-    P_CD (float): Current drive power in megawatts (MW).
-    E_ALPHA (float): Energy of alpha particles in megaelectronvolts (MeV).
-    E_N (float): Energy of neutrons in megaelectronvolts (MeV).
+    P_fus (float): Fusion power in megawatts (MW)
+    P_CD (float): Current drive power in megawatts (MW)
+    E_ALPHA (float): Energy of alpha particles in megaelectronvolts (MeV)
+    E_N (float): Energy of neutrons in megaelectronvolts (MeV)
 
     Returns:
-    float: Separator power (P_sep) in megawatts (MW).
+    float: Separator power (P_sep) in megawatts (MW)
+    
     """
     P_sep = P_CD + (P_fus * E_ALPHA / (E_ALPHA + E_N))
     
@@ -493,25 +609,28 @@ def f_heat_pol(R0, B0, P_sep, a, q95):
     heat =  (P_sep * B0) / (q95 * R0 * A * R0) 
     return heat
 
-def f_Bpol(q95, B_tor, a, R):
+def f_Bpol(q95, B_tor, a, R0):
     """
-    Calcule le champ magnétique poloidal B_pol à partir du facteur de sécurité q95.
+    Calculate the poloidal magnetic field B_pol from the safety factor q_{95}
 
-    Relation approximative (Wesson 2004):
+    Approximation taken from Wesson 2004:
       q95 = (a * B_tor) / (R * B_pol)
-    donc
+    Implies
       B_pol = (a * B_tor) / (R * q95)
 
-    Paramètres :
-      q95   : facteur de sécurité au bord
-      B_tor : champ magnétique toroidal à l'axe médian (T)
-      a     : rayon mineur du plasma (m)
-      R     : rayon majeur du tokamak (m)
+    Parameters
+    ----------
+    q95   : Safety factor
+    B_tor : Toroidal magnetic field on the axis (T)
+    a     : Minor radius (m)
+    R0     : Major radius (m)
 
-    Retour :
-      B_pol : champ magnétique poloidal (T)
+    Returns
+    -------
+    B_pol : Poloidal magnetic field (T)
+    
     """
-    B_pol = (a * B_tor) / (R * q95)
+    B_pol = (a * B_tor) / (R0 * q95)
     
     return B_pol
 
@@ -523,24 +642,22 @@ def f_heat_PFU_Eich(
     theta_deg       # Angle d’incidence sur le PFU (en degrés)
 ):
     """
-    Calcule à partir du scaling de Eich :
-      - lambda_q (m) : largeur de décroissance de la puissance SOL
-      - q_parallel0   (MW/m²) : pic de flux parallèle
-      - q_target      (MW/m²) : flux sur la PFU (incidence theta)
+    
+    PFU approximation (not benchmarked)
+    
+    Calculates from the Eich scaling:
+      - lambda_q (m): decay length of the Scrape-Off Layer (SOL) power
+      - q_parallel0 (MW/m²): peak parallel heat flux
+      - q_target (MW/m²): heat flux on the Plasma-Facing Unit (PFU) at incidence angle theta
 
-    Scaling de Eich (Eich+2013) :
-      lambda_q [mm] = 1.35 * R^0.04 * B_pol^(-0.92) * eps^0.42 * P_sol^(-0.02)
+    Source : [Eich scaling 2013]
+    lambda_q [mm] = 1.35 * R^0.04 * B_pol^(-0.92) * eps^0.42 * P_sol^(-0.02)
 
-    Formules :
-      lambda_q_m   = lambda_q_mm * 1e-3
-      q_parallel0  = (P_sol) / (2 * np.pi * R * lambda_q_m)
-      q_target     = q_parallel0 * np.sin(theta)
-
-    Remarque :
-      On travaille en MW pour P_sol et on renvoie directement q en MW/m².
-
-    Retours :
-      lambda_q_m, q_parallel0, q_target
+    Returns:
+    lambda_q_m : Width of the Scrape Of Layer (SOL) [m]
+    q_parallel0 : Peack heat flux on the PFU [MW/m²]
+    q_target Heat flux on the PFU [MW/m²]
+    
     """
     # conversion de l'angle en radians
     theta = np.deg2rad(theta_deg)
@@ -618,7 +735,7 @@ def f_Ip(tauE, R0, a, κ, δ, nbar, B0, Atomic_mass, P_fus, Q, H, C_SL,
     
     return Ip
 
-def f_Ib(R0, a, κ, pbar, Ip):
+def f_Freidberg_Ib(R0, a, κ, pbar, Ip):
     """
     
     Calculation of the bootstrap current using the Freidberg calculations
@@ -659,6 +776,95 @@ def f_Ib(R0, a, κ, pbar, Ip):
     # Calcul de Ib
     Ib = num / denom / 1e6
     return Ib
+
+# Freidberg case : Ib = 6.3
+# print('Ib Freidberg test case [MA] : 6.3')
+# print(f'Ib original test case [MA] : {round(f_Freidberg_Ib(5.34, 1.34, 1.7, 0.76, 14.3),1)}')
+
+# ARC case : Ib = 5.03
+# print('Ib ARC [MA] : 5.03')
+# print(f'Ib original ARC [MA] : {round(f_Freidberg_Ib(3.3, 1.1, 1.84, 0.58, 7.8),1)}')
+
+def calculate_CB(nu_J, nu_p):
+    """
+    
+    Numerically calculates the coefficient C_B(nu_J, nu_p) according to the integral equation (35)
+    from the following article:
+    D.J. Segal, A.J. Cerfon, J.P. Freidberg, "Steady state versus pulsed tokamak reactors",
+    Nuclear Fusion, 61(4), 045001, 2021.
+
+    Parameters
+    ----------
+    nu_J : Current profile parameter
+    nu_p : Pressure profile parameter
+
+    Returns
+    -------
+    CB : Numerical value of the coefficient C_B
+    
+    """
+    def integrand(x):
+        """
+        Integrand function of equation (35)
+        """
+        polynomial = (1 + (1 - 3 * nu_J) * x + nu_J * x**2)**2
+        return x**(1/4) * (1 - x)**(nu_p - 1) * polynomial
+
+    # Calculate the integral
+    integral, _ = quad(integrand, 0, 1)
+
+    # Final coefficient
+    CB = integral / (1 - nu_J)**2
+    return CB
+
+
+def f_Segal_Ib(nu_n, nu_T, epsilon, kappa, n20, Tk, R0, I_M):
+    """
+    
+    Source: Segal, D. J., Cerfon, A. J., & Freidberg, J. P. (2021).
+    Steady state versus pulsed tokamak reactors. Nuclear Fusion, 61(4), 045001.
+
+    Calculates the bootstrap current fraction f_B
+
+    Parameters :
+    ----------
+    nu_n : Density profile parameter
+    nu_T : Temperature profile parameter
+    nu_J : Current profile parameter
+    epsilon : Inverse aspect ratio (a/R0)
+    kappa : Elongation
+    n20 : Average density [10^20 m^-3]
+    Tk : Average temperature [keV]
+    R0 : Major radius [m]
+    I_M : Plasma current [MA]
+
+    Returns:
+    ----------
+    I_b : Bootstrap Current [MA]
+    
+    """
+    nu_p = nu_n + nu_T
+    nu_J = 0.453 - 0.1 * (nu_p - 1.5)  # Eq 36 Source
+
+    # Calculate C_B
+    CB = calculate_CB(nu_J, nu_p)
+
+    # Calculate K_b (equation A15)
+    K_b = 0.6099 * (1 + nu_n) * (1 + nu_T) * (nu_n + 0.054 * nu_T)
+    K_b *= (epsilon ** 2.5) * (kappa ** 1.27) * CB
+
+    # Calculate f_B (equation 34)
+    numerator = K_b * n20 * Tk * R0**2
+    denominator = I_M**2
+    f_B = numerator / denominator
+
+    # Bootstrap Current
+    I_b = f_B * I_M
+
+    return I_b
+
+# ARC case
+# print(f'Ib Segal ARC [MA] : {round(f_Segal_Ib(0.385, 0.929, 0.34, 1.84, 1.3, 14, 3.3, 7.8),1)}')
 
 def f_etaCD(a, R0, B0, nbar, Tbar, nu_n, nu_T):
     """
@@ -897,6 +1103,37 @@ def f_q95(B0, Ip, R0, a, κ, δ):
     q95 = (2 * np.pi * a**2 * B0) / (μ0  * Ip*1e6 * R0) * (1.17-0.65/Aspect_ratio)/(1-1/Aspect_ratio**2)*(1+κ**2*(1+2*δ**2-1.2*δ**3))/2
     return q95
 
+def f_q_mhd(a, Bt, R, Ip, eps, kappa95, delta95):
+    """
+    
+    Calculates the MHD safety factor q from the definition of the shaping factor S_k
+
+    Parameters
+    ----------
+    a : Plasma minor radius [m].
+    Bt : Toroidal magnetic field [T].
+    R : Major radius of the tokamak [m].
+    Ip : Plasma current [A].
+    eps : Inverse aspect ratio (a/R).
+    kappa95 : Elongation at the 95% flux surface.
+    delta95 : Triangularity at the 95% flux surface.
+
+    Returns
+    -------
+    q_MHD : MHD safety factor
+    
+    """
+    # Calculate the shaping factor S_k
+    S_k = (
+        0.5 * (1.17 - 0.65 * eps) / (1.0 - eps**2)**2
+        * (1.0 + kappa95**2 * (1.0 + 2.0 * delta95**2 - 1.2 * delta95**3))
+    )
+
+    # Calculate q
+    q_MHD = 5 * a**2 * Bt * S_k / (R * Ip)
+
+    return q_MHD
+
 def f_He_fraction(n_bar, T_bar, tauE, C_Alpha):
     """
     
@@ -935,45 +1172,231 @@ def f_He_fraction(n_bar, T_bar, tauE, C_Alpha):
 
 def f_surface_premiere_paroi(kappa, R0, a):
     """
-    Calcule la surface de la première paroi dans un tokamak
-    à partir de l'élongation (kappa), du grand rayon (R0) et du petit rayon (a).
     
-    Paramètres :
-    - kappa : élongation (sans unité)
-    - R0 : grand rayon en mètres
-    - a : petit rayon en mètres
+    Calculate the surface area of the first wall in a tokamak
+    from the elongation (kappa), major radius (R0), and minor radius (a)
 
-    Retour :
-    - Surface en mètres carrés (float)
+    Parameters
+    ----------
+    kappa : Elongation (dimensionless)
+    R0 : Major radius [m]
+    a : Minor radius [m]
+
+    Returns
+    -------
+    S : Surface area [m²]
+        
     """
-
-    # Approximation du périmètre de l'ellipse (section plasma) par Ramanujan
+    # Approximation of the ellipse perimeter (plasma cross-section) by Ramanujan
     Pe = math.pi * a * (3 * (1 + kappa) - math.sqrt((3 + kappa) * (1 + 3 * kappa)))
-
-    # Surface de la première paroi
+    # First wall surface area
     S = 2 * math.pi * R0 * Pe
-
     return S
 
 def f_P_elec(P_fus, P_LH, eta_T, eta_RF):
     """
-    Calcule la puissance électrique nette P_elec à partir de :
-      - P_fus : puissance de fusion (en MW, ou unité cohérente)
-      - P_LH  : puissance RF pour la drive du courant (Lower Hybrid)
-      - eta_T : rendement de conversion thermique (défaut 0.4)
-      - eta_RF: rendement klystron→plasma (défaut 0.4)
-
-    Formule :
-      P_elec = eta_T * P_fus - P_LH / eta_RF
-
-    Retour :
-      P_elec (même unité que P_fus et P_LH)
-    """
     
+    Calculate the net electrical power P_elec
+    
+    Parameters
+    ----------
+    P_fus : Fusion power [MW]
+    P_LH : LHCD power [MW]
+    eta_T : Conversion efficienty from fusion power to electrical power
+    eta_RF : Conversion efficienty from wall to klystron
+
+    Returns
+    -------
+    P_elec : Net electrical power [MW]
+    
+    """
     P_th = P_fus * E_F / (E_ALPHA + E_N)
     P_elec = eta_T * P_th - P_LH / eta_RF
-    
     return P_elec
+
+def f_W_th(n_avg, T_avg, volume):
+    """
+    
+    Calculate the total thermal energy W_th of a plasma assuming 
+    n_i = n_e and T_i = T_e.
+
+    Parameters
+    ----------
+    n_avg : Average density (electronic and ionic) [1e20 m⁻³]
+    T_avg : Average temperature (electronic and ionic) [keV]
+    volume : Plasma volume [m³]
+
+    Returns
+    -------
+    W_th : Thermal energy W_th [Joules]
+    
+    """
+    
+    n_m3 = n_avg * 1e20  # Convert n to m⁻³
+    T_eV = T_avg * 1e3   # Convert T to eV
+    W_th = 3 * n_m3 * T_eV * volume * E_ELEM
+    
+    return W_th
+
+def f_P_1rst_wall_Hmod(P_sep_solution, P_CD_solution, Surface_solution):
+    """
+    
+    Calculate the power deposited on the first wall in H-mode
+
+    Parameters
+    ----------
+    P_sep_solution : Power leaving the plasma [MW]
+    P_CD_solution : Power injected for current drive [MW]
+    Surface_solution : Surface area of the first wall [m²]
+
+    Returns
+    -------
+    P_1rst_wall_Hmod : Surface power density on the first wall in H-mode [MW/m²]
+    
+    """
+    
+    P_1rst_wall_Hmod = (P_sep_solution - P_CD_solution) / Surface_solution
+    
+    return P_1rst_wall_Hmod
+
+def f_P_1rst_wall_Lmod(P_sep_solution, Surface_solution):
+    """
+    
+    Calculate the power deposited on the first wall in L-mode
+
+    Parameters
+    ----------
+    P_sep_solution : Power leaving the plasma [MW]
+    Surface_solution : Surface area of the first wall [m²]
+
+    Returns
+    -------
+    P_1rst_wall_Lmod : Surface power density on the first wall in L-mode [MW/m²]
+        
+    """
+    
+    P_1rst_wall_Lmod = P_sep_solution / Surface_solution
+    
+    return P_1rst_wall_Lmod
+
+def f_P_synchrotron(T0_keV, R, a, Bt, ne0, A, V, alpha_n, alpha_T, beta_T, r=0.5, r_syn=0.6):
+    """
+    
+    Note : Under developement
+    
+    Calculate the total synchrotron radiation power (in MW) using the 
+    advanced Wenninger model
+
+    Parameters
+    ----------
+    T0_keV : Central electron temperature [keV]
+    R : Major radius [m]
+    a : Minor radius [m]
+    Bt : Toroidal magnetic field [T]
+    ne0 : Central electron density [10^20 m⁻³]
+    A : Geometric aspect ratio (R/a)
+    V : Plasma volume [m³]
+    alpha_n : Density profile parameter
+    alpha_T : Temperature profile parameter
+    beta_T : Temperature shape factor
+    r : Normalized radial position (~0.5 by default)
+    r_syn : Reflection factor (~0.6 to 0.7).
+
+    Returns
+    -------
+    P_syn : Total synchrotron power [MW]
+
+    Sources
+    -------
+    - Wenninger et al., Nuclear Fusion (2015)
+    - Wesson, "Tokamaks", 3rd ed., chap. 7
+    
+    """
+    # Constants
+    C_syn = 3.84**-9.6
+    T0 = T0_keV  # Temperature already in keV
+    pa0 = 6.04e3 * a * ne0 / Bt
+    kappa_syn = V / (2 * math.pi * 2 * R * a**2)
+    G_A = 0.93 * (1 + 0.85 * math.exp(-0.82 * A))
+    K_num = (1.98 + alpha_T)**1.36 * beta_T**2.14
+    K_den = (alpha_n + 3.87 * alpha_T + 1.46) * 0.79 * (beta_T**1.53 + 1.87 * alpha_T - 0.16)**1.33
+    K_profile = K_num / K_den
+    T_frac = ((1 - r_syn) / (1 + 0.12 * T0 / (pa0 * 0.41) * (1 - r))) * 0.62
+    P_syn = C_syn * T_frac * T0 * (16 + T0)**2.61 * R * a**1.38 * kappa_syn**0.79 * Bt**2.62 * ne0**0.38 * G_A * K_profile
+    
+    return P_syn
+
+def f_P_bremsstrahlung(V, n_e, T_e, Z_eff, R, a):
+    """
+    Note : Under developement
+    
+    Calculate the total Bremsstrahlung power (in MW)
+
+    Parameters
+    -------
+    n_e : Electron density [10^20 m⁻³]
+    T_e : Electron temperature [keV]
+    Z_eff : Effective charge
+    V : Plasma volume [m³]
+    
+    Returns
+    -------
+    P_Brem : Bremsstrahlung power [MW]
+
+    Assumptions:
+        - Fully ionized plasma
+        - Radial shape factor g_r ≈ 1 (flat profiles)
+
+    Sources
+    -------
+    NRL Plasma Formulary, 2022 edition, section on bremsstrahlung radiation.
+    Wesson, J., "Tokamaks", 3rd ed., Oxford University Press, p.228
+    
+    """
+    
+    P_Brem = 5.35e3 * Z_eff * n_e**2 * math.sqrt(T_e) * V
+    
+    return P_Brem / 1e6
+
+def f_P_line_radiation(V, n_e, T_e, f_imp, L_z, R, a):
+    """
+    
+    Note : Under developement
+    
+    Calculate the line radiation power (in MW) due to a given impurity in a plasma
+
+    Parameters
+    -------
+    n_e: Electron density [1e20 m⁻³]
+    f_imp: Impurity fraction (n_imp / n_e)
+    L_z: Radiative loss coefficient [W·m³] for the given impurity
+    V : Plasma volume [m³]
+    
+    Returns
+    -------
+    P_line : Line radiation power [MW]
+
+    Assumptions:
+        - Uniform impurity concentration
+        - Homogeneous plasma
+        - Line radiation + radiative recombination included in L_z(T_e)
+
+    Sources
+    -------
+    - H. Pütterich et al., "Radiative cooling rates of heavy elements for fusion plasmas", Nucl. Fusion 50 (2010) 025012.
+    - Summers et al., Atomic Data and Analysis Structure (ADAS): http://adas.ac.uk
+    - IAEA-INDC report on radiative losses, INDC(NDS)-457.
+
+    Note
+    ----
+    This function can be adapted to any impurity by changing L_z 
+    according to the species (W, C, N, etc.).
+    
+    """
+    
+    P_line = (n_e * 1e20)**2 * f_imp * L_z * V
+    
+    return P_line
 
 #%%
 
