@@ -15,9 +15,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'D0FUS_BIB'))
 #%% Main Function
 
 def run( a, R0, Bmax, P_fus,
-        Tbar, H, Temps_Plateau, δ, b , nu_n, nu_T,
+        Tbar, H, Temps_Plateau, b , nu_n, nu_T,
         Supra_choice, Chosen_Steel , Radial_build_model , Choice_Buck_Wedg , 
-        Option_Kappa , L_H_Scaling_choice, Scaling_Law):
+        Option_Kappa , L_H_Scaling_choice, Scaling_Law, Bootstrap_choice):
     
     ########################################### Initialisation ###########################################
     
@@ -36,9 +36,9 @@ def run( a, R0, Bmax, P_fus,
     
     # Tension fraction
     if Choice_Buck_Wedg == "Wedging" :
-        beta_TF = 1/2        # fraction de la tension aloué au WP (valeur fixe prise à partir de ITER: DDD TF p.97)
+        omega_TF = 1/2        # fraction de la tension aloué au WP (valeur fixe prise à partir de ITER: DDD TF p.97)
     elif Choice_Buck_Wedg == "Bucking" :
-        beta_TF = 1          # fraction de la tension aloué au WP , en bucking = 1
+        omega_TF = 1          # fraction de la tension aloué au WP , en bucking = 1
     else : 
         print('Chosse a valid mechanical configuration')
     
@@ -64,8 +64,8 @@ def run( a, R0, Bmax, P_fus,
         Eps = -0.6 / 100
         Marge_T_LTS = 1 #K
         
-        J_max_TF_conducteur = Jc_LTS(Bmax, T_helium + Marge_T_LTS + Marge_T_Helium, Nb3Sn_PARAMS, Eps)
-        J_max_CS_conducteur = Jc_LTS(Bmax, T_helium + Marge_T_LTS + Marge_T_Helium, Nb3Sn_PARAMS, Eps)
+        J_max_TF_conducteur = Jc_LTS(Bmax, T_helium + Marge_T_LTS + Marge_T_Helium, Nb3Sn_PARAMS, Eps) * f_Cu * f_Cool * f_In
+        J_max_CS_conducteur = Jc_LTS(Bmax, T_helium + Marge_T_LTS + Marge_T_Helium, Nb3Sn_PARAMS, Eps) * f_Cu * f_Cool * f_In
         
     elif Supra_choice == "HTS"  :
 
@@ -99,8 +99,8 @@ def run( a, R0, Bmax, P_fus,
         Tet = 0
         Marge_T_HTS = 5 #K
         
-        J_max_TF_conducteur = Jc_HTS(Bmax, T_helium + Marge_T_HTS + Marge_T_Helium, REBCO_PARAMS, Tet)
-        J_max_CS_conducteur = Jc_HTS(Bmax, T_helium + Marge_T_HTS + Marge_T_Helium, REBCO_PARAMS, Tet)
+        J_max_TF_conducteur = Jc_HTS(Bmax, T_helium + Marge_T_HTS + Marge_T_Helium, REBCO_PARAMS, Tet) * f_Cu * f_Cool * f_In
+        J_max_CS_conducteur = Jc_HTS(Bmax, T_helium + Marge_T_HTS + Marge_T_Helium, REBCO_PARAMS, Tet) * f_Cu * f_Cool * f_In
         
     elif Supra_choice == "Manual"  :
 
@@ -234,8 +234,15 @@ def run( a, R0, Bmax, P_fus,
     
     ########################################### Main calculus ###########################################
     
-    # Elongation
-    κ = f_Kappa(R0/a,Option_Kappa)
+    # Geometry
+    κ    = f_Kappa(R0/a,Option_Kappa)
+    κ_95 = f_Kappa_95(κ)
+    δ    = f_Delta(κ)
+    δ_95 = f_Delta_95(δ)
+    
+    # Plasma volume
+    Volume_solution = f_plasma_volume(R0, a, κ, δ)
+    Surface_solution = f_surface_premiere_paroi(κ, R0, a)
     
     # Central magnetic field
     B0_solution = f_B0(Bmax,a,b,R0)
@@ -251,7 +258,12 @@ def run( a, R0, Bmax, P_fus,
         tau_E_alpha  = f_tauE(pbar_alpha, R0, a, κ, P_fus, Q)
         Ip_alpha     = f_Ip(tau_E_alpha, R0, a, κ, δ, nbar_alpha, B0_solution, Atomic_mass, P_fus, Q, H, C_SL,
                      alpha_delta,alpha_M,alpha_kappa,alpha_epsilon, alpha_R,alpha_B,alpha_n,alpha_I,alpha_P)
-        Ib_alpha     = f_Ib(R0, a, κ, pbar_alpha, Ip_alpha)
+        if Bootstrap_choice == 'Freidberg' :
+            Ib_alpha = f_Freidberg_Ib(R0, a, κ, pbar_alpha, Ip_alpha)
+        elif Bootstrap_choice == 'Segal' :
+            Ib_alpha = f_Segal_Ib(nu_n, nu_T, a/R0, κ, nbar_alpha, Tbar, R0, Ip_alpha)
+        else :
+            print("Choose a valid Bootstrap model")
         eta_CD_alpha = f_etaCD(a, R0, B0_solution, nbar_alpha, Tbar, nu_n, nu_T)
         P_CD_alpha   = f_PCD(R0, nbar_alpha, Ip_alpha, Ib_alpha, eta_CD_alpha)
     
@@ -285,13 +297,20 @@ def run( a, R0, Bmax, P_fus,
     # Une fois Q déterminé, calcul des autres paramètres
     nbar_solution         = f_nbar(P_fus,R0,a,κ,nu_n,nu_T,f_alpha_solution,Tbar)
     pbar_solution         = f_pbar(nu_n,nu_T,nbar_solution,Tbar,f_alpha_solution)
+    W_th_solution         = f_W_th(nbar_solution, Tbar, Volume_solution)
     eta_CD                = f_etaCD(a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T)
     tauE_solution         = f_tauE(pbar_solution,R0,a,κ,P_fus,Q_solution)
     Ip_solution           = f_Ip(tauE_solution, R0, a, κ, δ, nbar_solution, B0_solution, Atomic_mass, P_fus, Q_solution, H, C_SL,
                           alpha_delta,alpha_M,alpha_kappa,alpha_epsilon, alpha_R,alpha_B,alpha_n,alpha_I,alpha_P)
-    Ib_solution           = f_Ib(R0, a, κ, pbar_solution, Ip_solution)
+    if Bootstrap_choice == 'Freidberg' :
+        Ib_solution = f_Freidberg_Ib(R0, a, κ, pbar_solution, Ip_solution)
+    elif Bootstrap_choice == 'Segal' :
+        Ib_solution = f_Segal_Ib(nu_n, nu_T, a/R0, κ, nbar_solution, Tbar, R0, Ip_solution)
+    else :
+        print("Choose a valid Bootstrap model")
     qstar_solution        = f_qstar(a, B0_solution, R0, Ip_solution, κ)
     q95_solution          = f_q95(B0_solution,Ip_solution,R0,a,κ,δ)
+    q_mhd_solution        = f_q_mhd(a, B0_solution, R0, Ip_solution, a/R0, κ, δ)
     B_pol_solution        = f_Bpol(q95_solution, B0_solution, a, R0)
     betaT_solution        = f_beta_T(pbar_solution,B0_solution)
     betaP_solution        = f_beta_P(a, κ, pbar_solution, Ip_solution)
@@ -306,11 +325,11 @@ def run( a, R0, Bmax, P_fus,
     heat_par_solution     = f_heat_par(R0,B0_solution,P_sep_solution)
     heat_pol_solution     = f_heat_pol(R0,B0_solution,P_sep_solution,a,q95_solution)
     lambda_q_Eich_m, q_parallel0_Eich, q_target_Eich = f_heat_PFU_Eich(P_sep_solution, B_pol_solution, R0, a/R0, theta_deg)
-    surface_1rst_wall_solution = f_surface_premiere_paroi(κ, R0, a)
-    P_1rst_wall_Hmod      = (P_sep_solution-P_CD_solution)/surface_1rst_wall_solution
-    P_1rst_wall_Lmod      = P_sep_solution/surface_1rst_wall_solution
+    P_1rst_wall_Hmod      = f_P_1rst_wall_Hmod(P_sep_solution, P_CD_solution, Surface_solution)
+    P_1rst_wall_Lmod      = f_P_1rst_wall_Lmod(P_sep_solution, Surface_solution)
     P_elec_solution       = f_P_elec(P_fus, P_CD_solution, eta_T, eta_RF)
-
+    li_solution           = f_li(nu_n, nu_T)
+    
     # L-H scaling :
     if L_H_Scaling_choice == 'Martin':
         P_Thresh = P_Thresh_Martin(nbar_solution, B0_solution, a, R0, κ, Atomic_mass)
@@ -323,23 +342,25 @@ def run( a, R0, Bmax, P_fus,
     
     # Radial Build
     if Radial_build_model == "academic" :
-        (c, Winding_pack_tension_ratio) = f_TF_academic(a, b, R0, σ_TF, μ0, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg)
-        (d,Alpha,B_CS) = f_CS_academic(a, b, c, R0, κ, Bmax, σ_CS, μ0, J_max_CS_conducteur, Choice_Buck_Wedg, Tbar, nbar_solution, Ip_solution, Ib_solution)
+        (c, Winding_pack_tension_ratio) = f_TF_academic(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg)
+        (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, Ib_solution, Bmax ,a ,b ,c , R0 ,κ ,nbar_solution, Tbar ,Ce ,Temps_Plateau , li_solution)
+        (d,Alpha,B_CS) = f_CS_academic(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, σ_CS, J_max_CS_conducteur, Choice_Buck_Wedg)
     elif Radial_build_model == "D0FUS" :
-        (c, Winding_pack_tension_ratio) = f_TF_D0FUS(a, b, R0, σ_TF, μ0, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg, gamma_TF, beta_TF)
-        (d,Alpha,B_CS, J_CS) = f_CS_D0FUS(a, b, c, R0, κ, Bmax, σ_CS, μ0, J_max_CS_conducteur, Choice_Buck_Wedg, Tbar, nbar_solution, Ip_solution, Ib_solution, gamma_CS)
+        (c, Winding_pack_tension_ratio) = f_TF_D0FUS(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg, omega_TF, n_TF)
+        (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, Ib_solution, Bmax ,a ,b ,c , R0 ,κ ,nbar_solution, Tbar ,Ce ,Temps_Plateau , li_solution)
+        (d,Alpha,B_CS, J_CS) = f_CS_D0FUS(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, σ_CS, J_max_CS_conducteur , Choice_Buck_Wedg)
     else :
         print('Choose a valid mechanical model')
     
     cost_solution = f_cost(a,b,c,d,R0,κ,Q_solution)
 
     return (B0_solution, B_CS, B_pol_solution,
-            tauE_solution,
-            Q_solution,
+            tauE_solution, W_th_solution,
+            Q_solution, Volume_solution, Surface_solution,
             Ip_solution, Ib_solution,
-            nbar_solution, nG_solution,
+            nbar_solution, nG_solution, pbar_solution,
             betaN_solution, betaT_solution, betaP_solution,
-            qstar_solution, q95_solution,
+            qstar_solution, q95_solution, q_mhd_solution,
             P_CD_solution, P_sep_solution, P_Thresh, eta_CD, P_elec_solution,
             cost_solution,
             heat_D0FUS_solution, heat_par_solution, heat_pol_solution, lambda_q_Eich_m, q_target_Eich,
@@ -347,7 +368,8 @@ def run( a, R0, Bmax, P_fus,
             Gamma_n_solution,
             f_alpha_solution,
             J_max_TF_conducteur, J_max_CS_conducteur,
-            Winding_pack_tension_ratio, R0-a, R0-a-b, R0-a-b-c, R0-a-b-c-d, κ)
+            Winding_pack_tension_ratio, R0-a, R0-a-b, R0-a-b-c, R0-a-b-c-d,
+            κ, κ_95, δ, δ_95)
 
 #%% Benchmark
 
@@ -361,22 +383,14 @@ if __name__ == "__main__":
     b = 1.2
     Tbar = 14
     
-    # Aries 1
-    # R0 = 6.75
-    # a = 1.5
-    # Pfus = 2000
-    # Bmax = 19
-    # b = 1.2
-    # Tbar = 20
-    
     # End Benchmark parameters
     (B0_solution, B_CS, B_pol_solution,
-    tauE_solution,
-    Q_solution,
+    tauE_solution, W_th_solution,
+    Q_solution, Volume_solution,Surface_solution,
     Ip_solution, Ib_solution, 
-    nbar_solution, nG_solution,
+    nbar_solution, nG_solution, pbar_solution,
     betaN_solution, betaT_solution, betaP_solution,
-    qstar_solution, q95_solution,
+    qstar_solution, q95_solution, q_mhd_solution,
     P_CD, P_sep, P_Thresh, eta_CD, P_elec_solution,
     cost,
     heat_D0FUS_solution, heat_par_solution, heat_pol_solution, lambda_q_Eich_m, q_target_Eich,
@@ -384,11 +398,12 @@ if __name__ == "__main__":
     Gamma_n,
     f_alpha_solution,
     J_max_TF_conducteur, J_max_CS_conducteur,
-    TF_ratio, r_minor, r_sep, r_c, r_d , κ ) = run( a, R0, Bmax, Pfus,
-                                                   Tbar, H, Temps_Plateau, δ, b , nu_n, nu_T,
+    TF_ratio, r_minor, r_sep, r_c, r_d ,
+    κ, κ_95, δ, δ_95) = run( a, R0, Bmax, Pfus,
+                                                   Tbar, H, Temps_Plateau, b , nu_n, nu_T,
                                                    Supra_choice, Chosen_Steel , Radial_build_model , 
                                                    Choice_Buck_Wedg , Option_Kappa , 
-                                                   L_H_Scaling_choice, Scaling_Law)
+                                                   L_H_Scaling_choice, Scaling_Law, Bootstrap_choice)
 
     # Clean display of results
     print("=========================================================================")
@@ -400,14 +415,28 @@ if __name__ == "__main__":
     print(f"[O] c (TF coil thickness)                           : {r_sep-r_c:.3f} [m]")
     print(f"[O] d (CS thickness)                                : {r_c-r_d:.3f} [m]")
     print(f"[O] R0-a-b-c-d                                      : {r_d:.3f} [m]")
+    print("-------------------------------------------------------------------------")
     print(f"[O] Kappa (Elongation)                              : {κ:.3f} ")
-    print(f"[I] Delta (Triangularity)                           : {δ:.3f} ")
+    print(f"[O] Kappa_95 (Elongation at 95%)                    : {κ_95:.3f} ")
+    print(f"[O] Delta (Triangularity)                           : {δ:.3f} ")
+    print(f"[O] Delta_95 (Triangularity at 95%)                 : {δ_95:.3f} ")
+    print(f"[O] Volume (Plasma)                                 : {Volume_solution:.3f} [m^3]")
+    print(f"[O] Surface (1rst Wall)                             : {Surface_solution:.3f} [m²]")
     print(f"[I] Mechanical configuration                        : {Choice_Buck_Wedg} ")
     print(f"[I] Superconductor technology                       : {Supra_choice} ")
     print("-------------------------------------------------------------------------")
     print(f"[I] Bmax (Maximum Magnetic Field - TF)              : {Bmax:.3f} [T]")
     print(f"[O] B0 (Central Magnetic Field)                     : {B0_solution:.3f} [T]")
     print(f"[O] BCS (Magnetic Field CS)                         : {B_CS:.3f} [T]")
+    print(f"[O] J_E-TF (Enginnering current density TF)         : {J_max_TF_conducteur/1e6:.3f} [MA/m²]")
+    print(f"[O] J_E-CS (Enginnering current density CS)         : {J_max_CS_conducteur/1e6:.3f} [MA/m²]")
+    print("-------------------------------------------------------------------------")
+    print(f"[I] P_fus (Fusion Power)                            : {Pfus:.3f} [MW]")
+    print(f"[O] P_CD (CD Power)                                 : {P_CD:.3f} [MW]")
+    print(f"[O] eta_CD (CD Efficiency)                          : {eta_CD:.3f} [MA/MW-m²]")
+    print(f"[O] Q (Energy Gain Factor)                          : {Q_solution:.3f}")
+    print(f"[O] P_elec-net (Net Electrical Power)               : {P_elec_solution:.3f} [MW]")
+    print(f"[O] Cost ((V_BB+V_TF+V_CS)/Q)                       : {cost:.3f} [m^3]")
     print("-------------------------------------------------------------------------")
     print(f"[I] H (Scaling Law factor)                          : {H:.3f} ")
     print(f"[O] tau_E (Confinement Time)                        : {tauE_solution:.3f} [s]")
@@ -418,7 +447,9 @@ if __name__ == "__main__":
     print(f"[I] Tbar (Mean Temperature)                         : {Tbar:.3f} [keV]")
     print(f"[O] nbar (Average Density)                          : {nbar_solution:.3f} [10^20 m^-3]")
     print(f"[O] nG (Greenwald Density)                          : {nG_solution:.3f} [10^20 m^-3]")
+    print(f"[O] pbar (Average Pressure)                         : {pbar_solution:.3f} [MPa]")
     print(f"[O] Alpha Fraction                                  : {f_alpha_solution*1e2:.3f} [%]")
+    print(f"[O] Thermal Energy Content                          : {W_th_solution/1e6:.3f} [MJ]")
     print("-------------------------------------------------------------------------")
     print(f"[O] Beta_T (Toroidal Beta)                          : {betaT_solution*1e2:.3f} [%]")
     print(f"[O] Beta_P (Poloidal Beta)                          : {betaP_solution:.3f}")
@@ -426,13 +457,7 @@ if __name__ == "__main__":
     print("-------------------------------------------------------------------------")
     print(f"[O] q* (Kink Safety Factor)                         : {qstar_solution:.3f}")
     print(f"[O] q95 (Safety Factor at 95%)                      : {q95_solution:.3f}")
-    print("-------------------------------------------------------------------------")
-    print(f"[I] P_fus (Fusion Power)                            : {Pfus:.3f} [MW]")
-    print(f"[O] P_CD (CD Power)                                 : {P_CD:.3f} [MW]")
-    print(f"[O] eta_CD (CD Efficiency)                          : {eta_CD:.3f} [MA/MW-m²]")
-    print(f"[O] Q (Energy Gain Factor)                          : {Q_solution:.3f}")
-    print(f"[O] P_elec (Electrical Power)                       : {P_elec_solution:.3f} [MW]")
-    print(f"[O] Cost ((V_BB+V_TF+V_CS)/Q)                       : {cost:.3f} [m^3]")
+    print(f"[O] q_MHD (MHD Safety Factor)                       : {q_mhd_solution:.3f}")
     print("-------------------------------------------------------------------------")
     print(f"[O] P_sep (Separatrix Power)                        : {P_sep:.3f} [MW]")
     print(f"[O] P_Thresh (L-H Power Threshold)                  : {P_Thresh:.3f} [MW]")
