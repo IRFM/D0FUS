@@ -44,11 +44,11 @@ def R0_a_scan(Bmax, P_fus):
     
     a_min = 0.5
     a_max = 3
-    a_step = 0.1
+    a_step = 0.05
     a_values = np.arange(a_min,a_max,a_step)
     R0_min = 1.5
     R0_max = 9
-    R0_step = 0.25
+    R0_step = 0.1
     R0_values = np.arange(R0_min,R0_max,R0_step)
      
     # Matrix creations
@@ -92,12 +92,12 @@ def R0_a_scan(Bmax, P_fus):
             
             # Main calcul
             (B0_solution, B_CS, B_pol_solution,
-            tauE_solution,
-            Q_solution,
+            tauE_solution, W_th_solution,
+            Q_solution, Volume_solution, Surface_solution,
             Ip_solution, Ib_solution,
-            n_solution, nG_solution,
+            n_solution, nG_solution, pbar_solution,
             betaN_solution, betaT_solution, betaP_solution,
-            qstar_solution, q95_solution, 
+            qstar_solution, q95_solution, q_mhd_solution,
             P_CD, P_sep, P_Thresh, eta_CD, P_elec_solution,
             cost,
             heat, heat_par_solution, heat_pol_solution, lambda_q_Eich_m, q_target_Eich,
@@ -106,11 +106,11 @@ def R0_a_scan(Bmax, P_fus):
             f_alpha_solution,
             J_max_TF_conducteur, J_max_CS_conducteur,
             TF_ratio, R0_a_solution, R0_a_b_solution, R0_a_b_c_solution, R0_a_b_c_d_solution,
-            κ) = run( a, R0, Bmax, Pfus, 
-            Tbar, H, Temps_Plateau, δ, b , nu_n, nu_T,
+            κ, κ_95, δ, δ_95) = run( a, R0, Bmax, P_fus, 
+            Tbar, H, Temps_Plateau, b , nu_n, nu_T,
             Supra_choice, Chosen_Steel , Radial_build_model , 
             Choice_Buck_Wedg , Option_Kappa , 
-            L_H_Scaling_choice, Scaling_Law)
+            L_H_Scaling_choice, Scaling_Law, Bootstrap_choice)
             
             # Verifier les conditions
             n_condition = n_solution / nG_solution
