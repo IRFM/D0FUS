@@ -15,24 +15,16 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'D0FUS_BIB'))
 #%% Main Function
 
 def run( a, R0, Bmax, P_fus,
-        Tbar, H, Temps_Plateau, b , nu_n, nu_T,
+        Tbar, H, Temps_Plateau_input, b , nu_n, nu_T,
         Supra_choice, Chosen_Steel , Radial_build_model , Choice_Buck_Wedg , 
-        Option_Kappa , L_H_Scaling_choice, Scaling_Law, Bootstrap_choice):
-    
-    ########################################### Initialisation ###########################################
+        Option_Kappa , L_H_Scaling_choice, Scaling_Law, Bootstrap_choice, Operation_mode):
     
     # Steel
-    if Chosen_Steel == '316L':
-        σ_TF = 660.E6        # Mechanical limit of the steel considered in [Pa]
-        σ_CS = 660.E6        # CS machanical limit [Pa]
-    elif Chosen_Steel == 'NH50':
-        σ_TF = 1000.E6        # Mechanical limit of the steel considered in [Pa]
-        σ_CS = 1000.E6        # CS machanical limit [Pa]
-    elif Chosen_Steel == 'Manual':
-        σ_TF = 1000.E6        # Mechanical limit of the steel considered in [Pa]
-        σ_CS = 660.E6        # CS machanical limit [Pa]
-    else : 
-        print('Choose a valid steel')
+    σ_TF = Steel(Chosen_Steel)
+    σ_CS = Steel(Chosen_Steel) / fatigue
+    # Current densit
+    J_max_TF_conducteur = Jc(Supra_choice, Bmax , T_helium) * f_Cu * f_Cool * f_In
+    J_max_CS_conducteur = Jc(Supra_choice, Bmax , T_helium + Marge_CS) * f_Cu * f_Cool * f_In
     
     # Tension fraction
     if Choice_Buck_Wedg == "Wedging" :
@@ -41,199 +33,10 @@ def run( a, R0, Bmax, P_fus,
         omega_TF = 1          # fraction de la tension aloué au WP , en bucking = 1
     else : 
         print('Chosse a valid mechanical configuration')
-    
-    # Current density
-    if Supra_choice == "LTS"  :
-
-        # Nb3Sn TFEU4 parameters LTS
-        Nb3Sn_PARAMS = {
-            'Ca1': 44.48,
-            'Ca2': 0.0,
-            'Eps0a': 0.00256,
-            'Epsm': -0.00049,
-            'Bc2m': 32.97,
-            'Tcm': 16.06,
-            'C1': 19922.0,
-            'p': 0.63,
-            'q': 2.1,
-            'dbrin': 0.82e-3,
-            'CuNCu': 1.01,
-        }
         
-        # tipical Déformation
-        Eps = -0.6 / 100
-        Marge_T_LTS = 1 #K
-        
-        J_max_TF_conducteur = Jc_LTS(Bmax, T_helium + Marge_T_LTS + Marge_T_Helium, Nb3Sn_PARAMS, Eps) * f_Cu * f_Cool * f_In
-        J_max_CS_conducteur = Jc_LTS(Bmax, T_helium + Marge_T_LTS + Marge_T_Helium, Nb3Sn_PARAMS, Eps) * f_Cu * f_Cool * f_In
-        
-    elif Supra_choice == "HTS"  :
-
-        # Paramètres par défaut pour REBCO (CERN 2014)
-        REBCO_PARAMS = {
-            'trebco': 1.5e-6,   # épaisseur de la couche supraconductrice [m]
-            'w': 4e-3,          # largeur du ruban [m]
-            'Tc0': 93.0,        # température critique zéro champ [K]
-            'n': 1.0,
-            'Bi0c': 140.0,      # [T]
-            'Alfc': 1.41e12,    # [A/m^2]
-            'pc': 0.313,
-            'qc': 0.867,
-            'gamc': 3.09,
-            'Bi0ab': 250.0,     # [T]
-            'Alfab': 83.8e12,   # [A/m^2]
-            'pab': 1.023,
-            'qab': 4.45,
-            'gamab': 4.73,
-            'n1': 1.77,
-            'n2': 4.1,
-            'a': 0.1,
-            'Nu': 0.857,
-            'g0': -0.0056,
-            'g1': 0.0944,
-            'g2': -0.0008,
-            'g3': 0.00388,
-        }
-        
-        # HTS orientation (pessimistic one)
-        Tet = 0
-        Marge_T_HTS = 5 #K
-        
-        J_max_TF_conducteur = Jc_HTS(Bmax, T_helium + Marge_T_HTS + Marge_T_Helium, REBCO_PARAMS, Tet) * f_Cu * f_Cool * f_In
-        J_max_CS_conducteur = Jc_HTS(Bmax, T_helium + Marge_T_HTS + Marge_T_Helium, REBCO_PARAMS, Tet) * f_Cu * f_Cool * f_In
-        
-    elif Supra_choice == "Manual"  :
-
-        J_max_CS_conducteur_manual = 50.E6       # A/m² from ITER values
-        J_max_TF_conducteur_manual = 50.E6       # A/m² from ITER values
-        
-    else :
-        print("Please choose a proper superconductor")
-
-        
-    # Confinement time scaling law
-    
-    # Considering :
-        # B the toroidal magnetic field on R0 (T)
-        # R0 the geometrcial majopr radius (m)
-        # Kappa the elongation
-        # M or A  the average atomic mass (AMU)
-        # Epsilon the inverse aspect ratio
-        # n the density (10**19/m cube)
-        # I plasma current (MA)
-        # P the absorbed power (MW)
-        # H an amplification factor = Taue/Taue_Hmode
-
-    # Definition des valeurs pour chaque loi
-    param_values = {
-        'IPB98(y,2)': {
-            'C_SL': 0.0562,
-            'alpha_(1+delta)': 0,
-            'alpha_M': 0.19,
-            'alpha_kappa': 0.78,
-            'alpha_epsilon': 0.58,
-            'alpha_R': 1.97,
-            'alpha_B': 0.15,
-            'alpha_n': 0.41,
-            'alpha_I': 0.93,
-            'alpha_P': -0.69
-        },
-        'ITPA20-IL': {
-            'C_SL': 0.067,
-            'alpha_(1+delta)': 0.56,
-            'alpha_M': 0.3,
-            'alpha_kappa': 0.67,
-            'alpha_epsilon': 0,
-            'alpha_R': 1.19,
-            'alpha_B': -0.13,
-            'alpha_n': 0.147,
-            'alpha_I': 1.29,
-            'alpha_P': -0.644
-        },
-        'ITPA20': {
-            'C_SL': 0.053,
-            'alpha_(1+delta)': 0.36,
-            'alpha_M': 0.2,
-            'alpha_kappa': 0.8,
-            'alpha_epsilon': 0.35,
-            'alpha_R': 1.71,
-            'alpha_B': 0.22,
-            'alpha_n': 0.24,
-            'alpha_I': 0.98,
-            'alpha_P': -0.669
-        },
-        'DS03': {
-            'C_SL': 0.028,
-            'alpha_(1+delta)': 0,
-            'alpha_M': 0.14,
-            'alpha_kappa': 0.75,
-            'alpha_epsilon': 0.3,
-            'alpha_R': 2.11,
-            'alpha_B': 0.07,
-            'alpha_n': 0.49,
-            'alpha_I': 0.83,
-            'alpha_P': -0.55
-        },
-        'L-mode': {
-            'C_SL': 0.023,
-            'alpha_(1+delta)': 0,
-            'alpha_M': 0.2,
-            'alpha_kappa': 0.64,
-            'alpha_epsilon': -0.06,
-            'alpha_R': 1.83,
-            'alpha_B': 0.03,
-            'alpha_n': 0.4,
-            'alpha_I': 0.96,
-            'alpha_P': -0.73
-        },
-        'L-mode OK': {
-            'C_SL': 0.023,
-            'alpha_(1+delta)': 0,
-            'alpha_M': 0.2,
-            'alpha_kappa': 0.64,
-            'alpha_epsilon': -0.06,
-            'alpha_R': 1.78,
-            'alpha_B': 0.03,
-            'alpha_n': 0.4,
-            'alpha_I': 0.96,
-            'alpha_P': -0.73
-        },
-        'ITER89-P': {
-            'C_SL': 0.048,
-            'alpha_(1+delta)': 0,
-            'alpha_M': 0.5,
-            'alpha_kappa': 0.5,
-            'alpha_epsilon': 0.3,
-            'alpha_R': 1.2,
-            'alpha_B': 0.2,
-            'alpha_n': 0.08,
-            'alpha_I': 0.85,
-            'alpha_P': -0.5
-        }
-    }
-
-    # Fonction pour recuperer les valeurs en fonction de la loi choisie
-    def get_parameter_value_scaling_law(Scaling_Law):
-        if Scaling_Law in param_values:
-            C_SL = param_values[Scaling_Law]['C_SL']
-            alpha_delta = param_values[Scaling_Law]['alpha_(1+delta)']
-            alpha_M = param_values[Scaling_Law]['alpha_M']
-            alpha_kappa = param_values[Scaling_Law]['alpha_kappa']
-            alpha_epsilon = param_values[Scaling_Law]['alpha_epsilon']
-            alpha_R = param_values[Scaling_Law]['alpha_R']
-            alpha_B = param_values[Scaling_Law]['alpha_B']
-            alpha_n = param_values[Scaling_Law]['alpha_n']
-            alpha_I = param_values[Scaling_Law]['alpha_I']
-            alpha_P = param_values[Scaling_Law]['alpha_P']
-            return C_SL,alpha_delta,alpha_M,alpha_kappa,alpha_epsilon,alpha_R,alpha_B,alpha_n,alpha_I,alpha_P
-        else:
-            raise ValueError(f"La loi {Scaling_Law} n'existe pas.")
-            
     (C_SL,alpha_delta,alpha_M,alpha_kappa,alpha_epsilon,
-     alpha_R,alpha_B,alpha_n,alpha_I,alpha_P) = get_parameter_value_scaling_law(Scaling_Law)
-    
-    ########################################### Main calculus ###########################################
-    
+     alpha_R,alpha_B,alpha_n,alpha_I,alpha_P) = f_Get_parameter_scaling_law(Scaling_Law)
+
     # Geometry
     κ    = f_Kappa(R0/a,Option_Kappa)
     κ_95 = f_Kappa_95(κ)
@@ -247,6 +50,9 @@ def run( a, R0, Bmax, P_fus,
     # Central magnetic field
     B0_solution = f_B0(Bmax,a,b,R0)
     
+    # Alpha Power
+    P_Alpha = f_P_alpha(P_fus, E_ALPHA, E_N)
+    
     # Function to solve for both f_alpha and Q
     def to_solve_f_alpha_and_Q(vars):
         
@@ -255,25 +61,55 @@ def run( a, R0, Bmax, P_fus,
         # Calculate intermediate values
         nbar_alpha   = f_nbar(P_fus, R0, a, κ, nu_n, nu_T, f_alpha, Tbar)
         pbar_alpha   = f_pbar(nu_n, nu_T, nbar_alpha, Tbar, f_alpha)
-        tau_E_alpha  = f_tauE(pbar_alpha, R0, a, κ, P_fus, Q)
-        Ip_alpha     = f_Ip(tau_E_alpha, R0, a, κ, δ, nbar_alpha, B0_solution, Atomic_mass, P_fus, Q, H, C_SL,
-                     alpha_delta,alpha_M,alpha_kappa,alpha_epsilon, alpha_R,alpha_B,alpha_n,alpha_I,alpha_P)
+        
+        # By taking the previous Q we provide a first approximation of the Ohmic and Auxilary power
+        # By the Q convergence, this values will be coherent 
+        # Proof : by definition of the convergence Q(n-1) = Q(n)
+        if Operation_mode == 'Steady-State' :
+            P_Ohm_alpha_init = 0
+            P_Aux_alpha_init = P_fus / Q
+        elif Operation_mode == 'Pulsed':
+            P_Aux_alpha_init = P_aux_input
+            P_Ohm_alpha_init = P_fus / Q - P_Aux_alpha_init
+        else:
+            print("Choose a valid operation mode ")
+            
+        tau_E_alpha  = f_tauE(pbar_alpha, R0, a, κ, P_Alpha, P_Aux_alpha_init, P_Ohm_alpha_init)
+        Ip_alpha     = f_Ip(tau_E_alpha, R0, a, κ, δ, nbar_alpha, B0_solution, Atomic_mass,
+                            P_Alpha, P_Ohm_alpha_init, P_Aux_alpha_init, H, C_SL,
+                            alpha_delta,alpha_M,alpha_kappa,alpha_epsilon, alpha_R,alpha_B,alpha_n,alpha_I,alpha_P)
         if Bootstrap_choice == 'Freidberg' :
             Ib_alpha = f_Freidberg_Ib(R0, a, κ, pbar_alpha, Ip_alpha)
         elif Bootstrap_choice == 'Segal' :
             Ib_alpha = f_Segal_Ib(nu_n, nu_T, a/R0, κ, nbar_alpha, Tbar, R0, Ip_alpha)
         else :
             print("Choose a valid Bootstrap model")
+            
         eta_CD_alpha = f_etaCD(a, R0, B0_solution, nbar_alpha, Tbar, nu_n, nu_T)
-        P_CD_alpha   = f_PCD(R0, nbar_alpha, Ip_alpha, Ib_alpha, eta_CD_alpha)
-    
+        
+        # Real Current drive and Ohmic balance needed allowing the convergence on Q
+        if Operation_mode == 'Steady-State' :
+            P_CD_alpha    = f_PCD(R0, nbar_alpha, Ip_alpha, Ib_alpha, eta_CD_alpha)
+            I_CD_alpha    = f_I_CD(R0, nbar_alpha, eta_CD_alpha, P_CD_alpha)
+            P_Ohm_alpha   = 0
+            I_Ohm_alpha   = 0
+            Q_alpha       = f_Q(P_fus,P_CD_alpha,P_Ohm_alpha)
+        elif Operation_mode == 'Pulsed':
+            P_CD_alpha    = P_aux_input
+            I_CD_alpha    = f_I_CD(R0, nbar_alpha, eta_CD_alpha, P_CD_alpha)
+            I_Ohm_alpha   = f_I_Ohm(Ip_alpha, Ib_alpha, I_CD_alpha)
+            P_Ohm_alpha   = f_P_Ohm(I_Ohm_alpha, Tbar, R0, a, κ)
+            Q_alpha       = f_Q(P_fus,P_CD_alpha,P_Ohm_alpha)
+        else:
+            print("Choose a valid operation mode ")
+        
         # Calculate new f_alpha
         new_f_alpha  = f_He_fraction(nbar_alpha, Tbar, tau_E_alpha, C_Alpha)
     
         # Calculate the residuals
-        f_alpha_residual = new_f_alpha - f_alpha
-        Q_residual       = (Q - P_fus / P_CD_alpha) * 100 / (P_fus / P_CD_alpha)
-    
+        f_alpha_residual = (new_f_alpha - f_alpha) * 100 / new_f_alpha    # In % to ease the convergence
+        Q_residual       = (Q - Q_alpha) * 100 / Q_alpha                  # In % to ease the convergence
+
         return [f_alpha_residual, Q_residual]
     
     # Initial guesses for f_alpha and Q
@@ -294,13 +130,22 @@ def run( a, R0, Bmax, P_fus,
     except ValueError as e:
         f_alpha_solution, Q_solution = np.nan, np.nan
 
-    # Une fois Q déterminé, calcul des autres paramètres
+    # Once the convergence loop passed, every other parameters are calculated
     nbar_solution         = f_nbar(P_fus,R0,a,κ,nu_n,nu_T,f_alpha_solution,Tbar)
     pbar_solution         = f_pbar(nu_n,nu_T,nbar_solution,Tbar,f_alpha_solution)
     W_th_solution         = f_W_th(nbar_solution, Tbar, Volume_solution)
     eta_CD                = f_etaCD(a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T)
-    tauE_solution         = f_tauE(pbar_solution,R0,a,κ,P_fus,Q_solution)
-    Ip_solution           = f_Ip(tauE_solution, R0, a, κ, δ, nbar_solution, B0_solution, Atomic_mass, P_fus, Q_solution, H, C_SL,
+    if Operation_mode == 'Steady-State' :
+        P_Ohm_solution = 0
+        P_Aux_solution = P_fus / Q_solution
+    elif Operation_mode == 'Pulsed':
+        P_Aux_solution = P_aux_input
+        P_Ohm_solution = P_fus / Q_solution - P_Aux_solution
+    else:
+        print("Choose a valid operation mode ")
+    tauE_solution         = f_tauE(pbar_solution,R0,a,κ, P_Alpha, P_Aux_solution, P_Ohm_solution)
+    Ip_solution           = f_Ip(tauE_solution, R0, a, κ, δ, nbar_solution, B0_solution, Atomic_mass, 
+                                 P_Alpha, P_Ohm_solution, P_Aux_solution, H, C_SL,
                           alpha_delta,alpha_M,alpha_kappa,alpha_epsilon, alpha_R,alpha_B,alpha_n,alpha_I,alpha_P)
     if Bootstrap_choice == 'Freidberg' :
         Ib_solution = f_Freidberg_Ib(R0, a, κ, pbar_solution, Ip_solution)
@@ -318,7 +163,21 @@ def run( a, R0, Bmax, P_fus,
     betaN_solution        = f_beta_N(betaT_solution, B0_solution, a, Ip_solution)
     nG_solution           = f_nG(Ip_solution, a)
     eta_CD_solution       = f_etaCD(a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T)
-    P_CD_solution         = f_PCD(R0,nbar_solution,Ip_solution,Ib_solution,eta_CD_solution)
+    if Operation_mode == 'Steady-State' :
+        Temps_Plateau     = 0
+        P_CD_solution     = f_PCD(R0,nbar_solution,Ip_solution,Ib_solution,eta_CD_solution)
+        I_Ohm_solution    = 0
+        I_CD_solution     = f_ICD(Ip_solution,Ib_solution, I_Ohm_solution)
+        P_Ohm_solution    = 0
+        Q_solution        = f_Q(P_fus,P_CD_solution,P_Ohm_solution)
+    elif Operation_mode == 'Pulsed':
+        P_CD_solution     = P_aux_input
+        I_CD_solution     = f_I_CD(R0, nbar_solution, eta_CD_solution, P_CD_solution)
+        I_Ohm_solution    = f_I_Ohm(Ip_solution, Ib_solution, I_CD_solution)
+        P_Ohm_solution    = f_P_Ohm(I_Ohm_solution, Tbar, R0, a, κ)
+        Q_solution        = f_Q(P_fus,P_CD_solution,P_Ohm_solution)
+    else:
+        print("Choose a valid operation mode ")
     P_sep_solution        = f_P_sep(P_fus, P_CD_solution)
     Gamma_n_solution      = f_Gamma_n(a, P_fus, R0, κ)
     heat_D0FUS_solution   = f_heat_D0FUS(R0,P_sep_solution)
@@ -343,21 +202,25 @@ def run( a, R0, Bmax, P_fus,
     # Radial Build
     if Radial_build_model == "academic" :
         (c, Winding_pack_tension_ratio) = f_TF_academic(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg)
-        (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, Ib_solution, Bmax ,a ,b ,c , R0 ,κ ,nbar_solution, Tbar ,Ce ,Temps_Plateau , li_solution)
+        (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, I_Ohm_solution, Bmax ,a ,b ,c , R0 ,κ ,nbar_solution, Tbar ,Ce ,Temps_Plateau_input , li_solution)
         (d,Alpha,B_CS) = f_CS_academic(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, σ_CS, J_max_CS_conducteur, Choice_Buck_Wedg)
     elif Radial_build_model == "D0FUS" :
         (c, Winding_pack_tension_ratio) = f_TF_D0FUS(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg, omega_TF, n_TF)
-        (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, Ib_solution, Bmax ,a ,b ,c , R0 ,κ ,nbar_solution, Tbar ,Ce ,Temps_Plateau , li_solution)
+        (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, I_Ohm_solution, Bmax ,a ,b ,c , R0 ,κ ,nbar_solution, Tbar ,Ce ,Temps_Plateau_input , li_solution)
         (d,Alpha,B_CS, J_CS) = f_CS_D0FUS(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, σ_CS, J_max_CS_conducteur , Choice_Buck_Wedg)
+    elif Radial_build_model == "CIRCEE" :
+        (c, Winding_pack_tension_ratio) = f_TF_CIRCEE(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg, omega_TF, n_TF)
+        (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, I_Ohm_solution, Bmax ,a ,b ,c , R0 ,κ ,nbar_solution, Tbar ,Ce ,Temps_Plateau_input , li_solution)
+        (d,Alpha,B_CS, J_CS) = f_CS_CIRCEE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, σ_CS, J_max_CS_conducteur , Choice_Buck_Wedg)
     else :
         print('Choose a valid mechanical model')
     
-    cost_solution = f_cost(a,b,c,d,R0,κ,Q_solution)
+    cost_solution = f_cost(a,b,c,d,R0,κ,P_fus)
 
     return (B0_solution, B_CS, B_pol_solution,
             tauE_solution, W_th_solution,
             Q_solution, Volume_solution, Surface_solution,
-            Ip_solution, Ib_solution,
+            Ip_solution, Ib_solution, I_CD_solution, I_Ohm_solution,
             nbar_solution, nG_solution, pbar_solution,
             betaN_solution, betaT_solution, betaP_solution,
             qstar_solution, q95_solution, q_mhd_solution,
@@ -371,7 +234,7 @@ def run( a, R0, Bmax, P_fus,
             Winding_pack_tension_ratio, R0-a, R0-a-b, R0-a-b-c, R0-a-b-c-d,
             κ, κ_95, δ, δ_95)
 
-#%% Benchmark
+#%% Test
 
 if __name__ == "__main__":
 
@@ -383,11 +246,19 @@ if __name__ == "__main__":
     b = 1.2
     Tbar = 14
     
+    # # ITER
+    # R0 = 6.2
+    # a = 2
+    # Pfus = 500
+    # Bmax = 12
+    # b = 1.25
+    # Tbar = 8
+    
     # End Benchmark parameters
     (B0_solution, B_CS, B_pol_solution,
     tauE_solution, W_th_solution,
     Q_solution, Volume_solution,Surface_solution,
-    Ip_solution, Ib_solution, 
+    Ip_solution, Ib_solution, I_CD_solution, I_Ohm_solution,
     nbar_solution, nG_solution, pbar_solution,
     betaN_solution, betaT_solution, betaP_solution,
     qstar_solution, q95_solution, q_mhd_solution,
@@ -400,10 +271,10 @@ if __name__ == "__main__":
     J_max_TF_conducteur, J_max_CS_conducteur,
     TF_ratio, r_minor, r_sep, r_c, r_d ,
     κ, κ_95, δ, δ_95) = run( a, R0, Bmax, Pfus,
-                                                   Tbar, H, Temps_Plateau, b , nu_n, nu_T,
+                                                   Tbar, H, Temps_Plateau_input, b , nu_n, nu_T,
                                                    Supra_choice, Chosen_Steel , Radial_build_model , 
                                                    Choice_Buck_Wedg , Option_Kappa , 
-                                                   L_H_Scaling_choice, Scaling_Law, Bootstrap_choice)
+                                                   L_H_Scaling_choice, Scaling_Law, Bootstrap_choice, Operation_mode)
 
     # Clean display of results
     print("=========================================================================")
@@ -439,9 +310,13 @@ if __name__ == "__main__":
     print(f"[O] Cost ((V_BB+V_TF+V_CS)/Q)                       : {cost:.3f} [m^3]")
     print("-------------------------------------------------------------------------")
     print(f"[I] H (Scaling Law factor)                          : {H:.3f} ")
+    print(f"[I] Operation (Pulsed / Steady)                     : {Operation_mode} ")
+    print(f"[I] t (Plateau Time)                                : {Temps_Plateau_input:.3f} ")
     print(f"[O] tau_E (Confinement Time)                        : {tauE_solution:.3f} [s]")
     print(f"[O] Ip (Plasma Current)                             : {Ip_solution:.3f} [MA]")
     print(f"[O] Ib (Bootstrap Current)                          : {Ib_solution:.3f} [MA]")
+    print(f"[O] ICD (Current Drive)                             : {I_CD_solution:.3f} [MA]")
+    print(f"[O] IOhm (Ohmic Current)                            : {I_Ohm_solution:.3f} [MA]")
     print(f"[O] f_b (Bootstrap Fraction)                        : {(Ib_solution/Ip_solution)*1e2:.3f} [%]")
     print("-------------------------------------------------------------------------")
     print(f"[I] Tbar (Mean Temperature)                         : {Tbar:.3f} [keV]")
