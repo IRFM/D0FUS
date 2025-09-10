@@ -14,9 +14,10 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'D0FUS_BIB'))
 #%% Panel control
 
 # Parameterization
-Supra_choice = 'HTS'                # 'HTS' , 'LTS' or Manual'
-Chosen_Steel = 'NH50'               # '316L' , 'NH50' or 'Manual'
-Radial_build_model = 'academic'        # "academic" , "D0FUS" , "CIRCEE"
+Operation_mode = 'Steady-State'     # 'Steady-State' or 'Pulsed'
+Supra_choice = 'Rebco'              # 'Nb3Sn' , 'Rebco', 'NbTi' or Manual'
+Chosen_Steel = 'N50H'               # '316L' , 'N50H' or 'Manual'
+Radial_build_model = 'D0FUS'        # "academic" , "D0FUS" , "CIRCEE"
 Choice_Buck_Wedg = 'Wedging'        # 'Wedging' or 'Bucking'
 Option_Kappa = 'Wenninger'          # 'Stambaugh' , 'Freidberg' , 'Wenninger' or 'Manual'
 L_H_Scaling_choice = 'New_Ip'       # 'Martin' , 'New_S', 'New_Ip'
@@ -27,9 +28,22 @@ Bootstrap_choice = 'Freidberg'      # 'Freidberg' or 'Segal'
 H = 1                               # H factor
 Tbar  = 14                          # Mean Temperature keV
 b = 1.2                             # BB + 1rst Wall + N shields + Gaps
-Temps_Plateau = 0                   # Plateau time
+
+# If Pulsed operation:
+if Operation_mode == 'Pulsed' :
+    Temps_Plateau_input = 10 * 60       # Plateau time [s]
+    P_aux_input = 50                    # P_aux
+else :
+    Temps_Plateau_input = 0            # Plateau time [min]
+    P_aux_input = 0                    # P_aux
 
 #%% Constants initialisation
+
+# If Pulsed operation:
+if Operation_mode == 'Pulsed' :
+    fatigue = 2                         # Fatigue parameter for the steel 
+else :
+    fatigue = 1                         # Fatigue parameter for the steel 
 
 Choice_solving_CS_method = "brentq" # "brentq" or "manual" for debuging
 Choice_solving_TF_method = "brentq" # "brentq" or "manual" for debuging
@@ -50,7 +64,10 @@ Zeff = 1                    # Zeff du plasma
 
 # Plasma stability
 betaN = 2.8  # Beta Tryon limit
-q = 2.5      # Security factor limit
+q = 2.5      # Safety factor limit
+
+# Elongation
+κ_manual = 1.7    # Elongation if chosen to be manual
 
 # Density and Temperature parameters
 nu_n  = 0.1     # Density profile parameter
@@ -64,7 +81,7 @@ ITERPI = 20          # ITER plasma induction current [Wb]
 # TF
 coef_inboard_tension = 1/2 # Paramètre représentatn la répartition jambe interne / externe de la tension
 F_CClamp = 0e6       # C-Clamp limit in N , max order of magnitude from DDD : 30e6 N and of 60e6 N from [Bachmann (2023) FED]
-n_TF = 1/2           # Asymetry conductor parameter 
+n_TF = 1             # Asymetry conductor parameter 
 
 # CS
 Gap = 0.1            # Gap between wedging and bucking CS and TF [m]
@@ -80,10 +97,19 @@ theta_deg = 2.7      # Angle d'incidence sur les PFU pour calcul du flux de chal
 
 # Current density scaling
 T_helium = 4.2           # K temeprature de l'helium considéré
-Marge_T_Helium = 0.3     # Puisque l'helium est à 10 barre, il est poussé à 0.3 K au dessus de la consigne
+Marge_T_Helium = 0.3     # Puisque l'helium est à 10 barre, il est poussé à 0.3 K au dessus de la consigne à 1 Bar
+Marge_CS = -1            # Puisque le CS n'est pas soumis à un flux neutronique, les marges sont plus souples
 f_Cu = 0.5               # Copper fraction
 f_Cool = 0.7             # Cooling fraction
 f_In = 0.75              # Insulation fraction
+# Rebco
+Tet = 0 # Orientation
+Marge_T_Rebco = 5 #K
+# Nb3Sn
+Eps = -0.6 / 100 # Deformation criteria
+Marge_T_Nb3Sn = 2 #K
+# NbTi
+Marge_T_NbTi = 1.7 #K
 
 #%% Numerical initialisation
 
