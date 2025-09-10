@@ -38,8 +38,7 @@ def f_Kappa(A,Option_Kappa):
         ms = 0.2
         κ = 1.12*((18.84-0.87*A-np.sqrt(4.84*A**2-28.77*A+52.52+14.74*ms))/7.37)
     if Option_Kappa == 'Manual' :
-        κ = 2.1  # Elongation
-        
+        κ = κ_manual  # Elongation
     if κ <=0 :
         κ = np.nan
     
@@ -502,7 +501,7 @@ def f_qstar(a, B0, R0, Ip, κ):
     
     return qstar
 
-def f_cost(a,b,c,d,R0,κ,Q):
+def f_cost(a,b,c,d,R0,κ,P_fus):
     """
     
     Calculation of the 'cost' parameter
@@ -517,7 +516,7 @@ def f_cost(a,b,c,d,R0,κ,Q):
     d : Thickness of the CS coil
     R0 : Major radius [m]
     κ : Elongation
-    Q : Gain factor
+    P_fus : Fusion Power [MW]
         
     Returns
     -------
@@ -528,7 +527,7 @@ def f_cost(a,b,c,d,R0,κ,Q):
     V_TF = 8*np.pi*(R0-a-b-(c/2))*c*((κ+1)*a+(2*b)+c) # Rectangular TF model coil
     V_CS = 2*np.pi*((R0-a-b-c)**2-(R0-a-b-c-d)**2)*(2*(a*κ+b+c)) # h approx to 2*(a*κ+b+c) and cylindrical model
     
-    cost = (V_BB+V_TF+V_CS) / Q
+    cost = (V_BB+V_TF+V_CS) / P_fus
     return cost
 
 def f_P_sep(P_fus, P_CD):
@@ -673,7 +672,7 @@ def f_heat_PFU_Eich(
 
     return lambda_q_m, q_parallel0, q_target
 
-def f_tauE(pbar, R0, a, κ, P_fus, Q):
+def f_tauE(pbar, R0, a, κ, P_Alpha, P_Aux, P_Ohm):
     """
     
     Calculation of the confinement time from the power balance
@@ -684,8 +683,9 @@ def f_tauE(pbar, R0, a, κ, P_fus, Q):
     R0 : Major radius [m]
     a : Minor radius [m]
     κ : Elongation
-    P_fus : The Fusion power [MW]P_fus : The Fusion power [MW]
-    Q : Gain factor
+    P_Alpha : The Alpha power [MW]
+    P_Aux : The Auxilary power [MW]
+    P_Ohm : The Ohmic power [MW]
         
     Returns
     -------
@@ -693,11 +693,42 @@ def f_tauE(pbar, R0, a, κ, P_fus, Q):
     
     """
     
-    tauE = pbar*1e6 * 3. * np.pi**2 * R0 * a**2 * κ * (E_N+E_ALPHA)/(E_ALPHA*P_fus*1e6) * (1/(1+5/Q))
+    # conversion en SI
+    p_Pa = pbar * 1e6
+    P_total_W = (P_Alpha + P_Aux + P_Ohm) * 1e6
+
+    if P_total_W <= 0:
+        return np.nan
+
+    # W_th = 3 * pi^2 * p * R0 * a^2 * kappa
+    W_th_J = 3.0 * np.pi**2 * p_Pa * R0 * a**2 * κ
+
+    tauE_s = W_th_J / P_total_W
     
-    return tauE
+    return tauE_s
+
+def f_P_alpha(P_fus, E_ALPHA, E_N):
+    """
+    
+    Calculation of the alpha power
+    
+    Parameters
+    ----------
+    P_fus : The Fusion power [MW]
+    E_ALPHA : Alpha energy [J]
+    E_N : Neutron energy [J]
         
-def f_Ip(tauE, R0, a, κ, δ, nbar, B0, Atomic_mass, P_fus, Q, H, C_SL,
+    Returns
+    -------
+    P_Alpha : The Alpha power [MW]
+    
+    """
+    
+    P_Alpha = P_fus * E_ALPHA / (E_ALPHA + E_N)
+    
+    return P_Alpha
+        
+def f_Ip(tauE, R0, a, κ, δ, nbar, B0, Atomic_mass, P_Alpha, P_Ohm, P_Aux, H, C_SL,
          alpha_delta,alpha_M,alpha_kappa,alpha_epsilon, alpha_R,alpha_B,alpha_n,alpha_I,alpha_P):
     """
     
@@ -712,8 +743,9 @@ def f_Ip(tauE, R0, a, κ, δ, nbar, B0, Atomic_mass, P_fus, Q, H, C_SL,
     n_bar : The mean electronic density [1e20p/m^3]
     B0 : The central magnetic field [T]
     Atomic_mass : The mean atomic mass [AMU]
-    P_fus : The Fusion power [MW]
-    Q : Gain factor
+    P_Alpha : The Alpha power [MW]
+    P_Aux : The Auxilary power [MW]
+    P_Ohm : The Ohmic power [MW]
         
     Returns
     -------
@@ -721,7 +753,7 @@ def f_Ip(tauE, R0, a, κ, δ, nbar, B0, Atomic_mass, P_fus, Q, H, C_SL,
     
     """
     
-    P = (E_ALPHA*P_fus)/(E_ALPHA+E_N) * (1+5/Q)
+    P = P_Alpha + P_Ohm + P_Aux
     Epsilon = a/R0
     
     # A creuser
@@ -909,11 +941,9 @@ def f_PCD(R0, nbar, Ip, Ib, eta_CD):
     ----------
     a : Minor radius [m]
     R0 : Major radius [m]
-    B0 : The central magnetic field [T]
     n_bar : The mean electronic density [1e20p/m^3]
-    T_bar : The mean temperature [keV]
-    nu_n : Density profile parameter 
-    nu_T : Temperature profile parameter
+    Ip : Plasma current [MA]
+    Ib : Bootstrap current [MA]
         
     Returns
     -------
@@ -922,6 +952,64 @@ def f_PCD(R0, nbar, Ip, Ib, eta_CD):
     """
     P_CD = R0*nbar*abs(Ip-Ib)/eta_CD
     return P_CD
+
+def f_I_CD(R0, nbar, eta_CD, P_CD):
+    """
+    
+    Estimate the Currend Drive (CD) current from the CD power
+    
+    Parameters
+    ----------
+    a : Minor radius [m]
+    R0 : Major radius [m]
+    n_bar : The mean electronic density [1e20p/m^3]
+    P_CD : Current drive power injected [MW]
+        
+    Returns
+    -------
+    I_CD : Current drive current [MA]
+    
+    """
+    I_CD = P_CD*eta_CD / (R0*nbar)
+    return I_CD
+
+def f_I_Ohm(Ip, Ib, I_CD):
+    """
+    
+    Estimate the Ohmic current
+    
+    Parameters
+    ----------
+    Ip : Plasma current [MA]
+    Ib : Bootstrap current [MA]
+    I_CD : Current drive current [MA]
+        
+    Returns
+    -------
+    I_Ohm : Current drive power injected [MW]
+    
+    """
+    I_Ohm = abs(Ip - Ib - I_CD)
+    return I_Ohm
+
+def f_ICD(Ip, Ib, I_Ohm):
+    """
+    
+    Estimate the Current drive
+    
+    Parameters
+    ----------
+    Ip : Plasma current [MA]
+    Ib : Bootstrap current [MA]
+    I_Ohm : Ohmic current [MA]
+        
+    Returns
+    -------
+    I_CD : Current drive power injected [MW]
+    
+    """
+    I_CD = abs(Ip - Ib - I_Ohm)
+    return I_CD
 
 def f_PLH(eta_RF, f_RP, P_CD):
     """
@@ -942,7 +1030,36 @@ def f_PLH(eta_RF, f_RP, P_CD):
     P_LH = (1/eta_RF)*(1/f_RP)*P_CD
     return P_LH
 
-def Q(P_fus,P_CD):
+def f_P_Ohm(I_Ohm, Tbar, R0, a, kappa):
+    """
+    Estimate the Ohmic heating power in a tokamak
+    
+    Parameters
+    ----------
+    I_Ohm : Ohmic plasma current [MA]
+    Tbar : Volume-averaged electron temperature [keV]
+    R0 : Major radius [m]
+    a : Minor radius [m]
+    kappa : Plasma elongation
+        
+    Returns
+    -------
+    P_Ohm : Ohmic power [MW]
+    """
+    
+    # Résistivité de Spitzer [Ohm·m]
+    # Réf. : Spitzer, L., & Härm, R. (1953). Transport phenomena in a completely ionized gas. Phys. Rev., 89(5), 977.
+    eta = 2.8e-8 / (Tbar**1.5)
+    
+    # Résistance plasma effective [Ohm]
+    R_eff = eta * (2 * R0) / (a**2 * kappa)
+    
+    # Puissance ohmique en Watt
+    P_Ohm = R_eff * (I_Ohm*1e6)**2 * 1e-6 # Current in A P in MW
+    
+    return P_Ohm
+
+def f_Q(P_fus,P_CD,P_Ohm):
     """
     
     Calculate the plasma amplification factor Q
@@ -951,13 +1068,14 @@ def Q(P_fus,P_CD):
     ----------
     P_fus = Fusion power [MW]
     P_CD = Current drive power [MW]
+    P_Ohm = Ohmic power [MW]
         
     Returns
     -------
     Q : Plasma amplification factor
     
     """
-    Q = P_fus/P_CD
+    Q = P_fus/(P_CD + P_Ohm)
     return Q
 
 def P_Thresh_Martin(n_bar, B0, a, R0, κ, Atomic_mass):
@@ -1397,6 +1515,122 @@ def f_P_line_radiation(V, n_e, T_e, f_imp, L_z, R, a):
     P_line = (n_e * 1e20)**2 * f_imp * L_z * V
     
     return P_line
+
+def f_Get_parameter_scaling_law(Scaling_Law):
+    
+    # Considering :
+        # B the toroidal magnetic field on R0 (T)
+        # R0 the geometrcial majopr radius (m)
+        # Kappa the elongation
+        # M or A  the average atomic mass (AMU)
+        # Epsilon the inverse aspect ratio
+        # n the density (10**19/m cube)
+        # I plasma current (MA)
+        # P the absorbed power (MW)
+        # H an amplification factor = Taue/Taue_Hmode
+    
+    # Definition des valeurs pour chaque loi
+    param_values = {
+        'IPB98(y,2)': {
+            'C_SL': 0.0562,
+            'alpha_(1+delta)': 0,
+            'alpha_M': 0.19,
+            'alpha_kappa': 0.78,
+            'alpha_epsilon': 0.58,
+            'alpha_R': 1.97,
+            'alpha_B': 0.15,
+            'alpha_n': 0.41,
+            'alpha_I': 0.93,
+            'alpha_P': -0.69
+        },
+        'ITPA20-IL': {
+            'C_SL': 0.067,
+            'alpha_(1+delta)': 0.56,
+            'alpha_M': 0.3,
+            'alpha_kappa': 0.67,
+            'alpha_epsilon': 0,
+            'alpha_R': 1.19,
+            'alpha_B': -0.13,
+            'alpha_n': 0.147,
+            'alpha_I': 1.29,
+            'alpha_P': -0.644
+        },
+        'ITPA20': {
+            'C_SL': 0.053,
+            'alpha_(1+delta)': 0.36,
+            'alpha_M': 0.2,
+            'alpha_kappa': 0.8,
+            'alpha_epsilon': 0.35,
+            'alpha_R': 1.71,
+            'alpha_B': 0.22,
+            'alpha_n': 0.24,
+            'alpha_I': 0.98,
+            'alpha_P': -0.669
+        },
+        'DS03': {
+            'C_SL': 0.028,
+            'alpha_(1+delta)': 0,
+            'alpha_M': 0.14,
+            'alpha_kappa': 0.75,
+            'alpha_epsilon': 0.3,
+            'alpha_R': 2.11,
+            'alpha_B': 0.07,
+            'alpha_n': 0.49,
+            'alpha_I': 0.83,
+            'alpha_P': -0.55
+        },
+        'L-mode': {
+            'C_SL': 0.023,
+            'alpha_(1+delta)': 0,
+            'alpha_M': 0.2,
+            'alpha_kappa': 0.64,
+            'alpha_epsilon': -0.06,
+            'alpha_R': 1.83,
+            'alpha_B': 0.03,
+            'alpha_n': 0.4,
+            'alpha_I': 0.96,
+            'alpha_P': -0.73
+        },
+        'L-mode OK': {
+            'C_SL': 0.023,
+            'alpha_(1+delta)': 0,
+            'alpha_M': 0.2,
+            'alpha_kappa': 0.64,
+            'alpha_epsilon': -0.06,
+            'alpha_R': 1.78,
+            'alpha_B': 0.03,
+            'alpha_n': 0.4,
+            'alpha_I': 0.96,
+            'alpha_P': -0.73
+        },
+        'ITER89-P': {
+            'C_SL': 0.048,
+            'alpha_(1+delta)': 0,
+            'alpha_M': 0.5,
+            'alpha_kappa': 0.5,
+            'alpha_epsilon': 0.3,
+            'alpha_R': 1.2,
+            'alpha_B': 0.2,
+            'alpha_n': 0.08,
+            'alpha_I': 0.85,
+            'alpha_P': -0.5
+        }
+    }
+    
+    if Scaling_Law in param_values:
+        C_SL = param_values[Scaling_Law]['C_SL']
+        alpha_delta = param_values[Scaling_Law]['alpha_(1+delta)']
+        alpha_M = param_values[Scaling_Law]['alpha_M']
+        alpha_kappa = param_values[Scaling_Law]['alpha_kappa']
+        alpha_epsilon = param_values[Scaling_Law]['alpha_epsilon']
+        alpha_R = param_values[Scaling_Law]['alpha_R']
+        alpha_B = param_values[Scaling_Law]['alpha_B']
+        alpha_n = param_values[Scaling_Law]['alpha_n']
+        alpha_I = param_values[Scaling_Law]['alpha_I']
+        alpha_P = param_values[Scaling_Law]['alpha_P']
+        return C_SL,alpha_delta,alpha_M,alpha_kappa,alpha_epsilon,alpha_R,alpha_B,alpha_n,alpha_I,alpha_P
+    else:
+        raise ValueError(f"La loi {Scaling_Law} n'existe pas.")
 
 #%%
 
