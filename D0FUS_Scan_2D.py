@@ -42,13 +42,13 @@ print("----- D0FUS reloaded -----")
 
 def R0_a_scan(Bmax, P_fus):
     
-    a_min = 0.5
+    a_min = 1
     a_max = 3
-    a_step = 0.05
+    a_step = 0.1
     a_values = np.arange(a_min,a_max,a_step)
-    R0_min = 1.5
+    R0_min = 3
     R0_max = 9
-    R0_step = 0.1
+    R0_step = 0.25
     R0_values = np.arange(R0_min,R0_max,R0_step)
      
     # Matrix creations
@@ -94,7 +94,7 @@ def R0_a_scan(Bmax, P_fus):
             (B0_solution, B_CS, B_pol_solution,
             tauE_solution, W_th_solution,
             Q_solution, Volume_solution, Surface_solution,
-            Ip_solution, Ib_solution,
+            Ip_solution, Ib_solution, I_CD_solution, I_Ohm_solution,
             n_solution, nG_solution, pbar_solution,
             betaN_solution, betaT_solution, betaP_solution,
             qstar_solution, q95_solution, q_mhd_solution,
@@ -107,10 +107,10 @@ def R0_a_scan(Bmax, P_fus):
             J_max_TF_conducteur, J_max_CS_conducteur,
             TF_ratio, R0_a_solution, R0_a_b_solution, R0_a_b_c_solution, R0_a_b_c_d_solution,
             κ, κ_95, δ, δ_95) = run( a, R0, Bmax, P_fus, 
-            Tbar, H, Temps_Plateau, b , nu_n, nu_T,
+            Tbar, H, Temps_Plateau_input, b , nu_n, nu_T,
             Supra_choice, Chosen_Steel , Radial_build_model , 
             Choice_Buck_Wedg , Option_Kappa , 
-            L_H_Scaling_choice, Scaling_Law, Bootstrap_choice)
+            L_H_Scaling_choice, Scaling_Law, Bootstrap_choice, Operation_mode)
             
             # Verifier les conditions
             n_condition = n_solution / nG_solution
@@ -395,10 +395,11 @@ def R0_a_scan(Bmax, P_fus):
         white_line = mlines.Line2D([], [], color='white', label='TF tension fraction [%]')
     else :
         print('Choose a relevant background parameter')
+    
     # Légende
     ax.legend(handles=[grey_line,white_line, grey_dashed_line], loc='upper left', facecolor='lightgrey', fontsize=taille_police_legende)
     
-    # Save the image ,black_line
+    # Save the image
     # Remplacer les virgules par des points dans svg
     svg = svg.replace('.', ',')
     path_to_save = os.path.join(save_directory,f"a_and_R0_scan_with_{svg}.png")
@@ -410,7 +411,7 @@ def R0_a_scan(Bmax, P_fus):
     plt.rcdefaults()
         
 if __name__ == "__main__":
-    Bmax = 20
+    Bmax = 12
     P_fus = 2000
     R0_a_scan(Bmax,P_fus)
         
