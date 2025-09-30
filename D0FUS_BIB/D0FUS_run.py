@@ -14,11 +14,11 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'D0FUS_BIB'))
 
 #%% Main Function
 
-def run( a, R0, Bmax, P_fus,
+def run(a, R0, Bmax, P_fus,
         Tbar, H, Temps_Plateau_input, b , nu_n, nu_T,
         Supra_choice, Chosen_Steel , Radial_build_model , Choice_Buck_Wedg , 
-        Option_Kappa , L_H_Scaling_choice, Scaling_Law, Bootstrap_choice, Operation_mode):
-    
+        Option_Kappa , κ_manual, L_H_Scaling_choice, Scaling_Law, Bootstrap_choice, Operation_mode):
+
     # Steel
     σ_TF = Steel(Chosen_Steel)
     σ_CS = Steel(Chosen_Steel) / fatigue
@@ -38,7 +38,7 @@ def run( a, R0, Bmax, P_fus,
      alpha_R,alpha_B,alpha_n,alpha_I,alpha_P) = f_Get_parameter_scaling_law(Scaling_Law)
 
     # Geometry
-    κ    = f_Kappa(R0/a,Option_Kappa)
+    κ    = f_Kappa(R0/a,Option_Kappa, κ_manual)
     κ_95 = f_Kappa_95(κ)
     δ    = f_Delta(κ)
     δ_95 = f_Delta_95(δ)
@@ -59,8 +59,16 @@ def run( a, R0, Bmax, P_fus,
         f_alpha, Q = vars
     
         # Calculate intermediate values
-        nbar_alpha   = f_nbar(P_fus, R0, a, κ, nu_n, nu_T, f_alpha, Tbar)
+        nbar_alpha         = f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, κ) 
+        # alternative taking into account a reffined version of the volume :
+        # nbar_alpha   = f_nbar_advanced(P_fus, nu_n, nu_T, f_alpha, Tbar, Volume_solution)
         pbar_alpha   = f_pbar(nu_n, nu_T, nbar_alpha, Tbar, f_alpha)
+        
+        # Radiative loss
+        P_Brem_alpha = f_P_bremsstrahlung(Volume_solution, nbar_alpha, Tbar, Zeff, R0, a)
+        beta_T = 2 # Beta_T taken from [J.Johner Helios]
+        P_syn_alpha = f_P_synchrotron(Tbar, R0, a, B0_solution, nbar_alpha, κ, nu_n, nu_T, beta_T, r_synch)
+        P_rad_alpha = P_Brem_alpha + P_syn_alpha
         
         # By taking the previous Q we provide a first approximation of the Ohmic and Auxilary power
         # By the Q convergence, this values will be coherent 
@@ -74,9 +82,10 @@ def run( a, R0, Bmax, P_fus,
         else:
             print("Choose a valid operation mode ")
             
-        tau_E_alpha  = f_tauE(pbar_alpha, R0, a, κ, P_Alpha, P_Aux_alpha_init, P_Ohm_alpha_init)
+        tau_E_alpha  = f_tauE(pbar_alpha, Volume_solution, P_Alpha, P_Aux_alpha_init, P_Ohm_alpha_init, P_rad_alpha)
         Ip_alpha     = f_Ip(tau_E_alpha, R0, a, κ, δ, nbar_alpha, B0_solution, Atomic_mass,
-                            P_Alpha, P_Ohm_alpha_init, P_Aux_alpha_init, H, C_SL,
+                            P_Alpha, P_Ohm_alpha_init, P_Aux_alpha_init, P_rad_alpha,
+                            H, C_SL,
                             alpha_delta,alpha_M,alpha_kappa,alpha_epsilon, alpha_R,alpha_B,alpha_n,alpha_I,alpha_P)
         if Bootstrap_choice == 'Freidberg' :
             Ib_alpha = f_Freidberg_Ib(R0, a, κ, pbar_alpha, Ip_alpha)
@@ -111,29 +120,44 @@ def run( a, R0, Bmax, P_fus,
         Q_residual       = (Q - Q_alpha) * 100 / Q_alpha                  # In % to ease the convergence
 
         return [f_alpha_residual, Q_residual]
-    
-    # Initial guesses for f_alpha and Q
-    initial_guess = [0.1, 1000]
-    
-    # Solve the system of equations
-    try:
-        solution, info, ier, msg = fsolve(to_solve_f_alpha_and_Q, initial_guess, xtol=1e-3, full_output=True)
-        if ier != 1:
-            f_alpha_solution = np.nan
-            Q_solution = np.nan
-        else:
-            f_alpha_solution, Q_solution = solution
-            if f_alpha_solution > 1 or f_alpha_solution < 0:
-                f_alpha_solution = np.nan
-            if Q_solution < 0:
-                Q_solution = np.nan
-    except ValueError as e:
-        f_alpha_solution, Q_solution = np.nan, np.nan
+        
+    def solve_f_alpha_Q():
+        # Version principale avec grid search
+        f_alpha_guesses = np.concatenate([
+            np.linspace(0.001, 0.01, 5),
+            np.linspace(0.01, 0.1, 5),
+            np.linspace(0.1, 1.0, 5)
+        ])
+        Q_guesses = np.logspace(1, 5, 8)
+        
+        initial_guesses = [[f_a, Q] for f_a in f_alpha_guesses for Q in Q_guesses]
+        
+        for method in ['lm', 'hybr', 'df-sane']:  # Plusieurs méthodes
+            for guess in initial_guesses:
+                try:
+                    result = root(to_solve_f_alpha_and_Q, guess, method=method, tol=1e-8)
+                    if result.success:
+                        f_alpha, Q = result.x
+                        if 0 <= f_alpha <= 1 and Q >= 0:
+                            return (f_alpha, Q)
+                except Exception:
+                    continue
+                    
+        return np.nan, np.nan
 
+    f_alpha_solution, Q_solution = solve_f_alpha_Q()
+        
     # Once the convergence loop passed, every other parameters are calculated
-    nbar_solution         = f_nbar(P_fus,R0,a,κ,nu_n,nu_T,f_alpha_solution,Tbar)
+    nbar_solution         = f_nbar(P_fus, nu_n, nu_T, f_alpha_solution, Tbar, R0, a, κ) 
+    # alternative taking into account a reffined version of the volume :
+    # nbar_solution         = f_nbar_advanced(P_fus, nu_n, nu_T, f_alpha_solution, Tbar, Volume_solution)
     pbar_solution         = f_pbar(nu_n,nu_T,nbar_solution,Tbar,f_alpha_solution)
     W_th_solution         = f_W_th(nbar_solution, Tbar, Volume_solution)
+    # Radiative loss
+    P_Brem_solution = f_P_bremsstrahlung(Volume_solution, nbar_solution, Tbar, Zeff, R0, a)
+    beta_T = 2 # Beta_T taken from [J.Johner Helios]
+    P_syn_solution = f_P_synchrotron(Tbar, R0, a, B0_solution, nbar_solution, κ, nu_n, nu_T, beta_T, r_synch)
+    P_rad_solution = P_Brem_solution + P_syn_solution
     eta_CD                = f_etaCD(a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T)
     if Operation_mode == 'Steady-State' :
         P_Ohm_solution = 0
@@ -143,9 +167,10 @@ def run( a, R0, Bmax, P_fus,
         P_Ohm_solution = P_fus / Q_solution - P_Aux_solution
     else:
         print("Choose a valid operation mode ")
-    tauE_solution         = f_tauE(pbar_solution,R0,a,κ, P_Alpha, P_Aux_solution, P_Ohm_solution)
+    tauE_solution         = f_tauE(pbar_solution, Volume_solution, P_Alpha, P_Aux_solution, P_Ohm_solution, P_rad_solution)
+    tau_alpha             = f_tau_alpha(nbar_solution, Tbar, tauE_solution, C_Alpha)
     Ip_solution           = f_Ip(tauE_solution, R0, a, κ, δ, nbar_solution, B0_solution, Atomic_mass, 
-                                 P_Alpha, P_Ohm_solution, P_Aux_solution, H, C_SL,
+                                 P_Alpha, P_Ohm_solution, P_Aux_solution, P_rad_solution, H, C_SL,
                           alpha_delta,alpha_M,alpha_kappa,alpha_epsilon, alpha_R,alpha_B,alpha_n,alpha_I,alpha_P)
     if Bootstrap_choice == 'Freidberg' :
         Ib_solution = f_Freidberg_Ib(R0, a, κ, pbar_solution, Ip_solution)
@@ -225,11 +250,11 @@ def run( a, R0, Bmax, P_fus,
             betaN_solution, betaT_solution, betaP_solution,
             qstar_solution, q95_solution, q_mhd_solution,
             P_CD_solution, P_sep_solution, P_Thresh, eta_CD, P_elec_solution,
-            cost_solution,
+            cost_solution, P_Brem_solution, P_syn_solution,
             heat_D0FUS_solution, heat_par_solution, heat_pol_solution, lambda_q_Eich_m, q_target_Eich,
             P_1rst_wall_Hmod, P_1rst_wall_Lmod,
             Gamma_n_solution,
-            f_alpha_solution,
+            f_alpha_solution, tau_alpha,
             J_max_TF_conducteur, J_max_CS_conducteur,
             Winding_pack_tension_ratio, R0-a, R0-a-b, R0-a-b-c, R0-a-b-c-d,
             κ, κ_95, δ, δ_95)
@@ -246,35 +271,27 @@ if __name__ == "__main__":
     b = 1.2
     Tbar = 14
     
-    # # ITER
-    # R0 = 6.2
-    # a = 2
-    # Pfus = 500
-    # Bmax = 12
-    # b = 1.25
-    # Tbar = 8
-    
     # End Benchmark parameters
     (B0_solution, B_CS, B_pol_solution,
     tauE_solution, W_th_solution,
-    Q_solution, Volume_solution,Surface_solution,
+    Q_solution, Volume_solution, Surface_solution,
     Ip_solution, Ib_solution, I_CD_solution, I_Ohm_solution,
     nbar_solution, nG_solution, pbar_solution,
     betaN_solution, betaT_solution, betaP_solution,
     qstar_solution, q95_solution, q_mhd_solution,
     P_CD, P_sep, P_Thresh, eta_CD, P_elec_solution,
-    cost,
+    cost, P_Brem_solution, P_syn_solution,
     heat_D0FUS_solution, heat_par_solution, heat_pol_solution, lambda_q_Eich_m, q_target_Eich,
     P_1rst_wall_Hmod, P_1rst_wall_Lmod,
     Gamma_n,
-    f_alpha_solution,
+    f_alpha_solution, tau_alpha,
     J_max_TF_conducteur, J_max_CS_conducteur,
     TF_ratio, r_minor, r_sep, r_c, r_d ,
-    κ, κ_95, δ, δ_95) = run( a, R0, Bmax, Pfus,
-                                                   Tbar, H, Temps_Plateau_input, b , nu_n, nu_T,
-                                                   Supra_choice, Chosen_Steel , Radial_build_model , 
-                                                   Choice_Buck_Wedg , Option_Kappa , 
-                                                   L_H_Scaling_choice, Scaling_Law, Bootstrap_choice, Operation_mode)
+    κ, κ_95, δ, δ_95) = run(a, R0, Bmax, Pfus,
+            Tbar, H, Temps_Plateau_input, b , nu_n, nu_T,
+            Supra_choice, Chosen_Steel , Radial_build_model , Choice_Buck_Wedg , 
+            Option_Kappa , κ_manual, L_H_Scaling_choice, Scaling_Law, Bootstrap_choice, Operation_mode)
+
 
     # Clean display of results
     print("=========================================================================")
@@ -304,10 +321,12 @@ if __name__ == "__main__":
     print("-------------------------------------------------------------------------")
     print(f"[I] P_fus (Fusion Power)                            : {Pfus:.3f} [MW]")
     print(f"[O] P_CD (CD Power)                                 : {P_CD:.3f} [MW]")
+    print(f"[O] P_S (Synchrotron Power)                         : {P_syn_solution:.3f} [MW]")
+    print(f"[O] P_B (Bremsstrahlung Power)                      : {P_Brem_solution:.3f} [MW]")
     print(f"[O] eta_CD (CD Efficiency)                          : {eta_CD:.3f} [MA/MW-m²]")
     print(f"[O] Q (Energy Gain Factor)                          : {Q_solution:.3f}")
     print(f"[O] P_elec-net (Net Electrical Power)               : {P_elec_solution:.3f} [MW]")
-    print(f"[O] Cost ((V_BB+V_TF+V_CS)/Q)                       : {cost:.3f} [m^3]")
+    print(f"[O] Cost ((V_BB+V_TF+V_CS)/P_fus)                   : {cost:.3f} [m^3]")
     print("-------------------------------------------------------------------------")
     print(f"[I] H (Scaling Law factor)                          : {H:.3f} ")
     print(f"[I] Operation (Pulsed / Steady)                     : {Operation_mode} ")
@@ -324,6 +343,7 @@ if __name__ == "__main__":
     print(f"[O] nG (Greenwald Density)                          : {nG_solution:.3f} [10^20 m^-3]")
     print(f"[O] pbar (Average Pressure)                         : {pbar_solution:.3f} [MPa]")
     print(f"[O] Alpha Fraction                                  : {f_alpha_solution*1e2:.3f} [%]")
+    print(f"[O] Alpha Confinement Time                          : {tau_alpha:.3f} [s]")
     print(f"[O] Thermal Energy Content                          : {W_th_solution/1e6:.3f} [MJ]")
     print("-------------------------------------------------------------------------")
     print(f"[O] Beta_T (Toroidal Beta)                          : {betaT_solution*1e2:.3f} [%]")
@@ -340,7 +360,7 @@ if __name__ == "__main__":
     print(f"[O] P_sep / S                                       : {P_1rst_wall_Lmod:.3f} [MW/m²]")
     print(f"[O] Heat scaling (P_sep / R0)                       : {heat_D0FUS_solution:.3f} [MW/m]")
     print(f"[O] Parallel Heat Flux (P_sep*B0 / R0)              : {heat_par_solution:.3f} [MW-T/m]")
-    print(f"[O] Poloidal Heat Flux (P_sep*B0) / (q95*R0*A*R0)   : {heat_pol_solution:.3f} [MW-T/m]")
+    print(f"[O] Poloidal Heat Flux (P_sep*B0) / (q95*R0*A)      : {heat_pol_solution:.3f} [MW-T/m]")
     print(f"[O] Gamma_n (Neutron Flux)                          : {Gamma_n:.3f} [MW/m²]")
     print("=========================================================================")
     
