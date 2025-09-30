@@ -39,14 +39,11 @@ D0FUS is a code developed in Python. To open it, the author recommends using Spy
 * sys
 * importlib
 * numpy
-* matplotlib
-* scipy
 * pandas
-* plotly
-* seaborn
+* sympy
+* scipy
+* matplotlib
 * tqdm
-* plotly
-* imageio
 
 To do this, if necessary, execute in the console:
 
@@ -60,7 +57,7 @@ If you want to install every librarys in one single command :
 
 * CMD
   ```sh
-  pip install numpy pandas sympy scipy deap matplotlib seaborn tqdm plotly imageio
+  pip install os math time warnings sys importlib numpy pandas sympy scipy matplotlib tqdm
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
