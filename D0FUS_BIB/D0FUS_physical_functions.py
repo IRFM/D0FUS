@@ -15,7 +15,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'D0FUS_BIB'))
 
 #%% Physical Functions
 
-def f_Kappa(A,Option_Kappa):
+def f_Kappa(A,Option_Kappa, κ_manual):
     """
     
     Estimate the maximum elongation as a function of the aspect ratio
@@ -74,7 +74,7 @@ def f_Delta(kappa):
     Estimate the maximum triangularity (delta) from the total elongation (kappa).
 
     This empirical relationship approximates the maximum triangularity 
-    Scaling taken from TREND [31,32] p 53
+    Scaling taken from TREND p 53
 
     Parameters:
     -------
@@ -110,6 +110,37 @@ def f_Delta_95(delta):
     """
     delta_95 = delta / 1.5
     return delta_95
+
+if __name__ == "__main__":
+    
+    # Paramètres
+    a = 1.0       # rayon mineur [m]
+    kappa = 1.7   # allongement
+    delta = 0.5   # triangularité
+    n_theta = 500
+    theta = np.linspace(0, 2*np.pi, n_theta)
+
+    # --- Cas sans triangularité : ellipse simple ---
+    x_ellipse = a * np.cos(theta)
+    z_ellipse = kappa * a * np.sin(theta)
+
+    # --- Cas avec triangularité (paramétrisation Miller) ---
+    x_tri = a * np.cos(theta + delta * np.sin(theta))
+    z_tri = kappa * a * np.sin(theta)
+
+    # --- Tracé ---
+    fig, ax = plt.subplots(figsize=(7,7))
+    ax.plot(x_ellipse, z_ellipse, 'b--', label="Without triangularity")
+    ax.plot(x_tri, z_tri, 'r-', label="With triangularity")
+
+    ax.set_aspect('equal')
+    ax.set_xlabel("x [m] (poloidal, horizontal)")
+    ax.set_ylabel("z [m] (poloidal, vertical)")
+    ax.set_title("Poloidal section of the plasma")
+    ax.grid(True)
+    ax.legend()
+
+    plt.show()
 
 def f_li(nu_n, nu_T):
     """
@@ -150,6 +181,7 @@ def f_plasma_volume(R0, a, kappa, delta):
     
     Calculate the volume of an axisymmetric tokamak plasma 
     using elongation (κ) and triangularity (δ).
+    Approximation from Miller coordinates at O(2)
 
     Parameters:
     -------
@@ -167,9 +199,75 @@ def f_plasma_volume(R0, a, kappa, delta):
     
     """
     
-    V = 2 * (np.pi**2) * R0 * (a**2) * kappa * (1 + 0.5 * (delta**2))
+    V = 2 * np.pi**2 * R0 * a**2 * kappa * (1 - (a * delta) / (4 * R0) - (delta**2) / 8)
     
     return V
+    
+if __name__ == "__main__":
+
+    # -------------------------
+    # Physical parameters
+    # -------------------------
+    R0 = 3.0      # Major radius [m]
+    a = 1.0       # Minor radius [m]
+    kappa = 1.7   # Elongation
+    
+    # Discretization for numerical integration
+    n_theta = 5000
+    theta = np.linspace(0, 2*np.pi, n_theta, endpoint=False)
+    dtheta = theta[1] - theta[0]
+    
+    # -------------------------
+    # Volume functions
+    # -------------------------
+    # Simpler expression [Wesson]
+    def V_simple(R0, a, kappa):
+        return 2 * np.pi**2 * R0 * a**2 * kappa
+    # Often used in system code ex: PROCESS and mentionned as reference in [Martin]
+    def V_process(R0, a, kappa, delta):
+        return 2 * np.pi**2 * R0 * a**2 * kappa * (1 - (1 - 8/(3*np.pi)) * delta * a / R0)
+    # 1rst order from Miller [Auclair]
+    def V_rec_1(R0, a, kappa, delta):
+        return 2 * np.pi**2 * R0 * a**2 * kappa * (1 - (delta * a) / (4 * R0))
+    # second order from Miller [Auclair]
+    def V_rec_2(R0, a, kappa, delta):
+        return 2 * np.pi**2 * R0 * a**2 * kappa * (1 - (a * delta) / (4 * R0) - (delta**2) / 8)
+    # Miller coordinates
+    def V_miller(R0, a, kappa, delta):
+        R_theta = R0 + a * np.cos(theta + delta * np.sin(theta))
+        Z_theta = kappa * a * np.sin(theta)
+        dZ = np.gradient(Z_theta, dtheta)
+        integrand = R_theta**2 * dZ
+        return np.pi * np.trapz(integrand, theta)
+    
+    # -------------------------
+    # Sweep over triangularity
+    # -------------------------
+    deltas = np.linspace(0, 0.5, 30)
+    
+    V_s    = [V_simple(R0, a, kappa) for d in deltas]
+    V_proc = [V_process(R0, a, kappa, d) for d in deltas]
+    V_ord1  = [V_rec_1(R0, a, kappa, d) for d in deltas]
+    V_ord2 = [V_rec_2(R0, a, kappa, d) for d in deltas]
+    V_num  = [V_miller(R0, a, kappa, d) for d in deltas]
+    
+    # -------------------------
+    # Plot
+    # -------------------------
+    plt.figure(figsize=(9,6))
+    plt.plot(deltas, V_s, 'k--', lw=2, label='V simple [Wesson]')
+    plt.plot(deltas, V_proc, 'g-.', lw=2, label='V Process [Martin]')
+    plt.plot(deltas, V_ord1, 'b-.', lw=2, label='V 1rst Order [Auclair]')
+    plt.plot(deltas, V_ord2, 'm-.', lw=2, label='V 2d Order [Auclair]')
+    plt.plot(deltas, V_num, 'ro-', markersize=5, label='Numerical [Miller]')
+    
+    plt.xlabel('Triangularity δ', fontsize=12)
+    plt.ylabel('Plasma Volume [m³]', fontsize=12)
+    plt.title('Comparison of Plasma Volumes', fontsize=14)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend(fontsize=11)
+    plt.tight_layout()
+    plt.show()
 
 
 def f_B0(Bmax, a, b, R0):
@@ -234,6 +332,45 @@ def f_nprof(nbar,nu_n,rho):
     n = nbar*(1+nu_n)*(1-rho**2)**nu_n
     return n
 
+def plot_profiles(Tbar, nu_T, nbar, nu_n, nrho=100):
+    """
+    Plot temperature and density profiles
+    
+    Parameters
+    ----------
+    Tbar : float - mean temperature [keV]
+    nu_T : float - temperature profile parameter
+    nbar : float - mean density [1e20 p/m^3]
+    nu_n : float - density profile parameter
+    nrho : int - number of points for rho
+    """
+    rho = np.linspace(0, 1, nrho)
+    T = f_Tprof(Tbar, nu_T, rho)
+    n = f_nprof(nbar, nu_n, rho)
+
+    fig, ax1 = plt.subplots()
+
+    ax1.set_xlabel("Normalized minor radius (rho)")
+    ax1.set_ylabel("Temperature [keV]", color="tab:red")
+    ax1.plot(rho, T, color="tab:red", label="Temperature")
+    ax1.tick_params(axis='y', labelcolor="tab:red")
+
+    ax2 = ax1.twinx()
+    ax2.set_ylabel("Density [1e20 p/m^3]", color="tab:blue")
+    ax2.plot(rho, n, color="tab:blue", linestyle="--", label="Density")
+    ax2.tick_params(axis='y', labelcolor="tab:blue")
+
+    plt.title("Plasma Temperature and Density Profiles")
+    fig.tight_layout()
+    
+    # Grille activée
+    ax1.grid(True, which='both', linestyle='--', linewidth=0.7, alpha=0.7)
+    plt.show()
+
+if __name__ == "__main__":
+    # Exemple d'utilisation
+    plot_profiles(Tbar=14, nu_T=1, nbar=1e20, nu_n=0.1)
+
 def f_sigmav(T):
     """
     
@@ -266,59 +403,137 @@ def f_sigmav(T):
     
     return sigma_v
 
-def f_nbar(P_fus,R0,a,κ,nu_n,nu_T,f_alpha,Tbar):
+def f_nbar_advanced(P_fus, nu_n, nu_T, f_alpha, Tbar, V):
     """
-    
-    Allows for the calculation of the mean electronic density needed for the fusion power chosen by the user
-    
+    Compute the mean electron density required to reach 
+    a given fusion power P_fus in a plasma of volume V.
+
     Parameters
     ----------
-    P_fus : The Fusion power [MW]
-    R0 : Major radius [m]
-    a : Minor radius [m]
-    κ : Elongation
-    nu_n : Density profile parameter 
-    nu_T : Temperature profile parameter
-        
+    P_fus : target fusion power [MW]
+    nu_n  : density profile parameter
+    nu_T  : temperature profile parameter
+    f_alpha : relative fraction of alpha particles in the plasma
+    Tbar  : average temperature [keV]
+    V     : plasma volume [m^3]
+
     Returns
     -------
-    n_bar : The mean electronic density [1e20p/m^3]
-    
+    n_bar : mean electron density [10^20 m^-3]
     """
-    # Définition de l'intégrande
+
+    # --- Normalized integral for <σv>eff ---
     def integrand(rho):
-        Tprof_value = f_Tprof(Tbar, nu_T, rho)  # Calcul de f_Tprof(Tbar, nu_T, rho)
-        sigmav_value = f_sigmav(Tprof_value)    # Calcul de f_sigmav(Tprof_value)
-        return sigmav_value * rho * (1 - rho**2)**(2 * nu_n)
+        T_local = f_Tprof(Tbar, nu_T, rho)     # temperature profile T(ρ)
+        sigmav  = f_sigmav(T_local)            # reactivity <σv>(T)
+        return sigmav * (1 - rho**2)**(2*nu_n) * 2 *  rho
 
-    # Effectuer l'intégration de 0 à 1
-    result_integration, error = quad(integrand, 0, 1)
-    
-    n_DT = np.sqrt(P_fus*1e6/((E_N+E_ALPHA)*np.pi**2*R0*κ*a**2*(1+nu_n)**2*result_integration))/(1e20*2)
-    
-    # Taking into account the alpha dilution
-    n_bar = n_DT* (2 + (4*f_alpha)/(1-2*f_alpha))
-    
-    return(n_bar)
+    sigma_v, _ = quad(integrand, 0, 1)
 
-def f_pbar(nu_n,nu_T,n_bar,Tbar,f_alpha):
+    # --- Solve for n (total fuel density D+T) ---
+    P_watt = P_fus * 1e6
+    n = 2 / (1 + nu_n) * np.sqrt(P_watt / (sigma_v * (E_ALPHA + E_N) * V))
+
+    # --- Convert to electron density (including alpha dilution) ---
+    # n_e = n_D + n_T + 2 * n_alpha = n + 2 * f_alpha * n_e
+    n_e = n / (1 - 2*f_alpha)
+
+    # Return in units of 1e20 m^-3
+    return n_e / 1e20
+
+def f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, kappa):
     """
-    
-    Estimate the plasma pressure
-    
+    Compute the mean electron density required to reach 
+    a given fusion power P_fus in a plasma of volume V.
+
     Parameters
     ----------
-    Tbar : Mean temperature [keV]
-    nbar : mean electronic density [1e20p/m^3]
-    nu_n : Density profile parameter 
-    nu_T : Temperature profile parameter
-        
+    P_fus : target fusion power [MW]
+    nu_n  : density profile parameter
+    nu_T  : temperature profile parameter
+    f_alpha : relative fraction of alpha particles in the plasma
+    Tbar  : average temperature [keV]
+    V     : plasma volume [m^3]
+
     Returns
     -------
-    p_bar : The mean pressure [MPa]
-    
+    n_bar : mean electron density [10^20 m^-3]
     """
-    p_bar = (2-f_alpha)*((1+nu_T)*(1+nu_n)/(1+nu_n+nu_T))*(n_bar*1e20)*(Tbar*E_ELEM*1e3)/1e6
+
+    # --- Normalized integral for <σv>eff ---
+    def integrand(rho):
+        T_local = f_Tprof(Tbar, nu_T, rho)     # temperature profile T(ρ)
+        sigmav  = f_sigmav(T_local)            # reactivity <σv>(T)
+        return sigmav * (1 - rho**2)**(2*nu_n) * 2 *  rho
+
+    I, _ = quad(integrand, 0, 1)
+
+    # --- Solve for n (total fuel density D+T) ---
+    P_watt = P_fus * 1e6
+    V = 2 * np.pi**2 * R0 * kappa * a**2
+    n = 2 / (1 + nu_n) * np.sqrt(P_watt / (I * (E_ALPHA + E_N) * V))
+
+    # --- Convert to electron density (including alpha dilution) ---
+    # n_e = n_D + n_T + 2 * n_alpha = n + 2 * f_alpha * n_e
+    n_e = n / (1 - 2*f_alpha)
+
+    # Return in units of 1e20 m^-3
+    return n_e / 1e20
+
+if __name__ == "__main__":
+    # Parameters
+    P_fus   = 2000   # [MW]
+    nu_n    = 0.1
+    nu_T    = 1
+    f_alpha = 0.06
+    Tbar    = 14     # [keV]
+    
+    # Sweep over plasma volumes (10 → 1000 m³, 500 points)
+    V_values = np.linspace(10, 1000, 500)
+    nbar_values = [f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, V) for V in V_values]
+    
+    # Plot
+    plt.figure(figsize=(8,5))
+    plt.plot(V_values, nbar_values, 'b-', lw=2)
+    
+    plt.xlabel("Plasma volume V [m³]", fontsize=12)
+    plt.ylabel("Mean electron density $\\bar{n}_e$ [$10^{20}$ m$^{-3}$]", fontsize=12)
+    plt.title("Required electron density vs plasma volume", fontsize=14)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.show()
+
+def f_pbar(nu_n, nu_T, n_bar, Tbar, f_alpha):
+    """
+    Estimate the mean plasma pressure.
+
+    Parameters
+    ----------
+    nu_n : density profile parameter
+    nu_T : temperature profile parameter
+    n_bar : mean electron density [1e20 m^-3]
+    Tbar : mean temperature [keV]
+    f_alpha : relative alpha particle fraction
+
+    Returns
+    -------
+    p_bar : mean plasma pressure [MPa]
+    """
+
+    # --- Profile factor ---
+    profile_factor = 2 * (1 + nu_T) * (1 + nu_n) / (1 + nu_T + nu_n)
+
+    # --- Convert inputs to SI units ---
+    # n_bar * 1e20 → electron density [m^-3]
+    # Tbar * E_ELEM * 1e3 → temperature [J]
+    # Divide by 1e6 → convert Pa to MPa
+    p_bar = (
+        profile_factor
+        * (n_bar * 1e20)
+        * (Tbar * E_ELEM * 1e3)
+        / 1e6
+    )
+
     return p_bar
 
 def f_beta_T(pbar_MPa, B0):
@@ -672,7 +887,7 @@ def f_heat_PFU_Eich(
 
     return lambda_q_m, q_parallel0, q_target
 
-def f_tauE(pbar, R0, a, κ, P_Alpha, P_Aux, P_Ohm):
+def f_tauE(pbar, V, P_Alpha, P_Aux, P_Ohm, P_Rad):
     """
     
     Calculation of the confinement time from the power balance
@@ -695,13 +910,12 @@ def f_tauE(pbar, R0, a, κ, P_Alpha, P_Aux, P_Ohm):
     
     # conversion en SI
     p_Pa = pbar * 1e6
-    P_total_W = (P_Alpha + P_Aux + P_Ohm) * 1e6
+    P_total_W = (P_Alpha + P_Aux + P_Ohm - P_Rad) * 1e6
 
     if P_total_W <= 0:
         return np.nan
 
-    # W_th = 3 * pi^2 * p * R0 * a^2 * kappa
-    W_th_J = 3.0 * np.pi**2 * p_Pa * R0 * a**2 * κ
+    W_th_J = 3/2 * p_Pa * V
 
     tauE_s = W_th_J / P_total_W
     
@@ -728,7 +942,7 @@ def f_P_alpha(P_fus, E_ALPHA, E_N):
     
     return P_Alpha
         
-def f_Ip(tauE, R0, a, κ, δ, nbar, B0, Atomic_mass, P_Alpha, P_Ohm, P_Aux, H, C_SL,
+def f_Ip(tauE, R0, a, κ, δ, nbar, B0, Atomic_mass, P_Alpha, P_Ohm, P_Aux, P_rad, H, C_SL,
          alpha_delta,alpha_M,alpha_kappa,alpha_epsilon, alpha_R,alpha_B,alpha_n,alpha_I,alpha_P):
     """
     
@@ -753,14 +967,10 @@ def f_Ip(tauE, R0, a, κ, δ, nbar, B0, Atomic_mass, P_Alpha, P_Ohm, P_Aux, H, C
     
     """
     
-    P = P_Alpha + P_Ohm + P_Aux
+    P = P_Alpha + P_Ohm + P_Aux - P_rad
     Epsilon = a/R0
     
-    # A creuser
-    Suspect = B0**alpha_B
-    partie_reelle = Suspect.real
-    
-    Denominateur = H* C_SL * R0**alpha_R * Epsilon**alpha_epsilon * κ**alpha_kappa * (nbar*10)**alpha_n * partie_reelle * Atomic_mass**alpha_M * P**alpha_P * (1 + δ)**alpha_delta
+    Denominateur = H* C_SL * R0**alpha_R * Epsilon**alpha_epsilon * κ**alpha_kappa * (nbar*10)**alpha_n * B0**alpha_B * Atomic_mass**alpha_M * P**alpha_P * (1 + δ)**alpha_delta
     inv_cI  = 1./alpha_I
     
     Ip = ((tauE/Denominateur)**inv_cI) # in MA
@@ -1270,7 +1480,6 @@ def f_He_fraction(n_bar, T_bar, tauE, C_Alpha):
     f_alpha : Alpha fraction (n_alpha/n_bar)
     
     """
-    # f_alpha = (1.18*1e-4*C_Alpha)/4 * n_bar * T_bar**2 * tauE 
     
     def integrand(rho):
         T_prof_value = f_Tprof(T_bar, nu_T, rho)
@@ -1280,9 +1489,45 @@ def f_He_fraction(n_bar, T_bar, tauE, C_Alpha):
     sigmav, _ = quad(integrand, 0, 1)
 
     C_equa_alpha = (n_bar*1e20*sigmav*C_Alpha*tauE)
-    f_alpha = (C_equa_alpha+1-np.sqrt(2*C_equa_alpha+1))/(2*C_equa_alpha)
+    f_alpha = (C_equa_alpha + 1 - np.sqrt( 2 * C_equa_alpha + 1 )) / ( 2 * C_equa_alpha )
     
     return f_alpha
+
+def f_tau_alpha(n_bar, T_bar, tauE, C_Alpha):
+    """
+    Estimate the alpha particle confinement time Tau_alpha
+    (derived consistently from f_He_fraction)
+
+    Parameters
+    ----------
+    n_bar : The mean electron density [1e20p/m^3]
+    T_bar : The mean temperature [keV]
+    tauE : Confinement time [s]
+    C_Alpha : Tuning parameter
+
+    Returns
+    -------
+    tau_alpha : Alpha confinement time [s]
+    """
+
+    # On reprend les mêmes étapes que dans f_He_fraction
+    def integrand(rho):
+        T_prof_value = f_Tprof(T_bar, nu_T, rho)
+        return f_sigmav(T_prof_value)
+
+    sigmav, _ = quad(integrand, 0, 1)
+
+    # Grandeur intermédiaire déjà utilisée
+    C_equa_alpha = (n_bar*1e20 * sigmav * C_Alpha * tauE)
+
+    # Fraction d’alphas
+    f_alpha = (C_equa_alpha + 1 - np.sqrt(2*C_equa_alpha + 1)) / (2*C_equa_alpha)
+
+    # Temps de confinement des alphas (relation directe)
+    tau_alpha_value = f_alpha * tauE / C_equa_alpha
+
+    return tau_alpha_value
+
 
 # Test
 # print(f"ITER Helium fraction: {round(f_He_fraction(1, 9, 3.1, 5),3)}") # ITER : ?%
@@ -1397,51 +1642,67 @@ def f_P_1rst_wall_Lmod(P_sep_solution, Surface_solution):
     
     return P_1rst_wall_Lmod
 
-def f_P_synchrotron(T0_keV, R, a, Bt, ne0, A, V, alpha_n, alpha_T, beta_T, r=0.5, r_syn=0.6):
+def f_P_synchrotron(T0_keV, R, a, Bt, ne0, kappa, alpha_n, alpha_T, beta_T, r):
     """
-    
-    Note : Under developement
-    
-    Calculate the total synchrotron radiation power (in MW) using the 
-    advanced Wenninger model
+    Calculate the total synchrotron radiation power (in MW) using the
+    improved formulation from Albajar et al. (2001).
 
     Parameters
     ----------
-    T0_keV : Central electron temperature [keV]
-    R : Major radius [m]
-    a : Minor radius [m]
-    Bt : Toroidal magnetic field [T]
-    ne0 : Central electron density [10^20 m⁻³]
-    A : Geometric aspect ratio (R/a)
-    V : Plasma volume [m³]
-    alpha_n : Density profile parameter
-    alpha_T : Temperature profile parameter
-    beta_T : Temperature shape factor
-    r : Normalized radial position (~0.5 by default)
-    r_syn : Reflection factor (~0.6 to 0.7).
+    T0_keV : float
+        Central electron temperature [keV]
+    R : float
+        Major radius [m]
+    a : float
+        Minor radius [m]
+    Bt : float
+        Toroidal magnetic field [T]
+    ne0 : float
+        Central electron density [10^20 m⁻³]
+    kappa : float
+        Plasma vertical elongation
+    alpha_n : float
+        Density profile peaking parameter
+    alpha_T : float
+        Temperature profile peaking parameter
+    beta_T : float
+        Temperature shape factor
+    r : float, optional
+        Wall reflection coefficient (default=0.9)
 
     Returns
     -------
-    P_syn : Total synchrotron power [MW]
+    P_syn : float
+        Total synchrotron radiation power [MW]
 
-    Sources
-    -------
-    - Wenninger et al., Nuclear Fusion (2015)
-    - Wesson, "Tokamaks", 3rd ed., chap. 7
-    
+    References
+    ----------
+    Albajar, F., Johner, J., & Granata, G. (2001). 
+    Improved calculation of synchrotron radiation losses in realistic tokamak plasmas. 
+    Nuclear Fusion, 41(6), 665.
     """
-    # Constants
-    C_syn = 3.84**-9.6
-    T0 = T0_keV  # Temperature already in keV
-    pa0 = 6.04e3 * a * ne0 / Bt
-    kappa_syn = V / (2 * math.pi * 2 * R * a**2)
-    G_A = 0.93 * (1 + 0.85 * math.exp(-0.82 * A))
-    K_num = (1.98 + alpha_T)**1.36 * beta_T**2.14
-    K_den = (alpha_n + 3.87 * alpha_T + 1.46) * 0.79 * (beta_T**1.53 + 1.87 * alpha_T - 0.16)**1.33
-    K_profile = K_num / K_den
-    T_frac = ((1 - r_syn) / (1 + 0.12 * T0 / (pa0 * 0.41) * (1 - r))) * 0.62
-    P_syn = C_syn * T_frac * T0 * (16 + T0)**2.61 * R * a**1.38 * kappa_syn**0.79 * Bt**2.62 * ne0**0.38 * G_A * K_profile
+    # Aspect ratio
+    A = R / a
     
+    # Calculate opacity parameter (Eq. 7)
+    pa0 = 6.04e3 * a * ne0 / Bt  # Dimensionless
+
+    # Calculate profile factor K (Eq. 13)
+    K_numer = (alpha_n + 3.87*alpha_T + 1.46)**(-0.79) * (1.98 + alpha_T)**1.36 * beta_T**2.14
+    K_denom = (beta_T**1.53 + 1.87*alpha_T - 0.16)**1.33
+    K = K_numer / K_denom
+
+    # Calculate aspect ratio correction factor G (Eq. 15)
+    G = 0.93 * (1 + 0.85 * math.exp(-0.82 * A))
+
+    # Calculate the main expression (Eq. 16)
+    term1 = 3.84e-8 * (1 - r)**0.5
+    term2 = R * a**1.38 * kappa**0.79 * Bt**2.62 * ne0**0.38
+    term3 = T0_keV * (16 + T0_keV)**2.61
+    term4 = (1 + 0.12 * T0_keV / pa0**0.41)**(-1.51)
+    
+    P_syn = term1 * term2 * term3 * term4 * K * G
+
     return P_syn
 
 def f_P_bremsstrahlung(V, n_e, T_e, Z_eff, R, a):
@@ -1472,7 +1733,7 @@ def f_P_bremsstrahlung(V, n_e, T_e, Z_eff, R, a):
     
     """
     
-    P_Brem = 5.35e3 * Z_eff * n_e**2 * math.sqrt(T_e) * V
+    P_Brem = 5.35e3 * Z_eff**2 * n_e**2 * T_e**(1/2) * V
     
     return P_Brem / 1e6
 
@@ -1513,8 +1774,99 @@ def f_P_line_radiation(V, n_e, T_e, f_imp, L_z, R, a):
     """
     
     P_line = (n_e * 1e20)**2 * f_imp * L_z * V
-    
-    return P_line
+
+    return P_line / 1e6
+
+def get_Lz(impurity, Te_keV):
+    """
+    Retourne le coefficient de pertes radiatives de raies Lz (W·m³)
+    pour une impureté donnée et une température électronique.
+
+    Paramètres
+    ----------
+    impurity : str
+        Nom de l'impureté ("W", "Ar", "Ne", "C").
+    Te_keV : float
+        Température électronique en keV (valide pour 1–30 keV).
+
+    Retour
+    ------
+    Lz : float
+        Coefficient radiatif de raies (W·m³).
+
+    Notes
+    -----
+    - Tables issues de :
+      * Pütterich et al. (2010) pour W,
+      * Fichiers ADF11/PLT (ADAS) pour Ar, Ne, C.
+    - Interpolation en log-log pour plus de stabilité.
+    """
+
+    # Grille commune en keV
+    Te_grid = np.array([1, 2, 3, 5, 10, 15, 20, 25, 30])
+
+    # Tables Lz (W·m³)
+    tables = {
+        "W":  np.array([4.21e-31, 4.38e-31, 2.28e-31, 1.87e-31,
+                        1.33e-31, 9.47e-32, 7.30e-32, 6.11e-32, 5.47e-32]),
+        "Ar": np.array([1.137e-29]*9),
+        "Ne": np.array([3.425e-23, 6.664e-16, 3.426e-16, 1.712e-16,
+                        3.425e-17, 1.712e-17, 1.047e-17, 7.150e-18, 5.235e-18]),
+        "C":  np.array([1.428e-26, 8.575e-23, 4.593e-23, 2.330e-23,
+                        4.545e-24, 2.277e-24, 1.394e-24, 9.531e-25, 6.985e-25])
+    }
+
+    imp = impurity.strip().capitalize()  # normalisation simple
+    if imp not in tables:
+        raise ValueError(f"Impureté '{impurity}' non supportée. Choisir parmi {list(tables.keys())}")
+
+    # Interpolation log-log
+    Lz_table = tables[imp]
+    f = interp1d(np.log10(Te_grid), np.log10(Lz_table),
+                 kind="linear", bounds_error=False, fill_value="extrapolate")
+    return float(10**f(np.log10(Te_keV)))
+
+
+if __name__ == "__main__":
+    # ITER-like plasma parameters
+    Te_keV = 7.0
+    ne = 1.0          # in 1e20 m^-3
+    V = 830.0         # m^3
+    R, a = 6.2, 2.0
+    Bt = 5.3
+    kappa = 1.7       # Plasma elongation (typical for ITER)
+    Z_eff = 1         # approximate effective charge
+    r = r_synch
+    beta_T = 2        # Beta_T taken from [J.Johner Helios]
+
+    # Profile parameters (typical parabolic profiles)
+    alpha_n = 0.1     # Density profile parameter
+    alpha_T = 1.0     # Temperature profile parameter
+
+    # Impurities
+    impurities = ['W', 'Ar']
+    fractions = [0.0001, 0.02]   # 0.01% W, 2% Ar
+
+    # Calculate bremsstrahlung
+    P_brem = f_P_bremsstrahlung(V, ne, Te_keV, Z_eff, R, a)
+    print(f"Bremsstrahlung power: {P_brem:.2f} MW (expected ~10 MW for ITER)")
+
+    # Calculate synchrotron using Albajar formula
+    P_syn = f_P_synchrotron(Te_keV, R, a, Bt, ne, kappa, alpha_n, alpha_T, beta_T, r) 
+    print(f"Synchrotron power (Albajar): {P_syn:.2f} MW (expected ~1 MW for ITER)")
+
+    # Line radiation
+    for imp, f_imp in zip(impurities, fractions):
+        Lz = get_Lz(imp, Te_keV)
+        P_line = f_P_line_radiation(V, ne, Te_keV, f_imp, Lz, R, a)
+        print(f"Line radiation ({imp}): {P_line:.2e} MW (using ADAS table)")
+
+    # Total
+    P_line_total = sum(
+        f_P_line_radiation(V, ne, Te_keV, f, get_Lz(imp, Te_keV), R, a)
+        for imp, f in zip(impurities, fractions)
+    )
+    print(f"Total line radiation: {P_line_total:.2f} MW")
 
 def f_Get_parameter_scaling_law(Scaling_Law):
     
