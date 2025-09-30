@@ -42,14 +42,11 @@ print("----- D0FUS reloaded -----")
 
 def R0_a_scan(Bmax, P_fus):
     
-    a_min = 1
-    a_max = 3
-    a_step = 0.1
-    a_values = np.arange(a_min,a_max,a_step)
-    R0_min = 3
-    R0_max = 9
-    R0_step = 0.25
-    R0_values = np.arange(R0_min,R0_max,R0_step)
+    a_min, a_max, a_N = 1, 3, 25
+    R0_min, R0_max, R0_N = 3, 9, 25   
+
+    a_values = np.linspace(a_min, a_max, a_N)
+    R0_values = np.linspace(R0_min, R0_max, R0_N)
      
     # Matrix creations
     max_limits_density = np.zeros((len(a_values),len(R0_values)))
@@ -99,17 +96,17 @@ def R0_a_scan(Bmax, P_fus):
             betaN_solution, betaT_solution, betaP_solution,
             qstar_solution, q95_solution, q_mhd_solution,
             P_CD, P_sep, P_Thresh, eta_CD, P_elec_solution,
-            cost,
+            cost, P_Brem_solution, P_syn_solution,
             heat, heat_par_solution, heat_pol_solution, lambda_q_Eich_m, q_target_Eich,
             P_1rst_wall_Hmod, P_1rst_wall_Lmod,
             Gamma_n,
-            f_alpha_solution,
+            f_alpha_solution, tau_alpha,
             J_max_TF_conducteur, J_max_CS_conducteur,
             TF_ratio, R0_a_solution, R0_a_b_solution, R0_a_b_c_solution, R0_a_b_c_d_solution,
             κ, κ_95, δ, δ_95) = run( a, R0, Bmax, P_fus, 
             Tbar, H, Temps_Plateau_input, b , nu_n, nu_T,
             Supra_choice, Chosen_Steel , Radial_build_model , 
-            Choice_Buck_Wedg , Option_Kappa , 
+            Choice_Buck_Wedg , Option_Kappa , κ_manual,
             L_H_Scaling_choice, Scaling_Law, Bootstrap_choice, Operation_mode)
             
             # Verifier les conditions
@@ -293,12 +290,18 @@ def R0_a_scan(Bmax, P_fus):
     ### Definition des axes
 
     # Axe y (a_values)
-    y_indices = np.arange(0, len(a_values), int(0.5/a_step)) # Sélectionner les indices
+    approx_step = 0.5
+    index_step = int(round(approx_step / ((a_max - a_min) / (len(a_values) - 1))))
+    y_indices = np.arange(0, len(a_values), index_step)
     ax.set_yticks(y_indices) # Positions
     ax.set_yticklabels(np.round((a_max+a_min)-a_values[y_indices],2), fontsize = taille_police_legende) # Etiquettes
     
     # Axe x (R0_values)
-    x_indices = np.arange(0, len(R0_values), int(1/R0_step)) # Sélectionner les indices
+    # espacement réel entre deux points de R0_values
+    real_step = (R0_max - R0_min) / (len(R0_values) - 1)
+    approx_step = 1.0
+    index_step = int(round(approx_step / real_step))
+    x_indices = np.arange(0, len(R0_values), index_step)
     ax.set_xticks(x_indices) # Positions
     x_labels = [round(R0_values[i],2) for i in x_indices] # Arrondir chaque valeur à une decimale
     ax.set_xticklabels(x_labels, rotation=45, ha='right', fontsize = taille_police_legende)
