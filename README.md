@@ -30,7 +30,9 @@ Additionally, and for more details, useful papers and notes on the code are grou
 
 ## Prerequisites
 
-D0FUS is a code developed in Python. To open it, the author recommends using Spyder, but any other Python executor will suffice. The code uses the following librarys, which will need to be installed on first execution if not already present:
+D0FUS is a code fully developed in Python.
+To use it, the author recommends using Spyder, but any other Python executor will suffice.
+The code uses the following librarys:
 
 * os
 * math
@@ -43,25 +45,27 @@ D0FUS is a code developed in Python. To open it, the author recommends using Spy
 * sympy
 * scipy
 * matplotlib
+* mpl_toolkits
 * tqdm
 
 To do this, if necessary, execute in the console:
 
-
 * CMD
   ```sh
-  pip install library_name
+  conda install library_name
   ```
 
 If you want to install every librarys in one single command :
 
 * CMD
   ```sh
-  pip install os math time warnings sys importlib numpy pandas sympy scipy matplotlib tqdm
+  conda install os math time warnings sys importlib numpy pandas sympy scipy matplotlib tqdm
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-Attntion : pip install might not work, then use conda install.
+Attntion : conda install might not work, then use pip install.
+
+In practice, most of the library are pre-installed in most Python executor, at the exception of tqdm.
 
 ## Installation
 
