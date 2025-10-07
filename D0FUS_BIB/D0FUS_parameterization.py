@@ -14,7 +14,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'D0FUS_BIB'))
 #%% Panel control
 
 # Parameterization
-Operation_mode = 'Pulsed'     # 'Steady-State' or 'Pulsed'
+Operation_mode = 'Steady-State'     # 'Steady-State' or 'Pulsed'
 Supra_choice = 'Rebco'              # 'Nb3Sn' , 'Rebco', 'NbTi' or Manual'
 Chosen_Steel = '316L'               # '316L' , 'N50H' or 'Manual'
 Radial_build_model = 'D0FUS'        # "academic" , "D0FUS" , "CIRCEE"
@@ -22,16 +22,16 @@ Choice_Buck_Wedg = 'Bucking'        # 'Wedging' or 'Bucking'
 Option_Kappa = 'Wenninger'          # 'Stambaugh' , 'Freidberg' , 'Wenninger' or 'Manual'
 L_H_Scaling_choice = 'New_Ip'       # 'Martin' , 'New_S', 'New_Ip'
 Scaling_Law = 'IPB98(y,2)'          # 'IPB98(y,2)', 'ITPA20-IL', 'ITPA20', 'DS03', 'L-mode', 'L-mode OK', 'ITER89-P'
-Bootstrap_choice = 'Segal'          # 'Freidberg' or 'Segal'
+Bootstrap_choice = 'Freidberg'      # 'Freidberg' or 'Segal'
 
 # Inputs
-H = 1.1                               # H factor
-Tbar  = 17.7                        # Mean Temperature keV
+H = 1                               # H factor
+Tbar  = 14                          # Mean Temperature keV
 b = 1.2                             # BB + 1rst Wall + N shields + Gaps
 
 # If Pulsed operation:
 if Operation_mode == 'Pulsed' :
-    Temps_Plateau_input = 20 * 60       # Plateau time [s]
+    Temps_Plateau_input = 120 * 60       # Plateau time [s]
     P_aux_input = 140                    # P_aux
 else :
     Temps_Plateau_input = 0            # Plateau time [min]
