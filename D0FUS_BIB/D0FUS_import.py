@@ -9,6 +9,8 @@ Created on Tue Jun 25 13:30:05 2024
 
 # Importations de bibliothèques standards
 import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 import math
 import time
 import warnings
@@ -32,9 +34,9 @@ from scipy.optimize import (
     bisect,
     root
 )
+from scipy.interpolate import interp1d
 from scipy.interpolate import griddata
 from scipy.integrate import quad
-from deap import base, creator, tools, algorithms
 
 # Importations de bibliothèques de visualisation
 import matplotlib.pyplot as plt
@@ -43,16 +45,9 @@ import matplotlib.colors as mcolors
 import matplotlib.patches as mpatches
 from matplotlib.ticker import MultipleLocator
 from matplotlib.colors import Normalize
-from mpl_toolkits.axes_grid1 import make_axes_locatable
-from mpl_toolkits.mplot3d import Axes3D
-import seaborn as sns  # améliore l'esthétique des graphiques
 from pandas.plotting import table
 from tqdm import tqdm
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-
-# Importation pour le traitement des images
-import imageio
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 #%%
 
