@@ -976,6 +976,46 @@ def f_Ip(tauE, R0, a, κ, δ, nbar, B0, Atomic_mass, P_Alpha, P_Ohm, P_Aux, P_ra
     Ip = ((tauE/Denominateur)**inv_cI) # in MA
     
     return Ip
+    
+def f_Ip_Auclair(tauE, R0, a, kappa, delta, nbar, B0, Atomic_mass, P_Alpha, P_Ohm, P_Aux, P_rad):
+    """
+    Calculate the plasma current (Ip) using the Auclair scaling law.
+
+    Parameters
+    ----------
+    tauE : Energy confinement time [s]
+    R0 : Major radius [m]
+    a : Minor radius [m]
+    kappa : Elongation
+    delta : Triangularity
+    nbar : Mean electron density [1e19 m^-3]
+    B0 : Central magnetic field [T]
+    Atomic_mass : Mean ion mass [AMU]
+    P_Alpha : Alpha power [MW]
+    P_Aux : Auxiliary power [MW]
+    P_Ohm : Ohmic power [MW]
+    P_rad : Radiated power [MW]
+    
+    Returns
+    -------
+    Ip : Plasma current [MA]
+
+    Scaling law (WLS multivariable, Auclair, STD5 database):
+    Ip [MA] ≈ exp(1.119) * tauE^0.366 * B0^0.332 * ne^0.043 * P^0.252 *
+              R0^0.161 * (1+delta)^-0.121 * kappa^0.448 * (a/R0)^1.047 * Atomic_mass^-0.028
+    """
+    
+    one_plus_delta = 1 + delta
+    epsilon = a / R0
+    P = P_Alpha + P_Ohm + P_Aux - P_rad  # Total heating in MW
+
+    Ip = np.exp(1.119) * tauE**0.366 * B0**0.332 * nbar**0.043 * \
+         P**0.252 * R0**0.161 * one_plus_delta**-0.121 * \
+         kappa**0.448 * epsilon**1.047 * Atomic_mass**-0.028
+
+    return Ip  # MA
+
+
 
 def f_Freidberg_Ib(R0, a, κ, pbar, Ip):
     """
