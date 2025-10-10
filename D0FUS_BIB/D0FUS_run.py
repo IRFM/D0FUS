@@ -61,12 +61,11 @@ def run(a, R0, Bmax, P_fus,
         # Calculate intermediate values
         nbar_alpha         = f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, κ) 
         # alternative taking into account a reffined version of the volume :
-        # nbar_alpha   = f_nbar_advanced(P_fus, nu_n, nu_T, f_alpha, Tbar, Volume_solution)
+        nbar_alpha   = f_nbar_advanced(P_fus, nu_n, nu_T, f_alpha, Tbar, Volume_solution)
         pbar_alpha   = f_pbar(nu_n, nu_T, nbar_alpha, Tbar, f_alpha)
         
         # Radiative loss
         P_Brem_alpha = f_P_bremsstrahlung(Volume_solution, nbar_alpha, Tbar, Zeff, R0, a)
-        beta_T = 2 # Beta_T taken from [J.Johner Helios]
         P_syn_alpha = f_P_synchrotron(Tbar, R0, a, B0_solution, nbar_alpha, κ, nu_n, nu_T, beta_T, r_synch)
         P_rad_alpha = P_Brem_alpha + P_syn_alpha
         
@@ -87,6 +86,9 @@ def run(a, R0, Bmax, P_fus,
                             P_Alpha, P_Ohm_alpha_init, P_Aux_alpha_init, P_rad_alpha,
                             H, C_SL,
                             alpha_delta,alpha_M,alpha_kappa,alpha_epsilon, alpha_R,alpha_B,alpha_n,alpha_I,alpha_P)
+        # Scaling [Auclair]
+        # Ip_alpha = f_Ip_Auclair(tau_E_alpha, R0, a, κ, δ, nbar_alpha, B0_solution, Atomic_mass,
+        #                       P_Alpha, P_Ohm_alpha_init, P_Aux_alpha_init, P_rad_alpha)
         if Bootstrap_choice == 'Freidberg' :
             Ib_alpha = f_Freidberg_Ib(R0, a, κ, pbar_alpha, Ip_alpha)
         elif Bootstrap_choice == 'Segal' :
@@ -122,7 +124,7 @@ def run(a, R0, Bmax, P_fus,
         return [f_alpha_residual, Q_residual]
         
     def solve_f_alpha_Q():
-        # Version principale avec grid search
+        # grid search
         f_alpha_guesses = np.concatenate([
             np.linspace(0.001, 0.01, 5),
             np.linspace(0.01, 0.1, 5),
@@ -150,12 +152,11 @@ def run(a, R0, Bmax, P_fus,
     # Once the convergence loop passed, every other parameters are calculated
     nbar_solution         = f_nbar(P_fus, nu_n, nu_T, f_alpha_solution, Tbar, R0, a, κ) 
     # alternative taking into account a reffined version of the volume :
-    # nbar_solution         = f_nbar_advanced(P_fus, nu_n, nu_T, f_alpha_solution, Tbar, Volume_solution)
+    nbar_solution         = f_nbar_advanced(P_fus, nu_n, nu_T, f_alpha_solution, Tbar, Volume_solution)
     pbar_solution         = f_pbar(nu_n,nu_T,nbar_solution,Tbar,f_alpha_solution)
     W_th_solution         = f_W_th(nbar_solution, Tbar, Volume_solution)
     # Radiative loss
     P_Brem_solution = f_P_bremsstrahlung(Volume_solution, nbar_solution, Tbar, Zeff, R0, a)
-    beta_T = 2 # Beta_T taken from [J.Johner Helios]
     P_syn_solution = f_P_synchrotron(Tbar, R0, a, B0_solution, nbar_solution, κ, nu_n, nu_T, beta_T, r_synch)
     P_rad_solution = P_Brem_solution + P_syn_solution
     eta_CD                = f_etaCD(a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T)
@@ -172,6 +173,9 @@ def run(a, R0, Bmax, P_fus,
     Ip_solution           = f_Ip(tauE_solution, R0, a, κ, δ, nbar_solution, B0_solution, Atomic_mass, 
                                  P_Alpha, P_Ohm_solution, P_Aux_solution, P_rad_solution, H, C_SL,
                           alpha_delta,alpha_M,alpha_kappa,alpha_epsilon, alpha_R,alpha_B,alpha_n,alpha_I,alpha_P)
+    # [Auclair] Ip calculation
+    # Ip_solution           = f_Ip_Auclair(tauE_solution, R0, a, κ, δ, nbar_solution, B0_solution, Atomic_mass,
+    #                       P_Alpha, P_Ohm_solution, P_Aux_solution, P_rad_solution)
     if Bootstrap_choice == 'Freidberg' :
         Ib_solution = f_Freidberg_Ib(R0, a, κ, pbar_solution, Ip_solution)
     elif Bootstrap_choice == 'Segal' :
@@ -234,7 +238,7 @@ def run(a, R0, Bmax, P_fus,
         (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, I_Ohm_solution, Bmax ,a ,b ,c , R0 ,κ ,nbar_solution, Tbar ,Ce ,Temps_Plateau_input , li_solution)
         (d,Alpha,B_CS, J_CS) = f_CS_D0FUS(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, σ_CS, J_max_CS_conducteur , Choice_Buck_Wedg)
     elif Radial_build_model == "CIRCEE" :
-        (c, Winding_pack_tension_ratio) = f_TF_CIRCEE(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg, omega_TF, n_TF)
+        (c, Winding_pack_tension_ratio) = f_TF_D0FUS(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg, omega_TF, n_TF)
         (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, I_Ohm_solution, Bmax ,a ,b ,c , R0 ,κ ,nbar_solution, Tbar ,Ce ,Temps_Plateau_input , li_solution)
         (d,Alpha,B_CS, J_CS) = f_CS_CIRCEE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, σ_CS, J_max_CS_conducteur , Choice_Buck_Wedg)
     else :
