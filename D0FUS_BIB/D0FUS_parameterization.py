@@ -18,11 +18,11 @@ Operation_mode = 'Steady-State'     # 'Steady-State' or 'Pulsed'
 Supra_choice = 'Rebco'              # 'Nb3Sn' , 'Rebco', 'NbTi' or Manual'
 Chosen_Steel = '316L'               # '316L' , 'N50H' or 'Manual'
 Radial_build_model = 'D0FUS'        # "academic" , "D0FUS" , "CIRCEE"
-Choice_Buck_Wedg = 'Bucking'        # 'Wedging' or 'Bucking'
+Choice_Buck_Wedg = 'Wedging'        # 'Wedging' or 'Bucking'
 Option_Kappa = 'Wenninger'          # 'Stambaugh' , 'Freidberg' , 'Wenninger' or 'Manual'
 L_H_Scaling_choice = 'New_Ip'       # 'Martin' , 'New_S', 'New_Ip'
 Scaling_Law = 'IPB98(y,2)'          # 'IPB98(y,2)', 'ITPA20-IL', 'ITPA20', 'DS03', 'L-mode', 'L-mode OK', 'ITER89-P'
-Bootstrap_choice = 'Freidberg'      # 'Freidberg' or 'Segal'
+Bootstrap_choice = 'Freidberg'          # 'Freidberg' or 'Segal'
 
 # Inputs
 H = 1                               # H factor
@@ -84,17 +84,17 @@ Young_modul_Glass_Fiber = 90e9  # Young modul glass fiber [CIRCEE model]
 # Density and Temperature parameters
 nu_n  = 0.1     # Density profile parameter
 nu_T  = 1       # Temperature profile parameter
-C_Alpha = 6     # Helium dilution tuning parameter (default : 5)
+C_Alpha = 5     # Helium dilution tuning parameter (default : 5)
 
 # Flux
 Ce = 0.45            # Ejima constants
 ITERPI = 20          # ITER plasma induction current [Wb]
 
 # TF
-coef_inboard_tension = 1/2 # Paramètre représentant la répartition jambe interne / externe de la tension
-F_CClamp = 0e6       # C-Clamp limit in N , max order of magnitude from DDD : 30e6 N and of 60e6 N from [Bachmann (2023) FED]
-n_TF = 1             # Asymetry conductor parameter 
-c_BP = 0.07          # Backplate thickness
+coef_inboard_tension = 1/2    # Paramètre représentant la répartition jambe interne / externe de la tension
+F_CClamp = 0e6                # C-Clamp limit in N , max order of magnitude from DDD : 30e6 N and of 60e6 N from [Bachmann (2023) FED]
+n_TF = 1                      # Asymetry conductor parameter 
+c_BP = 0.07                   # Backplate thickness [m]
 
 # CS
 Gap = 0.1            # Gap between wedging and bucking CS and TF [m]
