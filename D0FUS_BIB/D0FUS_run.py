@@ -1,5 +1,12 @@
 # -*- coding: utf-8 -*-
 """
+Created on Tue Sep 30 14:50:41 2025
+
+@author: TA276941
+"""
+
+# -*- coding: utf-8 -*-
+"""
 Created on Thu Jan  9 14:33:47 2025
 
 @author: TA276941
@@ -12,13 +19,104 @@ from D0FUS_radial_build_functions import *
 # Ajouter le répertoire 'D0FUS_BIB' au chemin de recherche de Python
 sys.path.append(os.path.join(os.path.dirname(__file__), 'D0FUS_BIB'))
 
+
+
+    
+
+#%% Parameters
+class Parameters:
+    
+    def __init__(self):
+        
+        self.a = 3
+        self.R0 = 9
+        self.Bmax = 12
+        self.P_fus = 2000
+        self.Operation_mode = 'Steady-State'     # 'Steady-State' or 'Pulsed'
+        self.Supra_choice = 'Nb3Sn'              # 'Nb3Sn' , 'Rebco', 'NbTi' or 'Manual'
+        self.Chosen_Steel = '316L'               # '316L' , 'N50H' or 'Manual'
+        self.Radial_build_model = 'D0FUS'        # "academic" , "D0FUS" , "CIRCEE"
+        self.Choice_Buck_Wedg = 'Wedging'        # 'Wedging' or 'Bucking'
+        self.Option_Kappa = 'Wenninger'          # 'Stambaugh' , 'Freidberg' , 'Wenninger' or 'Manual'
+        self.L_H_Scaling_choice = 'New_Ip'       # 'Martin' , 'New_S', 'New_Ip'
+        self.Scaling_Law = 'IPB98(y,2)'          # 'IPB98(y,2)', 'ITPA20-IL', 'ITPA20', 'DS03', 'L-mode', 'L-mode OK', 'ITER89-P'
+        self.Bootstrap_choice = 'Freidberg'      # 'Freidberg' or 'Segal'
+
+        # Inputs
+        self.H = 1
+        self.Tbar  = 14
+        self.b = 1.2
+
+        # If Pulsed operation:
+        if self.Operation_mode == 'Pulsed':
+            self.Temps_Plateau_input = 120 * 60
+            self.P_aux_input = 120
+            self.fatigue = 2
+        else:
+            self.Temps_Plateau_input = 0
+            self.P_aux_input = 0
+            self.fatigue = 1
+
+        # Elongation
+        self.κ_manual = 1.7
+
+        # Density and Temperature parameters
+        self.nu_n  = 0.1
+        self.nu_T  = 1
+        
+    def parse_assignments(self, lines):
+        result = []
+        for line in lines:
+            line = line.strip()
+            var, val = line.split("=")
+            var = var.strip() # remove space and \n (only at the beggining or end of the str)
+            val = val.strip()
+            try:
+                # try to convert into float
+                val = float(val)
+                if val.is_integer():
+                    val = int(val)
+            except ValueError:
+                pass  # keep in str if it's not a number
+            result.append([var, val])
+        return result
+        
+    def open_input(self, name):
+        
+        fic = open(name, "r")
+        read = fic.read()
+        fic.close
+        
+        read = read.split("\n")
+      
+        if read[-1] == "":
+            read.pop() # remove the last element of the list 
+        inputs = self.parse_assignments(read)
+        for var, val in inputs:
+            setattr(self, var, val)  
+            print(f"Input change : self.{var} = {val}")
+            
+
+        
+    
+        
+        
+        
+
+
 #%% Main Function
+
+'''def run(a, R0, Bmax, P_fus,
+        Tbar, H, Temps_Plateau_input, b , nu_n, nu_T,
+        Supra_choice, Chosen_Steel , Radial_build_model , Choice_Buck_Wedg , 
+        Option_Kappa , κ_manual, L_H_Scaling_choice, Scaling_Law, Bootstrap_choice, Operation_mode):
+'''
 
 def run(a, R0, Bmax, P_fus,
         Tbar, H, Temps_Plateau_input, b , nu_n, nu_T,
         Supra_choice, Chosen_Steel , Radial_build_model , Choice_Buck_Wedg , 
         Option_Kappa , κ_manual, L_H_Scaling_choice, Scaling_Law, Bootstrap_choice, Operation_mode):
-
+    
     # Steel
     σ_TF = Steel(Chosen_Steel)
     σ_CS = Steel(Chosen_Steel) / fatigue
@@ -61,11 +159,12 @@ def run(a, R0, Bmax, P_fus,
         # Calculate intermediate values
         nbar_alpha         = f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, κ) 
         # alternative taking into account a reffined version of the volume :
-        nbar_alpha   = f_nbar_advanced(P_fus, nu_n, nu_T, f_alpha, Tbar, Volume_solution)
+        # nbar_alpha   = f_nbar_advanced(P_fus, nu_n, nu_T, f_alpha, Tbar, Volume_solution)
         pbar_alpha   = f_pbar(nu_n, nu_T, nbar_alpha, Tbar, f_alpha)
         
         # Radiative loss
         P_Brem_alpha = f_P_bremsstrahlung(Volume_solution, nbar_alpha, Tbar, Zeff, R0, a)
+        beta_T = 2 # Beta_T taken from [J.Johner Helios]
         P_syn_alpha = f_P_synchrotron(Tbar, R0, a, B0_solution, nbar_alpha, κ, nu_n, nu_T, beta_T, r_synch)
         P_rad_alpha = P_Brem_alpha + P_syn_alpha
         
@@ -86,9 +185,6 @@ def run(a, R0, Bmax, P_fus,
                             P_Alpha, P_Ohm_alpha_init, P_Aux_alpha_init, P_rad_alpha,
                             H, C_SL,
                             alpha_delta,alpha_M,alpha_kappa,alpha_epsilon, alpha_R,alpha_B,alpha_n,alpha_I,alpha_P)
-        # Scaling [Auclair]
-        # Ip_alpha = f_Ip_Auclair(tau_E_alpha, R0, a, κ, δ, nbar_alpha, B0_solution, Atomic_mass,
-        #                       P_Alpha, P_Ohm_alpha_init, P_Aux_alpha_init, P_rad_alpha)
         if Bootstrap_choice == 'Freidberg' :
             Ib_alpha = f_Freidberg_Ib(R0, a, κ, pbar_alpha, Ip_alpha)
         elif Bootstrap_choice == 'Segal' :
@@ -124,7 +220,7 @@ def run(a, R0, Bmax, P_fus,
         return [f_alpha_residual, Q_residual]
         
     def solve_f_alpha_Q():
-        # grid search
+        # Version principale avec grid search
         f_alpha_guesses = np.concatenate([
             np.linspace(0.001, 0.01, 5),
             np.linspace(0.01, 0.1, 5),
@@ -152,11 +248,12 @@ def run(a, R0, Bmax, P_fus,
     # Once the convergence loop passed, every other parameters are calculated
     nbar_solution         = f_nbar(P_fus, nu_n, nu_T, f_alpha_solution, Tbar, R0, a, κ) 
     # alternative taking into account a reffined version of the volume :
-    nbar_solution         = f_nbar_advanced(P_fus, nu_n, nu_T, f_alpha_solution, Tbar, Volume_solution)
+    # nbar_solution         = f_nbar_advanced(P_fus, nu_n, nu_T, f_alpha_solution, Tbar, Volume_solution)
     pbar_solution         = f_pbar(nu_n,nu_T,nbar_solution,Tbar,f_alpha_solution)
     W_th_solution         = f_W_th(nbar_solution, Tbar, Volume_solution)
     # Radiative loss
     P_Brem_solution = f_P_bremsstrahlung(Volume_solution, nbar_solution, Tbar, Zeff, R0, a)
+    beta_T = 2 # Beta_T taken from [J.Johner Helios]
     P_syn_solution = f_P_synchrotron(Tbar, R0, a, B0_solution, nbar_solution, κ, nu_n, nu_T, beta_T, r_synch)
     P_rad_solution = P_Brem_solution + P_syn_solution
     eta_CD                = f_etaCD(a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T)
@@ -173,9 +270,6 @@ def run(a, R0, Bmax, P_fus,
     Ip_solution           = f_Ip(tauE_solution, R0, a, κ, δ, nbar_solution, B0_solution, Atomic_mass, 
                                  P_Alpha, P_Ohm_solution, P_Aux_solution, P_rad_solution, H, C_SL,
                           alpha_delta,alpha_M,alpha_kappa,alpha_epsilon, alpha_R,alpha_B,alpha_n,alpha_I,alpha_P)
-    # [Auclair] Ip calculation
-    # Ip_solution           = f_Ip_Auclair(tauE_solution, R0, a, κ, δ, nbar_solution, B0_solution, Atomic_mass,
-    #                       P_Alpha, P_Ohm_solution, P_Aux_solution, P_rad_solution)
     if Bootstrap_choice == 'Freidberg' :
         Ib_solution = f_Freidberg_Ib(R0, a, κ, pbar_solution, Ip_solution)
     elif Bootstrap_choice == 'Segal' :
@@ -238,7 +332,7 @@ def run(a, R0, Bmax, P_fus,
         (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, I_Ohm_solution, Bmax ,a ,b ,c , R0 ,κ ,nbar_solution, Tbar ,Ce ,Temps_Plateau_input , li_solution)
         (d,Alpha,B_CS, J_CS) = f_CS_D0FUS(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, σ_CS, J_max_CS_conducteur , Choice_Buck_Wedg)
     elif Radial_build_model == "CIRCEE" :
-        (c, Winding_pack_tension_ratio) = f_TF_D0FUS(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg, omega_TF, n_TF)
+        (c, Winding_pack_tension_ratio) = f_TF_CIRCEE(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg, omega_TF, n_TF)
         (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, I_Ohm_solution, Bmax ,a ,b ,c , R0 ,κ ,nbar_solution, Tbar ,Ce ,Temps_Plateau_input , li_solution)
         (d,Alpha,B_CS, J_CS) = f_CS_CIRCEE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, σ_CS, J_max_CS_conducteur , Choice_Buck_Wedg)
     else :
@@ -268,106 +362,139 @@ def run(a, R0, Bmax, P_fus,
 if __name__ == "__main__":
 
     # Sf Plant
-    R0 = 6
+    '''R0 = 6
     a = 1.6
     Pfus = 2000
     Bmax = 20
     b = 1.2
     Tbar = 14
+    '''
     
-    # End Benchmark parameters
-    (B0_solution, B_CS, B_pol_solution,
-    tauE_solution, W_th_solution,
-    Q_solution, Volume_solution, Surface_solution,
-    Ip_solution, Ib_solution, I_CD_solution, I_Ohm_solution,
-    nbar_solution, nG_solution, pbar_solution,
-    betaN_solution, betaT_solution, betaP_solution,
-    qstar_solution, q95_solution, q_mhd_solution,
-    P_CD, P_sep, P_Thresh, eta_CD, P_elec_solution,
-    cost, P_Brem_solution, P_syn_solution,
-    heat_D0FUS_solution, heat_par_solution, heat_pol_solution, lambda_q_Eich_m, q_target_Eich,
-    P_1rst_wall_Hmod, P_1rst_wall_Lmod,
-    Gamma_n,
-    f_alpha_solution, tau_alpha,
-    J_max_TF_conducteur, J_max_CS_conducteur,
-    TF_ratio, r_minor, r_sep, r_c, r_d ,
-    κ, κ_95, δ, δ_95) = run(a, R0, Bmax, Pfus,
-            Tbar, H, Temps_Plateau_input, b , nu_n, nu_T,
-            Supra_choice, Chosen_Steel , Radial_build_model , Choice_Buck_Wedg , 
-            Option_Kappa , κ_manual, L_H_Scaling_choice, Scaling_Law, Bootstrap_choice, Operation_mode)
-
-
-    # Clean display of results
-    print("=========================================================================")
-    print("=== Calculation Results ===")
-    print("-------------------------------------------------------------------------")
-    print(f"[I] R0 (Major Radius)                               : {R0:.3f} [m]")
-    print(f"[I] a (Minor Radius)                                : {a:.3f} [m]")
-    print(f"[I] b (BB & Nshield thickness)                      : {r_minor-r_sep:.3f} [m]")
-    print(f"[O] c (TF coil thickness)                           : {r_sep-r_c:.3f} [m]")
-    print(f"[O] d (CS thickness)                                : {r_c-r_d:.3f} [m]")
-    print(f"[O] R0-a-b-c-d                                      : {r_d:.3f} [m]")
-    print("-------------------------------------------------------------------------")
-    print(f"[O] Kappa (Elongation)                              : {κ:.3f} ")
-    print(f"[O] Kappa_95 (Elongation at 95%)                    : {κ_95:.3f} ")
-    print(f"[O] Delta (Triangularity)                           : {δ:.3f} ")
-    print(f"[O] Delta_95 (Triangularity at 95%)                 : {δ_95:.3f} ")
-    print(f"[O] Volume (Plasma)                                 : {Volume_solution:.3f} [m^3]")
-    print(f"[O] Surface (1rst Wall)                             : {Surface_solution:.3f} [m²]")
-    print(f"[I] Mechanical configuration                        : {Choice_Buck_Wedg} ")
-    print(f"[I] Superconductor technology                       : {Supra_choice} ")
-    print("-------------------------------------------------------------------------")
-    print(f"[I] Bmax (Maximum Magnetic Field - TF)              : {Bmax:.3f} [T]")
-    print(f"[O] B0 (Central Magnetic Field)                     : {B0_solution:.3f} [T]")
-    print(f"[O] BCS (Magnetic Field CS)                         : {B_CS:.3f} [T]")
-    print(f"[O] J_E-TF (Enginnering current density TF)         : {J_max_TF_conducteur/1e6:.3f} [MA/m²]")
-    print(f"[O] J_E-CS (Enginnering current density CS)         : {J_max_CS_conducteur/1e6:.3f} [MA/m²]")
-    print("-------------------------------------------------------------------------")
-    print(f"[I] P_fus (Fusion Power)                            : {Pfus:.3f} [MW]")
-    print(f"[O] P_CD (CD Power)                                 : {P_CD:.3f} [MW]")
-    print(f"[O] P_S (Synchrotron Power)                         : {P_syn_solution:.3f} [MW]")
-    print(f"[O] P_B (Bremsstrahlung Power)                      : {P_Brem_solution:.3f} [MW]")
-    print(f"[O] eta_CD (CD Efficiency)                          : {eta_CD:.3f} [MA/MW-m²]")
-    print(f"[O] Q (Energy Gain Factor)                          : {Q_solution:.3f}")
-    print(f"[O] P_elec-net (Net Electrical Power)               : {P_elec_solution:.3f} [MW]")
-    print(f"[O] Cost ((V_BB+V_TF+V_CS)/P_fus)                   : {cost:.3f} [m^3]")
-    print("-------------------------------------------------------------------------")
-    print(f"[I] H (Scaling Law factor)                          : {H:.3f} ")
-    print(f"[I] Operation (Pulsed / Steady)                     : {Operation_mode} ")
-    print(f"[I] t (Plateau Time)                                : {Temps_Plateau_input:.3f} ")
-    print(f"[O] tau_E (Confinement Time)                        : {tauE_solution:.3f} [s]")
-    print(f"[O] Ip (Plasma Current)                             : {Ip_solution:.3f} [MA]")
-    print(f"[O] Ib (Bootstrap Current)                          : {Ib_solution:.3f} [MA]")
-    print(f"[O] ICD (Current Drive)                             : {I_CD_solution:.3f} [MA]")
-    print(f"[O] IOhm (Ohmic Current)                            : {I_Ohm_solution:.3f} [MA]")
-    print(f"[O] f_b (Bootstrap Fraction)                        : {(Ib_solution/Ip_solution)*1e2:.3f} [%]")
-    print("-------------------------------------------------------------------------")
-    print(f"[I] Tbar (Mean Temperature)                         : {Tbar:.3f} [keV]")
-    print(f"[O] nbar (Average Density)                          : {nbar_solution:.3f} [10^20 m^-3]")
-    print(f"[O] nG (Greenwald Density)                          : {nG_solution:.3f} [10^20 m^-3]")
-    print(f"[O] pbar (Average Pressure)                         : {pbar_solution:.3f} [MPa]")
-    print(f"[O] Alpha Fraction                                  : {f_alpha_solution*1e2:.3f} [%]")
-    print(f"[O] Alpha Confinement Time                          : {tau_alpha:.3f} [s]")
-    print(f"[O] Thermal Energy Content                          : {W_th_solution/1e6:.3f} [MJ]")
-    print("-------------------------------------------------------------------------")
-    print(f"[O] Beta_T (Toroidal Beta)                          : {betaT_solution*1e2:.3f} [%]")
-    print(f"[O] Beta_P (Poloidal Beta)                          : {betaP_solution:.3f}")
-    print(f"[O] Beta_N (Normalized Beta)                        : {betaN_solution:.3f} [%]")
-    print("-------------------------------------------------------------------------")
-    print(f"[O] q* (Kink Safety Factor)                         : {qstar_solution:.3f}")
-    print(f"[O] q95 (Safety Factor at 95%)                      : {q95_solution:.3f}")
-    print(f"[O] q_MHD (MHD Safety Factor)                       : {q_mhd_solution:.3f}")
-    print("-------------------------------------------------------------------------")
-    print(f"[O] P_sep (Separatrix Power)                        : {P_sep:.3f} [MW]")
-    print(f"[O] P_Thresh (L-H Power Threshold)                  : {P_Thresh:.3f} [MW]")
-    print(f"[O] (P_sep - P_thresh) / S                          : {P_1rst_wall_Hmod:.3f} [MW/m²]")
-    print(f"[O] P_sep / S                                       : {P_1rst_wall_Lmod:.3f} [MW/m²]")
-    print(f"[O] Heat scaling (P_sep / R0)                       : {heat_D0FUS_solution:.3f} [MW/m]")
-    print(f"[O] Parallel Heat Flux (P_sep*B0 / R0)              : {heat_par_solution:.3f} [MW-T/m]")
-    print(f"[O] Poloidal Heat Flux (P_sep*B0) / (q95*R0*A)      : {heat_pol_solution:.3f} [MW-T/m]")
-    print(f"[O] Gamma_n (Neutron Flux)                          : {Gamma_n:.3f} [MW/m²]")
-    print("=========================================================================")
+    p = Parameters()
     
+    #print("len(sys.argv) : ",  len(sys.argv))
+    
+    if len(sys.argv) == 3:
+        name_input_file = sys.argv[1]
+        name_output_file = sys.argv[2] 
+        
+    # if you don't put any inputs in the terminal :
+    else:
+        name_input_file = "/Home/AA280228/Bureau/nouveau_dossier/D0FUS/inputs.txt"
+        name_output_file = "resultats.txt"
+        
+    p.open_input(name_input_file)
+
+    (
+        B0_solution, B_CS, B_pol_solution,
+        tauE_solution, W_th_solution,
+        Q_solution, Volume_solution, Surface_solution,
+        Ip_solution, Ib_solution, I_CD_solution, I_Ohm_solution,
+        nbar_solution, nG_solution, pbar_solution,
+        betaN_solution, betaT_solution, betaP_solution,
+        qstar_solution, q95_solution, q_mhd_solution,
+        P_CD, P_sep, P_Thresh, eta_CD, P_elec_solution,
+        cost, P_Brem_solution, P_syn_solution,
+        heat_D0FUS_solution, heat_par_solution, heat_pol_solution,
+        lambda_q_Eich_m, q_target_Eich,
+        P_1rst_wall_Hmod, P_1rst_wall_Lmod,
+        Gamma_n,
+        f_alpha_solution, tau_alpha,
+        J_max_TF_conducteur, J_max_CS_conducteur,
+        TF_ratio, r_minor, r_sep, r_c, r_d,
+        κ, κ_95, δ, δ_95
+    ) = run(
+    p.a, p.R0, p.Bmax, p.P_fus,
+    p.Tbar, p.H, p.Temps_Plateau_input, p.b, p.nu_n, p.nu_T,
+    p.Supra_choice, p.Chosen_Steel, p.Radial_build_model, p.Choice_Buck_Wedg,
+    p.Option_Kappa, p.κ_manual, p.L_H_Scaling_choice, p.Scaling_Law,
+    p.Bootstrap_choice, p.Operation_mode
+)
+    with open(name_output_file, "w", encoding="utf-8") as _f:
+        class DualWriter:
+            def __init__(self, *files):
+                self._files = files
+            def write(self, data):
+                for ff in self._files:
+                    ff.write(data)
+            
+
+        # Allows writing to the terminal and output file
+        f = DualWriter(sys.stdout, _f)
+        
+        # Clean display of results
+        print("=========================================================================", file=f)
+        print("=== Calculation Results ===", file=f)
+        print("-------------------------------------------------------------------------", file=f)
+        print(f"[I] R0 (Major Radius)                               : {p.R0:.3f} [m]", file=f)
+        print(f"[I] a (Minor Radius)                                : {p.a:.3f} [m]", file=f)
+        print(f"[I] b (BB & Nshield thickness)                      : {r_minor-r_sep:.3f} [m]", file=f)
+        print(f"[O] c (TF coil thickness)                           : {r_sep-r_c:.3f} [m]", file=f)
+        print(f"[O] d (CS thickness)                                : {r_c-r_d:.3f} [m]", file=f)
+        print(f"[O] R0-a-b-c-d                                      : {r_d:.3f} [m]", file=f)
+        print("-------------------------------------------------------------------------", file=f)
+        print(f"[O] Kappa (Elongation)                              : {κ:.3f} ", file=f)
+        print(f"[O] Kappa_95 (Elongation at 95%)                    : {κ_95:.3f} ", file=f)
+        print(f"[O] Delta (Triangularity)                           : {δ:.3f} ", file=f)
+        print(f"[O] Delta_95 (Triangularity at 95%)                 : {δ_95:.3f} ", file=f)
+        print(f"[O] Volume (Plasma)                                 : {Volume_solution:.3f} [m^3]", file=f)
+        print(f"[O] Surface (1rst Wall)                             : {Surface_solution:.3f} [m²]", file=f)
+        print(f"[I] Mechanical configuration                        : {Choice_Buck_Wedg} ", file=f)
+        print(f"[I] Superconductor technology                       : {Supra_choice} ", file=f)
+        print("-------------------------------------------------------------------------", file=f)
+        print(f"[I] Bmax (Maximum Magnetic Field - TF)              : {p.Bmax:.3f} [T]", file=f)
+        print(f"[O] B0 (Central Magnetic Field)                     : {B0_solution:.3f} [T]", file=f)
+        print(f"[O] BCS (Magnetic Field CS)                         : {B_CS:.3f} [T]", file=f)
+        print(f"[O] J_E-TF (Enginnering current density TF)         : {J_max_TF_conducteur/1e6:.3f} [MA/m²]", file=f)
+        print(f"[O] J_E-CS (Enginnering current density CS)         : {J_max_CS_conducteur/1e6:.3f} [MA/m²]", file=f)
+        print("-------------------------------------------------------------------------", file=f)
+        print(f"[I] P_fus (Fusion Power)                            : {p.P_fus:.3f} [MW]", file=f)
+        print(f"[O] P_CD (CD Power)                                 : {P_CD:.3f} [MW]", file=f)
+        print(f"[O] P_S (Synchrotron Power)                         : {P_syn_solution:.3f} [MW]", file=f)
+        print(f"[O] P_B (Bremsstrahlung Power)                      : {P_Brem_solution:.3f} [MW]", file=f)
+        print(f"[O] eta_CD (CD Efficiency)                          : {eta_CD:.3f} [MA/MW-m²]", file=f)
+        print(f"[O] Q (Energy Gain Factor)                          : {Q_solution:.3f}", file=f)
+        print(f"[O] P_elec-net (Net Electrical Power)               : {P_elec_solution:.3f} [MW]", file=f)
+        print(f"[O] Cost ((V_BB+V_TF+V_CS)/P_fus)                   : {cost:.3f} [m^3]", file=f)
+        print("-------------------------------------------------------------------------", file=f)
+        print(f"[I] H (Scaling Law factor)                          : {H:.3f} ", file=f)
+        print(f"[I] Operation (Pulsed / Steady)                     : {Operation_mode} ", file=f)
+        print(f"[I] t (Plateau Time)                                : {Temps_Plateau_input:.3f} ", file=f)
+        print(f"[O] tau_E (Confinement Time)                        : {tauE_solution:.3f} [s]", file=f)
+        print(f"[O] Ip (Plasma Current)                             : {Ip_solution:.3f} [MA]", file=f)
+        print(f"[O] Ib (Bootstrap Current)                          : {Ib_solution:.3f} [MA]", file=f)
+        print(f"[O] ICD (Current Drive)                             : {I_CD_solution:.3f} [MA]", file=f)
+        print(f"[O] IOhm (Ohmic Current)                            : {I_Ohm_solution:.3f} [MA]", file=f)
+        print(f"[O] f_b (Bootstrap Fraction)                        : {(Ib_solution/Ip_solution)*1e2:.3f} [%]", file=f)
+        print("-------------------------------------------------------------------------", file=f)
+        print(f"[I] Tbar (Mean Temperature)                         : {p.Tbar:.3f} [keV]", file=f)
+        print(f"[O] nbar (Average Density)                          : {nbar_solution:.3f} [10^20 m^-3]", file=f)
+        print(f"[O] nG (Greenwald Density)                          : {nG_solution:.3f} [10^20 m^-3]", file=f)
+        print(f"[O] pbar (Average Pressure)                         : {pbar_solution:.3f} [MPa]", file=f)
+        print(f"[O] Alpha Fraction                                  : {f_alpha_solution*1e2:.3f} [%]", file=f)
+        print(f"[O] Alpha Confinement Time                          : {tau_alpha:.3f} [s]", file=f)
+        print(f"[O] Thermal Energy Content                          : {W_th_solution/1e6:.3f} [MJ]", file=f)
+        print("-------------------------------------------------------------------------", file=f)
+        print(f"[O] Beta_T (Toroidal Beta)                          : {betaT_solution*1e2:.3f} [%]", file=f)
+        print(f"[O] Beta_P (Poloidal Beta)                          : {betaP_solution:.3f}", file=f)
+        print(f"[O] Beta_N (Normalized Beta)                        : {betaN_solution:.3f} [%]", file=f)
+        print("-------------------------------------------------------------------------", file=f)
+        print(f"[O] q* (Kink Safety Factor)                         : {qstar_solution:.3f}", file=f)
+        print(f"[O] q95 (Safety Factor at 95%)                      : {q95_solution:.3f}", file=f)
+        print(f"[O] q_MHD (MHD Safety Factor)                       : {q_mhd_solution:.3f}", file=f)
+        print("-------------------------------------------------------------------------", file=f)
+        print(f"[O] P_sep (Separatrix Power)                        : {P_sep:.3f} [MW]", file=f)
+        print(f"[O] P_Thresh (L-H Power Threshold)                  : {P_Thresh:.3f} [MW]", file=f)
+        print(f"[O] (P_sep - P_thresh) / S                          : {P_1rst_wall_Hmod:.3f} [MW/m²]", file=f)
+        print(f"[O] P_sep / S                                       : {P_1rst_wall_Lmod:.3f} [MW/m²]", file=f)
+        print(f"[O] Heat scaling (P_sep / R0)                       : {heat_D0FUS_solution:.3f} [MW/m]", file=f)
+        print(f"[O] Parallel Heat Flux (P_sep*B0 / R0)              : {heat_par_solution:.3f} [MW-T/m]", file=f)
+        print(f"[O] Poloidal Heat Flux (P_sep*B0) / (q95*R0*A)      : {heat_pol_solution:.3f} [MW-T/m]", file=f)
+        print(f"[O] Gamma_n (Neutron Flux)                          : {Gamma_n:.3f} [MW/m²]", file=f)
+        print("=========================================================================", file=f)
+        
+        sys.stdout = sys.__stdout__  
+        
     
 #%%
 
