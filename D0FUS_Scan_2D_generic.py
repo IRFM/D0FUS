@@ -40,7 +40,7 @@ for mod in module_names:
 print("----- D0FUS reloaded -----")
 
 
-def Dofus_Scan_2D_generic(Bmax, P_fus):
+def D0fus_Scan_2D_generic(param_1, param_2, inputs):
     
     
     a_min, a_max, a_N = 1, 3, 25
@@ -48,16 +48,17 @@ def Dofus_Scan_2D_generic(Bmax, P_fus):
 
     n_points = 25
     
-    param_1_min, param_1_max = 1.1, 1.3
-    param_1_name = "b"
+    param_1_min, param_1_max = param_1[1] , param_1[2]
+    param_1_name = param_1[0]
     unit_param_1 = "m"
-    param_1_values = np.linspace(param_1_min, param_1_max, n_points)
+    param_1_values = np.linspace(param_1_min, param_1_max, int(param_1[3]))
      
-    param_2_min, param_2_max = 1, 3 
-    param_2_name = "a"
+    param_2_min, param_2_max = param_2[1] , param_2[2]
+    param_2_name = param_2[0]
     unit_param_2 = "m"
-    param_2_values = np.linspace(param_2_min, param_2_max, n_points)
+    param_2_values = np.linspace(param_2_min, param_2_max, int(param_2[3]) )
     
+
   
     # Matrix creations
     max_limits_density = np.zeros((len(param_1_values),len(param_2_values)))
@@ -89,10 +90,14 @@ def Dofus_Scan_2D_generic(Bmax, P_fus):
     def set_module_var(name, value):
         globals()[name] = value
 
+    # default value for a and R0 
     set_module_var("a", 1.6)
     set_module_var("R0", 6)
     
-    
+    for elem in inputs:
+        set_module_var(elem[0], elem[1])
+        
+    print("a", a)
     # Initialisation
     x = 0
     y = 0
@@ -274,7 +279,16 @@ def Dofus_Scan_2D_generic(Bmax, P_fus):
     color_choice_security = 'Greens'
     color_choice_beta = 'Reds'
     # Afficher les heatmap pour les matrices avec imshow
-    im_density = ax.imshow(inverted_matrix_density_limit, cmap=color_choice_density, aspect='auto', interpolation='nearest', norm=Normalize(vmin=min_matrix, vmax=max_matrix))
+    im_density = ax.imshow(
+    max_limits_density,  # <--- inverse les lignes
+    cmap=color_choice_density,
+    aspect='auto',
+    interpolation='nearest',
+    norm=Normalize(vmin=min_matrix, vmax=max_matrix),
+    origin='lower'
+)
+
+
     im_security = ax.imshow(inverted_matrix_security_limit, cmap=color_choice_security, aspect='auto', interpolation='nearest', norm=Normalize(vmin=min_matrix, vmax=max_matrix))
     im_beta = ax.imshow(inverted_matrix_beta_limit, cmap=color_choice_beta, aspect='auto', interpolation='nearest', norm=Normalize(vmin=min_matrix, vmax=max_matrix))
 
@@ -316,22 +330,25 @@ def Dofus_Scan_2D_generic(Bmax, P_fus):
 
     ### Definition des axes
 
-    # Axe y (a_values)
-    approx_step = 0.5
-    index_step = int(round(approx_step / ((a_max - a_min) / (len(param_1_values) - 1))))
-    y_indices = np.arange(0, len(param_1_values), index_step)
-    ax.set_yticks(y_indices) # Positions
-    ax.set_yticklabels(np.round((a_max+a_min)-param_1_values[y_indices],2), fontsize = taille_police_legende) # Etiquettes
-    
-    # Axe x (param_2_values)
-    # espacement réel entre deux points de R0_values
-    real_step = (param_2_max - param_2_min) / (len(param_2_values) - 1)
-    approx_step = 1.0
-    index_step = int(round(approx_step / real_step))
-    x_indices = np.arange(0, len(param_2_values), index_step)
-    ax.set_xticks(x_indices) # Positions
-    x_labels = [round(param_2_values[i],2) for i in x_indices] # Arrondir chaque valeur à une decimale
-    ax.set_xticklabels(x_labels, rotation=45, ha='right', fontsize = taille_police_legende)
+    # X = param_1_values
+    ax.set_xticks(np.arange(len(param_1_values)))
+    ax.set_xticklabels(
+    [f"{v:.2f}" for v in param_1_values],
+    rotation=45,
+    ha='right',
+    fontsize=taille_police_legende
+        )
+    ax.set_xlabel(f"{param_1_name} [{unit_param_1}]", fontsize=taille_police_legende)
+
+    # Y = param_2_values
+   
+
+    ax.set_yticks(np.arange(len(param_2_values)))
+    ax.set_yticklabels(
+        [f"{int(v)}" for v in param_2_values[::-1] ],
+        fontsize=taille_police_legende
+    )
+    ax.set_ylabel(f"{param_2_name} [{unit_param_2}]", fontsize=taille_police_legende)
 
     ### Ajouter des contours
 
@@ -443,12 +460,81 @@ def Dofus_Scan_2D_generic(Bmax, P_fus):
 #%% a and R0 scan
 # 2D matrix calculation
 
+
+class inputs_management:
+    
+    def __init__(self, name_file):
+        self.name_file = name_file
+        
+        
+    def run(self):
+        self.read_file()
+        self.extract_inputs()
+        
+    def read_file(self):
+        fic = open(self.name_file)
+        self.inputs = fic.read()
+        fic.close()
+        print(self.inputs)
+               
+    def extract_input_scan(self, input):
+        """
+        exemple of input : R0 = [4.5 ; 5 ; 25]
+
+        """
+        params = input.split("=")
+        param_name = params[0].strip() # strip remove space ("R0 " -> "R0") 
+        
+        params_value = params[1].strip().strip("[]") # " [4.5 ; 5 ; 25]" ->  "4.5 ; 5 ; 25"
+        params_value = params_value.split(";")
+        
+        param_min = float(params_value[0].strip()) # str "4.5 " -> float 4.5 
+        param_max = float(params_value[1].strip()) 
+        param_n = float(params_value[2].strip()) 
+        
+        return [param_name, param_min, param_max, param_n] 
+    
+    def extract_input(self, input):
+        split_ = input.split("=")
+        input_name = split_[0].strip()
+        input_value = split_[1].strip()
+        
+        try:
+            input_value = float(input_value)
+        except ValueError:
+            pass # Error means input_value is a str (some inputs are str)
+
+        return [input_name, input_value] 
+        
+        
+    def extract_inputs(self):
+        debug = False
+        split_ = self.inputs.split("\n")
+        
+        if split_[-1] == "": # -1 check the last element 
+            split_.pop() # remove the last element if the last element is empty  
+            
+        self.param_1 = self.extract_input_scan(split_[0])
+        self.param_2 = self.extract_input_scan(split_[1])
+      
+        self.inputs = [] 
+        for i in range(2, len(split_)):
+            self.inputs.append(self.extract_input(split_[i]))
+
+        if debug:
+            print(self.param_1)
+            print(self.param_2)
+            print(self.inputs)
+             
+
         
 if __name__ == "__main__":
-    Bmax = 12
-    P_fus = 2000
     
-    Dofus_Scan_2D_generic(Bmax, P_fus)
+    file = "inputs_scan_2D.txt"
+    manager = inputs_management(file)
+    manager.run()
+    
+    D0fus_Scan_2D_generic(manager.param_1, manager.param_2, manager.inputs)
     
         
         
