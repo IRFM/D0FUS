@@ -40,7 +40,7 @@ for mod in module_names:
 print("----- D0FUS reloaded -----")
 
 
-def D0fus_Scan_2D_generic(param_1, param_2, inputs):
+def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
     
     
     a_min, a_max, a_N = 1, 3, 25
@@ -131,11 +131,103 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs):
             f_alpha_solution, tau_alpha,
             J_max_TF_conducteur, J_max_CS_conducteur,
             TF_ratio, R0_a_solution, R0_a_b_solution, R0_a_b_c_solution, R0_a_b_c_d_solution,
-            κ, κ_95, δ, δ_95) = run( a, R0, Bmax, P_fus, 
+            κ, κ_95, δ, δ_95
+            ) = run( 
+            a, R0, Bmax, P_fus, 
             Tbar, H, Temps_Plateau_input, b , nu_n, nu_T,
             Supra_choice, Chosen_Steel , Radial_build_model , 
             Choice_Buck_Wedg , Option_Kappa , κ_manual,
             L_H_Scaling_choice, Scaling_Law, Bootstrap_choice, Operation_mode)
+            
+            # outputs 
+            
+            with open(outputs_folder + "outputs_scan_2D.txt", "a", encoding="utf-8") as _f:
+                class DualWriter:
+                    def __init__(self, *files):
+                        self._files = files
+                    def write(self, data):
+                        for ff in self._files:
+                            ff.write(data)
+                    
+
+                # Allows writing to the terminal and output file
+                f = DualWriter(sys.stdout, _f)
+                
+                # Clean display of results
+                print("=========================================================================", file=f)
+                print("=== Calculation Results ===", file=f)
+                print("-------------------------------------------------------------------------", file=f)
+                print(f"[I] R0 (Major Radius)                               : {R0:.3f} [m]", file=f)
+                print(f"[I] a (Minor Radius)                                : {a:.3f} [m]", file=f)
+                print(f"[I] b (BB & Nshield thickness)                      : {R0_a_solution-R0_a_b_solution:.3f} [m]", file=f)
+                print(f"[O] c (TF coil thickness)                           : {R0_a_b_solution-R0_a_b_c_solution:.3f} [m]", file=f)
+                print(f"[O] d (CS thickness)                                : {R0_a_b_c_solution-R0_a_b_c_d_solution:.3f} [m]", file=f)
+                print(f"[O] R0-a-b-c-d                                      : {R0_a_b_c_d_solution:.3f} [m]", file=f)
+                print("-------------------------------------------------------------------------", file=f)
+                print(f"[O] Kappa (Elongation)                              : {κ:.3f} ", file=f)
+                print(f"[O] Kappa_95 (Elongation at 95%)                    : {κ_95:.3f} ", file=f)
+                print(f"[O] Delta (Triangularity)                           : {δ:.3f} ", file=f)
+                print(f"[O] Delta_95 (Triangularity at 95%)                 : {δ_95:.3f} ", file=f)
+                print(f"[O] Volume (Plasma)                                 : {Volume_solution:.3f} [m^3]", file=f)
+                print(f"[O] Surface (1rst Wall)                             : {Surface_solution:.3f} [m²]", file=f)
+                print(f"[I] Mechanical configuration                        : {Choice_Buck_Wedg} ", file=f)
+                print(f"[I] Superconductor technology                       : {Supra_choice} ", file=f)
+                print("-------------------------------------------------------------------------", file=f)
+                print(f"[I] Bmax (Maximum Magnetic Field - TF)              : {Bmax:.3f} [T]", file=f)
+                print(f"[O] B0 (Central Magnetic Field)                     : {B0_solution:.3f} [T]", file=f)
+                print(f"[O] BCS (Magnetic Field CS)                         : {B_CS:.3f} [T]", file=f)
+                print(f"[O] J_E-TF (Enginnering current density TF)         : {J_max_TF_conducteur/1e6:.3f} [MA/m²]", file=f)
+                print(f"[O] J_E-CS (Enginnering current density CS)         : {J_max_CS_conducteur/1e6:.3f} [MA/m²]", file=f)
+                print("-------------------------------------------------------------------------", file=f)
+                print(f"[I] P_fus (Fusion Power)                            : {P_fus:.3f} [MW]", file=f)
+                print(f"[O] P_CD (CD Power)                                 : {P_CD:.3f} [MW]", file=f)
+                print(f"[O] P_S (Synchrotron Power)                         : {P_syn_solution:.3f} [MW]", file=f)
+                print(f"[O] P_B (Bremsstrahlung Power)                      : {P_Brem_solution:.3f} [MW]", file=f)
+                print(f"[O] eta_CD (CD Efficiency)                          : {eta_CD:.3f} [MA/MW-m²]", file=f)
+                print(f"[O] Q (Energy Gain Factor)                          : {Q_solution:.3f}", file=f)
+                print(f"[O] P_elec-net (Net Electrical Power)               : {P_elec_solution:.3f} [MW]", file=f)
+                print(f"[O] Cost ((V_BB+V_TF+V_CS)/P_fus)                   : {cost:.3f} [m^3]", file=f)
+                print("-------------------------------------------------------------------------", file=f)
+                print(f"[I] H (Scaling Law factor)                          : {H:.3f} ", file=f)
+                print(f"[I] Operation (Pulsed / Steady)                     : {Operation_mode} ", file=f)
+                print(f"[I] t (Plateau Time)                                : {Temps_Plateau_input:.3f} ", file=f)
+                print(f"[O] tau_E (Confinement Time)                        : {tauE_solution:.3f} [s]", file=f)
+                print(f"[O] Ip (Plasma Current)                             : {Ip_solution:.3f} [MA]", file=f)
+                print(f"[O] Ib (Bootstrap Current)                          : {Ib_solution:.3f} [MA]", file=f)
+                print(f"[O] ICD (Current Drive)                             : {I_CD_solution:.3f} [MA]", file=f)
+                print(f"[O] IOhm (Ohmic Current)                            : {I_Ohm_solution:.3f} [MA]", file=f)
+                print(f"[O] f_b (Bootstrap Fraction)                        : {(Ib_solution/Ip_solution)*1e2:.3f} [%]", file=f)
+                print("-------------------------------------------------------------------------", file=f)
+                print(f"[I] Tbar (Mean Temperature)                         : {Tbar:.3f} [keV]", file=f)
+                print(f"[O] nbar (Average Density)                          : {n_solution:.3f} [10^20 m^-3]", file=f)
+                print(f"[O] nG (Greenwald Density)                          : {nG_solution:.3f} [10^20 m^-3]", file=f)
+                print(f"[O] pbar (Average Pressure)                         : {pbar_solution:.3f} [MPa]", file=f)
+                print(f"[O] Alpha Fraction                                  : {f_alpha_solution*1e2:.3f} [%]", file=f)
+                print(f"[O] Alpha Confinement Time                          : {tau_alpha:.3f} [s]", file=f)
+                print(f"[O] Thermal Energy Content                          : {W_th_solution/1e6:.3f} [MJ]", file=f)
+                print("-------------------------------------------------------------------------", file=f)
+                print(f"[O] Beta_T (Toroidal Beta)                          : {betaT_solution*1e2:.3f} [%]", file=f)
+                print(f"[O] Beta_P (Poloidal Beta)                          : {betaP_solution:.3f}", file=f)
+                print(f"[O] Beta_N (Normalized Beta)                        : {betaN_solution:.3f} [%]", file=f)
+                print("-------------------------------------------------------------------------", file=f)
+                print(f"[O] q* (Kink Safety Factor)                         : {qstar_solution:.3f}", file=f)
+                print(f"[O] q95 (Safety Factor at 95%)                      : {q95_solution:.3f}", file=f)
+                print(f"[O] q_MHD (MHD Safety Factor)                       : {q_mhd_solution:.3f}", file=f)
+                print("-------------------------------------------------------------------------", file=f)
+                print(f"[O] P_sep (Separatrix Power)                        : {P_sep:.3f} [MW]", file=f)
+                print(f"[O] P_Thresh (L-H Power Threshold)                  : {P_Thresh:.3f} [MW]", file=f)
+                print(f"[O] (P_sep - P_thresh) / S                          : {P_1rst_wall_Hmod:.3f} [MW/m²]", file=f)
+                print(f"[O] P_sep / S                                       : {P_1rst_wall_Lmod:.3f} [MW/m²]", file=f)
+                print(f"[O] Heat scaling (P_sep / R0)                       : {heat:.3f} [MW/m]", file=f)
+                print(f"[O] Parallel Heat Flux (P_sep*B0 / R0)              : {heat_par_solution:.3f} [MW-T/m]", file=f)
+                print(f"[O] Poloidal Heat Flux (P_sep*B0) / (q95*R0*A)      : {heat_pol_solution:.3f} [MW-T/m]", file=f)
+                print(f"[O] Gamma_n (Neutron Flux)                          : {Gamma_n:.3f} [MW/m²]", file=f)
+                print("=========================================================================", file=f)
+                
+                sys.stdout = sys.__stdout__  
+            
+            
+              
             
             # Verifier les conditions
             n_condition = n_solution / nG_solution
@@ -333,7 +425,7 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs):
     # X = param_1_values
     ax.set_xticks(np.arange(len(param_1_values)))
     ax.set_xticklabels(
-    [f"{v:.2f}" for v in param_1_values],
+    [f"{v:.1f}" for v in param_1_values],
     rotation=45,
     ha='right',
     fontsize=taille_police_legende
@@ -345,7 +437,7 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs):
 
     ax.set_yticks(np.arange(len(param_2_values)))
     ax.set_yticklabels(
-        [f"{int(v)}" for v in param_2_values[::-1] ],
+        [f"{v:.1f}" for v in param_2_values[::-1] ],
         fontsize=taille_police_legende
     )
     ax.set_ylabel(f"{param_2_name} [{unit_param_2}]", fontsize=taille_police_legende)
@@ -450,6 +542,9 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs):
     # Remplacer les virgules par des points dans svg
     svg = svg.replace('.', ',')
     path_to_save = os.path.join(save_directory,f"{param_1_name}_and_{param_2_name}_scan_with_{svg}.png")
+    
+    path_to_save = os.path.join(outputs_folder,f"{param_1_name}_and_{param_2_name}_scan_with_{svg}.png")
+    outputs_folder
     plt.savefig(path_to_save, dpi=300, bbox_inches='tight')
     # Afficher la figure
     plt.show()
@@ -463,12 +558,18 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs):
 
 class inputs_management:
     
-    def __init__(self, name_file):
+    def __init__(self, name_file, outputs_folder):
         self.name_file = name_file
+        self.outputs_folder = outputs_folder
         
+    def write_inputs_in_outputs_folder(self): 
+        fic_2 = open(self.outputs_folder + "inputs_scan_2D.txt", "w")
+        fic_2.write(self.inputs)
+        fic_2.close()
         
     def run(self):
         self.read_file()
+        self.write_inputs_in_outputs_folder()
         self.extract_inputs()
         
     def read_file(self):
@@ -530,11 +631,13 @@ class inputs_management:
         
 if __name__ == "__main__":
     
-    file = "inputs_scan_2D.txt"
-    manager = inputs_management(file)
+    inputs_file = "inputs_scan_2D.txt"
+    outputs_folder = "result/" # the folder must exist 
+    
+    manager = inputs_management(inputs_file, outputs_folder)
     manager.run()
     
-    D0fus_Scan_2D_generic(manager.param_1, manager.param_2, manager.inputs)
+    D0fus_Scan_2D_generic(manager.param_1, manager.param_2, manager.inputs, outputs_folder)
     
         
         
