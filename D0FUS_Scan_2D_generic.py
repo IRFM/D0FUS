@@ -9,6 +9,7 @@ import sys
 import os
 import re
 from sympy import symbols, latex
+from datetime import datetime
 
 # Répertoire des modules
 base_dir = os.path.dirname(__file__)
@@ -39,26 +40,49 @@ for mod in module_names:
 
 print("----- D0FUS reloaded -----")
 
+class DualWriter:
+    
+    def __init__(self, *files):
+        self._files = files
+    def write(self, data):
+        for ff in self._files:
+            ff.write(data)
+
+
+def convertion_input_unit(input):
+    
+    if input == "R0" or input == "a" or input == "b" :
+        return "m"
+    elif input == "P_fus":
+        return "MW"
+    elif input == "Bmax":
+        return "T"
+    elif input == "Tbar":
+        return "keV"
+    
+    return ""
+
+def set_module_var(name, value):
+    globals()[name] = value
+        
+
 
 def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
-    
     
     a_min, a_max, a_N = 1, 3, 25
     R0_min, R0_max, R0_N = 3, 9, 25   
 
-    n_points = 25
-    
     param_1_min, param_1_max = param_1[1] , param_1[2]
     param_1_name = param_1[0]
-    unit_param_1 = "m"
+    unit_param_1 = convertion_input_unit(param_1_name)
     param_1_values = np.linspace(param_1_min, param_1_max, int(param_1[3]))
      
     param_2_min, param_2_max = param_2[1] , param_2[2]
     param_2_name = param_2[0]
-    unit_param_2 = "m"
+    unit_param_2 = convertion_input_unit(param_2_name)
     param_2_values = np.linspace(param_2_min, param_2_max, int(param_2[3]) )
     
-
+    print(unit_param_1, unit_param_2, param_1_name, param_2_name)
   
     # Matrix creations
     max_limits_density = np.zeros((len(param_1_values),len(param_2_values)))
@@ -86,9 +110,6 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
     BCS_matrix = np.zeros((len(param_1_values),len(param_2_values)))
  
     
-    
-    def set_module_var(name, value):
-        globals()[name] = value
 
     # default value for a and R0 
     set_module_var("a", 1.6)
@@ -97,7 +118,6 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
     for elem in inputs:
         set_module_var(elem[0], elem[1])
         
-    print("a", a)
     # Initialisation
     x = 0
     y = 0
@@ -113,7 +133,6 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
             
             set_module_var(param_1_name, param_1)
             set_module_var(param_2_name, param_2)
-            
             
             # Main calcul
             (B0_solution, B_CS, B_pol_solution,
@@ -138,17 +157,8 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
             Supra_choice, Chosen_Steel , Radial_build_model , 
             Choice_Buck_Wedg , Option_Kappa , κ_manual,
             L_H_Scaling_choice, Scaling_Law, Bootstrap_choice, Operation_mode)
-            
-            # outputs 
-            
+        
             with open(outputs_folder + "outputs_scan_2D.txt", "a", encoding="utf-8") as _f:
-                class DualWriter:
-                    def __init__(self, *files):
-                        self._files = files
-                    def write(self, data):
-                        for ff in self._files:
-                            ff.write(data)
-                    
 
                 # Allows writing to the terminal and output file
                 f = DualWriter(sys.stdout, _f)
@@ -225,10 +235,7 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
                 print("=========================================================================", file=f)
                 
                 sys.stdout = sys.__stdout__  
-            
-            
-              
-            
+                       
             # Verifier les conditions
             n_condition = n_solution / nG_solution
             beta_condition = betaN_solution / betaN
@@ -290,14 +297,14 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
             c_matrix[y,x] = R0_a_b_solution - R0_a_b_c_solution
             d_matrix[y,x] = R0_a_b_c_solution - R0_a_b_c_d_solution
             
-            y = y+1
+            y += 1
             
-        x = x+1
+        x += 1
         
     taille_police_topological_map = 20 # typical value of 15, for prensentation : 20
     taille_police_background_map = 20 # typical value of 15, for prensentation : 20
     taille_police_subtitle = 15
-    taille_police_legende = 20 # typical value of 15, for prensentation : 20
+    taille_police_legende = 10 # typical value of 15, for prensentation : 20
     taille_police_other = 15
     taille_titre = 22
     plt.rcParams.update({'font.size': taille_police_other})
@@ -458,7 +465,7 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
     black_line = mlines.Line2D([], [], color='black', label='Radial build limit')
     
     # Tracer les isocontours choisis précédemment
-    if chosen_isocontour == 'Ip':
+    if chosen_isocontour == 'Ip' or chosen_isocontour == 'ip':
         contour_lines = ax.contour(inverted_Ip_matrix_mask, levels=np.arange(1, 25,1), colors='#555555')
         ax.clabel(contour_lines, inline=True, fmt='%d', fontsize=taille_police_topological_map)
         grey_line = mlines.Line2D([], [], color='#555555', label='$I_p$ [MA]')
@@ -497,17 +504,17 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
     else:
         print('Choose a relevant Iso parameter')
 
-    if chosen_topologic == 'Heat':
+    if chosen_topologic == 'Heat' or chosen_topologic == 'heat':
         # Heat contours
         contour_lines_Heat = ax.contour(inverted_Heat_matrix, levels=np.arange(1000, 10000 ,500), colors='white')
         ax.clabel(contour_lines_Heat, inline=True, fmt='%d', fontsize=taille_police_background_map)
         white_line = mlines.Line2D([], [], color='white', label='Heat// [MW-T/m]')
-    elif chosen_topologic == 'Q':
+    elif chosen_topologic == 'Q' or chosen_topologic == 'q':
         # Q contours
         contour_lines_Q = ax.contour(inverted_Q_matrix, levels=np.arange(0, 60 ,10), colors='white')
         ax.clabel(contour_lines_Q, inline=True, fmt='%d', fontsize=taille_police_background_map)
         white_line = mlines.Line2D([], [], color='white', label='Q []')
-    elif chosen_topologic == 'Cost' :
+    elif chosen_topologic == 'Cost' or chosen_topologic == 'cost':
         # Cost contours
         contour_lines_cost = ax.contour(inverted_Cost_matrix, levels=np.arange(0, 1000,20), colors='white')
         ax.clabel(contour_lines_cost, inline=True, fmt='%d', fontsize=taille_police_background_map)
@@ -611,10 +618,11 @@ class inputs_management:
     def extract_inputs(self):
         debug = False
         split_ = self.inputs.split("\n")
-        
-        if split_[-1] == "": # -1 check the last element 
-            split_.pop() # remove the last element if the last element is empty  
-            
+          
+        for _ in range(2):
+            if split_[-1].isspace() or split_[-1] == "" : # -1 check the last element 
+                split_.pop() # remove the last element if the last element is empty  
+     
         self.param_1 = self.extract_input_scan(split_[0])
         self.param_2 = self.extract_input_scan(split_[1])
       
@@ -632,12 +640,16 @@ class inputs_management:
 if __name__ == "__main__":
     
     inputs_file = "inputs_scan_2D.txt"
-    outputs_folder = "result/" # the folder must exist 
     
-    manager = inputs_management(inputs_file, outputs_folder)
+    now = datetime.now()
+    name_new_folder = "D0FUS_Scan_generic_" + now.strftime("%Y-%m-%d_%H-%M-") + f"{now.second:02d}"[:2]
+
+    os.makedirs(name_new_folder, exist_ok=True)
+ 
+    manager = inputs_management(inputs_file, name_new_folder + "/")
     manager.run()
     
-    D0fus_Scan_2D_generic(manager.param_1, manager.param_2, manager.inputs, outputs_folder)
+    D0fus_Scan_2D_generic(manager.param_1, manager.param_2, manager.inputs, name_new_folder + "/")
     
         
         
