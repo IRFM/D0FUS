@@ -123,13 +123,13 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
     y = 0
     
     # Scanning R0
-    for param_2 in tqdm(param_2_values, desc='Scanning parameters'):
+    for param_2 in tqdm(param_2_values , desc='Scanning parameters'):
         
         # Increment after iterations
         y = 0
         
         # Scanning param_1
-        for param_1 in param_1_values:
+        for param_1 in param_1_values  :
             
             set_module_var(param_1_name, param_1)
             set_module_var(param_2_name, param_2)
@@ -297,9 +297,9 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
             c_matrix[y,x] = R0_a_b_solution - R0_a_b_c_solution
             d_matrix[y,x] = R0_a_b_c_solution - R0_a_b_c_d_solution
             
-            y += 1
+            y = y + 1
             
-        x += 1
+        x = x + 1
         
     taille_police_topological_map = 20 # typical value of 15, for prensentation : 20
     taille_police_background_map = 20 # typical value of 15, for prensentation : 20
@@ -378,15 +378,9 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
     color_choice_security = 'Greens'
     color_choice_beta = 'Reds'
     # Afficher les heatmap pour les matrices avec imshow
-    im_density = ax.imshow(
-    max_limits_density,  # <--- inverse les lignes
-    cmap=color_choice_density,
-    aspect='auto',
-    interpolation='nearest',
-    norm=Normalize(vmin=min_matrix, vmax=max_matrix),
-    origin='lower'
-)
-
+   
+    im_density = ax.imshow(inverted_matrix_density_limit, cmap=color_choice_density, aspect='auto', interpolation='nearest', norm=Normalize(vmin=min_matrix, vmax=max_matrix))
+    
 
     im_security = ax.imshow(inverted_matrix_security_limit, cmap=color_choice_security, aspect='auto', interpolation='nearest', norm=Normalize(vmin=min_matrix, vmax=max_matrix))
     im_beta = ax.imshow(inverted_matrix_beta_limit, cmap=color_choice_beta, aspect='auto', interpolation='nearest', norm=Normalize(vmin=min_matrix, vmax=max_matrix))
@@ -429,25 +423,12 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
 
     ### Definition des axes
 
-    # X = param_1_values
-    ax.set_xticks(np.arange(len(param_1_values)))
-    ax.set_xticklabels(
-    [f"{v:.1f}" for v in param_1_values],
-    rotation=45,
-    ha='right',
-    fontsize=taille_police_legende
-        )
-    ax.set_xlabel(f"{param_1_name} [{unit_param_1}]", fontsize=taille_police_legende)
+    ax.set_yticks(np.arange(len(param_1_values)))
+    ax.set_yticklabels([ round(x, 2) for x in param_1_values[::-1]] , fontsize = taille_police_legende) # Etiquettes
+    
+    ax.set_xticks(np.arange(len(param_2_values)))
+    ax.set_xticklabels([round(x, 2) for x in param_2_values], rotation=45, ha='right', fontsize = taille_police_legende)
 
-    # Y = param_2_values
-   
-
-    ax.set_yticks(np.arange(len(param_2_values)))
-    ax.set_yticklabels(
-        [f"{v:.1f}" for v in param_2_values[::-1] ],
-        fontsize=taille_police_legende
-    )
-    ax.set_ylabel(f"{param_2_name} [{unit_param_2}]", fontsize=taille_police_legende)
 
     ### Ajouter des contours
 
