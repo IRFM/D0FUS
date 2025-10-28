@@ -410,8 +410,8 @@ if __name__ == "__main__":
         
     # if you don't put any inputs in the terminal :
     else:
-        name_input_file = "../inputs.txt"
-        name_output_file = "../results.txt"
+        name_input_file = "../D0FUS_run_input.txt"
+        name_output_file = "../D0FUS_run_output.txt"
         
     p.open_input(name_input_file)
 
