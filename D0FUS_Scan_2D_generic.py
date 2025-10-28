@@ -304,7 +304,7 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
     taille_police_topological_map = 20 # typical value of 15, for prensentation : 20
     taille_police_background_map = 20 # typical value of 15, for prensentation : 20
     taille_police_subtitle = 15
-    taille_police_legende = 10 # typical value of 15, for prensentation : 20
+    taille_police_legende = 20 # typical value of 15, for prensentation : 20
     taille_police_other = 15
     taille_titre = 22
     plt.rcParams.update({'font.size': taille_police_other})
@@ -387,18 +387,18 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
 
     # Coutour limite plasma = 1
     threshold = 1.0
-    ax.contour(inverted_matrix_plasma_limit, levels=[threshold], colors='#555555', linestyles='dashed')
-    grey_dashed_line = mlines.Line2D([], [], color='#555555', linestyle='dashed', label='Plasma stability boundary')
+    ax.contour(inverted_matrix_plasma_limit, levels=[threshold], colors='#555555', linestyles='dashed', linewidths=2)
+    grey_dashed_line = mlines.Line2D([], [], color='#555555', linestyle='dashed', linewidth=2, label='Plasma stability boundary')
 
     # Personnaliser les axes et le titre
-    plt.xlabel(title_parameter_2 +  "[" + unit_param_2 + "]", fontsize = taille_police_legende)
-    plt.ylabel(title_parameter + "[" + unit_param_1 + "]", fontsize = taille_police_legende)
+    plt.xlabel(title_parameter_2 +  " [" + unit_param_2 + "]", fontsize = taille_police_legende)
+    plt.ylabel(title_parameter + " [" + unit_param_1 + "]", fontsize = taille_police_legende)
 
     ### Color Bars
 
     # Créer un axe supplémentaire en dessous de l'axe principal pour les colorbars
     divider = make_axes_locatable(ax)
-    cax1 = divider.append_axes("bottom", size="5%", pad=1)
+    cax1 = divider.append_axes("bottom", size="5%", pad=1.3)
     cax2 = divider.append_axes("bottom", size="5%", pad=0.1, sharex=cax1)
     cax3 = divider.append_axes("bottom", size="5%", pad=0.1, sharex=cax1)
     
@@ -419,7 +419,7 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
     
     # Ajouter les traits en pointillé à la valeur 1 pour chaque color bar
     for cax in [cax1, cax2, cax3]:
-        cax.axvline(x=1, color='#333333', linestyle='--', linewidth=1, dashes=(5, 3))
+        cax.axvline(x=1, color='#333333', linestyle='--', linewidth=2, dashes=(5, 3))
 
     ### Definition des axes
 
