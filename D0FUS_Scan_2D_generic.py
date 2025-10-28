@@ -369,7 +369,7 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
     title_parameter = "$" + latex(param_1_name) + "$"
     title_parameter_2 = "$" + latex(param_2_name) + "$"
  
-    plt.suptitle(f"Parameter space : {title_parameter}, {title_parameter_2}", fontsize=taille_titre,y=0.94, fontweight='bold')
+    #plt.suptitle(f"Parameter space : {title_parameter}, {title_parameter_2}", fontsize=taille_titre,y=0.94, fontweight='bold')
 
     # Calculer le minimum et le maximum des valeurs numériques
     min_matrix = 0.5
