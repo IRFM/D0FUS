@@ -1234,7 +1234,7 @@ if __name__ == "__main__":
 
 #%% Magnetic flux calculation
 
-def Magnetic_flux(Ip, I_Ohm, Bmax, a, b, c, R0, κ, nbar, Tbar, Ce, Temps_Plateau, Li):
+def Magnetic_flux(Ip, I_Ohm, Bmax, a, b, c, R0, κ, nbar, Tbar, Ce, Temps_Plateau, Li, Choice_Buck_Wedg):
     """
     Calculate the magnetic flux components for a tokamak plasma.
 
@@ -1362,7 +1362,7 @@ if __name__ == "__main__":
         Ip_cs, I_Ohm_cs, Bmax_cs,
         a_cs, b_cs, c_cs, R0_cs,
         κ_cs, nbar_cs, Tbar_cs,
-        Ce_cs, Temps_Plateau_cs, Li_cs
+        Ce_cs, Temps_Plateau_cs, Li_cs, Choice_Buck_Wedg
     )
     
     # Print benchmark results in a clear format

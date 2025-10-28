@@ -1502,7 +1502,7 @@ def f_q_mhd(a, Bt, R, Ip, eps, kappa95, delta95):
 
     return q_MHD
 
-def f_He_fraction(n_bar, T_bar, tauE, C_Alpha):
+def f_He_fraction(n_bar, T_bar, tauE, C_Alpha, nu_T):
     """
     
     Estimate the fraction of Alpha particles
@@ -1533,7 +1533,7 @@ def f_He_fraction(n_bar, T_bar, tauE, C_Alpha):
     
     return f_alpha
 
-def f_tau_alpha(n_bar, T_bar, tauE, C_Alpha):
+def f_tau_alpha(n_bar, T_bar, tauE, C_Alpha, nu_T):
     """
     Estimate the alpha particle confinement time Tau_alpha
     (derived consistently from f_He_fraction)

@@ -28,41 +28,33 @@ class Parameters:
     
     def __init__(self):
         
-        self.a = 3
-        self.R0 = 9
-        self.Bmax = 12
-        self.P_fus = 2000
-        self.Operation_mode = 'Steady-State'     # 'Steady-State' or 'Pulsed'
+        self.P_fus = 2000                        # Fusion power [MW]
+        self.R0 = 9                              # Major radius [m]
+        self.a = 3                               # Minor radius [m]        
+        self.Option_Kappa = 'Wenninger'          # Plasma elongation model: 'Stambaugh' , 'Freidberg' , 'Wenninger' or 'Manual'
+        self.κ_manual = 1.7                      # Plasma vertical elongation when using 'Manual' model
+        self.Bmax = 12                           # Toroidal field on the inner leg of the TF coils [T]
         self.Supra_choice = 'Nb3Sn'              # 'Nb3Sn' , 'Rebco', 'NbTi' or 'Manual'
-        self.Chosen_Steel = '316L'               # '316L' , 'N50H' or 'Manual'
         self.Radial_build_model = 'D0FUS'        # "academic" , "D0FUS" , "CIRCEE"
+        self.b = 1.2                             # First wall + blanket + neutron shield + gaps thickness [m]
         self.Choice_Buck_Wedg = 'Wedging'        # 'Wedging' or 'Bucking'
-        self.Option_Kappa = 'Wenninger'          # 'Stambaugh' , 'Freidberg' , 'Wenninger' or 'Manual'
-        self.L_H_Scaling_choice = 'New_Ip'       # 'Martin' , 'New_S', 'New_Ip'
-        self.Scaling_Law = 'IPB98(y,2)'          # 'IPB98(y,2)', 'ITPA20-IL', 'ITPA20', 'DS03', 'L-mode', 'L-mode OK', 'ITER89-P'
-        self.Bootstrap_choice = 'Freidberg'      # 'Freidberg' or 'Segal'
-
-        # Inputs
-        self.H = 1
-        self.Tbar  = 14
-        self.b = 1.2
-
-        # If Pulsed operation:
+        self.Chosen_Steel = '316L'               # '316L' , 'N50H' or 'Manual'
+        self.Scaling_Law = 'IPB98(y,2)'          # Confinement time scaling law: 'IPB98(y,2)', 'ITPA20-IL', 'ITPA20', 'DS03', 'L-mode', 'L-mode OK', 'ITER89-P'
+        self.H = 1                               # H factor for the energy confinement time
+        self.Tbar  = 14                          # Volume-averaged temperature [keV]
+        self.nu_T  = 1                           # Temperature profile peaking parameter
+        self.nu_n  = 0.1                         # Density profile peaking parameter
+        self.L_H_Scaling_choice = 'New_Ip'       # Scaling law for the L-H threshold power: 'Martin' , 'New_S', 'New_Ip'
+        self.Bootstrap_choice = 'Freidberg'      # Bootstrap current model: 'Freidberg' or 'Segal'
+        self.Operation_mode = 'Steady-State'     # 'Steady-State' or 'Pulsed'
         if self.Operation_mode == 'Pulsed':
-            self.Temps_Plateau_input = 120 * 60
-            self.P_aux_input = 120
-            self.fatigue = 2
+            self.Temps_Plateau_input = 120 * 60  # Ip plateau duration [s]
+            self.P_aux_input = 120               # Auxiliary power [MW]
+            self.fatigue = 2                     # Fatigue parameter for the steel 
         else:
             self.Temps_Plateau_input = 0
             self.P_aux_input = 0
             self.fatigue = 1
-
-        # Elongation
-        self.κ_manual = 1.7
-
-        # Density and Temperature parameters
-        self.nu_n  = 0.1
-        self.nu_T  = 1
         
     def parse_assignments(self, lines):
         result = []
@@ -97,13 +89,6 @@ class Parameters:
             print(f"Input change : self.{var} = {val}")
             
 
-        
-    
-        
-        
-        
-
-
 #%% Main Function
 
 '''def run(a, R0, Bmax, P_fus,
@@ -115,7 +100,8 @@ class Parameters:
 def run(a, R0, Bmax, P_fus,
         Tbar, H, Temps_Plateau_input, b , nu_n, nu_T,
         Supra_choice, Chosen_Steel , Radial_build_model , Choice_Buck_Wedg , 
-        Option_Kappa , κ_manual, L_H_Scaling_choice, Scaling_Law, Bootstrap_choice, Operation_mode):
+        Option_Kappa , κ_manual, L_H_Scaling_choice, Scaling_Law, Bootstrap_choice, Operation_mode,
+        fatigue, P_aux_input):
     
     # Steel
     σ_TF = Steel(Chosen_Steel)
@@ -211,7 +197,7 @@ def run(a, R0, Bmax, P_fus,
             print("Choose a valid operation mode ")
         
         # Calculate new f_alpha
-        new_f_alpha  = f_He_fraction(nbar_alpha, Tbar, tau_E_alpha, C_Alpha)
+        new_f_alpha  = f_He_fraction(nbar_alpha, Tbar, tau_E_alpha, C_Alpha, nu_T)
     
         # Calculate the residuals
         f_alpha_residual = (new_f_alpha - f_alpha) * 100 / new_f_alpha    # In % to ease the convergence
@@ -266,7 +252,7 @@ def run(a, R0, Bmax, P_fus,
     else:
         print("Choose a valid operation mode ")
     tauE_solution         = f_tauE(pbar_solution, Volume_solution, P_Alpha, P_Aux_solution, P_Ohm_solution, P_rad_solution)
-    tau_alpha             = f_tau_alpha(nbar_solution, Tbar, tauE_solution, C_Alpha)
+    tau_alpha             = f_tau_alpha(nbar_solution, Tbar, tauE_solution, C_Alpha, nu_T)
     Ip_solution           = f_Ip(tauE_solution, R0, a, κ, δ, nbar_solution, B0_solution, Atomic_mass, 
                                  P_Alpha, P_Ohm_solution, P_Aux_solution, P_rad_solution, H, C_SL,
                           alpha_delta,alpha_M,alpha_kappa,alpha_epsilon, alpha_R,alpha_B,alpha_n,alpha_I,alpha_P)
@@ -325,15 +311,15 @@ def run(a, R0, Bmax, P_fus,
     # Radial Build
     if Radial_build_model == "academic" :
         (c, Winding_pack_tension_ratio) = f_TF_academic(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg)
-        (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, I_Ohm_solution, Bmax ,a ,b ,c , R0 ,κ ,nbar_solution, Tbar ,Ce ,Temps_Plateau_input , li_solution)
+        (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, I_Ohm_solution, Bmax ,a ,b ,c , R0 ,κ ,nbar_solution, Tbar ,Ce ,Temps_Plateau_input , li_solution, Choice_Buck_Wedg)
         (d,Alpha,B_CS) = f_CS_academic(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, σ_CS, J_max_CS_conducteur, Choice_Buck_Wedg)
     elif Radial_build_model == "D0FUS" :
         (c, Winding_pack_tension_ratio) = f_TF_D0FUS(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg, omega_TF, n_TF)
-        (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, I_Ohm_solution, Bmax ,a ,b ,c , R0 ,κ ,nbar_solution, Tbar ,Ce ,Temps_Plateau_input , li_solution)
+        (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, I_Ohm_solution, Bmax ,a ,b ,c , R0 ,κ ,nbar_solution, Tbar ,Ce ,Temps_Plateau_input , li_solution, Choice_Buck_Wedg)
         (d,Alpha,B_CS, J_CS) = f_CS_D0FUS(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, σ_CS, J_max_CS_conducteur , Choice_Buck_Wedg)
     elif Radial_build_model == "CIRCEE" :
         (c, Winding_pack_tension_ratio) = f_TF_CIRCEE(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg, omega_TF, n_TF)
-        (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, I_Ohm_solution, Bmax ,a ,b ,c , R0 ,κ ,nbar_solution, Tbar ,Ce ,Temps_Plateau_input , li_solution)
+        (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, I_Ohm_solution, Bmax ,a ,b ,c , R0 ,κ ,nbar_solution, Tbar ,Ce ,Temps_Plateau_input , li_solution, Choice_Buck_Wedg)
         (d,Alpha,B_CS, J_CS) = f_CS_CIRCEE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, σ_CS, J_max_CS_conducteur , Choice_Buck_Wedg)
     else :
         print('Choose a valid mechanical model')
@@ -438,7 +424,7 @@ if __name__ == "__main__":
     p.Tbar, p.H, p.Temps_Plateau_input, p.b, p.nu_n, p.nu_T,
     p.Supra_choice, p.Chosen_Steel, p.Radial_build_model, p.Choice_Buck_Wedg,
     p.Option_Kappa, p.κ_manual, p.L_H_Scaling_choice, p.Scaling_Law,
-    p.Bootstrap_choice, p.Operation_mode
+    p.Bootstrap_choice, p.Operation_mode, p.fatigue, p.P_aux_input
 )
     with open(name_output_file, "w", encoding="utf-8") as _f:
         class DualWriter:
@@ -469,8 +455,8 @@ if __name__ == "__main__":
         print(f"[O] Delta_95 (Triangularity at 95%)                 : {δ_95:.3f} ", file=f)
         print(f"[O] Volume (Plasma)                                 : {Volume_solution:.3f} [m^3]", file=f)
         print(f"[O] Surface (1rst Wall)                             : {Surface_solution:.3f} [m²]", file=f)
-        print(f"[I] Mechanical configuration                        : {Choice_Buck_Wedg} ", file=f)
-        print(f"[I] Superconductor technology                       : {Supra_choice} ", file=f)
+        print(f"[I] Mechanical configuration                        : {p.Choice_Buck_Wedg} ", file=f)
+        print(f"[I] Superconductor technology                       : {p.Supra_choice} ", file=f)
         print("-------------------------------------------------------------------------", file=f)
         print(f"[I] Bmax (Maximum Magnetic Field - TF)              : {p.Bmax:.3f} [T]", file=f)
         print(f"[O] B0 (Central Magnetic Field)                     : {B0_solution:.3f} [T]", file=f)
@@ -487,9 +473,9 @@ if __name__ == "__main__":
         print(f"[O] P_elec-net (Net Electrical Power)               : {P_elec_solution:.3f} [MW]", file=f)
         print(f"[O] Cost ((V_BB+V_TF+V_CS)/P_fus)                   : {cost:.3f} [m^3]", file=f)
         print("-------------------------------------------------------------------------", file=f)
-        print(f"[I] H (Scaling Law factor)                          : {H:.3f} ", file=f)
-        print(f"[I] Operation (Pulsed / Steady)                     : {Operation_mode} ", file=f)
-        print(f"[I] t (Plateau Time)                                : {Temps_Plateau_input:.3f} ", file=f)
+        print(f"[I] H (Scaling Law factor)                          : {p.H:.3f} ", file=f)
+        print(f"[I] Operation (Pulsed / Steady)                     : {p.Operation_mode} ", file=f)
+        print(f"[I] t (Plateau Time)                                : {p.Temps_Plateau_input:.3f} ", file=f)
         print(f"[O] tau_E (Confinement Time)                        : {tauE_solution:.3f} [s]", file=f)
         print(f"[O] Ip (Plasma Current)                             : {Ip_solution:.3f} [MA]", file=f)
         print(f"[O] Ib (Bootstrap Current)                          : {Ib_solution:.3f} [MA]", file=f)
