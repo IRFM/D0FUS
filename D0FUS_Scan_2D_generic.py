@@ -158,8 +158,9 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
             Choice_Buck_Wedg , Option_Kappa , κ_manual,
             L_H_Scaling_choice, Scaling_Law, Bootstrap_choice, Operation_mode)
         
-            with open(outputs_folder + "outputs_scan_2D.txt", "a", encoding="utf-8") as _f:
+            with open(outputs_folder + input_file, "a", encoding="utf-8") as _f:
 
+                
                 # Allows writing to the terminal and output file
                 f = DualWriter(sys.stdout, _f)
                 
@@ -551,7 +552,7 @@ class inputs_management:
         self.outputs_folder = outputs_folder
         
     def write_inputs_in_outputs_folder(self): 
-        fic_2 = open(self.outputs_folder + "inputs_scan_2D.txt", "w")
+        fic_2 = open(self.outputs_folder + input_file, "w")
         fic_2.write(self.inputs)
         fic_2.close()
         
@@ -620,14 +621,14 @@ class inputs_management:
         
 if __name__ == "__main__":
     
-    inputs_file = "inputs_scan_2D.txt"
+    input_file = "D0FUS_Scan_2D_input.txt"
     
     now = datetime.now()
     name_new_folder = "D0FUS_Scan_2D_generic_" + now.strftime("%Y-%m-%d_%H-%M-") + f"{now.second:02d}"[:2]
 
     os.makedirs(name_new_folder, exist_ok=True)
  
-    manager = inputs_management(inputs_file, name_new_folder + "/")
+    manager = inputs_management(input_file, name_new_folder + "/")
     manager.run()
     
     D0fus_Scan_2D_generic(manager.param_1, manager.param_2, manager.inputs, name_new_folder + "/")
