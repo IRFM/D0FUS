@@ -20,9 +20,6 @@ from D0FUS_radial_build_functions import *
 sys.path.append(os.path.join(os.path.dirname(__file__), 'D0FUS_BIB'))
 
 
-
-    
-
 #%% Parameters
 class Parameters:
     
@@ -91,38 +88,33 @@ class Parameters:
 
 #%% Main Function
 
-'''def run(a, R0, Bmax, P_fus,
-        Tbar, H, Temps_Plateau_input, b , nu_n, nu_T,
-        Supra_choice, Chosen_Steel , Radial_build_model , Choice_Buck_Wedg , 
-        Option_Kappa , κ_manual, L_H_Scaling_choice, Scaling_Law, Bootstrap_choice, Operation_mode):
-'''
-
-def run(a, R0, Bmax, P_fus,
-        Tbar, H, Temps_Plateau_input, b , nu_n, nu_T,
-        Supra_choice, Chosen_Steel , Radial_build_model , Choice_Buck_Wedg , 
-        Option_Kappa , κ_manual, L_H_Scaling_choice, Scaling_Law, Bootstrap_choice, Operation_mode,
-        fatigue, P_aux_input):
+def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
+        Supra_choice, Chosen_Steel, Radial_build_model, Choice_Buck_Wedg, 
+        Option_Kappa, κ_manual, L_H_Scaling_choice, Scaling_Law, Bootstrap_choice, 
+        Operation_mode, fatigue, P_aux_input):
     
-    # Steel
+    # Stress limits in steel
     σ_TF = Steel(Chosen_Steel)
     σ_CS = Steel(Chosen_Steel) / fatigue
-    # Current densit
-    J_max_TF_conducteur = Jc(Supra_choice, Bmax , T_helium) * f_Cu * f_Cool * f_In
-    J_max_CS_conducteur = Jc(Supra_choice, Bmax , T_helium + Marge_CS) * f_Cu * f_Cool * f_In
     
-    # Tension fraction
-    if Choice_Buck_Wedg == "Wedging" :
-        omega_TF = 1/2        # fraction de la tension aloué au WP (valeur fixe prise à partir de ITER: DDD TF p.97)
-    elif Choice_Buck_Wedg == "Bucking" :
-        omega_TF = 1          # fraction de la tension aloué au WP , en bucking = 1
-    else : 
-        print('Chosse a valid mechanical configuration')
+    # Current densities in coils
+    J_max_TF_conducteur = Jc(Supra_choice, Bmax, T_helium) * f_Cu * f_Cool * f_In
+    J_max_CS_conducteur = Jc(Supra_choice, Bmax, T_helium + Marge_CS) * f_Cu * f_Cool * f_In
+    
+    # Fraction of vertical tension allocated to the winding pack of the TF coils (the rest being allocated to the nose)
+    if Choice_Buck_Wedg == "Wedging":
+        omega_TF = 1/2        # From ITER DDD TF p.97
+    elif Choice_Buck_Wedg == "Bucking":
+        omega_TF = 1          
+    else: 
+        print('Choose a valid mechanical configuration')
         
+    # Confinement time scaling law
     (C_SL,alpha_delta,alpha_M,alpha_kappa,alpha_epsilon,
      alpha_R,alpha_B,alpha_n,alpha_I,alpha_P) = f_Get_parameter_scaling_law(Scaling_Law)
 
-    # Geometry
-    κ    = f_Kappa(R0/a,Option_Kappa, κ_manual)
+    # Plasma geometry
+    κ    = f_Kappa(R0/a, Option_Kappa, κ_manual)
     κ_95 = f_Kappa_95(κ)
     δ    = f_Delta(κ)
     δ_95 = f_Delta_95(δ)
@@ -132,23 +124,23 @@ def run(a, R0, Bmax, P_fus,
     Surface_solution = f_surface_premiere_paroi(κ, R0, a)
     
     # Central magnetic field
-    B0_solution = f_B0(Bmax,a,b,R0)
+    B0_solution = f_B0(Bmax, a, b, R0)
     
-    # Alpha Power
+    # Alpha power
     P_Alpha = f_P_alpha(P_fus, E_ALPHA, E_N)
     
-    # Function to solve for both f_alpha and Q
+    # Function to solve for both the alpha particle fraction f_alpha and Q
     def to_solve_f_alpha_and_Q(vars):
         
         f_alpha, Q = vars
     
         # Calculate intermediate values
-        nbar_alpha         = f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, κ) 
-        # alternative taking into account a reffined version of the volume :
+        nbar_alpha   = f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, κ) 
+        # Alternative with a different calculation of the volume:
         # nbar_alpha   = f_nbar_advanced(P_fus, nu_n, nu_T, f_alpha, Tbar, Volume_solution)
         pbar_alpha   = f_pbar(nu_n, nu_T, nbar_alpha, Tbar, f_alpha)
         
-        # Radiative loss
+        # Radiative losses
         P_Brem_alpha = f_P_bremsstrahlung(Volume_solution, nbar_alpha, Tbar, Zeff, R0, a)
         beta_T = 2 # Beta_T taken from [J.Johner Helios]
         P_syn_alpha = f_P_synchrotron(Tbar, R0, a, B0_solution, nbar_alpha, κ, nu_n, nu_T, beta_T, r_synch)
@@ -242,26 +234,37 @@ def run(a, R0, Bmax, P_fus,
     beta_T = 2 # Beta_T taken from [J.Johner Helios]
     P_syn_solution = f_P_synchrotron(Tbar, R0, a, B0_solution, nbar_solution, κ, nu_n, nu_T, beta_T, r_synch)
     P_rad_solution = P_Brem_solution + P_syn_solution
+    # Current drive efficiency
     eta_CD                = f_etaCD(a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T)
-    if Operation_mode == 'Steady-State' :
-        P_Ohm_solution = 0
+    if Operation_mode == 'Steady-State':
         P_Aux_solution = P_fus / Q_solution
+        P_Ohm_solution = 0
     elif Operation_mode == 'Pulsed':
-        P_Aux_solution = P_aux_input
+        P_Aux_solution = P_aux_input        
         P_Ohm_solution = P_fus / Q_solution - P_Aux_solution
     else:
         print("Choose a valid operation mode ")
-    tauE_solution         = f_tauE(pbar_solution, Volume_solution, P_Alpha, P_Aux_solution, P_Ohm_solution, P_rad_solution)
-    tau_alpha             = f_tau_alpha(nbar_solution, Tbar, tauE_solution, C_Alpha, nu_T)
-    Ip_solution           = f_Ip(tauE_solution, R0, a, κ, δ, nbar_solution, B0_solution, Atomic_mass, 
-                                 P_Alpha, P_Ohm_solution, P_Aux_solution, P_rad_solution, H, C_SL,
+        
+    # Solve for energy confinement time
+    tauE_solution = f_tauE(pbar_solution, Volume_solution, P_Alpha, P_Aux_solution, P_Ohm_solution, P_rad_solution)
+
+    # Solve for alpha particles confinement time
+    tau_alpha     = f_tau_alpha(nbar_solution, Tbar, tauE_solution, C_Alpha, nu_T)
+
+    # Solve for Ip
+    Ip_solution   = f_Ip(tauE_solution, R0, a, κ, δ, nbar_solution, B0_solution, Atomic_mass, 
+                          P_Alpha, P_Ohm_solution, P_Aux_solution, P_rad_solution, H, C_SL,
                           alpha_delta,alpha_M,alpha_kappa,alpha_epsilon, alpha_R,alpha_B,alpha_n,alpha_I,alpha_P)
+
+    # Calculate the bootstrap current
     if Bootstrap_choice == 'Freidberg' :
         Ib_solution = f_Freidberg_Ib(R0, a, κ, pbar_solution, Ip_solution)
     elif Bootstrap_choice == 'Segal' :
         Ib_solution = f_Segal_Ib(nu_n, nu_T, a/R0, κ, nbar_solution, Tbar, R0, Ip_solution)
     else :
         print("Choose a valid Bootstrap model")
+
+    # Calculate the derived quantities from the solution found above
     qstar_solution        = f_qstar(a, B0_solution, R0, Ip_solution, κ)
     q95_solution          = f_q95(B0_solution,Ip_solution,R0,a,κ,δ)
     q_mhd_solution        = f_q_mhd(a, B0_solution, R0, Ip_solution, a/R0, κ, δ)
@@ -272,7 +275,7 @@ def run(a, R0, Bmax, P_fus,
     betaN_solution        = f_beta_N(betaT_solution, B0_solution, a, Ip_solution)
     nG_solution           = f_nG(Ip_solution, a)
     eta_CD_solution       = f_etaCD(a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T)
-    if Operation_mode == 'Steady-State' :
+    if Operation_mode == 'Steady-State':
         Temps_Plateau     = 0
         P_CD_solution     = f_PCD(R0,nbar_solution,Ip_solution,Ib_solution,eta_CD_solution)
         I_Ohm_solution    = 0
@@ -298,17 +301,17 @@ def run(a, R0, Bmax, P_fus,
     P_elec_solution       = f_P_elec(P_fus, P_CD_solution, eta_T, eta_RF)
     li_solution           = f_li(nu_n, nu_T)
     
-    # L-H scaling :
+    # Calculate the L-H threshold power:
     if L_H_Scaling_choice == 'Martin':
         P_Thresh = P_Thresh_Martin(nbar_solution, B0_solution, a, R0, κ, Atomic_mass)
     elif L_H_Scaling_choice == 'New_S':
         P_Thresh = P_Thresh_New_S(nbar_solution, B0_solution, a, R0, κ, Atomic_mass)
     elif L_H_Scaling_choice == 'New_Ip':
         P_Thresh = P_Thresh_New_Ip(nbar_solution, B0_solution, a, R0, κ, Ip_solution, Atomic_mass)
-    else :
+    else:
         print('Choose a valid Scaling for L-H transition')
     
-    # Radial Build
+    # Calculate the radial build
     if Radial_build_model == "academic" :
         (c, Winding_pack_tension_ratio) = f_TF_academic(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg)
         (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, I_Ohm_solution, Bmax ,a ,b ,c , R0 ,κ ,nbar_solution, Tbar ,Ce ,Temps_Plateau_input , li_solution, Choice_Buck_Wedg)
@@ -324,6 +327,7 @@ def run(a, R0, Bmax, P_fus,
     else :
         print('Choose a valid mechanical model')
     
+    # Calculate a proxy for the machine cost   
     cost_solution = f_cost(a,b,c,d,R0,κ,P_fus)
 
     return (B0_solution, B_CS, B_pol_solution,
@@ -343,7 +347,8 @@ def run(a, R0, Bmax, P_fus,
             Winding_pack_tension_ratio, R0-a, R0-a-b, R0-a-b-c, R0-a-b-c-d,
             κ, κ_95, δ, δ_95)
 
-#%% Test
+
+#%% 
 
 if __name__ == "__main__":
 
@@ -379,22 +384,20 @@ if __name__ == "__main__":
     # nu_T  = 0.6 #1.62
 
     # Sf Plant
-    R0 = 6
-    a = 1.6
-    Pfus = 2000
-    Bmax = 20
-    b = 1.2
-    Tbar = 14
+    # R0 = 6
+    # a = 1.6
+    # Pfus = 2000
+    # Bmax = 20
+    # b = 1.2
+    # Tbar = 14   
     
     p = Parameters()
-    
-    #print("len(sys.argv) : ",  len(sys.argv))
     
     if len(sys.argv) == 3:
         name_input_file = sys.argv[1]
         name_output_file = sys.argv[2] 
         
-    # if you don't put any inputs in the terminal :
+    # if you don't put any inputs in the terminal:
     else:
         name_input_file = "../D0FUS_run_input.txt"
         name_output_file = "../D0FUS_run_output.txt"

@@ -34,9 +34,6 @@ r_synch = 0.5               # Synchrotron reflection coefficient of the wall
 betaN = 2.8  # Beta Troyon limit
 q = 2.5      # Safety factor limit
 
-# Radiative Power
-beta_T = 2 # Beta_T taken from [J.Johner Helios]
-
 Choice_solving_CS_method = "brentq" # "brentq" or "manual" for debugging
 Choice_solving_TF_method = "brentq" # "brentq" or "manual" for debugging
 
