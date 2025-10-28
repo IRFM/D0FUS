@@ -361,14 +361,44 @@ def run(a, R0, Bmax, P_fus,
 
 if __name__ == "__main__":
 
+    # FIRE
+    # R0 = 2.14
+    # a = 0.595
+    # κ_manual = 2.0
+    # Pfus = 150
+    # Bmax = 14.9
+    # b = 0.1 
+    # Operation_mode = 'Pulsed'
+    # P_aux_input = 15
+    # Choice_Buck_Wedg = 'Bucking'
+    # H = 1.1
+    # Tbar = 5.42 
+    # nu_n  = 0.2 # Meade FED 2002
+    # nu_T  = 1.0 # Meade FED 2002
+
+
+    # FIRE-Luciole version METIS (cf. slides JFA 02-10-2025)
+    # R0 = 2.14
+    # a = 0.60
+    # κ_manual = 1.79
+    # Pfus = 55
+    # Bmax = 14.9
+    # b = 0.1 
+    # Operation_mode = 'Pulsed'
+    # P_aux_input = 20
+    # Choice_Buck_Wedg = 'Bucking'
+    # H = 1.0
+    # Tbar = 4.51
+    # nu_n  = 0.43
+    # nu_T  = 0.6 #1.62
+
     # Sf Plant
-    '''R0 = 6
+    R0 = 6
     a = 1.6
     Pfus = 2000
     Bmax = 20
     b = 1.2
     Tbar = 14
-    '''
     
     p = Parameters()
     
@@ -380,8 +410,8 @@ if __name__ == "__main__":
         
     # if you don't put any inputs in the terminal :
     else:
-        name_input_file = "/Home/AA280228/Bureau/nouveau_dossier/D0FUS/inputs.txt"
-        name_output_file = "resultats.txt"
+        name_input_file = "../inputs.txt"
+        name_output_file = "../results.txt"
         
     p.open_input(name_input_file)
 
