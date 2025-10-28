@@ -357,8 +357,8 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
     inverted_TF_ratio_matrix = TF_ratio_matrix[::-1, :]
 
     # Ask the user to choose the second topologic map :
-    chosen_isocontour = input("Choose the Iso parameter (Ip, n, beta, q95, B0, BCS, c, d, c&d): ")
-    chosen_topologic = input("Choose the background parameter (Heat, Cost, Q, Gamma_n, L_H, Alpha, TF): ")
+    chosen_isocontour = input("Choose a first iso-contour parameter (Ip, n, beta, q95, B0, BCS, c, d, c&d): ")
+    chosen_topologic = input("Choose a second iso-contour parameter (Heat, Cost, Q, Gamma_n, L_H, Alpha, TF): ")
     
     # Créer une figure et un axe principal
     fig, ax = plt.subplots(figsize=(10, 13))
