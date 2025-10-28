@@ -1,5 +1,6 @@
 # To do
 
+* Use the Parameters class in D0FUS_2D_Scan_generic -> Arthur
 * Allow users to put comments in input files -> Arthur
 * Improve output files from D0FUS_2D_Scan_generic -> Arthur
 * Create a directory with examples of input files -> Eric
