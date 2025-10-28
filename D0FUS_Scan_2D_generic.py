@@ -623,7 +623,7 @@ if __name__ == "__main__":
     inputs_file = "inputs_scan_2D.txt"
     
     now = datetime.now()
-    name_new_folder = "D0FUS_Scan_generic_" + now.strftime("%Y-%m-%d_%H-%M-") + f"{now.second:02d}"[:2]
+    name_new_folder = "D0FUS_Scan_2D_generic_" + now.strftime("%Y-%m-%d_%H-%M-") + f"{now.second:02d}"[:2]
 
     os.makedirs(name_new_folder, exist_ok=True)
  
