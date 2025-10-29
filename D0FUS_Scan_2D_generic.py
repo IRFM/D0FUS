@@ -155,7 +155,7 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder, parameter_cl
             parameter_class.L_H_Scaling_choice, parameter_class.Scaling_Law, parameter_class.Bootstrap_choice, 
             parameter_class.Operation_mode, parameter_class.fatigue, parameter_class.P_aux_input)
         
-            with open(outputs_folder + input_file, "a", encoding="utf-8") as _f:
+            with open(outputs_folder + output_file, "a", encoding="utf-8") as _f:
 
                 
                 # Allows writing to the terminal and output file
@@ -635,6 +635,7 @@ if __name__ == "__main__":
     
     parameter_class = Parameters()
     input_file = "D0FUS_Scan_2D_input.txt"
+    output_file = "D0FUS_Scan_2D_output.txt"    
     
     now = datetime.now()
     name_new_folder = "D0FUS_Scan_2D_generic_" + now.strftime("%Y-%m-%d_%H-%M-") + f"{now.second:02d}"[:2]

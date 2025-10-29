@@ -1,7 +1,5 @@
 # To do
 
-* Set a fixed number of ticks (10 by default) in the 2D scan plots -> Arthur
-* Improve output files from D0FUS_2D_Scan_generic -> Eric
 * Put all comments in English
 * Put all variable names in English
 * Move D0FUS_run.py into D0FUS instead of D0FUS/D0FUS_BIB
