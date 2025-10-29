@@ -421,11 +421,18 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder, parameter_cl
 
     ### Definition des axes
 
-    ax.set_yticks(np.arange(len(param_1_values)))
-    ax.set_yticklabels([ round(x, 2) for x in param_1_values[::-1]] , fontsize = taille_police_legende) # Etiquettes
-    
-    ax.set_xticks(np.arange(len(param_2_values)))
-    ax.set_xticklabels([round(x, 2) for x in param_2_values], rotation=45, ha='right', fontsize = taille_police_legende)
+    nb_ticks = 10 
+
+    # ---- Axe Y ----
+    y_ticks = np.linspace(min(param_1_values), max(param_1_values), nb_ticks)
+    ax.set_yticks(np.linspace(0, len(param_1_values) - 1, nb_ticks))  # position sur le graphe
+    ax.set_yticklabels([round(val, 2) for val in y_ticks[::-1]], fontsize=taille_police_legende)
+
+    # ---- Axe X ----
+    x_ticks = np.linspace(min(param_2_values), max(param_2_values), nb_ticks)
+    ax.set_xticks(np.linspace(0, len(param_2_values) - 1, nb_ticks))
+    ax.set_xticklabels([round(val, 2) for val in x_ticks],
+                    rotation=45, ha='right', fontsize=taille_police_legende)
 
 
     ### Ajouter des contours
