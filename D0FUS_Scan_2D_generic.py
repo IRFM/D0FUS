@@ -67,10 +67,7 @@ def set_module_var(class_, name, value):
         
 
 
-def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder, parameter_class):
-    
-    a_min, a_max, a_N = 1, 3, 25
-    R0_min, R0_max, R0_N = 3, 9, 25   
+def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder, parameter_class): 
 
     param_1_min, param_1_max = param_1[1] , param_1[2]
     param_1_name = param_1[0]
