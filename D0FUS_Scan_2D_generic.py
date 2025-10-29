@@ -62,12 +62,12 @@ def convertion_input_unit(input):
     
     return ""
 
-def set_module_var(name, value):
-    globals()[name] = value
+def set_module_var(class_, name, value):
+    setattr(class_, name, value)
         
 
 
-def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
+def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder, parameter_class):
     
     a_min, a_max, a_N = 1, 3, 25
     R0_min, R0_max, R0_N = 3, 9, 25   
@@ -111,12 +111,10 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
  
     
 
-    # default value for a and R0 
-    set_module_var("a", 1.6)
-    set_module_var("R0", 6)
+    
     
     for elem in inputs:
-        set_module_var(elem[0], elem[1])
+        set_module_var(parameter_class, elem[0], elem[1])
         
     # Initialisation
     x = 0
@@ -131,8 +129,8 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
         # Scanning param_1
         for param_1 in param_1_values  :
             
-            set_module_var(param_1_name, param_1)
-            set_module_var(param_2_name, param_2)
+            set_module_var(parameter_class, param_1_name, param_1)
+            set_module_var(parameter_class, param_2_name, param_2)
             
             # Main calcul
             (B0_solution, B_CS, B_pol_solution,
@@ -152,11 +150,13 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
             TF_ratio, R0_a_solution, R0_a_b_solution, R0_a_b_c_solution, R0_a_b_c_d_solution,
             κ, κ_95, δ, δ_95
             ) = run( 
-            a, R0, Bmax, P_fus, 
-            Tbar, H, Temps_Plateau_input, b , nu_n, nu_T,
-            Supra_choice, Chosen_Steel , Radial_build_model , 
-            Choice_Buck_Wedg , Option_Kappa , κ_manual,
-            L_H_Scaling_choice, Scaling_Law, Bootstrap_choice, Operation_mode)
+            parameter_class.a, parameter_class.R0, parameter_class.Bmax, parameter_class.P_fus, 
+            parameter_class.Tbar, parameter_class.H, parameter_class.Temps_Plateau_input, 
+            parameter_class.b , parameter_class.nu_n, parameter_class.nu_T,
+            parameter_class.Supra_choice, parameter_class.Chosen_Steel , parameter_class.Radial_build_model, 
+            parameter_class.Choice_Buck_Wedg , parameter_class.Option_Kappa , parameter_class.κ_manual,
+            parameter_class.L_H_Scaling_choice, parameter_class.Scaling_Law, parameter_class.Bootstrap_choice, 
+            parameter_class.Operation_mode, parameter_class.fatigue, parameter_class.P_aux_input)
         
             with open(outputs_folder + input_file, "a", encoding="utf-8") as _f:
 
@@ -168,8 +168,8 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
                 print("=========================================================================", file=f)
                 print("=== Calculation Results ===", file=f)
                 print("-------------------------------------------------------------------------", file=f)
-                print(f"[I] R0 (Major Radius)                               : {R0:.3f} [m]", file=f)
-                print(f"[I] a (Minor Radius)                                : {a:.3f} [m]", file=f)
+                print(f"[I] R0 (Major Radius)                               : {parameter_class.R0:.3f} [m]", file=f)
+                print(f"[I] a (Minor Radius)                                : {parameter_class.a:.3f} [m]", file=f)
                 print(f"[I] b (BB & Nshield thickness)                      : {R0_a_solution-R0_a_b_solution:.3f} [m]", file=f)
                 print(f"[O] c (TF coil thickness)                           : {R0_a_b_solution-R0_a_b_c_solution:.3f} [m]", file=f)
                 print(f"[O] d (CS thickness)                                : {R0_a_b_c_solution-R0_a_b_c_d_solution:.3f} [m]", file=f)
@@ -181,16 +181,16 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
                 print(f"[O] Delta_95 (Triangularity at 95%)                 : {δ_95:.3f} ", file=f)
                 print(f"[O] Volume (Plasma)                                 : {Volume_solution:.3f} [m^3]", file=f)
                 print(f"[O] Surface (1rst Wall)                             : {Surface_solution:.3f} [m²]", file=f)
-                print(f"[I] Mechanical configuration                        : {Choice_Buck_Wedg} ", file=f)
-                print(f"[I] Superconductor technology                       : {Supra_choice} ", file=f)
+                print(f"[I] Mechanical configuration                        : {parameter_class.Choice_Buck_Wedg} ", file=f)
+                print(f"[I] Superconductor technology                       : {parameter_class.Supra_choice} ", file=f)
                 print("-------------------------------------------------------------------------", file=f)
-                print(f"[I] Bmax (Maximum Magnetic Field - TF)              : {Bmax:.3f} [T]", file=f)
+                print(f"[I] Bmax (Maximum Magnetic Field - TF)              : {parameter_class.Bmax:.3f} [T]", file=f)
                 print(f"[O] B0 (Central Magnetic Field)                     : {B0_solution:.3f} [T]", file=f)
                 print(f"[O] BCS (Magnetic Field CS)                         : {B_CS:.3f} [T]", file=f)
                 print(f"[O] J_E-TF (Enginnering current density TF)         : {J_max_TF_conducteur/1e6:.3f} [MA/m²]", file=f)
                 print(f"[O] J_E-CS (Enginnering current density CS)         : {J_max_CS_conducteur/1e6:.3f} [MA/m²]", file=f)
                 print("-------------------------------------------------------------------------", file=f)
-                print(f"[I] P_fus (Fusion Power)                            : {P_fus:.3f} [MW]", file=f)
+                print(f"[I] P_fus (Fusion Power)                            : {parameter_class.P_fus:.3f} [MW]", file=f)
                 print(f"[O] P_CD (CD Power)                                 : {P_CD:.3f} [MW]", file=f)
                 print(f"[O] P_S (Synchrotron Power)                         : {P_syn_solution:.3f} [MW]", file=f)
                 print(f"[O] P_B (Bremsstrahlung Power)                      : {P_Brem_solution:.3f} [MW]", file=f)
@@ -199,9 +199,9 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
                 print(f"[O] P_elec-net (Net Electrical Power)               : {P_elec_solution:.3f} [MW]", file=f)
                 print(f"[O] Cost ((V_BB+V_TF+V_CS)/P_fus)                   : {cost:.3f} [m^3]", file=f)
                 print("-------------------------------------------------------------------------", file=f)
-                print(f"[I] H (Scaling Law factor)                          : {H:.3f} ", file=f)
-                print(f"[I] Operation (Pulsed / Steady)                     : {Operation_mode} ", file=f)
-                print(f"[I] t (Plateau Time)                                : {Temps_Plateau_input:.3f} ", file=f)
+                print(f"[I] H (Scaling Law factor)                          : {parameter_class.H:.3f} ", file=f)
+                print(f"[I] Operation (Pulsed / Steady)                     : {parameter_class.Operation_mode} ", file=f)
+                print(f"[I] t (Plateau Time)                                : {parameter_class.Temps_Plateau_input:.3f} ", file=f)
                 print(f"[O] tau_E (Confinement Time)                        : {tauE_solution:.3f} [s]", file=f)
                 print(f"[O] Ip (Plasma Current)                             : {Ip_solution:.3f} [MA]", file=f)
                 print(f"[O] Ib (Bootstrap Current)                          : {Ib_solution:.3f} [MA]", file=f)
@@ -209,7 +209,7 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
                 print(f"[O] IOhm (Ohmic Current)                            : {I_Ohm_solution:.3f} [MA]", file=f)
                 print(f"[O] f_b (Bootstrap Fraction)                        : {(Ib_solution/Ip_solution)*1e2:.3f} [%]", file=f)
                 print("-------------------------------------------------------------------------", file=f)
-                print(f"[I] Tbar (Mean Temperature)                         : {Tbar:.3f} [keV]", file=f)
+                print(f"[I] Tbar (Mean Temperature)                         : {parameter_class.Tbar:.3f} [keV]", file=f)
                 print(f"[O] nbar (Average Density)                          : {n_solution:.3f} [10^20 m^-3]", file=f)
                 print(f"[O] nG (Greenwald Density)                          : {nG_solution:.3f} [10^20 m^-3]", file=f)
                 print(f"[O] pbar (Average Pressure)                         : {pbar_solution:.3f} [MPa]", file=f)
@@ -252,7 +252,7 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
             max_limit_power = np.nan
             
             if not np.isnan(R0_a_b_c_d_solution) and not np.isnan(max_limit) and max_limit<1 and R0_a_b_c_d_solution>0 :
-                radial_build = R0
+                radial_build = parameter_class.R0
             
             # Création d'un tableau contenant les valeurs des conditions
             conditions = np.array([n_condition, beta_condition, q_condition])
@@ -362,8 +362,8 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder):
     
     # Créer une figure et un axe principal
     fig, ax = plt.subplots(figsize=(10, 13))
-    svg = f"Bmax={Bmax}_Pfus={P_fus}_scaling_law={Scaling_Law}_Triangularity={δ}_Hfactor={H}_Meca={Choice_Buck_Wedg}_"
-    plt.title(f"$B_{{\mathrm{{max}}}}$ = {Bmax} [T], $P_{{\mathrm{{fus}}}}$ = {P_fus} [MW], scaling law : {Scaling_Law}",fontsize=taille_police_subtitle)
+    svg = f"Bmax={parameter_class.Bmax}_Pfus={parameter_class.P_fus}_scaling_law={parameter_class.Scaling_Law}_Triangularity={δ}_Hfactor={parameter_class.H}_Meca={parameter_class.Choice_Buck_Wedg}_"
+    plt.title(f"$B_{{\mathrm{{max}}}}$ = {parameter_class.Bmax} [T], $P_{{\mathrm{{fus}}}}$ = {parameter_class.P_fus} [MW], scaling law : {parameter_class.Scaling_Law}",fontsize=taille_police_subtitle)
     
 
     title_parameter = "$" + latex(param_1_name) + "$"
@@ -562,9 +562,17 @@ class inputs_management:
         self.extract_inputs()
         
     def read_file(self):
-        fic = open(self.name_file)
-        self.inputs = fic.read()
-        fic.close()
+        with open(self.name_file, 'r', encoding='utf-8') as fic:
+            lines = fic.readlines()
+        
+        cleaned_lines = []
+        for line in lines:
+
+            line = line.split('#')[0].strip()
+            if line: 
+                cleaned_lines.append(line)
+    
+        self.inputs = '\n'.join(cleaned_lines)
         print(self.inputs)
                
     def extract_input_scan(self, input):
@@ -621,6 +629,7 @@ class inputs_management:
         
 if __name__ == "__main__":
     
+    parameter_class = Parameters()
     input_file = "D0FUS_Scan_2D_input.txt"
     
     now = datetime.now()
@@ -631,7 +640,7 @@ if __name__ == "__main__":
     manager = inputs_management(input_file, name_new_folder + "/")
     manager.run()
     
-    D0fus_Scan_2D_generic(manager.param_1, manager.param_2, manager.inputs, name_new_folder + "/")
+    D0fus_Scan_2D_generic(manager.param_1, manager.param_2, manager.inputs, name_new_folder + "/", parameter_class)
     
         
         
