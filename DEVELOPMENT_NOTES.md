@@ -1,5 +1,6 @@
 # To do
 
+* Set a fixed number of ticks (10 by default) in the 2D scan plots -> Arthur
 * Improve output files from D0FUS_2D_Scan_generic -> Eric
 * Put all comments in English
 * Put all variable names in English
@@ -7,7 +8,8 @@
 * Put more explicit comments in D0FUS_parameterization.py, e.g. for ITERP -> Timothé
 * Add legend in 2D scan plots for the radial build + plasma stability contour
 * Use classes as arguments of e.g. run instead of a long list of input and output variables
-* Set a fixed number of ticks (10 by default) in the 2D scan plots -> Arthur
+* Go through all functions and make sure that no global variables are used
+* Change the code structure to remove the imports in cascade
 
 # For discussion
 
