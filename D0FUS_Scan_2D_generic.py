@@ -10,6 +10,7 @@ import os
 import re
 from sympy import symbols, latex
 from datetime import datetime
+from matplotlib.ticker import MaxNLocator
 
 # Répertoire des modules
 base_dir = os.path.dirname(__file__)
@@ -392,6 +393,23 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder, parameter_cl
     plt.xlabel(title_parameter_2 +  " [" + unit_param_2 + "]", fontsize = taille_police_legende)
     plt.ylabel(title_parameter + " [" + unit_param_1 + "]", fontsize = taille_police_legende)
 
+    nb_ticks = 10 
+
+    # ---- Axe Y ----
+    y_ticks = np.linspace(min(param_1_values), max(param_1_values), nb_ticks)
+    ax.set_yticks(np.linspace(0, len(param_1_values) - 1, nb_ticks))  # position sur le graphe
+    ax.set_yticklabels([round(val, 2) for val in y_ticks[::-1]], fontsize=taille_police_legende)
+
+    # ---- Axe X ----
+    x_ticks = np.linspace(min(param_2_values), max(param_2_values), nb_ticks)
+    ax.set_xticks(np.linspace(0, len(param_2_values) - 1, nb_ticks))
+    ax.set_xticklabels([round(val, 2) for val in x_ticks],
+                    rotation=45, ha='right', fontsize=taille_police_legende)
+
+    ax.tick_params(axis='both', which='major', labelsize=20)  # Taille de la police des ticks majeurs
+    ax.tick_params(axis='both', which='minor', labelsize=12)  # Taille de la police des ticks mineurs
+
+
     ### Color Bars
 
     # Créer un axe supplémentaire en dessous de l'axe principal pour les colorbars
@@ -418,22 +436,6 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder, parameter_cl
     # Ajouter les traits en pointillé à la valeur 1 pour chaque color bar
     for cax in [cax1, cax2, cax3]:
         cax.axvline(x=1, color='#333333', linestyle='--', linewidth=2, dashes=(5, 3))
-
-    ### Definition des axes
-
-    nb_ticks = 10 
-
-    # ---- Axe Y ----
-    y_ticks = np.linspace(min(param_1_values), max(param_1_values), nb_ticks)
-    ax.set_yticks(np.linspace(0, len(param_1_values) - 1, nb_ticks))  # position sur le graphe
-    ax.set_yticklabels([round(val, 2) for val in y_ticks[::-1]], fontsize=taille_police_legende)
-
-    # ---- Axe X ----
-    x_ticks = np.linspace(min(param_2_values), max(param_2_values), nb_ticks)
-    ax.set_xticks(np.linspace(0, len(param_2_values) - 1, nb_ticks))
-    ax.set_xticklabels([round(val, 2) for val in x_ticks],
-                    rotation=45, ha='right', fontsize=taille_police_legende)
-
 
     ### Ajouter des contours
 
