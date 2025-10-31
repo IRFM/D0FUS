@@ -140,10 +140,11 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
         
         f_alpha, Q = vars
     
-        # Calculate intermediate values
+        # Calculate the averaged density from the fusion power and other parameters
         nbar_alpha   = f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, κ) 
-        # Alternative with a different calculation of the volume:
+        # Alternative calculation with a different way of calculating the plasma volume:
         # nbar_alpha   = f_nbar_advanced(P_fus, nu_n, nu_T, f_alpha, Tbar, Volume_solution)
+
         pbar_alpha   = f_pbar(nu_n, nu_T, nbar_alpha, Tbar, f_alpha)
         
         # Radiative losses
@@ -152,9 +153,8 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
         P_syn_alpha = f_P_synchrotron(Tbar, R0, a, B0_solution, nbar_alpha, κ, nu_n, nu_T, beta_T, r_synch)
         P_rad_alpha = P_Brem_alpha + P_syn_alpha
         
-        # By taking the previous Q we provide a first approximation of the Ohmic and Auxilary power
-        # By the Q convergence, this values will be coherent 
-        # Proof : by definition of the convergence Q(n-1) = Q(n)
+        # Calculate a first guess of the Ohmic and auxiliary powers from P_fus and Q
+        # (at convergence all these parameters will be consistent with each other)
         if Operation_mode == 'Steady-State' :
             P_Ohm_alpha_init = 0
             P_Aux_alpha_init = P_fus / Q
@@ -165,20 +165,22 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
             print("Choose a valid operation mode ")
             
         tau_E_alpha  = f_tauE(pbar_alpha, Volume_solution, P_Alpha, P_Aux_alpha_init, P_Ohm_alpha_init, P_rad_alpha)
+
         Ip_alpha     = f_Ip(tau_E_alpha, R0, a, κ, δ, nbar_alpha, B0_solution, Atomic_mass,
                             P_Alpha, P_Ohm_alpha_init, P_Aux_alpha_init, P_rad_alpha,
                             H, C_SL,
                             alpha_delta,alpha_M,alpha_kappa,alpha_epsilon, alpha_R,alpha_B,alpha_n,alpha_I,alpha_P)
-        if Bootstrap_choice == 'Freidberg' :
+
+        if Bootstrap_choice == 'Freidberg':
             Ib_alpha = f_Freidberg_Ib(R0, a, κ, pbar_alpha, Ip_alpha)
-        elif Bootstrap_choice == 'Segal' :
+        elif Bootstrap_choice == 'Segal':
             Ib_alpha = f_Segal_Ib(nu_n, nu_T, a/R0, κ, nbar_alpha, Tbar, R0, Ip_alpha)
-        else :
-            print("Choose a valid Bootstrap model")
+        else:
+            print("Choose a valid bootstrap model")
             
         eta_CD_alpha = f_etaCD(a, R0, B0_solution, nbar_alpha, Tbar, nu_n, nu_T)
         
-        # Real Current drive and Ohmic balance needed allowing the convergence on Q
+        # Update the Ohmic and auxiliary powers consistently with current drive requirements
         if Operation_mode == 'Steady-State' :
             P_CD_alpha    = f_PCD(R0, nbar_alpha, Ip_alpha, Ib_alpha, eta_CD_alpha)
             I_CD_alpha    = f_I_CD(R0, nbar_alpha, eta_CD_alpha, P_CD_alpha)
@@ -194,7 +196,7 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
         else:
             print("Choose a valid operation mode ")
         
-        # Calculate new f_alpha
+        # Update f_alpha
         new_f_alpha  = f_He_fraction(nbar_alpha, Tbar, tau_E_alpha, C_Alpha, nu_T)
     
         # Calculate the residuals
