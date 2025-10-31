@@ -55,7 +55,13 @@ class Parameters:
         
     def parse_assignments(self, lines):
         result = []
+        cleaned_lines = []
         for line in lines:
+
+            line = line.split('#')[0].strip()
+            if line: 
+                cleaned_lines.append(line)                
+        for line in cleaned_lines:
             line = line.strip()
             var, val = line.split("=")
             var = var.strip() # remove space and \n (only at the beggining or end of the str)
@@ -367,7 +373,6 @@ if __name__ == "__main__":
     # nu_n  = 0.2 # Meade FED 2002
     # nu_T  = 1.0 # Meade FED 2002
 
-
     # FIRE-Luciole version METIS (cf. slides JFA 02-10-2025)
     # R0 = 2.14
     # a = 0.60
@@ -383,7 +388,7 @@ if __name__ == "__main__":
     # nu_n  = 0.43
     # nu_T  = 0.6 #1.62
 
-    # Sf Plant
+    # SF-Plant 2 GW tokamak
     # R0 = 6
     # a = 1.6
     # Pfus = 2000
