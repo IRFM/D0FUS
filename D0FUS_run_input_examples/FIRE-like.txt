@@ -1,9 +1,11 @@
 R0 = 2.14
 a = 0.595
+Option_Kappa = Manual
 κ_manual = 2.0
+b = 0.1 
 P_fus = 150
 Bmax = 14.9
-b = 0.1 
+Supra_choice = Rebco
 Operation_mode = Pulsed
 P_aux_input = 15
 Choice_Buck_Wedg = Bucking
