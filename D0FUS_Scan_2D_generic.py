@@ -11,35 +11,30 @@ import re
 from sympy import symbols, latex
 from datetime import datetime
 
-# Répertoire des modules
+
+#%% Set modules
 base_dir = os.path.dirname(__file__)
 dofus_dir = os.path.join(base_dir, 'D0FUS_BIB')
-
-# Ajouter le répertoire au sys.path s’il n’y est pas déjà
 if dofus_dir not in sys.path:
     sys.path.append(dofus_dir)
 
-# Trouver tous les fichiers .py dans D0FUS_BIB (hors __init__.py)
 module_files = [
     f for f in os.listdir(dofus_dir)
     if f.endswith('.py') and f != '__init__.py'
 ]
 
-# Convertir les noms de fichiers en noms de modules
 module_names = [os.path.splitext(f)[0] for f in module_files]
 
-# Supprimer les modules du cache (sys.modules)
+# Suppress modules from cache (sys.modules) and reload them
 for mod in module_names:
-    full_mod_name = mod  # Ex: 'D0FUS_parameterization'
+    full_mod_name = mod
     if full_mod_name in sys.modules:
         del sys.modules[full_mod_name]
-
-# Recharger dynamiquement chaque module avec import *
 for mod in module_names:
     exec(f'from {mod} import *')
 
-print("----- D0FUS reloaded -----")
 
+#%%
 class DualWriter:
     
     def __init__(self, *files):
@@ -48,8 +43,7 @@ class DualWriter:
         for ff in self._files:
             ff.write(data)
 
-
-def convertion_input_unit(input):
+def conversion_input_unit(input):
     
     if input == "R0" or input == "a" or input == "b" :
         return "m"
@@ -65,28 +59,27 @@ def convertion_input_unit(input):
 def set_module_var(class_, name, value):
     setattr(class_, name, value)
         
-
-
+#%%
 def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder, parameter_class): 
 
     param_1_min, param_1_max = param_1[1] , param_1[2]
     param_1_name = param_1[0]
-    unit_param_1 = convertion_input_unit(param_1_name)
+    unit_param_1 = conversion_input_unit(param_1_name)
     param_1_values = np.linspace(param_1_min, param_1_max, int(param_1[3]))
      
     param_2_min, param_2_max = param_2[1] , param_2[2]
     param_2_name = param_2[0]
-    unit_param_2 = convertion_input_unit(param_2_name)
+    unit_param_2 = conversion_input_unit(param_2_name)
     param_2_values = np.linspace(param_2_min, param_2_max, int(param_2[3]) )
     
     print(unit_param_1, unit_param_2, param_1_name, param_2_name)
   
-    # Matrix creations
+    # Create matrices where results will be stored
     max_limits_density = np.zeros((len(param_1_values),len(param_2_values)))
     max_limits_security = np.zeros((len(param_1_values),len(param_2_values)))
     max_limits_beta = np.zeros((len(param_1_values),len(param_2_values)))
-    radial_build_matrix = np.zeros((len(param_1_values),len(param_2_values)))
     max_limits_matrix = np.zeros((len(param_1_values),len(param_2_values)))
+    radial_build_matrix = np.zeros((len(param_1_values),len(param_2_values)))
     
     Heat_matrix = np.zeros((len(param_1_values),len(param_2_values)))
     Cost_matrix = np.zeros((len(param_1_values),len(param_2_values)))
@@ -117,19 +110,19 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder, parameter_cl
     x = 0
     y = 0
     
-    # Scanning R0
+    # Scan param_2
     for param_2 in tqdm(param_2_values , desc='Scanning parameters'):
         
         # Increment after iterations
         y = 0
         
-        # Scanning param_1
-        for param_1 in param_1_values  :
+        # Scan param_1
+        for param_1 in param_1_values:
             
             set_module_var(parameter_class, param_1_name, param_1)
             set_module_var(parameter_class, param_2_name, param_2)
             
-            # Main calcul
+            # Run D0FUS
             (B0_solution, B_CS, B_pol_solution,
             tauE_solution, W_th_solution,
             Q_solution, Volume_solution, Surface_solution,
@@ -156,12 +149,11 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder, parameter_cl
             parameter_class.Operation_mode, parameter_class.fatigue, parameter_class.P_aux_input)
         
             with open(outputs_folder + output_file, "a", encoding="utf-8") as _f:
-
                 
                 # Allows writing to the terminal and output file
                 f = DualWriter(sys.stdout, _f)
                 
-                # Clean display of results
+                # Print input and output parameters
                 print("=========================================================================", file=f)
                 print("=== Calculation Results ===", file=f)
                 print("-------------------------------------------------------------------------", file=f)
@@ -234,7 +226,7 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder, parameter_cl
                 
                 sys.stdout = sys.__stdout__  
                        
-            # Verifier les conditions
+            # Calculate plasma stablity indicators
             n_condition = n_solution / nG_solution
             beta_condition = betaN_solution / betaN
             q_condition = q / qstar_solution
@@ -353,76 +345,60 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder, parameter_cl
     inverted_f_alpha_matrix = f_alpha_matrix[::-1, :]
     inverted_TF_ratio_matrix = TF_ratio_matrix[::-1, :]
 
-    # Ask the user to choose the second topologic map :
     chosen_isocontour = input("Choose a first iso-contour parameter (Ip, n, beta, q95, B0, BCS, c, d, c&d): ")
     chosen_topologic = input("Choose a second iso-contour parameter (Heat, Cost, Q, Gamma_n, L_H, Alpha, TF): ")
     
-    # Créer une figure et un axe principal
+    # Create figure and main axes
     fig, ax = plt.subplots(figsize=(10, 13))
     svg = f"Bmax={parameter_class.Bmax}_Pfus={parameter_class.P_fus}_scaling_law={parameter_class.Scaling_Law}_Triangularity={δ}_Hfactor={parameter_class.H}_Meca={parameter_class.Choice_Buck_Wedg}_"
     plt.title(f"$B_{{\mathrm{{max}}}}$ = {parameter_class.Bmax} [T], $P_{{\mathrm{{fus}}}}$ = {parameter_class.P_fus} [MW], scaling law : {parameter_class.Scaling_Law}",fontsize=taille_police_subtitle)
     
-
     title_parameter = "$" + latex(param_1_name) + "$"
     title_parameter_2 = "$" + latex(param_2_name) + "$"
  
     #plt.suptitle(f"Parameter space : {title_parameter}, {title_parameter_2}", fontsize=taille_titre,y=0.94, fontweight='bold')
 
-    # Calculer le minimum et le maximum des valeurs numériques
-    min_matrix = 0.5
-    max_matrix = 2
-    # Choix des couleurs
+    # Plot heat maps for plasma stability indicators with imshow
+    min_stability_heatmap = 0.5
+    max_stability_heatmap = 2
     color_choice_density = 'Blues'
     color_choice_security = 'Greens'
-    color_choice_beta = 'Reds'
-    # Afficher les heatmap pour les matrices avec imshow
-   
-    im_density = ax.imshow(inverted_matrix_density_limit, cmap=color_choice_density, aspect='auto', interpolation='nearest', norm=Normalize(vmin=min_matrix, vmax=max_matrix))
-    
+    color_choice_beta = 'Reds'   
+    im_density = ax.imshow(inverted_matrix_density_limit, cmap=color_choice_density, aspect='auto', interpolation='nearest', norm=Normalize(vmin=min_stability_heatmap, vmax=max_stability_heatmap))
+    im_security = ax.imshow(inverted_matrix_security_limit, cmap=color_choice_security, aspect='auto', interpolation='nearest', norm=Normalize(vmin=min_stability_heatmap, vmax=max_stability_heatmap))
+    im_beta = ax.imshow(inverted_matrix_beta_limit, cmap=color_choice_beta, aspect='auto', interpolation='nearest', norm=Normalize(vmin=min_stability_heatmap, vmax=max_stability_heatmap))
 
-    im_security = ax.imshow(inverted_matrix_security_limit, cmap=color_choice_security, aspect='auto', interpolation='nearest', norm=Normalize(vmin=min_matrix, vmax=max_matrix))
-    im_beta = ax.imshow(inverted_matrix_beta_limit, cmap=color_choice_beta, aspect='auto', interpolation='nearest', norm=Normalize(vmin=min_matrix, vmax=max_matrix))
-
-    # Coutour limite plasma = 1
+    # Plot plasma stability boundary
     threshold = 1.0
     ax.contour(inverted_matrix_plasma_limit, levels=[threshold], colors='#555555', linestyles='dashed', linewidths=2)
     grey_dashed_line = mlines.Line2D([], [], color='#555555', linestyle='dashed', linewidth=2, label='Plasma stability boundary')
 
-    # Personnaliser les axes et le titre
+    # Axes labels and ticks
     plt.xlabel(title_parameter_2 +  " [" + unit_param_2 + "]", fontsize = taille_police_legende)
     plt.ylabel(title_parameter + " [" + unit_param_1 + "]", fontsize = taille_police_legende)
 
     nb_ticks = 10 
 
-    # ---- Axe Y ----
     y_ticks = np.linspace(min(param_1_values), max(param_1_values), nb_ticks)
     ax.set_yticks(np.linspace(0, len(param_1_values) - 1, nb_ticks))  # position sur le graphe
     ax.set_yticklabels([round(val, 2) for val in y_ticks[::-1]], fontsize=taille_police_legende)
 
-    # ---- Axe X ----
     x_ticks = np.linspace(min(param_2_values), max(param_2_values), nb_ticks)
     ax.set_xticks(np.linspace(0, len(param_2_values) - 1, nb_ticks))
     ax.set_xticklabels([round(val, 2) for val in x_ticks],
                     rotation=45, ha='right', fontsize=taille_police_legende)
 
-    ax.tick_params(axis='both', which='major', labelsize=20)  # Taille de la police des ticks majeurs
-    ax.tick_params(axis='both', which='minor', labelsize=12)  # Taille de la police des ticks mineurs
+    # Create colorbars for plasma stability indicators
 
-
-    ### Color Bars
-
-    # Créer un axe supplémentaire en dessous de l'axe principal pour les colorbars
     divider = make_axes_locatable(ax)
     cax1 = divider.append_axes("bottom", size="5%", pad=1.3)
     cax2 = divider.append_axes("bottom", size="5%", pad=0.1, sharex=cax1)
     cax3 = divider.append_axes("bottom", size="5%", pad=0.1, sharex=cax1)
     
-    # Ajouter des annotations textuelles à côté des colorbars
     cax1.annotate('n/$n_{\mathrm{G}}$', xy=(-0.01, 0.5), xycoords='axes fraction', ha='right', va='center', fontsize=taille_police_other)
     cax2.annotate(r'$\beta$/$\beta_{T}$', xy=(-0.01, 0.5), xycoords='axes fraction', ha='right', va='center', fontsize=taille_police_other)
     cax3.annotate('$q_{\mathrm{K}}$/$q_{\mathrm{*}}$', xy=(-0.01, 0.5), xycoords='axes fraction', ha='right', va='center', fontsize=taille_police_other)
     
-    # Créer les colorbars avec les orientations désirées
     cbar_density = plt.colorbar(im_density, cax=cax1, orientation='horizontal')
     tick_labels = cbar_density.ax.xaxis.get_ticklabels()
     tick_labels[-1].set_visible(False)
@@ -432,11 +408,11 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder, parameter_cl
     cbar_security = plt.colorbar(im_security, cax=cax3, orientation='horizontal')
     tick_labels = cbar_security.ax.xaxis.get_ticklabels()
     
-    # Ajouter les traits en pointillé à la valeur 1 pour chaque color bar
+    # Add dahsed line at the value of 1 in each colorbar
     for cax in [cax1, cax2, cax3]:
         cax.axvline(x=1, color='#333333', linestyle='--', linewidth=2, dashes=(5, 3))
 
-    ### Ajouter des contours
+    # Add iso-contour lines
 
     # Remplacer NaN par -1 et les autres par 1 dans la matrice pour les contours du radial build
     filled_matrix = np.where(np.isnan(inverted_matrix_radial_build), -1, 1)
@@ -446,7 +422,7 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder, parameter_cl
     contour_radial_line = ax.contour(
     filled_matrix, 
     levels=contour_level,
-    colors='black'   # Noir
+    colors='black'
     )
     # Création d'une ligne de légende personnalisée correspondant au style du contour
     black_line = mlines.Line2D([], [], color='black', label='Radial build limit')
@@ -489,7 +465,7 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder, parameter_cl
         ax.clabel(contour_lines, inline=True, fmt='%.2f', fontsize=taille_police_topological_map)
         grey_line = mlines.Line2D([], [], color='#555555', label='CS + TF width [m]')
     else:
-        print('Choose a relevant Iso parameter')
+        print('Choose a relevant first iso-contour parameter')
 
     if chosen_topologic == 'Heat' or chosen_topologic == 'heat':
         # Heat contours
@@ -527,7 +503,7 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder, parameter_cl
         ax.clabel(contour_lines_TF, inline=True, fmt='%d', fontsize=taille_police_background_map)
         white_line = mlines.Line2D([], [], color='white', label='TF tension fraction [%]')
     else :
-        print('Choose a relevant background parameter')
+        print('Choose a relevant second iso-contour parameter')
     
     # Légende
     ax.legend(handles=[grey_line,white_line, grey_dashed_line], loc='upper left', facecolor='lightgrey', fontsize=taille_police_legende)
@@ -546,9 +522,7 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder, parameter_cl
     # Reinitialisation des paramètres par defaut
     plt.rcdefaults()
     
-#%% a and R0 scan
-# 2D matrix calculation
-
+#%% 
 
 class inputs_management:
     
