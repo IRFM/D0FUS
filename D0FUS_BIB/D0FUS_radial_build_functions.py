@@ -25,7 +25,7 @@ def Steel(Chosen_Steel):
     elif Chosen_Steel == 'N50H':
         σ = 1000.E6        # Mechanical limit of the steel considered in [Pa]
     elif Chosen_Steel == 'Manual':
-        σ = σ_manual.E6        # Mechanical limit of the steel considered in [Pa]
+        σ = σ_manual*1.E6        # Mechanical limit of the steel considered in [Pa]
     else : 
         print('Choose a valid steel')
     return(σ)
