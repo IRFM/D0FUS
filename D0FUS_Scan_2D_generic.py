@@ -10,7 +10,6 @@ import os
 import re
 from sympy import symbols, latex
 from datetime import datetime
-from matplotlib.ticker import MaxNLocator
 
 # Répertoire des modules
 base_dir = os.path.dirname(__file__)
