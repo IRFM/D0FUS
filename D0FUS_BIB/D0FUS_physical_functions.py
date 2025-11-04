@@ -1449,8 +1449,7 @@ def P_Thresh_New_Ip(n_bar, B0, a, R0, κ, Ip, Atomic_mass):
 def f_q95(B0, Ip, R0, a, κ, δ):
     """
     
-    Estimate the safety factor at 95% of the separatrix q_95
-    Source : ITER Chapter  1: Overview and summary 1999 and HELIOS code J.Johner
+    Estimate q95, the safety factor at psi_N=0.95
     
     Parameters
     ----------
@@ -1458,17 +1457,22 @@ def f_q95(B0, Ip, R0, a, κ, δ):
     Ip : Plasma current [MA]
     R0 : Major radius [m]
     a : Minor radius [m]
-    κ : Elongation
-    δ : triangularity
+    κ : Elongation of the LCFS
+    δ : Triangularity of the LCFS
     
     Returns
     -------
-    q95 : safety factor at 95% of the separatrix
+    q95
     
     """
-    Aspect_ratio = R0 / a
-    # Calcul de q95
-    q95 = (2 * np.pi * a**2 * B0) / (μ0  * Ip*1e6 * R0) * (1.17-0.65/Aspect_ratio)/(1-1/Aspect_ratio**2)*(1+κ**2*(1+2*δ**2-1.2*δ**3))/2
+    Aspect_ratio = R0/a
+    
+    # Formula from Johner FST 2011 (used in the HELIOS code)
+    # q95 = (2 * np.pi * a**2 * B0) / (μ0  * Ip*1e6 * R0) * (1.17-0.65/Aspect_ratio)/(1-1/Aspect_ratio**2)*(1+κ**2*(1+2*δ**2-1.2*δ**3))/2
+    
+    # Formula from Sauter FED 2016 considering that w07 = 1, i.e. assuming no squareness
+    q95 = (4.1 * a**2 * B0) / (R0 * Ip) * (1 + 1.2*(κ-1) + 0.56*(κ-1)**2) * (1 + 0.09*δ + 0.16*δ**2) * (1 + 0.45*δ/Aspect_ratio) / (1 - 0.74/Aspect_ratio)  
+    
     return q95
 
 def f_q_mhd(a, Bt, R, Ip, eps, kappa95, delta95):
