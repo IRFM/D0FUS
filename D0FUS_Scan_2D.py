@@ -42,8 +42,8 @@ print("----- D0FUS reloaded -----")
 
 def R0_a_scan(Bmax, P_fus):
     
-    a_min, a_max, a_N = 1, 3, 25
-    R0_min, R0_max, R0_N = 3, 9, 25   
+    a_min, a_max, a_N = 0.3, 2, 10 #1, 3, 25
+    R0_min, R0_max, R0_N = 1, 6, 10 #3, 9, 25   
 
     a_values = np.linspace(a_min, a_max, a_N)
     R0_values = np.linspace(R0_min, R0_max, R0_N)
@@ -94,7 +94,7 @@ def R0_a_scan(Bmax, P_fus):
             Ip_solution, Ib_solution, I_CD_solution, I_Ohm_solution,
             n_solution, nG_solution, pbar_solution,
             betaN_solution, betaT_solution, betaP_solution,
-            qstar_solution, q95_solution, q_mhd_solution,
+            qstar_solution, q95_solution,
             P_CD, P_sep, P_Thresh, eta_CD, P_elec_solution,
             cost, P_Brem_solution, P_syn_solution,
             heat, heat_par_solution, heat_pol_solution, lambda_q_Eich_m, q_target_Eich,
@@ -414,8 +414,8 @@ def R0_a_scan(Bmax, P_fus):
     plt.rcdefaults()
         
 if __name__ == "__main__":
-    Bmax = 12
-    P_fus = 2000
+    Bmax = 14.9 #20
+    P_fus = 100 #55
     R0_a_scan(Bmax,P_fus)
         
         

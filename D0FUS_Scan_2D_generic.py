@@ -129,7 +129,7 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder, parameter_cl
             Ip_solution, Ib_solution, I_CD_solution, I_Ohm_solution,
             n_solution, nG_solution, pbar_solution,
             betaN_solution, betaT_solution, betaP_solution,
-            qstar_solution, q95_solution, q_mhd_solution,
+            qstar_solution, q95_solution,
             P_CD, P_sep, P_Thresh, eta_CD, P_elec_solution,
             cost, P_Brem_solution, P_syn_solution,
             heat, heat_par_solution, heat_pol_solution, lambda_q_Eich_m, q_target_Eich,
@@ -212,7 +212,6 @@ def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder, parameter_cl
                 print("-------------------------------------------------------------------------", file=f)
                 print(f"[O] q* (Kink Safety Factor)                         : {qstar_solution:.3f}", file=f)
                 print(f"[O] q95 (Safety Factor at 95%)                      : {q95_solution:.3f}", file=f)
-                print(f"[O] q_MHD (MHD Safety Factor)                       : {q_mhd_solution:.3f}", file=f)
                 print("-------------------------------------------------------------------------", file=f)
                 print(f"[O] P_sep (Separatrix Power)                        : {P_sep:.3f} [MW]", file=f)
                 print(f"[O] P_Thresh (L-H Power Threshold)                  : {P_Thresh:.3f} [MW]", file=f)

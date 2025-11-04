@@ -696,19 +696,19 @@ def f_nG(Ip, a):
 def f_qstar(a, B0, R0, Ip, κ):
     """
     
-    Calculation of the safety factor
+    Calculation of qstar, the kink safety factor (see Freidberg et al. PoP 2015, eq. 30)
     
     Parameters
     ----------
-    a : Minor radius [m]
-    B0 : The central magnetic field [T]
+    a  : Minor radius [m]
+    B0 : Central magnetic field [T]
     R0 : Major radius [m]
     Ip : Plasma current [MA]
-    κ : Elongation
+    κ  : Elongation of the LCFS
         
     Returns
     -------
-    qstar : The safety factor
+    qstar
     
     """
     
@@ -1475,36 +1475,6 @@ def f_q95(B0, Ip, R0, a, κ, δ):
     
     return q95
 
-def f_q_mhd(a, Bt, R, Ip, eps, kappa95, delta95):
-    """
-    
-    Calculates the MHD safety factor q from the definition of the shaping factor S_k
-
-    Parameters
-    ----------
-    a : Plasma minor radius [m].
-    Bt : Toroidal magnetic field [T].
-    R : Major radius of the tokamak [m].
-    Ip : Plasma current [A].
-    eps : Inverse aspect ratio (a/R).
-    kappa95 : Elongation at the 95% flux surface.
-    delta95 : Triangularity at the 95% flux surface.
-
-    Returns
-    -------
-    q_MHD : MHD safety factor
-    
-    """
-    # Calculate the shaping factor S_k
-    S_k = (
-        0.5 * (1.17 - 0.65 * eps) / (1.0 - eps**2)**2
-        * (1.0 + kappa95**2 * (1.0 + 2.0 * delta95**2 - 1.2 * delta95**3))
-    )
-
-    # Calculate q
-    q_MHD = 5 * a**2 * Bt * S_k / (R * Ip)
-
-    return q_MHD
 
 def f_He_fraction(n_bar, T_bar, tauE, C_Alpha, nu_T):
     """

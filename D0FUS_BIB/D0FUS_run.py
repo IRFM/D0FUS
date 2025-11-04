@@ -277,7 +277,6 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
     # Calculate the derived quantities from the solution found above
     qstar_solution        = f_qstar(a, B0_solution, R0, Ip_solution, κ)
     q95_solution          = f_q95(B0_solution,Ip_solution,R0,a,κ,δ)
-    q_mhd_solution        = f_q_mhd(a, B0_solution, R0, Ip_solution, a/R0, κ, δ)
     B_pol_solution        = f_Bpol(q95_solution, B0_solution, a, R0)
     betaT_solution        = f_beta_T(pbar_solution,B0_solution)
     betaP_solution        = f_beta_P(a, κ, pbar_solution, Ip_solution)
@@ -346,7 +345,7 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
             Ip_solution, Ib_solution, I_CD_solution, I_Ohm_solution,
             nbar_solution, nG_solution, pbar_solution,
             betaN_solution, betaT_solution, betaP_solution,
-            qstar_solution, q95_solution, q_mhd_solution,
+            qstar_solution, q95_solution,
             P_CD_solution, P_sep_solution, P_Thresh, eta_CD, P_elec_solution,
             cost_solution, P_Brem_solution, P_syn_solution,
             heat_D0FUS_solution, heat_par_solution, heat_pol_solution, lambda_q_Eich_m, q_target_Eich,
@@ -380,7 +379,7 @@ if __name__ == "__main__":
         Ip_solution, Ib_solution, I_CD_solution, I_Ohm_solution,
         nbar_solution, nG_solution, pbar_solution,
         betaN_solution, betaT_solution, betaP_solution,
-        qstar_solution, q95_solution, q_mhd_solution,
+        qstar_solution, q95_solution,
         P_CD, P_sep, P_Thresh, eta_CD, P_elec_solution,
         cost, P_Brem_solution, P_syn_solution,
         heat_D0FUS_solution, heat_par_solution, heat_pol_solution,
@@ -469,7 +468,6 @@ if __name__ == "__main__":
         print("-------------------------------------------------------------------------", file=f)
         print(f"[O] q* (Kink Safety Factor)                         : {qstar_solution:.3f}", file=f)
         print(f"[O] q95 (Safety Factor at 95%)                      : {q95_solution:.3f}", file=f)
-        print(f"[O] q_MHD (MHD Safety Factor)                       : {q_mhd_solution:.3f}", file=f)
         print("-------------------------------------------------------------------------", file=f)
         print(f"[O] P_sep (Separatrix Power)                        : {P_sep:.3f} [MW]", file=f)
         print(f"[O] P_Thresh (L-H Power Threshold)                  : {P_Thresh:.3f} [MW]", file=f)
