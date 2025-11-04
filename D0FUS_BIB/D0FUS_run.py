@@ -138,8 +138,8 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
     # Function to solve for both the alpha particle fraction f_alpha and Q
     def to_solve_f_alpha_and_Q(vars):
         
-        f_alpha, Q = vars
-    
+        f_alpha, Q = vars  
+ 
         # Calculate the averaged density from the fusion power and other parameters
         nbar_alpha   = f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, κ) 
         # Alternative calculation with a different way of calculating the plasma volume:
@@ -197,7 +197,7 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
             print("Choose a valid operation mode ")
         
         # Update f_alpha
-        new_f_alpha  = f_He_fraction(nbar_alpha, Tbar, tau_E_alpha, C_Alpha, nu_T)
+        new_f_alpha  = f_He_fraction(nbar_alpha, Tbar, tau_E_alpha, C_Alpha, nu_T)   
     
         # Calculate the residuals
         f_alpha_residual = (new_f_alpha - f_alpha) * 100 / new_f_alpha    # In % to ease the convergence
@@ -216,7 +216,7 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
         
         initial_guesses = [[f_a, Q] for f_a in f_alpha_guesses for Q in Q_guesses]
         
-        for method in ['lm', 'hybr', 'df-sane']:  # Plusieurs méthodes
+        for method in ['lm', 'hybr', 'df-sane']:  # Try several methods
             for guess in initial_guesses:
                 try:
                     result = root(to_solve_f_alpha_and_Q, guess, method=method, tol=1e-8)
@@ -224,6 +224,8 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
                         f_alpha, Q = result.x
                         if 0 <= f_alpha <= 1 and Q >= 0:
                             return (f_alpha, Q)
+                    else: 
+                        print("!!! Convergence issue in finding f_alpha and Q !!!")
                 except Exception:
                     continue
                     
@@ -265,12 +267,12 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
                           alpha_delta,alpha_M,alpha_kappa,alpha_epsilon, alpha_R,alpha_B,alpha_n,alpha_I,alpha_P)
 
     # Calculate the bootstrap current
-    if Bootstrap_choice == 'Freidberg' :
+    if Bootstrap_choice == 'Freidberg':
         Ib_solution = f_Freidberg_Ib(R0, a, κ, pbar_solution, Ip_solution)
-    elif Bootstrap_choice == 'Segal' :
+    elif Bootstrap_choice == 'Segal':
         Ib_solution = f_Segal_Ib(nu_n, nu_T, a/R0, κ, nbar_solution, Tbar, R0, Ip_solution)
-    else :
-        print("Choose a valid Bootstrap model")
+    else:
+        print("Choose a valid bootstrap model")
 
     # Calculate the derived quantities from the solution found above
     qstar_solution        = f_qstar(a, B0_solution, R0, Ip_solution, κ)
@@ -431,8 +433,8 @@ if __name__ == "__main__":
         print(f"[I] Bmax (Maximum Magnetic Field - TF)              : {p.Bmax:.3f} [T]", file=f)
         print(f"[O] B0 (Central Magnetic Field)                     : {B0_solution:.3f} [T]", file=f)
         print(f"[O] BCS (Magnetic Field CS)                         : {B_CS:.3f} [T]", file=f)
-        print(f"[O] J_E-TF (Enginnering current density TF)         : {J_max_TF_conducteur/1e6:.3f} [MA/m²]", file=f)
-        print(f"[O] J_E-CS (Enginnering current density CS)         : {J_max_CS_conducteur/1e6:.3f} [MA/m²]", file=f)
+        print(f"[O] J_E-TF (Engineering current density TF)         : {J_max_TF_conducteur/1e6:.3f} [MA/m²]", file=f)
+        print(f"[O] J_E-CS (Engineering current density CS)         : {J_max_CS_conducteur/1e6:.3f} [MA/m²]", file=f)
         print("-------------------------------------------------------------------------", file=f)
         print(f"[I] P_fus (Fusion Power)                            : {p.P_fus:.3f} [MW]", file=f)
         print(f"[O] P_CD (CD Power)                                 : {P_CD:.3f} [MW]", file=f)
