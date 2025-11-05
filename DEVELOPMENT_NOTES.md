@@ -13,6 +13,8 @@
 * Change the code structure to remove the imports in cascade
 * Use more adequate variable names, e.g. q_limit instead of q 
 * Give references for the models used, e.g. for the confinement time scaling laws -> Timothé
+* Remove function in function
+* only 1  __name__ == '__main__' per file
 
 # For discussion
 
