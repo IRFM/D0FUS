@@ -1,625 +1,596 @@
-# -*- coding: utf-8 -*-
 """
-Created on Tue Apr 23 15:08:01 2024
+D0FUS Scan Module
+Generates 2D parameter space maps with full visualization
 
-@author: TA276941
+Created on: Dec 2023
+Author: Auclair Timothe
 """
-#%% Import
+
 import sys
 import os
-import re
-from sympy import symbols, latex
 from datetime import datetime
+import shutil
+
+# Add parent directory to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+# Import all necessary modules
+from D0FUS_BIB.D0FUS_parameterization import *
+from D0FUS_BIB.D0FUS_radial_build_functions import *
+
+# Try to import physical functions if they exist in a separate file
+try:
+    from D0FUS_BIB.D0FUS_physical_functions import *
+except ImportError:
+    pass  # Functions might be in radial_build_functions
+
+from D0FUS_EXE.D0FUS_run import run, Parameters
 
 
-#%% Set modules
-base_dir = os.path.dirname(__file__)
-dofus_dir = os.path.join(base_dir, 'D0FUS_BIB')
-if dofus_dir not in sys.path:
-    sys.path.append(dofus_dir)
-
-module_files = [
-    f for f in os.listdir(dofus_dir)
-    if f.endswith('.py') and f != '__init__.py'
-]
-
-module_names = [os.path.splitext(f)[0] for f in module_files]
-
-# Suppress modules from cache (sys.modules) and reload them
-for mod in module_names:
-    full_mod_name = mod
-    if full_mod_name in sys.modules:
-        del sys.modules[full_mod_name]
-for mod in module_names:
-    exec(f'from {mod} import *')
-
-
-#%%
-class DualWriter:
+def R0_a_scan(params, scan_config=None):
+    """
+    Perform 2D scan over R0 and a parameters
     
-    def __init__(self, *files):
-        self._files = files
-    def write(self, data):
-        for ff in self._files:
-            ff.write(data)
-
-def conversion_input_unit(input):
+    Args:
+        params: Parameters object with baseline configuration
+        scan_config: Dict with scan parameters (optional)
     
-    if input == "R0" or input == "a" or input == "b" :
-        return "m"
-    elif input == "P_fus":
-        return "MW"
-    elif input == "Bmax":
-        return "T"
-    elif input == "Tbar":
-        return "keV"
+    Returns:
+        matrices: Dict containing all calculated matrices
+        a_values: Array of minor radius values
+        R0_values: Array of major radius values
+    """
     
-    return ""
-
-def set_module_var(class_, name, value):
-    setattr(class_, name, value)
-        
-#%%
-def D0fus_Scan_2D_generic(param_1, param_2, inputs, outputs_folder, parameter_class): 
-
-    param_1_min, param_1_max = param_1[1] , param_1[2]
-    param_1_name = param_1[0]
-    unit_param_1 = conversion_input_unit(param_1_name)
-    param_1_values = np.linspace(param_1_min, param_1_max, int(param_1[3]))
-     
-    param_2_min, param_2_max = param_2[1] , param_2[2]
-    param_2_name = param_2[0]
-    unit_param_2 = conversion_input_unit(param_2_name)
-    param_2_values = np.linspace(param_2_min, param_2_max, int(param_2[3]) )
+    # Default scan configuration
+    if scan_config is None:
+        scan_config = {
+            'a_min': 1, 'a_max': 3, 'a_N': 25,
+            'R0_min': 3, 'R0_max': 9, 'R0_N': 25
+        }
     
-    print(unit_param_1, unit_param_2, param_1_name, param_2_name)
-  
-    # Create matrices where results will be stored
-    max_limits_density = np.zeros((len(param_1_values),len(param_2_values)))
-    max_limits_security = np.zeros((len(param_1_values),len(param_2_values)))
-    max_limits_beta = np.zeros((len(param_1_values),len(param_2_values)))
-    max_limits_matrix = np.zeros((len(param_1_values),len(param_2_values)))
-    radial_build_matrix = np.zeros((len(param_1_values),len(param_2_values)))
+    a_values = np.linspace(scan_config['a_min'], scan_config['a_max'], scan_config['a_N'])
+    R0_values = np.linspace(scan_config['R0_min'], scan_config['R0_max'], scan_config['R0_N'])
     
-    Heat_matrix = np.zeros((len(param_1_values),len(param_2_values)))
-    Cost_matrix = np.zeros((len(param_1_values),len(param_2_values)))
-    Q_matrix = np.zeros((len(param_1_values),len(param_2_values)))
-    P_CD_matrix = np.zeros((len(param_1_values),len(param_2_values)))
-    Gamma_n_matrix = np.zeros((len(param_1_values),len(param_2_values)))
-    L_H_matrix = np.zeros((len(param_1_values),len(param_2_values)))
-    f_alpha_matrix = np.zeros((len(param_1_values),len(param_2_values)))
-    TF_ratio_matrix = np.zeros((len(param_1_values),len(param_2_values)))
-    c_matrix = np.zeros((len(param_1_values),len(param_2_values)))
-    d_matrix = np.zeros((len(param_1_values),len(param_2_values)))
+    # Initialize all matrices
+    matrices = {
+        'density': np.zeros((len(a_values), len(R0_values))),
+        'security': np.zeros((len(a_values), len(R0_values))),
+        'beta': np.zeros((len(a_values), len(R0_values))),
+        'radial_build': np.zeros((len(a_values), len(R0_values))),
+        'limits': np.zeros((len(a_values), len(R0_values))),
+        'Heat': np.zeros((len(a_values), len(R0_values))),
+        'Cost': np.zeros((len(a_values), len(R0_values))),
+        'Q': np.zeros((len(a_values), len(R0_values))),
+        'P_CD': np.zeros((len(a_values), len(R0_values))),
+        'Gamma_n': np.zeros((len(a_values), len(R0_values))),
+        'L_H': np.zeros((len(a_values), len(R0_values))),
+        'f_alpha': np.zeros((len(a_values), len(R0_values))),
+        'TF_ratio': np.zeros((len(a_values), len(R0_values))),
+        'Ip': np.zeros((len(a_values), len(R0_values))),
+        'n': np.zeros((len(a_values), len(R0_values))),
+        'beta_N': np.zeros((len(a_values), len(R0_values))),
+        'q95': np.zeros((len(a_values), len(R0_values))),
+        'B0': np.zeros((len(a_values), len(R0_values))),
+        'BCS': np.zeros((len(a_values), len(R0_values))),
+        'c': np.zeros((len(a_values), len(R0_values))),
+        'd': np.zeros((len(a_values), len(R0_values)))
+    }
     
-    Ip_matrix = np.zeros((len(param_1_values),len(param_2_values)))
-    n_matrix = np.zeros((len(param_1_values),len(param_2_values)))
-    beta_matrix = np.zeros((len(param_1_values),len(param_2_values)))
-    q95_matrix = np.zeros((len(param_1_values),len(param_2_values)))
-    B0_matrix = np.zeros((len(param_1_values),len(param_2_values)))
-    BCS_matrix = np.zeros((len(param_1_values),len(param_2_values)))
- 
+    print(f"\nStarting 2D scan:")
+    print(f"  a: [{scan_config['a_min']}, {scan_config['a_max']}] m with {scan_config['a_N']} points")
+    print(f"  R0: [{scan_config['R0_min']}, {scan_config['R0_max']}] m with {scan_config['R0_N']} points")
+    print(f"  Total calculations: {len(a_values) * len(R0_values)}\n")
     
-
-    
-    
-    for elem in inputs:
-        set_module_var(parameter_class, elem[0], elem[1])
-        
-    # Initialisation
-    x = 0
-    y = 0
-    
-    # Scan param_2
-    for param_2 in tqdm(param_2_values , desc='Scanning parameters'):
-        
-        # Increment after iterations
-        y = 0
-        
-        # Scan param_1
-        for param_1 in param_1_values:
-            
-            set_module_var(parameter_class, param_1_name, param_1)
-            set_module_var(parameter_class, param_2_name, param_2)
-            
-            # Run D0FUS
-            (B0_solution, B_CS, B_pol_solution,
-            tauE_solution, W_th_solution,
-            Q_solution, Volume_solution, Surface_solution,
-            Ip_solution, Ib_solution, I_CD_solution, I_Ohm_solution,
-            n_solution, nG_solution, pbar_solution,
-            betaN_solution, betaT_solution, betaP_solution,
-            qstar_solution, q95_solution,
-            P_CD, P_sep, P_Thresh, eta_CD, P_elec_solution,
-            cost, P_Brem_solution, P_syn_solution,
-            heat, heat_par_solution, heat_pol_solution, lambda_q_Eich_m, q_target_Eich,
-            P_1rst_wall_Hmod, P_1rst_wall_Lmod,
-            Gamma_n,
-            f_alpha_solution, tau_alpha,
-            J_max_TF_conducteur, J_max_CS_conducteur,
-            TF_ratio, R0_a_solution, R0_a_b_solution, R0_a_b_c_solution, R0_a_b_c_d_solution,
-            κ, κ_95, δ, δ_95
-            ) = run( 
-            parameter_class.a, parameter_class.R0, parameter_class.Bmax, parameter_class.P_fus, 
-            parameter_class.Tbar, parameter_class.H, parameter_class.Temps_Plateau_input, 
-            parameter_class.b , parameter_class.nu_n, parameter_class.nu_T,
-            parameter_class.Supra_choice, parameter_class.Chosen_Steel , parameter_class.Radial_build_model, 
-            parameter_class.Choice_Buck_Wedg , parameter_class.Option_Kappa , parameter_class.κ_manual,
-            parameter_class.L_H_Scaling_choice, parameter_class.Scaling_Law, parameter_class.Bootstrap_choice, 
-            parameter_class.Operation_mode, parameter_class.fatigue, parameter_class.P_aux_input)
-        
-            with open(outputs_folder + output_file, "a", encoding="utf-8") as _f:
+    # Scanning loop
+    for x, R0 in enumerate(tqdm(R0_values, desc='Scanning R0')):
+        for y, a in enumerate(a_values):
+            try:
+                # Run calculation
+                results = run(
+                    a, R0, params.Bmax, params.P_fus, params.Tbar, params.H,
+                    params.Temps_Plateau_input, params.b, params.nu_n, params.nu_T,
+                    params.Supra_choice, params.Chosen_Steel, params.Radial_build_model,
+                    params.Choice_Buck_Wedg, params.Option_Kappa, params.κ_manual,
+                    params.L_H_Scaling_choice, params.Scaling_Law, params.Bootstrap_choice,
+                    params.Operation_mode, params.fatigue, params.P_aux_input
+                )
                 
-                # Allows writing to the terminal and output file
-                f = DualWriter(sys.stdout, _f)
+                # Unpack results
+                (B0, B_CS, B_pol,
+                 tauE, W_th,
+                 Q, Volume, Surface,
+                 Ip, Ib, I_CD, I_Ohm,
+                 nbar, nG, pbar,
+                 betaN, betaT, betaP,
+                 qstar, q95,
+                 P_CD, P_sep, P_Thresh, eta_CD, P_elec,
+                 cost, P_Brem, P_syn,
+                 heat, heat_par, heat_pol, lambda_q, q_target,
+                 P_wall_H, P_wall_L,
+                 Gamma_n,
+                 f_alpha, tau_alpha,
+                 J_TF, J_CS,
+                 TF_ratio,
+                 r_minor, r_sep, r_c, r_d,
+                 κ, κ_95, δ, δ_95) = results
                 
-                # Print input and output parameters
-                print("=========================================================================", file=f)
-                print("=== Calculation Results ===", file=f)
-                print("-------------------------------------------------------------------------", file=f)
-                print(f"[I] R0 (Major Radius)                               : {parameter_class.R0:.3f} [m]", file=f)
-                print(f"[I] a (Minor Radius)                                : {parameter_class.a:.3f} [m]", file=f)
-                print(f"[I] b (BB & Nshield thickness)                      : {R0_a_solution-R0_a_b_solution:.3f} [m]", file=f)
-                print(f"[O] c (TF coil thickness)                           : {R0_a_b_solution-R0_a_b_c_solution:.3f} [m]", file=f)
-                print(f"[O] d (CS thickness)                                : {R0_a_b_c_solution-R0_a_b_c_d_solution:.3f} [m]", file=f)
-                print(f"[O] R0-a-b-c-d                                      : {R0_a_b_c_d_solution:.3f} [m]", file=f)
-                print("-------------------------------------------------------------------------", file=f)
-                print(f"[O] Kappa (Elongation)                              : {κ:.3f} ", file=f)
-                print(f"[O] Kappa_95 (Elongation at 95%)                    : {κ_95:.3f} ", file=f)
-                print(f"[O] Delta (Triangularity)                           : {δ:.3f} ", file=f)
-                print(f"[O] Delta_95 (Triangularity at 95%)                 : {δ_95:.3f} ", file=f)
-                print(f"[O] Volume (Plasma)                                 : {Volume_solution:.3f} [m^3]", file=f)
-                print(f"[O] Surface (1rst Wall)                             : {Surface_solution:.3f} [m²]", file=f)
-                print(f"[I] Mechanical configuration                        : {parameter_class.Choice_Buck_Wedg} ", file=f)
-                print(f"[I] Superconductor technology                       : {parameter_class.Supra_choice} ", file=f)
-                print("-------------------------------------------------------------------------", file=f)
-                print(f"[I] Bmax (Maximum Magnetic Field - TF)              : {parameter_class.Bmax:.3f} [T]", file=f)
-                print(f"[O] B0 (Central Magnetic Field)                     : {B0_solution:.3f} [T]", file=f)
-                print(f"[O] BCS (Magnetic Field CS)                         : {B_CS:.3f} [T]", file=f)
-                print(f"[O] J_E-TF (Engineering current density TF)         : {J_max_TF_conducteur/1e6:.3f} [MA/m²]", file=f)
-                print(f"[O] J_E-CS (Engineering current density CS)         : {J_max_CS_conducteur/1e6:.3f} [MA/m²]", file=f)
-                print("-------------------------------------------------------------------------", file=f)
-                print(f"[I] P_fus (Fusion Power)                            : {parameter_class.P_fus:.3f} [MW]", file=f)
-                print(f"[O] P_CD (CD Power)                                 : {P_CD:.3f} [MW]", file=f)
-                print(f"[O] P_S (Synchrotron Power)                         : {P_syn_solution:.3f} [MW]", file=f)
-                print(f"[O] P_B (Bremsstrahlung Power)                      : {P_Brem_solution:.3f} [MW]", file=f)
-                print(f"[O] eta_CD (CD Efficiency)                          : {eta_CD:.3f} [MA/MW-m²]", file=f)
-                print(f"[O] Q (Energy Gain Factor)                          : {Q_solution:.3f}", file=f)
-                print(f"[O] P_elec-net (Net Electrical Power)               : {P_elec_solution:.3f} [MW]", file=f)
-                print(f"[O] Cost ((V_BB+V_TF+V_CS)/P_fus)                   : {cost:.3f} [m^3]", file=f)
-                print("-------------------------------------------------------------------------", file=f)
-                print(f"[I] H (Scaling Law factor)                          : {parameter_class.H:.3f} ", file=f)
-                print(f"[I] Operation (Pulsed / Steady)                     : {parameter_class.Operation_mode} ", file=f)
-                print(f"[I] t (Plateau Time)                                : {parameter_class.Temps_Plateau_input:.3f} ", file=f)
-                print(f"[O] tau_E (Confinement Time)                        : {tauE_solution:.3f} [s]", file=f)
-                print(f"[O] Ip (Plasma Current)                             : {Ip_solution:.3f} [MA]", file=f)
-                print(f"[O] Ib (Bootstrap Current)                          : {Ib_solution:.3f} [MA]", file=f)
-                print(f"[O] ICD (Current Drive)                             : {I_CD_solution:.3f} [MA]", file=f)
-                print(f"[O] IOhm (Ohmic Current)                            : {I_Ohm_solution:.3f} [MA]", file=f)
-                print(f"[O] f_b (Bootstrap Fraction)                        : {(Ib_solution/Ip_solution)*1e2:.3f} [%]", file=f)
-                print("-------------------------------------------------------------------------", file=f)
-                print(f"[I] Tbar (Mean Temperature)                         : {parameter_class.Tbar:.3f} [keV]", file=f)
-                print(f"[O] nbar (Average Density)                          : {n_solution:.3f} [10^20 m^-3]", file=f)
-                print(f"[O] nG (Greenwald Density)                          : {nG_solution:.3f} [10^20 m^-3]", file=f)
-                print(f"[O] pbar (Average Pressure)                         : {pbar_solution:.3f} [MPa]", file=f)
-                print(f"[O] Alpha Fraction                                  : {f_alpha_solution*1e2:.3f} [%]", file=f)
-                print(f"[O] Alpha Confinement Time                          : {tau_alpha:.3f} [s]", file=f)
-                print(f"[O] Thermal Energy Content                          : {W_th_solution/1e6:.3f} [MJ]", file=f)
-                print("-------------------------------------------------------------------------", file=f)
-                print(f"[O] Beta_T (Toroidal Beta)                          : {betaT_solution*1e2:.3f} [%]", file=f)
-                print(f"[O] Beta_P (Poloidal Beta)                          : {betaP_solution:.3f}", file=f)
-                print(f"[O] Beta_N (Normalized Beta)                        : {betaN_solution:.3f} [%]", file=f)
-                print("-------------------------------------------------------------------------", file=f)
-                print(f"[O] q* (Kink Safety Factor)                         : {qstar_solution:.3f}", file=f)
-                print(f"[O] q95 (Safety Factor at 95%)                      : {q95_solution:.3f}", file=f)
-                print("-------------------------------------------------------------------------", file=f)
-                print(f"[O] P_sep (Separatrix Power)                        : {P_sep:.3f} [MW]", file=f)
-                print(f"[O] P_Thresh (L-H Power Threshold)                  : {P_Thresh:.3f} [MW]", file=f)
-                print(f"[O] (P_sep - P_thresh) / S                          : {P_1rst_wall_Hmod:.3f} [MW/m²]", file=f)
-                print(f"[O] P_sep / S                                       : {P_1rst_wall_Lmod:.3f} [MW/m²]", file=f)
-                print(f"[O] Heat scaling (P_sep / R0)                       : {heat:.3f} [MW/m]", file=f)
-                print(f"[O] Parallel Heat Flux (P_sep*B0 / R0)              : {heat_par_solution:.3f} [MW-T/m]", file=f)
-                print(f"[O] Poloidal Heat Flux (P_sep*B0) / (q95*R0*A)      : {heat_pol_solution:.3f} [MW-T/m]", file=f)
-                print(f"[O] Gamma_n (Neutron Flux)                          : {Gamma_n:.3f} [MW/m²]", file=f)
-                print("=========================================================================", file=f)
+                # Calculate plasma limit conditions
+                # betaN_limit and q_limit are imported from D0FUS_parameterization
+                # They are your renamed variables: betaN_limit = 2.8, q_limit = 2.5
                 
-                sys.stdout = sys.__stdout__  
-                       
-            # Calculate plasma stablity indicators
-            n_condition = n_solution / nG_solution
-            beta_condition = betaN_solution / betaN
-            q_condition = q / qstar_solution
-            
-            max_limit = max(n_condition, beta_condition, q_condition)
-            
-            # Initialisation
-            radial_build = np.nan
-            max_limit_density = np.nan
-            max_limit_security = np.nan
-            max_limit_beta = np.nan
-            max_limit_power = np.nan
-            
-            if not np.isnan(R0_a_b_c_d_solution) and not np.isnan(max_limit) and max_limit<1 and R0_a_b_c_d_solution>0 :
-                radial_build = parameter_class.R0
-            
-            # Création d'un tableau contenant les valeurs des conditions
-            conditions = np.array([n_condition, beta_condition, q_condition])
-            # Indice de la condition la plus contraignante
-            indice_max_condition = np.argmax(conditions)
-            
-            if not np.isnan(max_limit) and max_limit < 2 :
-                # Action en fonction de la limite la plus contraignante
-                if indice_max_condition == 0:
-                    # Action spécifique pour n_condition
-                    max_limit_density = max_limit
-                elif indice_max_condition == 1:
-                    # Action spécifique pour beta_condition
-                    max_limit_beta = max_limit
-                elif indice_max_condition == 2:
-                    # Action spécifique pour q_condition
-                    max_limit_security = max_limit
-                    
-            # Store the value in the matrix
-            # Radial Build
-            radial_build_matrix[y,x] = radial_build       
-            # Plasma limits
-            max_limits_density[y, x] = max_limit_density
-            max_limits_security[y, x] = max_limit_security
-            max_limits_beta[y, x] = max_limit_beta
-            max_limits_matrix[y, x] = max_limit
-            # Details
-            Ip_matrix[y,x] = Ip_solution
-            n_matrix[y,x] = n_solution
-            beta_matrix[y,x] = betaN_solution
-            q95_matrix[y,x] = q95_solution
-            B0_matrix[y,x] = B0_solution
-            BCS_matrix[y,x] = B_CS
-            # Figure of merits
-            Heat_matrix[y,x] = heat
-            Q_matrix[y,x] = Q_solution
-            P_CD_matrix[y,x] = P_CD
-            Gamma_n_matrix[y,x] = Gamma_n
-            Cost_matrix[y,x] = cost
-            L_H_matrix[y,x] = P_sep/P_Thresh
-            f_alpha_matrix[y,x] = f_alpha_solution*100
-            TF_ratio_matrix[y,x] = TF_ratio*100
-            c_matrix[y,x] = R0_a_b_solution - R0_a_b_c_solution
-            d_matrix[y,x] = R0_a_b_c_solution - R0_a_b_c_d_solution
-            
-            y = y + 1
-            
-        x = x + 1
-        
-    taille_police_topological_map = 20 # typical value of 15, for prensentation : 20
-    taille_police_background_map = 20 # typical value of 15, for prensentation : 20
-    taille_police_subtitle = 15
-    taille_police_legende = 20 # typical value of 15, for prensentation : 20
-    taille_police_other = 15
-    taille_titre = 22
-    plt.rcParams.update({'font.size': taille_police_other})
-
-    # Inverser l'ordre des lignes des matrices
-    inverted_matrix_density_limit = max_limits_density[::-1, :]
-    inverted_matrix_security_limit = max_limits_security[::-1, :]
-    inverted_matrix_beta_limit = max_limits_beta[::-1, :]
-    inverted_matrix_radial_build = radial_build_matrix[::-1, :]
-    inverted_matrix_plasma_limit = max_limits_matrix[::-1, :]
-
-    inverted_Ip_matrix = Ip_matrix[::-1, :]
-    inverted_n_matrix = n_matrix[::-1, :]
-    inverted_beta_matrix = beta_matrix[::-1, :]
-    inverted_q95_matrix = q95_matrix[::-1, :]
-    inverted_B0_matrix = B0_matrix[::-1, :]
-    inverted_BCS_matrix = BCS_matrix[::-1, :]
-    inverted_c_matrix = c_matrix[::-1, :]
-    inverted_d_matrix = d_matrix[::-1, :]
+                n_condition = nbar / nG                # Should be < 1
+                beta_condition = betaN / betaN_limit   # Should be < 1
+                q_condition = q_limit / qstar          # Should be < 1
+                
+                max_limit = max(n_condition, beta_condition, q_condition)
+                
+                # Store all results in matrices
+                matrices['Q'][y, x] = Q
+                matrices['Cost'][y, x] = cost
+                matrices['Heat'][y, x] = heat
+                matrices['P_CD'][y, x] = P_CD
+                matrices['Gamma_n'][y, x] = Gamma_n
+                matrices['L_H'][y, x] = P_sep / P_Thresh if P_Thresh > 0 else np.nan
+                matrices['f_alpha'][y, x] = f_alpha * 100
+                matrices['TF_ratio'][y, x] = TF_ratio * 100
+                matrices['Ip'][y, x] = Ip
+                matrices['n'][y, x] = nbar
+                matrices['beta_N'][y, x] = betaN
+                matrices['q95'][y, x] = q95
+                matrices['B0'][y, x] = B0
+                matrices['BCS'][y, x] = B_CS
+                matrices['c'][y, x] = r_sep - r_c
+                matrices['d'][y, x] = r_c - r_d
+                
+                matrices['limits'][y, x] = max_limit
+                
+                # Initialize all limit matrices to NaN
+                matrices['density'][y, x] = np.nan
+                matrices['security'][y, x] = np.nan
+                matrices['beta'][y, x] = np.nan
+                
+                # Check radial build validity
+                if not np.isnan(r_d) and max_limit < 1 and r_d > 0:
+                    matrices['radial_build'][y, x] = R0
+                else:
+                    matrices['radial_build'][y, x] = np.nan
+                
+                # Identify the most limiting constraint and store ONLY that one
+                conditions = np.array([n_condition, beta_condition, q_condition])
+                idx_max = np.argmax(conditions)
+                
+                if max_limit < 2:
+                    if idx_max == 0:
+                        # Density is most constraining
+                        matrices['density'][y, x] = n_condition
+                    elif idx_max == 1:
+                        # Beta is most constraining
+                        matrices['beta'][y, x] = beta_condition
+                    elif idx_max == 2:
+                        # Safety factor is most constraining
+                        matrices['security'][y, x] = q_condition
+                
+            except Exception as e:
+                # Fill with NaN on error
+                for key in matrices:
+                    matrices[key][y, x] = np.nan
+                # Print first few errors for debugging
+                if x < 3 and y < 3:
+                    print(f"\n  Debug: Error at R0={R0:.2f}, a={a:.2f}: {str(e)}")
+                continue
     
-    inverted_Ip_matrix_mask = inverted_Ip_matrix
-    inverted_n_matrix_mask = inverted_n_matrix
-    inverted_beta_matrix_mask = inverted_beta_matrix
-    inverted_q95_matrix_mask = inverted_q95_matrix
-    inverted_B0_matrix_mask = inverted_B0_matrix
-    inverted_BCS_matrix_mask = inverted_BCS_matrix
-    inverted_c_matrix_mask = inverted_c_matrix
-    inverted_d_matrix_mask = inverted_d_matrix
-    # Créez un masque pour les valeurs NaN dans les matrices associées au Radial build
-    mask = np.isnan(inverted_matrix_radial_build)
-    # Appliquez ce masque à la nouvelle matrice
-    inverted_Ip_matrix_mask[mask] = np.nan
-    inverted_n_matrix_mask[mask] = np.nan
-    inverted_beta_matrix_mask[mask] = np.nan
-    inverted_q95_matrix_mask[mask] = np.nan
-    inverted_B0_matrix_mask[mask] = np.nan
-    inverted_BCS_matrix_mask[mask] = np.nan
-    inverted_c_matrix_mask[mask] = np.nan
-    inverted_d_matrix_mask[mask] = np.nan
-    inverted_c_d_matrix_mask = inverted_c_matrix_mask + inverted_d_matrix_mask
-   
-    inverted_Heat_matrix = Heat_matrix[::-1, :]
-    inverted_Cost_matrix = Cost_matrix[::-1, :]
-    inverted_Q_matrix = Q_matrix[::-1, :]
-    inverted_P_CD_matrix = P_CD_matrix[::-1, :]
-    inverted_Gamma_n_matrix = Gamma_n_matrix[::-1, :]
-    inverted_L_H_matrix = L_H_matrix[::-1, :]
-    inverted_f_alpha_matrix = f_alpha_matrix[::-1, :]
-    inverted_TF_ratio_matrix = TF_ratio_matrix[::-1, :]
+    print("\n✓ Scan calculation completed!\n")
+    return matrices, a_values, R0_values
 
-    chosen_isocontour = input("Choose a first iso-contour parameter (Ip, n, beta, q95, B0, BCS, c, d, c&d): ")
-    chosen_topologic = input("Choose a second iso-contour parameter (Heat, Cost, Q, Gamma_n, L_H, Alpha, TF): ")
+
+def plot_scan_results(matrices, a_values, R0_values, params, output_dir, 
+                      iso_param=None, bg_param=None):
+    """
+    Generate and save scan visualization plots
     
-    # Create figure and main axes
+    Args:
+        matrices: Dict of calculated matrices
+        a_values: Array of minor radius values
+        R0_values: Array of major radius values
+        params: Parameters object
+        output_dir: Directory to save results
+        iso_param: Iso-contour parameter (if None, will ask user)
+        bg_param: Background parameter (if None, will ask user)
+    """
+    
+    # Ask user for plot preferences if not provided
+    if iso_param is None:
+        iso_param = input("Choose iso-contour parameter (Ip, n, beta, q95, B0, BCS, c, d, c&d): ").strip()
+    if bg_param is None:
+        bg_param = input("Choose background parameter (Heat, Cost, Q, Gamma_n, L_H, Alpha, TF, B0, BCS): ").strip()
+    
+    # Font sizes
+    font_topological = 20
+    font_background = 28
+    font_subtitle = 15
+    font_legend = 20
+    font_other = 15
+    font_title = 22
+    plt.rcParams.update({'font.size': font_other})
+    
+    # Invert matrices for plotting (flip vertically)
+    inv_matrices = {key: val[::-1, :] for key, val in matrices.items()}
+    
+    # Create masked versions for radial build
+    inv_Ip_mask = inv_matrices['Ip'].copy()
+    inv_n_mask = inv_matrices['n'].copy()
+    inv_beta_mask = inv_matrices['beta_N'].copy()
+    inv_q95_mask = inv_matrices['q95'].copy()
+    inv_B0_mask = inv_matrices['B0'].copy()
+    inv_BCS_mask = inv_matrices['BCS'].copy()
+    inv_c_mask = inv_matrices['c'].copy()
+    inv_d_mask = inv_matrices['d'].copy()
+    
+    # Apply radial build mask
+    mask = np.isnan(inv_matrices['radial_build'])
+    inv_Ip_mask[mask] = np.nan
+    inv_n_mask[mask] = np.nan
+    inv_beta_mask[mask] = np.nan
+    inv_q95_mask[mask] = np.nan
+    inv_B0_mask[mask] = np.nan
+    inv_BCS_mask[mask] = np.nan
+    inv_c_mask[mask] = np.nan
+    inv_d_mask[mask] = np.nan
+    inv_c_d_mask = inv_c_mask + inv_d_mask
+    
+    # Create figure
     fig, ax = plt.subplots(figsize=(10, 13))
-    svg = f"Bmax={parameter_class.Bmax}_Pfus={parameter_class.P_fus}_scaling_law={parameter_class.Scaling_Law}_Triangularity={δ}_Hfactor={parameter_class.H}_Meca={parameter_class.Choice_Buck_Wedg}_"
-    plt.title(f"$B_{{\mathrm{{max}}}}$ = {parameter_class.Bmax} [T], $P_{{\mathrm{{fus}}}}$ = {parameter_class.P_fus} [MW], scaling law : {parameter_class.Scaling_Law}",fontsize=taille_police_subtitle)
     
-    title_parameter = "$" + latex(param_1_name) + "$"
-    title_parameter_2 = "$" + latex(param_2_name) + "$"
- 
-    #plt.suptitle(f"Parameter space : {title_parameter}, {title_parameter_2}", fontsize=taille_titre,y=0.94, fontweight='bold')
-
-    # Plot heat maps for plasma stability indicators with imshow
-    min_stability_heatmap = 0.5
-    max_stability_heatmap = 2
-    color_choice_density = 'Blues'
-    color_choice_security = 'Greens'
-    color_choice_beta = 'Reds'   
-    im_density = ax.imshow(inverted_matrix_density_limit, cmap=color_choice_density, aspect='auto', interpolation='nearest', norm=Normalize(vmin=min_stability_heatmap, vmax=max_stability_heatmap))
-    im_security = ax.imshow(inverted_matrix_security_limit, cmap=color_choice_security, aspect='auto', interpolation='nearest', norm=Normalize(vmin=min_stability_heatmap, vmax=max_stability_heatmap))
-    im_beta = ax.imshow(inverted_matrix_beta_limit, cmap=color_choice_beta, aspect='auto', interpolation='nearest', norm=Normalize(vmin=min_stability_heatmap, vmax=max_stability_heatmap))
-
-    # Plot plasma stability boundary
-    threshold = 1.0
-    ax.contour(inverted_matrix_plasma_limit, levels=[threshold], colors='#555555', linestyles='dashed', linewidths=2)
-    grey_dashed_line = mlines.Line2D([], [], color='#555555', linestyle='dashed', linewidth=2, label='Plasma stability boundary')
-
-    # Axes labels and ticks
-    plt.xlabel(title_parameter_2 +  " [" + unit_param_2 + "]", fontsize = taille_police_legende)
-    plt.ylabel(title_parameter + " [" + unit_param_1 + "]", fontsize = taille_police_legende)
-
-    nb_ticks = 10 
-
-    y_ticks = np.linspace(min(param_1_values), max(param_1_values), nb_ticks)
-    ax.set_yticks(np.linspace(0, len(param_1_values) - 1, nb_ticks))  # position sur le graphe
-    ax.set_yticklabels([round(val, 2) for val in y_ticks[::-1]], fontsize=taille_police_legende)
-
-    x_ticks = np.linspace(min(param_2_values), max(param_2_values), nb_ticks)
-    ax.set_xticks(np.linspace(0, len(param_2_values) - 1, nb_ticks))
-    ax.set_xticklabels([round(val, 2) for val in x_ticks],
-                    rotation=45, ha='right', fontsize=taille_police_legende)
-
-    # Create colorbars for plasma stability indicators
-
+    # Title
+    title_choice = 1
+    if title_choice == 1:
+        plt.suptitle(f"Parameter space: a, $\\mathbf{{R_0}}$", fontsize=font_title, y=0.94, fontweight='bold')
+        plt.title(f"$B_{{\\mathrm{{max}}}}$ = {params.Bmax} [T], $P_{{\\mathrm{{fus}}}}$ = {params.P_fus} [MW], "
+                 f"scaling law: {params.Scaling_Law}", fontsize=font_subtitle)
+    
+    # Plot color maps for plasma limits
+    min_val, max_val = 0.5, 2.0
+    im_density = ax.imshow(inv_matrices['density'], cmap='Blues', aspect='auto',
+                          interpolation='nearest', norm=Normalize(vmin=min_val, vmax=max_val))
+    im_security = ax.imshow(inv_matrices['security'], cmap='Greens', aspect='auto',
+                           interpolation='nearest', norm=Normalize(vmin=min_val, vmax=max_val))
+    im_beta = ax.imshow(inv_matrices['beta'], cmap='Reds', aspect='auto',
+                       interpolation='nearest', norm=Normalize(vmin=min_val, vmax=max_val))
+    
+    # Contour for plasma stability boundary (limit = 1)
+    linewidth = 2.5
+    ax.contour(inv_matrices['limits'], levels=[1.0], colors='white', linewidths=linewidth)
+    white_dashed_line = mlines.Line2D([], [], color='white', linewidth=linewidth, 
+                                     label='Plasma stability boundary')
+    
+    # Contour for radial build boundary
+    filled_matrix = np.where(np.isnan(inv_matrices['radial_build']), -1, 1)
+    ax.contour(filled_matrix, levels=[0], linewidths=linewidth, colors='black')
+    black_line = mlines.Line2D([], [], color='black', linewidth=linewidth, 
+                               label='Radial build limit')
+    
+    # Configure axes
+    ax.set_xlabel('$R_0$ [m]', fontsize=24)
+    ax.set_ylabel('a [m]', fontsize=24)
+    
+    # Configure colorbars
     divider = make_axes_locatable(ax)
     cax1 = divider.append_axes("bottom", size="5%", pad=1.3)
     cax2 = divider.append_axes("bottom", size="5%", pad=0.1, sharex=cax1)
     cax3 = divider.append_axes("bottom", size="5%", pad=0.1, sharex=cax1)
     
-    cax1.annotate('n/$n_{\mathrm{G}}$', xy=(-0.01, 0.5), xycoords='axes fraction', ha='right', va='center', fontsize=taille_police_other)
-    cax2.annotate(r'$\beta$/$\beta_{T}$', xy=(-0.01, 0.5), xycoords='axes fraction', ha='right', va='center', fontsize=taille_police_other)
-    cax3.annotate('$q_{\mathrm{K}}$/$q_{\mathrm{*}}$', xy=(-0.01, 0.5), xycoords='axes fraction', ha='right', va='center', fontsize=taille_police_other)
+    # Colorbar annotations
+    cax1.annotate('n/$n_{\\mathrm{G}}$', xy=(-0.01, 0.5), xycoords='axes fraction', 
+                 ha='right', va='center', fontsize=font_other)
+    cax2.annotate(r'$\beta$/$\beta_{T}$', xy=(-0.01, 0.5), xycoords='axes fraction', 
+                 ha='right', va='center', fontsize=font_other)
+    cax3.annotate('$q_{\\mathrm{K}}$/$q_{*}$', xy=(-0.01, 0.5), xycoords='axes fraction', 
+                 ha='right', va='center', fontsize=font_other)
     
+    # Create colorbars
     cbar_density = plt.colorbar(im_density, cax=cax1, orientation='horizontal')
     tick_labels = cbar_density.ax.xaxis.get_ticklabels()
-    tick_labels[-1].set_visible(False)
+    if tick_labels:
+        tick_labels[-1].set_visible(False)
+    
     cbar_beta = plt.colorbar(im_beta, cax=cax2, orientation='horizontal')
     tick_labels = cbar_beta.ax.xaxis.get_ticklabels()
-    tick_labels[-1].set_visible(False)
+    if tick_labels:
+        tick_labels[-1].set_visible(False)
+    
     cbar_security = plt.colorbar(im_security, cax=cax3, orientation='horizontal')
-    tick_labels = cbar_security.ax.xaxis.get_ticklabels()
     
-    # Add dahsed line at the value of 1 in each colorbar
+    # Add vertical lines at value 1 for each colorbar
     for cax in [cax1, cax2, cax3]:
-        cax.axvline(x=1, color='#333333', linestyle='--', linewidth=2, dashes=(5, 3))
-
-    # Add iso-contour lines
-
-    # Remplacer NaN par -1 et les autres par 1 dans la matrice pour les contours du radial build
-    filled_matrix = np.where(np.isnan(inverted_matrix_radial_build), -1, 1)
-    # Définir le niveau de contour pour les valeurs de transition
-    contour_level = [0]
-    # Tracer les contours autour des valeurs de transition
-    contour_radial_line = ax.contour(
-    filled_matrix, 
-    levels=contour_level,
-    colors='black'
-    )
-    # Création d'une ligne de légende personnalisée correspondant au style du contour
-    black_line = mlines.Line2D([], [], color='black', label='Radial build limit')
+        cax.axvline(x=1, color='white', linewidth=2.5)
     
-    # Tracer les isocontours choisis précédemment
-    if chosen_isocontour == 'Ip' or chosen_isocontour == 'ip':
-        contour_lines = ax.contour(inverted_Ip_matrix_mask, levels=np.arange(1, 25,1), colors='#555555')
-        ax.clabel(contour_lines, inline=True, fmt='%d', fontsize=taille_police_topological_map)
-        grey_line = mlines.Line2D([], [], color='#555555', label='$I_p$ [MA]')
-    elif chosen_isocontour == 'n':
-        contour_lines = ax.contour(inverted_n_matrix_mask, levels=np.arange(0.25, 5,0.25), colors='#555555')
-        ax.clabel(contour_lines, inline=True, fmt='%.2f', fontsize=taille_police_topological_map)
-        grey_line = mlines.Line2D([], [], color='#555555', label='$n$ [10e20]')
-    elif chosen_isocontour == 'beta':
-        contour_lines = ax.contour(inverted_beta_matrix_mask, levels=np.arange(1, 10,0.25), colors='#555555')
-        ax.clabel(contour_lines, inline=True, fmt='%.2f', fontsize=taille_police_topological_map)
-        grey_line = mlines.Line2D([], [], color='#555555', label='$\\beta$ [%]')
-    elif chosen_isocontour == 'q95':
-        contour_lines = ax.contour(inverted_q95_matrix_mask, levels=np.arange(1, 10,0.5), colors='#555555')
-        ax.clabel(contour_lines, inline=True, fmt='%.1f', fontsize=taille_police_topological_map)
-        grey_line = mlines.Line2D([], [], color='#555555', label='$q_{95}$ []')
-    elif chosen_isocontour == 'B0':
-        contour_lines = ax.contour(inverted_B0_matrix_mask, levels=np.arange(1, 25 ,0.5), colors='#555555')
-        ax.clabel(contour_lines, inline=True, fmt='%.1f', fontsize=taille_police_topological_map)
-        grey_line = mlines.Line2D([], [], color='#555555', label='$B_{0}$ [T]')
-    elif chosen_isocontour == 'BCS':
-        contour_lines = ax.contour(inverted_BCS_matrix_mask, levels=np.arange(1, 100 ,2), colors='#555555')
-        ax.clabel(contour_lines, inline=True, fmt='%.1f', fontsize=taille_police_topological_map)
-        grey_line = mlines.Line2D([], [], color='#555555', label='$B_{CS}$ [T]')
-    elif chosen_isocontour == 'c':
-        contour_lines = ax.contour(inverted_c_matrix_mask, levels=np.arange(0, 10 ,0.1), colors='#555555')
-        ax.clabel(contour_lines, inline=True, fmt='%.2f', fontsize=taille_police_topological_map)
-        grey_line = mlines.Line2D([], [], color='#555555', label='$TF$ width [m]')
-    elif chosen_isocontour == 'd':
-        contour_lines = ax.contour(inverted_d_matrix_mask, levels=np.arange(0, 10 ,0.1), colors='#555555')
-        ax.clabel(contour_lines, inline=True, fmt='%.2f', fontsize=taille_police_topological_map)
-        grey_line = mlines.Line2D([], [], color='#555555', label='$CS$ width [m]')
-    elif chosen_isocontour == 'c&d':
-        contour_lines = ax.contour(inverted_c_d_matrix_mask, levels=np.arange(0, 10 ,0.1), colors='#555555')
-        ax.clabel(contour_lines, inline=True, fmt='%.2f', fontsize=taille_police_topological_map)
-        grey_line = mlines.Line2D([], [], color='#555555', label='CS + TF width [m]')
+    # Configure y-axis (a_values)
+    a_min, a_max = a_values[0], a_values[-1]
+    approx_step_y = 0.5
+    real_step_y = (a_max - a_min) / (len(a_values) - 1)
+    index_step_y = max(1, int(round(approx_step_y / real_step_y)))
+    y_indices = np.arange(0, len(a_values), index_step_y)
+    ax.set_yticks(y_indices)
+    ax.set_yticklabels(np.round((a_max + a_min) - a_values[y_indices], 2), fontsize=font_legend)
+    
+    # Configure x-axis (R0_values)
+    R0_min, R0_max = R0_values[0], R0_values[-1]
+    approx_step_x = 1.0
+    real_step_x = (R0_max - R0_min) / (len(R0_values) - 1)
+    index_step_x = max(1, int(round(approx_step_x / real_step_x)))
+    x_indices = np.arange(0, len(R0_values), index_step_x)
+    ax.set_xticks(x_indices)
+    x_labels = [round(R0_values[i], 2) for i in x_indices]
+    ax.set_xticklabels(x_labels, rotation=45, ha='right', fontsize=font_legend)
+    
+    # Add iso-contours based on user choice
+    grey_line = None
+    if iso_param == 'Ip':
+        contour_lines = ax.contour(inv_Ip_mask, levels=np.arange(1, 25, 1), 
+                                   colors='black', linestyles='dashed', linewidths=linewidth)
+        ax.clabel(contour_lines, inline=True, fmt='%d', fontsize=font_topological)
+        grey_line = mlines.Line2D([], [], linewidth=linewidth, color='black', 
+                                 linestyle='dashed', label='$I_p$ [MA]')
+    elif iso_param == 'n':
+        contour_lines = ax.contour(inv_n_mask, levels=np.arange(0.25, 5, 0.25), 
+                                   colors='black', linestyles='dashed', linewidths=linewidth)
+        ax.clabel(contour_lines, inline=True, fmt='%.2f', fontsize=font_topological)
+        grey_line = mlines.Line2D([], [], linewidth=linewidth, color='black', 
+                                 linestyle='dashed', label='$n$ [10$^{20}$ m$^{-3}$]')
+    elif iso_param == 'beta':
+        contour_lines = ax.contour(inv_beta_mask, levels=np.arange(1, 10, 0.25), 
+                                   colors='black', linestyles='dashed', linewidths=linewidth)
+        ax.clabel(contour_lines, inline=True, fmt='%.2f', fontsize=font_topological)
+        grey_line = mlines.Line2D([], [], linewidth=linewidth, color='black', 
+                                 linestyle='dashed', label='$\\beta_N$ [%]')
+    elif iso_param == 'q95':
+        contour_lines = ax.contour(inv_q95_mask, levels=np.arange(1, 10, 0.5), 
+                                   colors='black', linestyles='dashed', linewidths=linewidth)
+        ax.clabel(contour_lines, inline=True, fmt='%.1f', fontsize=font_topological)
+        grey_line = mlines.Line2D([], [], linewidth=linewidth, color='black', 
+                                 linestyle='dashed', label='$q_{95}$')
+    elif iso_param == 'B0':
+        contour_lines = ax.contour(inv_B0_mask, levels=np.arange(1, 25, 0.5), 
+                                   colors='black', linestyles='dashed', linewidths=linewidth)
+        ax.clabel(contour_lines, inline=True, fmt='%.1f', fontsize=font_topological)
+        grey_line = mlines.Line2D([], [], linewidth=linewidth, color='black', 
+                                 linestyle='dashed', label='$B_0$ [T]')
+    elif iso_param == 'BCS':
+        contour_lines = ax.contour(inv_BCS_mask, levels=np.arange(1, 100, 2), 
+                                   colors='black', linestyles='dashed', linewidths=linewidth)
+        ax.clabel(contour_lines, inline=True, fmt='%.1f', fontsize=font_topological)
+        grey_line = mlines.Line2D([], [], linewidth=linewidth, color='black', 
+                                 linestyle='dashed', label='$B_{CS}$ [T]')
+    elif iso_param == 'c':
+        contour_lines = ax.contour(inv_c_mask, levels=np.arange(0, 10, 0.1), 
+                                   colors='black', linestyles='dashed', linewidths=linewidth)
+        ax.clabel(contour_lines, inline=True, fmt='%.2f', fontsize=font_topological)
+        grey_line = mlines.Line2D([], [], linewidth=linewidth, color='black', 
+                                 linestyle='dashed', label='TF width [m]')
+    elif iso_param == 'd':
+        contour_lines = ax.contour(inv_d_mask, levels=np.arange(0, 10, 0.1), 
+                                   colors='black', linestyles='dashed', linewidths=linewidth)
+        ax.clabel(contour_lines, inline=True, fmt='%.2f', fontsize=font_topological)
+        grey_line = mlines.Line2D([], [], linewidth=linewidth, color='black', 
+                                 linestyle='dashed', label='CS width [m]')
+    elif iso_param == 'c&d':
+        contour_lines = ax.contour(inv_c_d_mask, levels=np.arange(0, 10, 0.1), 
+                                   colors='black', linestyles='dashed', linewidths=linewidth)
+        ax.clabel(contour_lines, inline=True, fmt='%.2f', fontsize=font_topological)
+        grey_line = mlines.Line2D([], [], linewidth=linewidth, color='black', 
+                                 linestyle='dashed', label='CS + TF width [m]')
     else:
-        print('Choose a relevant first iso-contour parameter')
+        print(f'Warning: Unknown iso parameter "{iso_param}"')
+    
+    # Add background contours based on user choice
+    white_line = None
+    if bg_param == 'Heat':
+        contour_bg = ax.contour(inv_matrices['Heat'], levels=np.arange(1000, 10000, 500), 
+                               colors='white', linestyles='dashed', linewidths=linewidth)
+        ax.clabel(contour_bg, inline=True, fmt='%d', fontsize=font_background)
+        white_line = mlines.Line2D([], [], linewidth=linewidth, color='white', 
+                                   linestyle='dashed', label='Heat// [MW-T/m]')
+    elif bg_param == 'Q':
+        contour_bg = ax.contour(inv_matrices['Q'], levels=np.arange(0, 60, 10), 
+                               colors='white', linestyles='dashed', linewidths=linewidth)
+        ax.clabel(contour_bg, inline=True, fmt='%d', fontsize=font_background)
+        white_line = mlines.Line2D([], [], linewidth=linewidth, color='white', 
+                                   linestyle='dashed', label='Q')
+    elif bg_param == 'Cost':
+        contour_bg = ax.contour(inv_matrices['Cost'], levels=np.arange(0, 1000, 20), 
+                               colors='white', linestyles='dashed', linewidths=linewidth)
+        ax.clabel(contour_bg, inline=True, fmt='%d', fontsize=font_background)
+        white_line = mlines.Line2D([], [], linewidth=linewidth, color='white', 
+                                   linestyle='dashed', label='Cost [m$^3$]')
+    elif bg_param == 'Gamma_n':
+        contour_bg = ax.contour(inv_matrices['Gamma_n'], levels=np.arange(0, 20, 1), 
+                               colors='white', linestyles='dashed', linewidths=linewidth)
+        ax.clabel(contour_bg, inline=True, fmt='%d', fontsize=font_background)
+        white_line = mlines.Line2D([], [], linewidth=linewidth, color='white', 
+                                   linestyle='dashed', label='$\\Gamma_n$ [MW/m²]')
+    elif bg_param == 'L_H':
+        contour_bg = ax.contour(inv_matrices['L_H'], levels=np.arange(0, 10, 1), 
+                               colors='white', linestyles='dashed', linewidths=linewidth)
+        ax.clabel(contour_bg, inline=True, fmt='%d', fontsize=font_background)
+        white_line = mlines.Line2D([], [], linewidth=linewidth, color='white', 
+                                   linestyle='dashed', label='L-H Transition')
+    elif bg_param == 'Alpha':
+        contour_bg = ax.contour(inv_matrices['f_alpha'], levels=np.arange(0, 100, 1), 
+                               colors='white', linestyles='dashed', linewidths=linewidth)
+        ax.clabel(contour_bg, inline=True, fmt='%d', fontsize=font_background)
+        white_line = mlines.Line2D([], [], linewidth=linewidth, color='white', 
+                                   linestyle='dashed', label='Alpha fraction [%]')
+    elif bg_param == 'TF':
+        contour_bg = ax.contour(inv_matrices['TF_ratio'], levels=np.arange(0, 100, 5), 
+                               colors='white', linestyles='dashed', linewidths=linewidth)
+        ax.clabel(contour_bg, inline=True, fmt='%d', fontsize=font_background)
+        white_line = mlines.Line2D([], [], linewidth=linewidth, color='white', 
+                                   linestyle='dashed', label='TF tension fraction [%]')
+    elif bg_param == 'B0':
+        contour_bg = ax.contour(inv_B0_mask, levels=np.arange(0, 25, 0.5), 
+                               colors='white', linestyles='dashed', linewidths=linewidth)
+        ax.clabel(contour_bg, inline=True, fmt='%.1f', fontsize=font_background)
+        white_line = mlines.Line2D([], [], linewidth=linewidth, color='white', 
+                                   linestyle='dashed', label='$B_0$ [T]')
+    elif bg_param == 'BCS':
+        contour_bg = ax.contour(inv_BCS_mask, levels=np.arange(0, 100, 5), 
+                               colors='white', linestyles='dashed', linewidths=linewidth)
+        ax.clabel(contour_bg, inline=True, fmt='%.1f', fontsize=font_background)
+        white_line = mlines.Line2D([], [], linewidth=linewidth, color='white', 
+                                   linestyle='dashed', label='$B_{CS}$ [T]')
+    else:
+        print(f'Warning: Unknown background parameter "{bg_param}"')
+    
+    # Add legend
+    legend_handles = [white_dashed_line, black_line]
+    if white_line:
+        legend_handles.append(white_line)
+    if grey_line:
+        legend_handles.append(grey_line)
+    
+    ax.legend(handles=legend_handles, loc='upper left', facecolor='lightgrey', 
+             fontsize=font_legend)
+    
+    return fig, ax, iso_param, bg_param
 
-    if chosen_topologic == 'Heat' or chosen_topologic == 'heat':
-        # Heat contours
-        contour_lines_Heat = ax.contour(inverted_Heat_matrix, levels=np.arange(1000, 10000 ,500), colors='white')
-        ax.clabel(contour_lines_Heat, inline=True, fmt='%d', fontsize=taille_police_background_map)
-        white_line = mlines.Line2D([], [], color='white', label='Heat// [MW-T/m]')
-    elif chosen_topologic == 'Q' or chosen_topologic == 'q':
-        # Q contours
-        contour_lines_Q = ax.contour(inverted_Q_matrix, levels=np.arange(0, 60 ,10), colors='white')
-        ax.clabel(contour_lines_Q, inline=True, fmt='%d', fontsize=taille_police_background_map)
-        white_line = mlines.Line2D([], [], color='white', label='Q []')
-    elif chosen_topologic == 'Cost' or chosen_topologic == 'cost':
-        # Cost contours
-        contour_lines_cost = ax.contour(inverted_Cost_matrix, levels=np.arange(0, 1000,20), colors='white')
-        ax.clabel(contour_lines_cost, inline=True, fmt='%d', fontsize=taille_police_background_map)
-        white_line = mlines.Line2D([], [], color='white', label='$Cost$ [$m^3$]')
-    elif chosen_topologic == 'Gamma_n' :
-        # Gamma_n contours
-        contour_lines_Gamma_n = ax.contour(inverted_Gamma_n_matrix, levels=np.arange(-1, 20,1), colors='white')
-        ax.clabel(contour_lines_Gamma_n, inline=True, fmt='%d', fontsize=taille_police_background_map)
-        white_line = mlines.Line2D([], [], color='white', label='$\\Gamma_n$ [MW/m²]')
-    elif chosen_topologic == 'L_H' :
-        # L-H transition contours
-        contour_lines_LH = ax.contour(inverted_L_H_matrix, levels=np.arange(-1, 10,1), colors='white')
-        ax.clabel(contour_lines_LH, inline=True, fmt='%d', fontsize=taille_police_background_map)
-        white_line = mlines.Line2D([], [], color='white', label='L-H Transition []')
-    elif chosen_topologic == 'Alpha' :
-        # Alpha fraction contours
-        contour_lines_Alpha = ax.contour(inverted_f_alpha_matrix, levels=np.arange(-1, 100,1), colors='white')
-        ax.clabel(contour_lines_Alpha, inline=True, fmt='%d', fontsize=taille_police_background_map)
-        white_line = mlines.Line2D([], [], color='white', label='Alpha fraction [%]')
-    elif chosen_topologic == 'TF' :
-        # TF ratio contours
-        contour_lines_TF = ax.contour(inverted_TF_ratio_matrix, levels=np.arange(0, 100,5), colors='white')
-        ax.clabel(contour_lines_TF, inline=True, fmt='%d', fontsize=taille_police_background_map)
-        white_line = mlines.Line2D([], [], color='white', label='TF tension fraction [%]')
-    else :
-        print('Choose a relevant second iso-contour parameter')
-    
-    # Légende
-    ax.legend(handles=[grey_line,white_line, grey_dashed_line], loc='upper left', facecolor='lightgrey', fontsize=taille_police_legende)
-    
-    # Save the image
-    # Remplacer les virgules par des points dans svg
-    svg = svg.replace('.', ',')
-    path_to_save = os.path.join(save_directory,f"{param_1_name}_and_{param_2_name}_scan_with_{svg}.png")
-    
-    path_to_save = os.path.join(outputs_folder,f"{param_1_name}_and_{param_2_name}_scan_with_{svg}.png")
-    outputs_folder
-    plt.savefig(path_to_save, dpi=300, bbox_inches='tight')
-    # Afficher la figure
-    plt.show()
 
-    # Reinitialisation des paramètres par defaut
+def save_scan_results(fig, matrices, a_values, R0_values, params, output_dir, 
+                     iso_param, bg_param, input_file_path=None):
+    """Save scan results to timestamped directory"""
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_name = f"Scan_D0FUS_{timestamp}"
+    output_path = os.path.join(output_dir, output_name)
+    
+    # Create directory
+    os.makedirs(output_path, exist_ok=True)
+    
+    # Copy original input file if provided
+    if input_file_path and os.path.exists(input_file_path):
+        input_copy = os.path.join(output_path, "scan_parameters.txt")
+        shutil.copy2(input_file_path, input_copy)
+    else:
+        # Generate input file from parameters
+        input_copy = os.path.join(output_path, "scan_parameters.txt")
+        with open(input_copy, "w", encoding='utf-8') as f:
+            f.write("# D0FUS Scan Parameters\n")
+            f.write(f"# Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            f.write("# Fixed parameters:\n")
+            for key, value in vars(params).items():
+                f.write(f"{key} = {value}\n")
+            f.write("\n# Scan configuration:\n")
+            f.write(f"# a: [{a_values[0]:.2f}, {a_values[-1]:.2f}] m with {len(a_values)} points\n")
+            f.write(f"# R0: [{R0_values[0]:.2f}, {R0_values[-1]:.2f}] m with {len(R0_values)} points\n")
+            f.write(f"# Iso-contour: {iso_param}\n")
+            f.write(f"# Background: {bg_param}\n")
+    
+    # Save figure
+    fig_filename = f"scan_map_{iso_param}_{bg_param}.png"
+    fig_path = os.path.join(output_path, fig_filename)
+    fig.savefig(fig_path, dpi=300, bbox_inches='tight')
+    
+    print(f"✓ Scan figure saved to: {fig_path}")
+    print(f"✓ All results saved to: {output_path}\n")
+    
+    # Reset matplotlib to defaults
     plt.rcdefaults()
     
-#%% 
+    return output_path
 
-class inputs_management:
+
+def main(input_file=None, scan_config=None, auto_plot=False, 
+         iso_param=None, bg_param=None):
+    """
+    Main execution function for scans
     
-    def __init__(self, name_file, outputs_folder):
-        self.name_file = name_file
-        self.outputs_folder = outputs_folder
-        
-    def write_inputs_in_outputs_folder(self): 
-        fic_2 = open(self.outputs_folder + input_file, "w")
-        fic_2.write(self.inputs)
-        fic_2.close()
-        
-    def run(self):
-        self.read_file()
-        self.write_inputs_in_outputs_folder()
-        self.extract_inputs()
-        
-    def read_file(self):
-        with open(self.name_file, 'r', encoding='utf-8') as fic:
-            lines = fic.readlines()
-        
-        cleaned_lines = []
-        for line in lines:
-
-            line = line.split('#')[0].strip()
-            if line: 
-                cleaned_lines.append(line)
+    Args:
+        input_file: Path to input file (optional)
+        scan_config: Dict with scan configuration (optional)
+        auto_plot: If True, use provided iso_param and bg_param without asking
+        iso_param: Iso-contour parameter (if auto_plot=True)
+        bg_param: Background parameter (if auto_plot=True)
+    """
     
-        self.inputs = '\n'.join(cleaned_lines)
-        print(self.inputs)
-               
-    def extract_input_scan(self, input):
-        """
-        exemple of input : R0 = [4.5 ; 5 ; 25]
-
-        """
-        params = input.split("=")
-        param_name = params[0].strip() # strip remove space ("R0 " -> "R0") 
-        
-        params_value = params[1].strip().strip("[]") # " [4.5 ; 5 ; 25]" ->  "4.5 ; 5 ; 25"
-        params_value = params_value.split(";")
-        
-        param_min = float(params_value[0].strip()) # str "4.5 " -> float 4.5 
-        param_max = float(params_value[1].strip()) 
-        param_n = float(params_value[2].strip()) 
-        
-        return [param_name, param_min, param_max, param_n] 
+    # Load parameters
+    p = Parameters()
     
-    def extract_input(self, input):
-        split_ = input.split("=")
-        input_name = split_[0].strip()
-        input_value = split_[1].strip()
+    # Store input file path for copying later
+    input_file_path = input_file
+    
+    if input_file is None:
+        default_input = os.path.join(os.path.dirname(__file__), '..', 'D0FUS_INPUTS', 'default_input.txt')
+        if os.path.exists(default_input):
+            input_file = default_input
+    
+    if input_file and os.path.exists(input_file):
+        print(f"\nLoading parameters from: {input_file}")
+        p.open_input(input_file)
+    else:
+        print(f"\nWarning: Input file not found. Using default parameters.")
+        input_file_path = None
+    
+    # Print scan configuration
+    print("\n" + "="*73)
+    print("Starting D0FUS 2D parameter scan...")
+    print("="*73)
+    print(f"\nFixed parameters:")
+    print(f"  Bmax = {p.Bmax} T")
+    print(f"  P_fus = {p.P_fus} MW")
+    print(f"  Scaling Law = {p.Scaling_Law}")
+    print(f"  Operation mode = {p.Operation_mode}")
+    print(f"  Superconductor = {p.Supra_choice}")
+    print(f"  Mechanical config = {p.Choice_Buck_Wedg}")
+    
+    # Default scan configuration if not provided
+    if scan_config is None:
+        scan_config = {
+            'a_min': 1, 'a_max': 3, 'a_N': 25,
+            'R0_min': 3, 'R0_max': 9, 'R0_N': 25
+        }
+    
+    try:
+        # Perform scan
+        matrices, a_values, R0_values = R0_a_scan(p, scan_config)
         
-        try:
-            input_value = float(input_value)
-        except ValueError:
-            pass # Error means input_value is a str (some inputs are str)
+        # Plot results
+        if auto_plot and iso_param and bg_param:
+            # Automatic plotting with provided parameters
+            fig, ax, iso_used, bg_used = plot_scan_results(
+                matrices, a_values, R0_values, p, None, iso_param, bg_param
+            )
+        else:
+            # Interactive plotting - ask user for preferences
+            fig, ax, iso_used, bg_used = plot_scan_results(
+                matrices, a_values, R0_values, p, None
+            )
+        
+        # Save results
+        output_dir = os.path.join(os.path.dirname(__file__), '..', 'D0FUS_OUTPUTS')
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = save_scan_results(
+            fig, matrices, a_values, R0_values, p, output_dir,
+            iso_used, bg_used, input_file_path
+        )
+        
+        # Show plot
+        plt.show()
+        
+        return matrices, a_values, R0_values, output_path
+    
+    except Exception as e:
+        print(f"\n!!! ERROR during scan !!!")
+        print(f"Error message: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
-        return [input_name, input_value] 
-        
-        
-    def extract_inputs(self):
-        debug = False
-        split_ = self.inputs.split("\n")
-          
-        for _ in range(2):
-            if split_[-1].isspace() or split_[-1] == "" : # -1 check the last element 
-                split_.pop() # remove the last element if the last element is empty  
-     
-        self.param_1 = self.extract_input_scan(split_[0])
-        self.param_2 = self.extract_input_scan(split_[1])
-      
-        self.inputs = [] 
-        for i in range(2, len(split_)):
-            self.inputs.append(self.extract_input(split_[i]))
 
-        if debug:
-            print(self.param_1)
-            print(self.param_2)
-            print(self.inputs)
-             
-
-        
 if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        input_file = sys.argv[1]
+    else:
+        input_file = None
     
-    parameter_class = Parameters()
-    input_file = "D0FUS_Scan_2D_input.txt"
-    output_file = "D0FUS_Scan_2D_output.txt"    
+    main(input_file)
     
-    now = datetime.now()
-    name_new_folder = "D0FUS_Scan_2D_generic_" + now.strftime("%Y-%m-%d_%H-%M-") + f"{now.second:02d}"[:2]
-
-    os.makedirs(name_new_folder, exist_ok=True)
- 
-    manager = inputs_management(input_file, name_new_folder + "/")
-    manager.run()
-    
-    D0fus_Scan_2D_generic(manager.param_1, manager.param_2, manager.inputs, name_new_folder + "/", parameter_class)
-    
-        
-        
+    print("\nD0FUS_scan completed successfully!")
