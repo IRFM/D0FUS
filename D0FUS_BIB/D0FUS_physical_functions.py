@@ -1,16 +1,14 @@
-# -*- coding: utf-8 -*-
 """
-Created on Thu Jan  9 14:31:18 2025
-
-@author: TA276941
+Created on: Dec 2023
+Author: Auclair Timothe
 """
 
 #%% Import
 
-from D0FUS_parameterization import *
-
-# Ajouter le répertoire 'D0FUS_BIB' au chemin de recherche de Python
-sys.path.append(os.path.join(os.path.dirname(__file__), 'D0FUS_BIB'))
+try:
+    from .D0FUS_parameterization import *
+except ImportError:
+    from D0FUS_parameterization import *
 
 
 #%% Physical Functions
