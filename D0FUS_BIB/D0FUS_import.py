@@ -1,8 +1,6 @@
-# -*- coding: utf-8 -*-
 """
-Created on Tue Jun 25 13:30:05 2024
-
-@author: TA276941
+Created on: Dec 2023
+Author: Auclair Timothe
 """
 
 #%% Import
@@ -32,11 +30,13 @@ from scipy.optimize import (
     basinhopping,
     brentq,
     bisect,
-    root
+    root,
+    least_squares
 )
 from scipy.interpolate import interp1d
 from scipy.interpolate import griddata
 from scipy.integrate import quad
+from scipy.signal import find_peaks
 
 # Importations de bibliothèques de visualisation
 import matplotlib.pyplot as plt
