@@ -1,7 +1,12 @@
-# -*- coding: utf-8 -*-
 """
-Created on Tue Jun 25 12:57:44 2024
+Created on: Dec 2023
+Author: Auclair Timothe
 
-@author: TA276941
+D0FUS Library Package
 """
 
+from .D0FUS_import import *
+from .D0FUS_parameterization import *
+
+__version__ = "1.0.0"
+__all__ = ['D0FUS_import', 'D0FUS_parameterization', 'D0FUS_physical_functions', 'D0FUS_radial_build_functions']
