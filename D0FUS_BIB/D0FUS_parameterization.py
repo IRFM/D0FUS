@@ -1,17 +1,14 @@
-# -*- coding: utf-8 -*-
 """
-Created on Thu Jun  6 09:31:26 2024
-
-@author: TA276941
-
-Sets constants and parameters which are not initialized in D0FUS_run.py
+Created on: Dec 2023
+Author: Auclair Timothe
 """
+
 #%% Import
 
-from D0FUS_import import *
-
-# Adds 'D0FUS_BIB' directory to Python search tree
-sys.path.append(os.path.join(os.path.dirname(__file__), 'D0FUS_BIB'))
+try:
+    from .D0FUS_import import *
+except ImportError:
+    from D0FUS_import import *
 
 #%% 
 
@@ -31,8 +28,8 @@ Zeff = 1                    # Zeff du plasma (default :1)
 r_synch = 0.5               # Synchrotron reflection coefficient of the wall
 
 # Plasma stability limits
-betaN = 2.8  # Beta Troyon limit
-q = 2.5      # Safety factor limit
+betaN_limit = 2.8  # Beta Troyon limit
+q_limit = 2.5      # Safety factor limit
 
 Choice_solving_CS_method = "brentq" # "brentq" or "manual" for debugging
 Choice_solving_TF_method = "brentq" # "brentq" or "manual" for debugging
@@ -89,12 +86,6 @@ theta_deg = 2.7      # Angle d'incidence sur les PFU pour calcul du flux de chal
 
 # Hide runtime-related warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
-
-# Create a directory to save images if it doesn't exist
-# save_directory = "Graphs"
-save_directory = os.path.join(os.getcwd(), "Graphs", "Données brutes")
-
-os.makedirs(save_directory, exist_ok=True)
 
 #%%
 
