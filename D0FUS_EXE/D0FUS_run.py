@@ -1,8 +1,6 @@
 """
-D0FUS Run Module
-Generates a single design point
-
-Created on: Dec 2023
+D0FUS Run Module - Complete Version
+Generates a single design point with full output
 Author: Auclair Timothe
 """
 
@@ -60,7 +58,7 @@ class Parameters:
             self.fatigue = 1
     
     def parse_assignments(self, lines):
-        """Parse input file lines"""
+        """Parse input file lines, skipping scan parameters (those with brackets)"""
         result = []
         cleaned_lines = []
         for line in lines:
@@ -71,9 +69,16 @@ class Parameters:
         for line in cleaned_lines:
             if '=' not in line:
                 continue
+            
             var, val = line.split("=", 1)
             var = var.strip()
             val = val.strip()
+            
+            # Skip scan parameters (those with brackets [min, max, n])
+            if val.startswith('[') and val.endswith(']'):
+                print(f"Skipping scan parameter: {var} = {val}")
+                continue
+            
             try:
                 val = float(val)
                 if val.is_integer():

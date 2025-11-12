@@ -1,13 +1,16 @@
-"""
-D0FUS Scan Module
-Generates 2D parameter space maps with full visualization
 
-Created on: Dec 2023
+
+"""
+D0FUS Scan Module - Complete Generic Version
+Generates 2D parameter space maps with full visualization
+Supports scanning any 2 parameters dynamically
+
 Author: Auclair Timothe
 """
 
 import sys
 import os
+import re
 from datetime import datetime
 import shutil
 
@@ -22,77 +25,183 @@ from D0FUS_BIB.D0FUS_radial_build_functions import *
 try:
     from D0FUS_BIB.D0FUS_physical_functions import *
 except ImportError:
-    pass  # Functions might be in radial_build_functions
+    pass
 
 from D0FUS_EXE.D0FUS_run import run, Parameters
 
 
-def R0_a_scan(params, scan_config=None):
+def parse_scan_parameter(line):
     """
-    Perform 2D scan over R0 and a parameters
-    
-    Args:
-        params: Parameters object with baseline configuration
-        scan_config: Dict with scan parameters (optional)
+    Parse a scan parameter line with bracket syntax
+    Example: "R0 = [3, 9, 25]" -> ("R0", 3.0, 9.0, 25)
     
     Returns:
-        matrices: Dict containing all calculated matrices
-        a_values: Array of minor radius values
-        R0_values: Array of major radius values
+        tuple: (param_name, min_value, max_value, n_points)
+    """
+    # Pattern: parameter = [min, max, n_points]
+    match = re.match(r'^\s*(\w+)\s*=\s*\[([^\]]+)\]', line)
+    if not match:
+        return None
+    
+    param_name = match.group(1).strip()
+    values_str = match.group(2)
+    
+    # Split by comma or semicolon
+    values = re.split(r'[,;]', values_str)
+    if len(values) != 3:
+        raise ValueError(f"Scan parameter {param_name} must have exactly 3 values: [min, max, n_points]")
+    
+    min_val = float(values[0].strip())
+    max_val = float(values[1].strip())
+    n_points = int(float(values[2].strip()))
+    
+    return (param_name, min_val, max_val, n_points)
+
+
+def load_scan_parameters(input_file):
+    """
+    Load parameters from input file, identifying scan parameters
+    
+    Returns:
+        tuple: (scan_params, fixed_params)
+            scan_params: list of (name, min, max, n_points)
+            fixed_params: dict of fixed parameter values
+    """
+    if not os.path.exists(input_file):
+        raise FileNotFoundError(f"Input file not found: {input_file}")
+    
+    scan_params = []
+    fixed_params = {}
+    scan_param_names = []  # Keep track of scan parameter names
+    
+    with open(input_file, 'r', encoding='utf-8') as f:
+        for line in f:
+            # Remove comments and whitespace
+            line = line.split('#')[0].strip()
+            if not line:
+                continue
+            
+            # Try to parse as scan parameter
+            scan_param = parse_scan_parameter(line)
+            if scan_param:
+                scan_params.append(scan_param)
+                scan_param_names.append(scan_param[0])  # Store the parameter name
+                continue
+            
+            # Parse as fixed parameter (only if not a scan parameter)
+            if '=' in line:
+                parts = line.split('=', 1)
+                param_name = parts[0].strip()
+                param_value = parts[1].strip()
+                
+                # Skip if this is a scan parameter (already processed)
+                if param_name in scan_param_names:
+                    continue
+                
+                # Try to convert to float
+                try:
+                    param_value = float(param_value)
+                    if param_value.is_integer():
+                        param_value = int(param_value)
+                except ValueError:
+                    pass  # Keep as string
+                
+                fixed_params[param_name] = param_value
+    
+    if len(scan_params) != 2:
+        raise ValueError(f"Expected exactly 2 scan parameters, found {len(scan_params)}")
+    
+    return scan_params, fixed_params
+
+
+def get_parameter_unit(param_name):
+    """Get the unit for a parameter name"""
+    units = {
+        'R0': 'm', 'a': 'm', 'b': 'm',
+        'P_fus': 'MW',
+        'Bmax': 'T',
+        'Tbar': 'keV',
+        'H': '',
+        'nu_n': '', 'nu_T': '',
+    }
+    return units.get(param_name, '')
+
+
+def generic_2D_scan(scan_params, fixed_params, params_obj):
+    """
+    Perform generic 2D scan over any two parameters
+    
+    Args:
+        scan_params: list of 2 tuples (name, min, max, n_points)
+        fixed_params: dict of fixed parameter values
+        params_obj: Parameters object to update
+    
+    Returns:
+        matrices: dict of result matrices
+        param1_values: array of first parameter values
+        param2_values: array of second parameter values
     """
     
-    # Default scan configuration
-    if scan_config is None:
-        scan_config = {
-            'a_min': 1, 'a_max': 3, 'a_N': 25,
-            'R0_min': 3, 'R0_max': 9, 'R0_N': 25
-        }
+    # Extract scan parameters
+    param1_name, param1_min, param1_max, param1_n = scan_params[0]
+    param2_name, param2_min, param2_max, param2_n = scan_params[1]
     
-    a_values = np.linspace(scan_config['a_min'], scan_config['a_max'], scan_config['a_N'])
-    R0_values = np.linspace(scan_config['R0_min'], scan_config['R0_max'], scan_config['R0_N'])
+    param1_values = np.linspace(param1_min, param1_max, param1_n)
+    param2_values = np.linspace(param2_min, param2_max, param2_n)
+    
+    print(f"\nStarting 2D scan:")
+    print(f"  {param1_name}: [{param1_min}, {param1_max}] with {param1_n} points")
+    print(f"  {param2_name}: [{param2_min}, {param2_max}] with {param2_n} points")
+    print(f"  Total calculations: {param1_n * param2_n}\n")
     
     # Initialize all matrices
     matrices = {
-        'density': np.zeros((len(a_values), len(R0_values))),
-        'security': np.zeros((len(a_values), len(R0_values))),
-        'beta': np.zeros((len(a_values), len(R0_values))),
-        'radial_build': np.zeros((len(a_values), len(R0_values))),
-        'limits': np.zeros((len(a_values), len(R0_values))),
-        'Heat': np.zeros((len(a_values), len(R0_values))),
-        'Cost': np.zeros((len(a_values), len(R0_values))),
-        'Q': np.zeros((len(a_values), len(R0_values))),
-        'P_CD': np.zeros((len(a_values), len(R0_values))),
-        'Gamma_n': np.zeros((len(a_values), len(R0_values))),
-        'L_H': np.zeros((len(a_values), len(R0_values))),
-        'f_alpha': np.zeros((len(a_values), len(R0_values))),
-        'TF_ratio': np.zeros((len(a_values), len(R0_values))),
-        'Ip': np.zeros((len(a_values), len(R0_values))),
-        'n': np.zeros((len(a_values), len(R0_values))),
-        'beta_N': np.zeros((len(a_values), len(R0_values))),
-        'q95': np.zeros((len(a_values), len(R0_values))),
-        'B0': np.zeros((len(a_values), len(R0_values))),
-        'BCS': np.zeros((len(a_values), len(R0_values))),
-        'c': np.zeros((len(a_values), len(R0_values))),
-        'd': np.zeros((len(a_values), len(R0_values)))
+        'density': np.zeros((len(param1_values), len(param2_values))),
+        'security': np.zeros((len(param1_values), len(param2_values))),
+        'beta': np.zeros((len(param1_values), len(param2_values))),
+        'radial_build': np.zeros((len(param1_values), len(param2_values))),
+        'limits': np.zeros((len(param1_values), len(param2_values))),
+        'Heat': np.zeros((len(param1_values), len(param2_values))),
+        'Cost': np.zeros((len(param1_values), len(param2_values))),
+        'Q': np.zeros((len(param1_values), len(param2_values))),
+        'P_CD': np.zeros((len(param1_values), len(param2_values))),
+        'Gamma_n': np.zeros((len(param1_values), len(param2_values))),
+        'L_H': np.zeros((len(param1_values), len(param2_values))),
+        'f_alpha': np.zeros((len(param1_values), len(param2_values))),
+        'TF_ratio': np.zeros((len(param1_values), len(param2_values))),
+        'Ip': np.zeros((len(param1_values), len(param2_values))),
+        'n': np.zeros((len(param1_values), len(param2_values))),
+        'beta_N': np.zeros((len(param1_values), len(param2_values))),
+        'q95': np.zeros((len(param1_values), len(param2_values))),
+        'B0': np.zeros((len(param1_values), len(param2_values))),
+        'BCS': np.zeros((len(param1_values), len(param2_values))),
+        'c': np.zeros((len(param1_values), len(param2_values))),
+        'd': np.zeros((len(param1_values), len(param2_values)))
     }
     
-    print(f"\nStarting 2D scan:")
-    print(f"  a: [{scan_config['a_min']}, {scan_config['a_max']}] m with {scan_config['a_N']} points")
-    print(f"  R0: [{scan_config['R0_min']}, {scan_config['R0_max']}] m with {scan_config['R0_N']} points")
-    print(f"  Total calculations: {len(a_values) * len(R0_values)}\n")
+    # Apply fixed parameters to params_obj
+    for param_name, param_value in fixed_params.items():
+        if hasattr(params_obj, param_name):
+            setattr(params_obj, param_name, param_value)
     
     # Scanning loop
-    for x, R0 in enumerate(tqdm(R0_values, desc='Scanning R0')):
-        for y, a in enumerate(a_values):
+    for y, param1_val in enumerate(tqdm(param1_values, desc=f'Scanning {param1_name}')):
+        for x, param2_val in enumerate(param2_values):
+            
+            # Set scan parameter values
+            setattr(params_obj, param1_name, param1_val)
+            setattr(params_obj, param2_name, param2_val)
+            
             try:
                 # Run calculation
                 results = run(
-                    a, R0, params.Bmax, params.P_fus, params.Tbar, params.H,
-                    params.Temps_Plateau_input, params.b, params.nu_n, params.nu_T,
-                    params.Supra_choice, params.Chosen_Steel, params.Radial_build_model,
-                    params.Choice_Buck_Wedg, params.Option_Kappa, params.κ_manual,
-                    params.L_H_Scaling_choice, params.Scaling_Law, params.Bootstrap_choice,
-                    params.Operation_mode, params.fatigue, params.P_aux_input
+                    params_obj.a, params_obj.R0, params_obj.Bmax, params_obj.P_fus, 
+                    params_obj.Tbar, params_obj.H,
+                    params_obj.Temps_Plateau_input, params_obj.b, params_obj.nu_n, params_obj.nu_T,
+                    params_obj.Supra_choice, params_obj.Chosen_Steel, params_obj.Radial_build_model,
+                    params_obj.Choice_Buck_Wedg, params_obj.Option_Kappa, params_obj.κ_manual,
+                    params_obj.L_H_Scaling_choice, params_obj.Scaling_Law, params_obj.Bootstrap_choice,
+                    params_obj.Operation_mode, params_obj.fatigue, params_obj.P_aux_input
                 )
                 
                 # Unpack results
@@ -115,12 +224,12 @@ def R0_a_scan(params, scan_config=None):
                  κ, κ_95, δ, δ_95) = results
                 
                 # Calculate plasma limit conditions
-                # betaN_limit and q_limit are imported from D0FUS_parameterization
-                # They are your renamed variables: betaN_limit = 2.8, q_limit = 2.5
+                betaN_limit_value = 2.8
+                q_limit_value = 2.5
                 
-                n_condition = nbar / nG                # Should be < 1
-                beta_condition = betaN / betaN_limit   # Should be < 1
-                q_condition = q_limit / qstar          # Should be < 1
+                n_condition = nbar / nG
+                beta_condition = betaN / betaN_limit_value
+                q_condition = q_limit_value / qstar
                 
                 max_limit = max(n_condition, beta_condition, q_condition)
                 
@@ -151,7 +260,7 @@ def R0_a_scan(params, scan_config=None):
                 
                 # Check radial build validity
                 if not np.isnan(r_d) and max_limit < 1 and r_d > 0:
-                    matrices['radial_build'][y, x] = R0
+                    matrices['radial_build'][y, x] = params_obj.R0
                 else:
                     matrices['radial_build'][y, x] = np.nan
                 
@@ -161,42 +270,31 @@ def R0_a_scan(params, scan_config=None):
                 
                 if max_limit < 2:
                     if idx_max == 0:
-                        # Density is most constraining
                         matrices['density'][y, x] = n_condition
                     elif idx_max == 1:
-                        # Beta is most constraining
                         matrices['beta'][y, x] = beta_condition
                     elif idx_max == 2:
-                        # Safety factor is most constraining
                         matrices['security'][y, x] = q_condition
                 
             except Exception as e:
                 # Fill with NaN on error
                 for key in matrices:
                     matrices[key][y, x] = np.nan
-                # Print first few errors for debugging
-                if x < 3 and y < 3:
-                    print(f"\n  Debug: Error at R0={R0:.2f}, a={a:.2f}: {str(e)}")
+                if y < 2 and x < 2:
+                    print(f"\n  Debug: Error at {param1_name}={param1_val:.2f}, {param2_name}={param2_val:.2f}: {str(e)}")
                 continue
     
     print("\n✓ Scan calculation completed!\n")
-    return matrices, a_values, R0_values
+    return matrices, param1_values, param2_values, param1_name, param2_name
 
 
-def plot_scan_results(matrices, a_values, R0_values, params, output_dir, 
-                      iso_param=None, bg_param=None):
-    """
-    Generate and save scan visualization plots
+def plot_scan_results(matrices, param1_values, param2_values, param1_name, param2_name,
+                      params, output_dir, iso_param=None, bg_param=None):
+    """Generate and save scan visualization plots"""
     
-    Args:
-        matrices: Dict of calculated matrices
-        a_values: Array of minor radius values
-        R0_values: Array of major radius values
-        params: Parameters object
-        output_dir: Directory to save results
-        iso_param: Iso-contour parameter (if None, will ask user)
-        bg_param: Background parameter (if None, will ask user)
-    """
+    # Get units
+    unit_param1 = get_parameter_unit(param1_name)
+    unit_param2 = get_parameter_unit(param2_name)
     
     # Ask user for plot preferences if not provided
     if iso_param is None:
@@ -210,10 +308,10 @@ def plot_scan_results(matrices, a_values, R0_values, params, output_dir,
     font_subtitle = 15
     font_legend = 20
     font_other = 15
-    font_title = 22
+    font_title = 30
     plt.rcParams.update({'font.size': font_other})
     
-    # Invert matrices for plotting (flip vertically)
+    # Invert matrices for plotting
     inv_matrices = {key: val[::-1, :] for key, val in matrices.items()}
     
     # Create masked versions for radial build
@@ -241,13 +339,6 @@ def plot_scan_results(matrices, a_values, R0_values, params, output_dir,
     # Create figure
     fig, ax = plt.subplots(figsize=(10, 13))
     
-    # Title
-    title_choice = 1
-    if title_choice == 1:
-        plt.suptitle(f"Parameter space: a, $\\mathbf{{R_0}}$", fontsize=font_title, y=0.94, fontweight='bold')
-        plt.title(f"$B_{{\\mathrm{{max}}}}$ = {params.Bmax} [T], $P_{{\\mathrm{{fus}}}}$ = {params.P_fus} [MW], "
-                 f"scaling law: {params.Scaling_Law}", fontsize=font_subtitle)
-    
     # Plot color maps for plasma limits
     min_val, max_val = 0.5, 2.0
     im_density = ax.imshow(inv_matrices['density'], cmap='Blues', aspect='auto',
@@ -257,7 +348,7 @@ def plot_scan_results(matrices, a_values, R0_values, params, output_dir,
     im_beta = ax.imshow(inv_matrices['beta'], cmap='Reds', aspect='auto',
                        interpolation='nearest', norm=Normalize(vmin=min_val, vmax=max_val))
     
-    # Contour for plasma stability boundary (limit = 1)
+    # Contour for plasma stability boundary
     linewidth = 2.5
     ax.contour(inv_matrices['limits'], levels=[1.0], colors='white', linewidths=linewidth)
     white_dashed_line = mlines.Line2D([], [], color='white', linewidth=linewidth, 
@@ -270,8 +361,10 @@ def plot_scan_results(matrices, a_values, R0_values, params, output_dir,
                                label='Radial build limit')
     
     # Configure axes
-    ax.set_xlabel('$R_0$ [m]', fontsize=24)
-    ax.set_ylabel('a [m]', fontsize=24)
+    label_param2 = f"${param2_name}$" + (f" [{unit_param2}]" if unit_param2 else "")
+    label_param1 = f"${param1_name}$" + (f" [{unit_param1}]" if unit_param1 else "")
+    ax.set_xlabel(label_param2, fontsize=24)
+    ax.set_ylabel(label_param1, fontsize=24)
     
     # Configure colorbars
     divider = make_axes_locatable(ax)
@@ -279,7 +372,6 @@ def plot_scan_results(matrices, a_values, R0_values, params, output_dir,
     cax2 = divider.append_axes("bottom", size="5%", pad=0.1, sharex=cax1)
     cax3 = divider.append_axes("bottom", size="5%", pad=0.1, sharex=cax1)
     
-    # Colorbar annotations
     cax1.annotate('n/$n_{\\mathrm{G}}$', xy=(-0.01, 0.5), xycoords='axes fraction', 
                  ha='right', va='center', fontsize=font_other)
     cax2.annotate(r'$\beta$/$\beta_{T}$', xy=(-0.01, 0.5), xycoords='axes fraction', 
@@ -287,43 +379,37 @@ def plot_scan_results(matrices, a_values, R0_values, params, output_dir,
     cax3.annotate('$q_{\\mathrm{K}}$/$q_{*}$', xy=(-0.01, 0.5), xycoords='axes fraction', 
                  ha='right', va='center', fontsize=font_other)
     
-    # Create colorbars
     cbar_density = plt.colorbar(im_density, cax=cax1, orientation='horizontal')
-    tick_labels = cbar_density.ax.xaxis.get_ticklabels()
-    if tick_labels:
-        tick_labels[-1].set_visible(False)
+    if cbar_density.ax.xaxis.get_ticklabels():
+        cbar_density.ax.xaxis.get_ticklabels()[-1].set_visible(False)
     
     cbar_beta = plt.colorbar(im_beta, cax=cax2, orientation='horizontal')
-    tick_labels = cbar_beta.ax.xaxis.get_ticklabels()
-    if tick_labels:
-        tick_labels[-1].set_visible(False)
+    if cbar_beta.ax.xaxis.get_ticklabels():
+        cbar_beta.ax.xaxis.get_ticklabels()[-1].set_visible(False)
     
     cbar_security = plt.colorbar(im_security, cax=cax3, orientation='horizontal')
     
-    # Add vertical lines at value 1 for each colorbar
     for cax in [cax1, cax2, cax3]:
         cax.axvline(x=1, color='white', linewidth=2.5)
     
-    # Configure y-axis (a_values)
-    a_min, a_max = a_values[0], a_values[-1]
-    approx_step_y = 0.5
-    real_step_y = (a_max - a_min) / (len(a_values) - 1)
+    # Configure y-axis (param1)
+    approx_step_y = (param1_values[-1] - param1_values[0]) / 10
+    real_step_y = (param1_values[-1] - param1_values[0]) / (len(param1_values) - 1)
     index_step_y = max(1, int(round(approx_step_y / real_step_y)))
-    y_indices = np.arange(0, len(a_values), index_step_y)
+    y_indices = np.arange(0, len(param1_values), index_step_y)
     ax.set_yticks(y_indices)
-    ax.set_yticklabels(np.round((a_max + a_min) - a_values[y_indices], 2), fontsize=font_legend)
+    ax.set_yticklabels(np.round(param1_values[::-1][y_indices], 2), fontsize=font_legend)
     
-    # Configure x-axis (R0_values)
-    R0_min, R0_max = R0_values[0], R0_values[-1]
-    approx_step_x = 1.0
-    real_step_x = (R0_max - R0_min) / (len(R0_values) - 1)
+    # Configure x-axis (param2)
+    approx_step_x = (param2_values[-1] - param2_values[0]) / 10
+    real_step_x = (param2_values[-1] - param2_values[0]) / (len(param2_values) - 1)
     index_step_x = max(1, int(round(approx_step_x / real_step_x)))
-    x_indices = np.arange(0, len(R0_values), index_step_x)
+    x_indices = np.arange(0, len(param2_values), index_step_x)
     ax.set_xticks(x_indices)
-    x_labels = [round(R0_values[i], 2) for i in x_indices]
+    x_labels = [round(param2_values[i], 2) for i in x_indices]
     ax.set_xticklabels(x_labels, rotation=45, ha='right', fontsize=font_legend)
     
-    # Add iso-contours based on user choice
+    # Add iso-contours
     grey_line = None
     if iso_param == 'Ip':
         contour_lines = ax.contour(inv_Ip_mask, levels=np.arange(1, 25, 1), 
@@ -379,10 +465,8 @@ def plot_scan_results(matrices, a_values, R0_values, params, output_dir,
         ax.clabel(contour_lines, inline=True, fmt='%.2f', fontsize=font_topological)
         grey_line = mlines.Line2D([], [], linewidth=linewidth, color='black', 
                                  linestyle='dashed', label='CS + TF width [m]')
-    else:
-        print(f'Warning: Unknown iso parameter "{iso_param}"')
     
-    # Add background contours based on user choice
+    # Add background contours
     white_line = None
     if bg_param == 'Heat':
         contour_bg = ax.contour(inv_matrices['Heat'], levels=np.arange(1000, 10000, 500), 
@@ -438,8 +522,6 @@ def plot_scan_results(matrices, a_values, R0_values, params, output_dir,
         ax.clabel(contour_bg, inline=True, fmt='%.1f', fontsize=font_background)
         white_line = mlines.Line2D([], [], linewidth=linewidth, color='white', 
                                    linestyle='dashed', label='$B_{CS}$ [T]')
-    else:
-        print(f'Warning: Unknown background parameter "{bg_param}"')
     
     # Add legend
     legend_handles = [white_dashed_line, black_line]
@@ -454,8 +536,8 @@ def plot_scan_results(matrices, a_values, R0_values, params, output_dir,
     return fig, ax, iso_param, bg_param
 
 
-def save_scan_results(fig, matrices, a_values, R0_values, params, output_dir, 
-                     iso_param, bg_param, input_file_path=None):
+def save_scan_results(fig, matrices, param1_values, param2_values, param1_name, param2_name,
+                     params, output_dir, iso_param, bg_param, input_file_path=None):
     """Save scan results to timestamped directory"""
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -475,17 +557,19 @@ def save_scan_results(fig, matrices, a_values, R0_values, params, output_dir,
         with open(input_copy, "w", encoding='utf-8') as f:
             f.write("# D0FUS Scan Parameters\n")
             f.write(f"# Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-            f.write("# Fixed parameters:\n")
+            f.write("# Scan parameters:\n")
+            f.write(f"{param1_name} = [{param1_values[0]:.2f}, {param1_values[-1]:.2f}, {len(param1_values)}]\n")
+            f.write(f"{param2_name} = [{param2_values[0]:.2f}, {param2_values[-1]:.2f}, {len(param2_values)}]\n")
+            f.write("\n# Fixed parameters:\n")
             for key, value in vars(params).items():
-                f.write(f"{key} = {value}\n")
-            f.write("\n# Scan configuration:\n")
-            f.write(f"# a: [{a_values[0]:.2f}, {a_values[-1]:.2f}] m with {len(a_values)} points\n")
-            f.write(f"# R0: [{R0_values[0]:.2f}, {R0_values[-1]:.2f}] m with {len(R0_values)} points\n")
+                if key not in [param1_name, param2_name]:
+                    f.write(f"{key} = {value}\n")
+            f.write(f"\n# Visualization:\n")
             f.write(f"# Iso-contour: {iso_param}\n")
             f.write(f"# Background: {bg_param}\n")
     
     # Save figure
-    fig_filename = f"scan_map_{iso_param}_{bg_param}.png"
+    fig_filename = f"scan_map_{param1_name}_{param2_name}_{iso_param}_{bg_param}.png"
     fig_path = os.path.join(output_path, fig_filename)
     fig.savefig(fig_path, dpi=300, bbox_inches='tight')
     
@@ -498,14 +582,12 @@ def save_scan_results(fig, matrices, a_values, R0_values, params, output_dir,
     return output_path
 
 
-def main(input_file=None, scan_config=None, auto_plot=False, 
-         iso_param=None, bg_param=None):
+def main(input_file=None, auto_plot=False, iso_param=None, bg_param=None):
     """
     Main execution function for scans
     
     Args:
         input_file: Path to input file (optional)
-        scan_config: Dict with scan configuration (optional)
         auto_plot: If True, use provided iso_param and bg_param without asking
         iso_param: Iso-contour parameter (if auto_plot=True)
         bg_param: Background parameter (if auto_plot=True)
@@ -518,64 +600,68 @@ def main(input_file=None, scan_config=None, auto_plot=False,
     input_file_path = input_file
     
     if input_file is None:
-        default_input = os.path.join(os.path.dirname(__file__), '..', 'D0FUS_INPUTS', 'default_input.txt')
+        default_input = os.path.join(os.path.dirname(__file__), '..', 'D0FUS_INPUTS', 'scan_R0_a_example.txt')
         if os.path.exists(default_input):
             input_file = default_input
+        else:
+            raise FileNotFoundError("No input file provided and default scan input not found")
     
-    if input_file and os.path.exists(input_file):
-        print(f"\nLoading parameters from: {input_file}")
-        p.open_input(input_file)
-    else:
-        print(f"\nWarning: Input file not found. Using default parameters.")
-        input_file_path = None
+    if not os.path.exists(input_file):
+        raise FileNotFoundError(f"Input file not found: {input_file}")
+    
+    print(f"\nLoading parameters from: {input_file}")
+    
+    # Load scan and fixed parameters
+    scan_params, fixed_params = load_scan_parameters(input_file)
     
     # Print scan configuration
     print("\n" + "="*73)
     print("Starting D0FUS 2D parameter scan...")
     print("="*73)
-    print(f"\nFixed parameters:")
-    print(f"  Bmax = {p.Bmax} T")
-    print(f"  P_fus = {p.P_fus} MW")
-    print(f"  Scaling Law = {p.Scaling_Law}")
-    print(f"  Operation mode = {p.Operation_mode}")
-    print(f"  Superconductor = {p.Supra_choice}")
-    print(f"  Mechanical config = {p.Choice_Buck_Wedg}")
+    print(f"\nScan parameters:")
+    for param_name, min_val, max_val, n_points in scan_params:
+        unit = get_parameter_unit(param_name)
+        unit_str = f" [{unit}]" if unit else ""
+        print(f"  {param_name}: [{min_val}, {max_val}]{unit_str} with {n_points} points")
     
-    # Default scan configuration if not provided
-    if scan_config is None:
-        scan_config = {
-            'a_min': 1, 'a_max': 3, 'a_N': 25,
-            'R0_min': 3, 'R0_max': 9, 'R0_N': 25
-        }
+    print(f"\nFixed parameters:")
+    for key, value in list(fixed_params.items())[:6]:  # Show first 6
+        print(f"  {key} = {value}")
+    if len(fixed_params) > 6:
+        print(f"  ... and {len(fixed_params) - 6} more")
     
     try:
         # Perform scan
-        matrices, a_values, R0_values = R0_a_scan(p, scan_config)
+        matrices, param1_values, param2_values, param1_name, param2_name = generic_2D_scan(
+            scan_params, fixed_params, p
+        )
         
         # Plot results
         if auto_plot and iso_param and bg_param:
             # Automatic plotting with provided parameters
             fig, ax, iso_used, bg_used = plot_scan_results(
-                matrices, a_values, R0_values, p, None, iso_param, bg_param
+                matrices, param1_values, param2_values, param1_name, param2_name,
+                p, None, iso_param, bg_param
             )
         else:
             # Interactive plotting - ask user for preferences
             fig, ax, iso_used, bg_used = plot_scan_results(
-                matrices, a_values, R0_values, p, None
+                matrices, param1_values, param2_values, param1_name, param2_name,
+                p, None
             )
         
         # Save results
         output_dir = os.path.join(os.path.dirname(__file__), '..', 'D0FUS_OUTPUTS')
         os.makedirs(output_dir, exist_ok=True)
         output_path = save_scan_results(
-            fig, matrices, a_values, R0_values, p, output_dir,
-            iso_used, bg_used, input_file_path
+            fig, matrices, param1_values, param2_values, param1_name, param2_name,
+            p, output_dir, iso_used, bg_used, input_file_path
         )
         
         # Show plot
         plt.show()
         
-        return matrices, a_values, R0_values, output_path
+        return matrices, param1_values, param2_values, output_path
     
     except Exception as e:
         print(f"\n!!! ERROR during scan !!!")
