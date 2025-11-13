@@ -128,7 +128,7 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
     else: 
         print('Choose a valid mechanical configuration')
         
-    # Confinement time scaling law
+    # Confinement time scaling law parameters
     (C_SL, alpha_delta, alpha_M, alpha_kappa, alpha_epsilon,
      alpha_R, alpha_B, alpha_n, alpha_I, alpha_P) = f_Get_parameter_scaling_law(Scaling_Law)
 
@@ -137,46 +137,50 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
     κ_95 = f_Kappa_95(κ)
     δ = f_Delta(κ)
     δ_95 = f_Delta_95(δ)
-    
-    # Plasma volume
     Volume_solution = f_plasma_volume(R0, a, κ, δ)
     Surface_solution = f_surface_premiere_paroi(κ, R0, a)
     
     # Central magnetic field
     B0_solution = f_B0(Bmax, a, b, R0)
-    
     # Alpha power
     P_Alpha = f_P_alpha(P_fus, E_ALPHA, E_N)
     
-    # Function to solve for both the alpha particle fraction f_alpha and Q
+    # Function to solve both the alpha particle fraction f_alpha and Q
     def to_solve_f_alpha_and_Q(vars):
+        
         f_alpha, Q = vars
         
+        # Sanity check
+        if f_alpha > 1 or f_alpha < 0:
+            return[1e10,1e10]
+        if Q < 0:
+            return[1e10,1e10]
+        
+        # Density and pressure
         nbar_alpha = f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, κ)
         pbar_alpha = f_pbar(nu_n, nu_T, nbar_alpha, Tbar, f_alpha)
-        
         # Radiative losses
         P_Brem_alpha = f_P_bremsstrahlung(Volume_solution, nbar_alpha, Tbar, Zeff, R0, a)
-        beta_T = 2
-        P_syn_alpha = f_P_synchrotron(Tbar, R0, a, B0_solution, nbar_alpha, κ, nu_n, nu_T, beta_T, r_synch)
+        P_syn_alpha = f_P_synchrotron(Tbar, R0, a, B0_solution, nbar_alpha, κ, nu_n, nu_T, r_synch)
         P_rad_alpha = P_Brem_alpha + P_syn_alpha
-        
+
+        # Initialize power inputs based on operation mode
         if Operation_mode == 'Steady-State':
-            P_Ohm_alpha_init = 0
             P_Aux_alpha_init = P_fus / Q
+            P_Ohm_alpha_init = 0
         elif Operation_mode == 'Pulsed':
             P_Aux_alpha_init = P_aux_input
             P_Ohm_alpha_init = P_fus / Q - P_Aux_alpha_init
         else:
             print("Choose a valid operation mode")
-            
+        # Confinement time calculation
         tau_E_alpha = f_tauE(pbar_alpha, Volume_solution, P_Alpha, P_Aux_alpha_init, P_Ohm_alpha_init, P_rad_alpha)
-        
+        # Associated Plasma Current
         Ip_alpha = f_Ip(tau_E_alpha, R0, a, κ, δ, nbar_alpha, B0_solution, Atomic_mass,
                         P_Alpha, P_Ohm_alpha_init, P_Aux_alpha_init, P_rad_alpha,
                         H, C_SL,
                         alpha_delta, alpha_M, alpha_kappa, alpha_epsilon, alpha_R, alpha_B, alpha_n, alpha_I, alpha_P)
-
+        # Associated bootstrap current
         if Bootstrap_choice == 'Freidberg':
             Ib_alpha = f_Freidberg_Ib(R0, a, κ, pbar_alpha, Ip_alpha)
         elif Bootstrap_choice == 'Segal':
@@ -184,71 +188,137 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
         else:
             print("Choose a valid bootstrap model")
             
-        eta_CD_alpha = f_etaCD(a, R0, B0_solution, nbar_alpha, Tbar, nu_n, nu_T)
-        
         if Operation_mode == 'Steady-State':
-            P_CD_alpha = f_PCD(R0, nbar_alpha, Ip_alpha, Ib_alpha, eta_CD_alpha)
-            I_CD_alpha = f_I_CD(R0, nbar_alpha, eta_CD_alpha, P_CD_alpha)
-            P_Ohm_alpha = 0
+            # Current drive efficienty (complex calculation)
+            eta_CD_alpha = f_etaCD(a, R0, B0_solution, nbar_alpha, Tbar, nu_n, nu_T)
+            # I_Ohm = 0 by definition
             I_Ohm_alpha = 0
+            # And associated power
+            P_Ohm_alpha = 0
+            # Current balance: Ip = Ib + I_CD + I_Ohm
+            I_CD_alpha = f_ICD(Ip_alpha, Ib_alpha, I_Ohm_alpha)
+            # Power required to drive I_CD
+            P_CD_alpha = f_PCD(R0, nbar_alpha, I_CD_alpha, eta_CD_alpha)
+            # Q calculation
             Q_alpha = f_Q(P_fus, P_CD_alpha, P_Ohm_alpha)
+            
         elif Operation_mode == 'Pulsed':
+            # Current drive efficienty (complex calculation)
+            eta_CD_alpha = f_etaCD(a, R0, B0_solution, nbar_alpha, Tbar, nu_n, nu_T)
+            # Pulsed mode: P_CD is a fixed INPUT from user
             P_CD_alpha = P_aux_input
+            # Calculate I_CD from power and efficiency
             I_CD_alpha = f_I_CD(R0, nbar_alpha, eta_CD_alpha, P_CD_alpha)
+            # Ohmic current from current balance: Ip = Ib + I_CD + I_Ohm
             I_Ohm_alpha = f_I_Ohm(Ip_alpha, Ib_alpha, I_CD_alpha)
+            # Ohmic power calculation
             P_Ohm_alpha = f_P_Ohm(I_Ohm_alpha, Tbar, R0, a, κ)
+            # Q factor including both CD and Ohmic power
             Q_alpha = f_Q(P_fus, P_CD_alpha, P_Ohm_alpha)
         else:
             print("Choose a valid operation mode")
-        
+        # Helium fraction
         new_f_alpha = f_He_fraction(nbar_alpha, Tbar, tau_E_alpha, C_Alpha, nu_T)
         
+        # Residuals
         f_alpha_residual = (new_f_alpha - f_alpha) * 100 / new_f_alpha
         Q_residual = (Q - Q_alpha) * 100 / Q_alpha
-
+        
+        # print("DBG: f_alpha, Q ->", f_alpha, Q, "P_CD_alpha", P_CD_alpha, "P_Ohm_alpha", P_Ohm_alpha, "Q_alpha", Q_alpha)
+        
         return [f_alpha_residual, Q_residual]
         
     def solve_f_alpha_Q():
-        f_alpha_guesses = np.concatenate([
-            np.linspace(0.001, 0.01, 5),
-            np.linspace(0.01, 0.1, 5),
-            np.linspace(0.1, 1.0, 5)
-        ])
-        Q_guesses = np.logspace(1, 5, 8)
-        
-        initial_guesses = [[f_a, Q] for f_a in f_alpha_guesses for Q in Q_guesses]
-        
-        for method in ['lm', 'hybr', 'df-sane']:
+        """
+        Solve for the optimal f_alpha and Q parameters using a two-step approach:
+        1. First tries direct root-finding with initial guesses
+        2. If unsuccessful, performs a grid search over parameter space
+    
+        Returns:
+            tuple: (f_alpha, Q) if a valid solution is found, (np.nan, np.nan) otherwise
+        """
+        # Step 1: Try direct root-finding with initial guesses
+        initial_guesses = [[0.05, 50]]  # Initial guess
+        methods = ['lm', 'hybr', 'df-sane']  # Root-finding methods
+    
+        for method in methods:
             for guess in initial_guesses:
                 try:
-                    result = root(to_solve_f_alpha_and_Q, guess, method=method, tol=1e-8)
+                    result = root(
+                        to_solve_f_alpha_and_Q,
+                        guess,
+                        method=method,
+                        tol=1e-8
+                    )
+    
                     if result.success:
                         f_alpha, Q = result.x
+                        # print("solver found:", f_alpha, Q)
                         if 0 <= f_alpha <= 1 and Q >= 0:
                             return (f_alpha, Q)
-                    else: 
-                        print("!!! Convergence issue in finding f_alpha and Q !!!")
-                except Exception:
+    
+                except Exception as e:
                     continue
-                    
+    
+        # Step 2: If direct methods fail, perform grid search
+        f_alpha_guesses = [0.001, 0.01, 0.05, 0.1, 0.3]
+        Q_guesses = [1, 10, 100, 1000, 1e5]
+    
+        for f_a in f_alpha_guesses:
+            for Q in Q_guesses:
+                try:
+                    result = root(
+                        to_solve_f_alpha_and_Q,
+                        [f_a, Q],
+                        method='lm',  # Simplest method for grid search
+                        tol=1e-8
+                    )
+    
+                    if result.success:
+                        f_alpha, Q = result.x
+                        # print("solver found:", f_alpha, Q)
+                        if 0 <= f_alpha <= 1 and Q >= 0:
+                            return (f_alpha, Q)
+    
+                except Exception as e:
+                    continue
+    
+        # If all attempts fail
+        # print("Warning: No valid solution found for f_alpha and Q")
         return np.nan, np.nan
 
     f_alpha_solution, Q_solution = solve_f_alpha_Q()
     
-    # Once convergence is achieved, calculate all other parameters
+    # Check if convergence succeeded
+    if np.isnan(f_alpha_solution) or np.isnan(Q_solution):
+        return (np.nan, np.nan, np.nan,                  # B0, B_CS, B_pol
+                np.nan, np.nan,                          # tauE, W_th
+                np.nan, np.nan, np.nan,                  # Q, Volume, Surface
+                np.nan, np.nan, np.nan, np.nan,          # Ip, Ib, I_CD, I_Ohm
+                np.nan, np.nan, np.nan,                  # nbar, nG, pbar
+                np.nan, np.nan, np.nan,                  # betaN, betaT, betaP
+                np.nan, np.nan,                          # qstar, q95
+                np.nan, np.nan, np.nan, np.nan, np.nan,  # P_CD, P_sep, P_Thresh, eta_CD, P_elec
+                np.nan, np.nan, np.nan,                  # cost, P_Brem, P_syn
+                np.nan, np.nan, np.nan, np.nan, np.nan,  # heat, heat_par, heat_pol, lambda_q, q_target
+                np.nan, np.nan,                          # P_wall_H, P_wall_L
+                np.nan,                                  # Gamma_n
+                np.nan, np.nan,                          # f_alpha, tau_alpha
+                np.nan, np.nan,                          # J_TF, J_CS
+                np.nan,                                  # TF_ratio
+                np.nan, np.nan, np.nan, np.nan,          # r_minor, r_sep, r_c, r_d
+                np.nan, np.nan, np.nan, np.nan)          # κ, κ_95, δ, δ_95
+    
+    # Once convergence is achieved, calculate all other parameters:
     nbar_solution = f_nbar(P_fus, nu_n, nu_T, f_alpha_solution, Tbar, R0, a, κ)
     pbar_solution = f_pbar(nu_n, nu_T, nbar_solution, Tbar, f_alpha_solution)
     W_th_solution = f_W_th(nbar_solution, Tbar, Volume_solution)
-    
     # Radiative losses
     P_Brem_solution = f_P_bremsstrahlung(Volume_solution, nbar_solution, Tbar, Zeff, R0, a)
-    beta_T = 2
-    P_syn_solution = f_P_synchrotron(Tbar, R0, a, B0_solution, nbar_solution, κ, nu_n, nu_T, beta_T, r_synch)
+    P_syn_solution = f_P_synchrotron(Tbar, R0, a, B0_solution, nbar_solution, κ, nu_n, nu_T, r_synch)
     P_rad_solution = P_Brem_solution + P_syn_solution
     
-    # Current drive efficiency
-    eta_CD = f_etaCD(a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T)
-    
+    # Preliminary solving for confinement time calculation
     if Operation_mode == 'Steady-State':
         P_Aux_solution = P_fus / Q_solution
         P_Ohm_solution = 0
@@ -257,18 +327,14 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
         P_Ohm_solution = P_fus / Q_solution - P_Aux_solution
     else:
         print("Choose a valid operation mode")
-        
-    # Solve for energy confinement time
+    # Confinement time
     tauE_solution = f_tauE(pbar_solution, Volume_solution, P_Alpha, P_Aux_solution, P_Ohm_solution, P_rad_solution)
-
-    # Solve for alpha particles confinement time
+    # alpha particles confinement time
     tau_alpha = f_tau_alpha(nbar_solution, Tbar, tauE_solution, C_Alpha, nu_T)
-
-    # Solve for Ip
+    # Plasma current needed
     Ip_solution = f_Ip(tauE_solution, R0, a, κ, δ, nbar_solution, B0_solution, Atomic_mass, 
                        P_Alpha, P_Ohm_solution, P_Aux_solution, P_rad_solution, H, C_SL,
                        alpha_delta, alpha_M, alpha_kappa, alpha_epsilon, alpha_R, alpha_B, alpha_n, alpha_I, alpha_P)
-
     # Calculate the bootstrap current
     if Bootstrap_choice == 'Freidberg':
         Ib_solution = f_Freidberg_Ib(R0, a, κ, pbar_solution, Ip_solution)
@@ -276,7 +342,6 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
         Ib_solution = f_Segal_Ib(nu_n, nu_T, a/R0, κ, nbar_solution, Tbar, R0, Ip_solution)
     else:
         print("Choose a valid bootstrap model")
-
     # Calculate derived quantities
     qstar_solution = f_qstar(a, B0_solution, R0, Ip_solution, κ)
     q95_solution = f_q95(B0_solution, Ip_solution, R0, a, κ, δ)
@@ -286,21 +351,32 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
     beta_solution = f_beta(betaP_solution, betaT_solution)
     betaN_solution = f_beta_N(betaT_solution, B0_solution, a, Ip_solution)
     nG_solution = f_nG(Ip_solution, a)
-    eta_CD_solution = f_etaCD(a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T)
     
+    # Recalculate currents and powers using same logic as convergence loop
     if Operation_mode == 'Steady-State':
-        Temps_Plateau = 0
-        P_CD_solution = f_PCD(R0, nbar_solution, Ip_solution, Ib_solution, eta_CD_solution)
+        # Current drive efficiency
+        eta_CD_solution = f_etaCD(a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T)
+        # I_Ohm = 0 by definition
         I_Ohm_solution = 0
-        I_CD_solution = f_ICD(Ip_solution, Ib_solution, I_Ohm_solution)
+        # And associated power
         P_Ohm_solution = 0
-        Q_solution = f_Q(P_fus, P_CD_solution, P_Ohm_solution)
+        # Current balance: Ip = Ib + I_CD + I_Ohm
+        I_CD_solution = f_ICD(Ip_solution, Ib_solution, I_Ohm_solution)
+        # Power required to drive I_CD
+        P_CD_solution = f_PCD(R0, nbar_solution, I_CD_solution, eta_CD_solution)
+        
     elif Operation_mode == 'Pulsed':
+        # Current drive efficiency
+        eta_CD_solution = f_etaCD(a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T)
+        # Pulsed mode: P_CD is a fixed INPUT from user
         P_CD_solution = P_aux_input
+        # Calculate I_CD from power and efficiency
         I_CD_solution = f_I_CD(R0, nbar_solution, eta_CD_solution, P_CD_solution)
+        # Ohmic current from current balance: Ip = Ib + I_CD + I_Ohm
         I_Ohm_solution = f_I_Ohm(Ip_solution, Ib_solution, I_CD_solution)
+        # Ohmic power calculation
         P_Ohm_solution = f_P_Ohm(I_Ohm_solution, Tbar, R0, a, κ)
-        Q_solution = f_Q(P_fus, P_CD_solution, P_Ohm_solution)
+        
     else:
         print("Choose a valid operation mode")
         
@@ -354,7 +430,7 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
             nbar_solution, nG_solution, pbar_solution,
             betaN_solution, betaT_solution, betaP_solution,
             qstar_solution, q95_solution,
-            P_CD_solution, P_sep_solution, P_Thresh, eta_CD, P_elec_solution,
+            P_CD_solution, P_sep_solution, P_Thresh, eta_CD_solution, P_elec_solution,
             cost_solution, P_Brem_solution, P_syn_solution,
             heat_D0FUS_solution, heat_par_solution, heat_pol_solution, lambda_q_Eich_m, q_target_Eich,
             P_1rst_wall_Hmod, P_1rst_wall_Lmod,
