@@ -8,7 +8,7 @@ import os
 import re
 from pathlib import Path
 try: get_ipython().magic('autoreload 2') # Activating auto-reload
-except: pass
+8except: pass
 
 # Add D0FUS_EXE to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'D0FUS_EXE'))
@@ -276,7 +276,7 @@ def main():
             sys.exit(1)
     
     except KeyboardInterrupt:
-        print("\n\n Operation cancelled by user. Goodbye!")
+        print("\n\n Operation cancelled by user")
         sys.exit(0)
 
 if __name__ == "__main__":
