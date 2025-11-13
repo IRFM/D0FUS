@@ -30,8 +30,8 @@ from scipy.optimize import (
     basinhopping,
     brentq,
     bisect,
-    root,
-    least_squares
+    least_squares,
+    shgo
 )
 from scipy.interpolate import interp1d
 from scipy.interpolate import griddata
