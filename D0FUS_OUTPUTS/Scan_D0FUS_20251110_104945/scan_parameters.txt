@@ -1,0 +1,37 @@
+# D0FUS Scan Input - Bmax and P_fus Parameter Space
+# Example showing scan flexibility: any 2 parameters can be scanned
+# Scan syntax: parameter_name = [min, max, n_points]
+
+# SCAN PARAMETERS (exactly 2 required)
+Bmax = [10, 14, 20]         # Maximum toroidal field scan [T]
+P_fus = [1000, 3000, 20]    # Fusion power scan [MW]
+
+# FIXED PARAMETERS
+R0 = 9                      # Major radius [m]
+a = 3                       # Minor radius [m]
+b = 1.2                     # First wall + blanket thickness [m]
+
+# Plasma Shape
+Option_Kappa = Wenninger
+κ_manual = 1.7
+
+# Technology Choices
+Supra_choice = Nb3Sn
+Radial_build_model = D0FUS
+Choice_Buck_Wedg = Wedging
+Chosen_Steel = 316L
+
+# Plasma Physics
+Scaling_Law = IPB98(y,2)
+H = 1
+Tbar = 14
+nu_T = 1
+nu_n = 0.1
+L_H_Scaling_choice = New_Ip
+Bootstrap_choice = Freidberg
+
+# Operation Mode
+Operation_mode = Steady-State
+Temps_Plateau_input = 0
+P_aux_input = 0
+fatigue = 1

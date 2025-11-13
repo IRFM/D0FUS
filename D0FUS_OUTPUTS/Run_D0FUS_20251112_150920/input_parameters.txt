@@ -1,0 +1,37 @@
+# D0FUS Input Parameters
+# Lines starting with # are comments
+# Format: parameter_name = value
+
+# Fusion Power and Geometry
+P_fus = 2000                    # Fusion power [MW]
+R0 = 9                          # Major radius [m]
+a = 1.7                           # Minor radius [m]
+b = 1.2                         # First wall + blanket thickness [m]
+
+# Plasma Shape
+Option_Kappa = Manual           # Elongation model: Stambaugh, Freidberg, Wenninger, Manual
+κ_manual = 2.1                  # Manual elongation (if Option_Kappa = Manual)
+
+# Magnetic Field
+Bmax = 12                       # Maximum toroidal field on TF coils [T]
+
+# Technology Choices
+Supra_choice = Nb3Sn            # Superconductor: Nb3Sn, Rebco, NbTi, Manual
+Radial_build_model = D0FUS      # Radial build: academic, D0FUS, CIRCEE
+Choice_Buck_Wedg = Wedging      # Mechanical config: Wedging, Bucking
+Chosen_Steel = 316L             # Steel type: 316L, N50H, Manual
+
+# Plasma Physics
+Scaling_Law = ITPA20            # Confinement scaling law
+H = 1                           # H-factor for confinement time
+Tbar = 14                       # Volume-averaged temperature [keV]
+nu_T = 1                        # Temperature profile peaking
+nu_n = 0.1                      # Density profile peaking
+L_H_Scaling_choice = New_Ip     # L-H threshold: Martin, New_S, New_Ip
+Bootstrap_choice = Freidberg    # Bootstrap model: Freidberg, Segal
+
+# Operation Mode
+Operation_mode = Steady-State   # Steady-State or Pulsed
+Temps_Plateau_input = 0         # Plateau duration [s] (for Pulsed)
+P_aux_input = 0                 # Auxiliary power [MW] (for Pulsed)
+fatigue = 1                     # Fatigue parameter (2 for Pulsed, 1 for Steady-State)
