@@ -2,7 +2,7 @@
 
 # D0FUS
 
-**D0FUS** (Design 0-Dimensional for Fusion Systems) is a comprehensive Python-based tool for tokamak fusion power plant design and analysis. It enables rapid exploration of design space through 0D/1D physics models.
+**D0FUS** (Design 0-dimensional for Fusion Systems) is a comprehensive Python-based tool for tokamak fusion power plant design and analysis. It enables rapid exploration of design space through 0D/1D physics models.
 
 ## Installation
 
