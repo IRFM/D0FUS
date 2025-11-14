@@ -8,7 +8,7 @@ import os
 import re
 from pathlib import Path
 try: get_ipython().magic('autoreload 2') # Activating auto-reload
-8except: pass
+except: pass
 
 # Add D0FUS_EXE to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'D0FUS_EXE'))

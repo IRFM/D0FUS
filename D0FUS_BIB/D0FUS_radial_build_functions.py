@@ -1984,7 +1984,7 @@ def f_CS_D0FUS( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
     # --------------------------------------------------------------
     # Sign change detection
     # --------------------------------------------------------------
-    def find_sign_changes(f, a, b, n=200):
+    def find_sign_changes(f, a, b, n):
         x_vals = np.linspace(a, b, n)
         y_vals = np.array([f(x) for x in x_vals])
         sign_changes = []
@@ -2028,7 +2028,7 @@ def f_CS_D0FUS( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
         # --------------------------------------------------------------
         # Recherche des intervalles puis des racines
         # --------------------------------------------------------------
-        sign_intervals = find_sign_changes(f_sigma_diff, d_min, d_max, n=200)
+        sign_intervals = find_sign_changes(f_sigma_diff, d_min, d_max, n=1500)
         roots = refine_zeros(f_sigma_diff, sign_intervals)
         
         if debug:
@@ -2375,7 +2375,7 @@ def f_CS_CIRCE( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
     # --------------------------------------------------------------
     # Sign change detection
     # --------------------------------------------------------------
-    def find_sign_changes(f, a, b, n=200):
+    def find_sign_changes(f, a, b, n):
         x_vals = np.linspace(a, b, n)
         y_vals = np.array([f(x) for x in x_vals])
         sign_changes = []
@@ -2416,7 +2416,7 @@ def f_CS_CIRCE( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
         # --------------------------------------------------------------
         # Recherche des intervalles puis des racines
         # --------------------------------------------------------------
-        sign_intervals = find_sign_changes(f_sigma_diff, d_min, d_max, n=200)
+        sign_intervals = find_sign_changes(f_sigma_diff, d_min, d_max, n=1500)
         roots = refine_zeros(f_sigma_diff, sign_intervals)
     
         if debug:

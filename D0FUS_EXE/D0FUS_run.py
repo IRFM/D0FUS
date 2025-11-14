@@ -220,29 +220,59 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
         # Helium fraction
         new_f_alpha = f_He_fraction(nbar_alpha, Tbar, tau_E_alpha, C_Alpha, nu_T)
         
+        # To avoid division by 0
+        epsilon = 1e-10
+        
         # Residuals
-        f_alpha_residual = (new_f_alpha - f_alpha) * 100 / new_f_alpha
-        Q_residual = (Q - Q_alpha) * 100 / Q_alpha
+        f_alpha_residual = abs(new_f_alpha - f_alpha) / (abs(new_f_alpha) + epsilon) * 100
+        Q_residual = abs(Q - Q_alpha) / (abs(Q_alpha) + epsilon) * 100
         
         # print("DBG: f_alpha, Q ->", f_alpha, Q, "P_CD_alpha", P_CD_alpha, "P_Ohm_alpha", P_Ohm_alpha, "Q_alpha", Q_alpha)
         
         return [f_alpha_residual, Q_residual]
-        
+    
     def solve_f_alpha_Q():
         """
-        Solve for the optimal f_alpha and Q parameters using a two-step approach:
-        1. First tries direct root-finding with initial guesses
-        2. If unsuccessful, performs a grid search over parameter space
-    
-        Returns:
-            tuple: (f_alpha, Q) if a valid solution is found, (np.nan, np.nan) otherwise
+        Solve for f_alpha and Q with robust convergence verification.
         """
-        # Step 1: Try direct root-finding with initial guesses
-        initial_guesses = [[0.05, 50]]  # Initial guess
-        methods = ['lm', 'hybr', 'df-sane']  # Root-finding methods
-    
-        for method in methods:
-            for guess in initial_guesses:
+        
+        def verify_solution(f_alpha, Q, residuals, tolerance=1e-3):
+            """
+            Verify if the solution is physically valid and numerically converged.
+            
+            Args:
+                f_alpha, Q: Solution candidates
+                residuals: Residuals from to_solve_f_alpha_and_Q
+                tolerance: Maximum acceptable residual (default 0.1%)
+            
+            Returns:
+                bool: True if solution is valid
+            """
+            # Check physical bounds
+            if not (0 <= f_alpha <= 1 and Q >= 0):
+                return False
+            
+            # Check numerical convergence
+            if abs(residuals[0]) > tolerance or abs(residuals[1]) > tolerance:
+                return False
+            
+            # Check if values are reasonable
+            if Q > 1e6 or f_alpha < 1e-6:  # Adjust based on your physics
+                return False
+                
+            return True
+        
+        # Step 1: Try multiple initial guesses with verification
+        initial_guesses = [
+            [0.05, 50],
+            [0.05, 1000],
+            [0.05, 1],
+        ]
+        
+        methods = ['lm', 'hybr']
+        
+        for guess in initial_guesses:
+            for method in methods:
                 try:
                     result = root(
                         to_solve_f_alpha_and_Q,
@@ -250,41 +280,69 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
                         method=method,
                         tol=1e-8
                     )
-    
+                    
                     if result.success:
                         f_alpha, Q = result.x
-                        # print("solver found:", f_alpha, Q)
-                        if 0 <= f_alpha <= 1 and Q >= 0:
+                        
+                        # Re-evaluate residuals to verify convergence
+                        residuals = to_solve_f_alpha_and_Q([f_alpha, Q])
+                        
+                        # Verify this is a true convergence
+                        if verify_solution(f_alpha, Q, residuals, tolerance=0.1):  # 0.1% tolerance
+                            # print(f"Valid solution: f_alpha={f_alpha:.6f}, Q={Q:.1f}, "
+                            #      f"residuals=[{residuals[0]:.2e}, {residuals[1]:.2e}]")
                             return (f_alpha, Q)
-    
+                        else:
+                            pass
+                            # print(f"Invalid solution from guess {guess}: "
+                            #      f"f_alpha={f_alpha:.6f}, Q={Q:.1f}, "
+                            #      f"residuals=[{residuals[0]:.2e}, {residuals[1]:.2e}]")
+                            
                 except Exception as e:
                     continue
-    
-        # Step 2: If direct methods fail, perform grid search
-        f_alpha_guesses = [0.001, 0.01, 0.05, 0.1, 0.3]
+        
+        # Step 2: Grid search if all direct methods fail
+        # print("Direct methods failed, trying grid search...")
+        f_alpha_guesses = [0.001, 0.01, 0.1, 0.3]
         Q_guesses = [1, 10, 100, 1000, 1e5]
-    
+        
+        best_solution = None
+        best_residual_norm = float('inf')
+        
         for f_a in f_alpha_guesses:
-            for Q in Q_guesses:
+            for Q_guess in Q_guesses:
                 try:
                     result = root(
                         to_solve_f_alpha_and_Q,
-                        [f_a, Q],
-                        method='lm',  # Simplest method for grid search
+                        [f_a, Q_guess],
+                        method='hybr',
                         tol=1e-8
                     )
-    
+                    
                     if result.success:
                         f_alpha, Q = result.x
-                        # print("solver found:", f_alpha, Q)
-                        if 0 <= f_alpha <= 1 and Q >= 0:
+                        residuals = to_solve_f_alpha_and_Q([f_alpha, Q])
+                        
+                        if verify_solution(f_alpha, Q, residuals, tolerance=0.1):
                             return (f_alpha, Q)
-    
+                        
+                        # Keep best solution even if not perfect
+                        residual_norm = np.sqrt(residuals[0]**2 + residuals[1]**2)
+                        if residual_norm < best_residual_norm and 0 <= f_alpha <= 1 and Q >= 0:
+                            best_residual_norm = residual_norm
+                            best_solution = (f_alpha, Q, residuals)
+                            
                 except Exception as e:
                     continue
-    
-        # If all attempts fail
-        # print("Warning: No valid solution found for f_alpha and Q")
+        
+        # Return best solution if no perfect one found
+        if best_solution is not None and best_residual_norm < 1.0:  # 1% acceptable
+            f_alpha, Q, residuals = best_solution
+            # print(f"Returning best solution (not perfect): f_alpha={f_alpha:.6f}, Q={Q:.1f}, "
+            #       f"residuals=[{residuals[0]:.2e}, {residuals[1]:.2e}]")
+            return (f_alpha, Q)
+        
+        # print("No valid solution found")
         return np.nan, np.nan
 
     f_alpha_solution, Q_solution = solve_f_alpha_Q()

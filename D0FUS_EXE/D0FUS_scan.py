@@ -475,7 +475,7 @@ def plot_scan_results(matrices, param1_values, param2_values, param1_name, param
         white_line = mlines.Line2D([], [], linewidth=linewidth, color='white', 
                                    linestyle='dashed', label='Heat// [MW-T/m]')
     elif bg_param == 'Q':
-        contour_bg = ax.contour(inv_matrices['Q'], levels=np.arange(0, 60, 10), 
+        contour_bg = ax.contour(inv_matrices['Q'], levels=np.arange(0, 110, 10), 
                                colors='white', linestyles='dashed', linewidths=linewidth)
         ax.clabel(contour_bg, inline=True, fmt='%d', fontsize=font_background)
         white_line = mlines.Line2D([], [], linewidth=linewidth, color='white', 
