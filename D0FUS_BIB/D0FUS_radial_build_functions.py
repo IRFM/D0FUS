@@ -6,17 +6,10 @@ Author: Auclair Timothe
 #%% Import
 try:
     from .D0FUS_parameterization import *
-except ImportError:
-    from D0FUS_parameterization import *
-
-# Si radial_build utilise des fonctions de physical_functions :
-try:
     from .D0FUS_physical_functions import *
 except ImportError:
-    try:
-        from D0FUS_physical_functions import *
-    except ImportError:
-        pass  # Les fonctions sont peut-être définies ici
+    from D0FUS_parameterization import *
+    from .D0FUS_physical_functions import *
 
 #%% print
 
@@ -669,8 +662,6 @@ def Number_TF_coils(R0, a, b, ripple_adm, L_min):
         Additional margin added to r2 to satisfy both constraints
     """
 
-    import math
-
     N_min = 1
     N_max = 200
     delta_step = 0.01
@@ -774,7 +765,7 @@ def f_TF_academic(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg):
         T = abs(((np.pi * B0 * 2 * R0**2) / μ0 * math.log(R2 / R1) - F_CClamp) * coef_inboard_tension)
     else:
         # Invalid geometric conditions
-        return np.nan, np.nan
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
     # 8. Radial pressure P due to the magnetic field B_max_TF
     P = B_max_TF**2 / (2 * μ0)
@@ -785,13 +776,15 @@ def f_TF_academic(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg):
         c_Nose = (B0**2 * R0**2) * math.log(R2 / R1) / (2 * μ0 * 2 * R1 * (σ_TF - P))
         σ_r = P  # Radial stress
         σ_z = T / (2 * np.pi * R1 * c_Nose)  # Axial stress
-        ratio_tension = σ_z / (σ_z + σ_r)
+        σ_theta = 0
+
     elif Choice_Buck_Wedg == "Wedging":
         # Thickness c2 for wedging, valid if R1 >> c
         c_Nose = (B0**2 * R0**2) / (2 * μ0 * R1 * σ_TF) * (1 + math.log(R2 / R1) / 2)
         σ_theta = P * R1 / c_Nose  # Circumferential stress
         σ_z = T / (2 * np.pi * R1 * c_Nose)  # Axial stress
-        ratio_tension = σ_z / (σ_theta + σ_z)
+        σ_r = 0
+        
     else:
         raise ValueError("Choose 'Bucking' or 'Wedging' as the mechanical option.")
 
@@ -800,14 +793,16 @@ def f_TF_academic(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg):
 
     # Verify that c_WP is valid
     if c is None or np.isnan(c) or c < 0 or c > (c_WP + c_Nose) or c > R0 - a - b:
-        return np.nan, np.nan
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+    
+    Steel_fraction = c_Nose / c
 
-    return c, ratio_tension
+    return c, c_WP, c_Nose, σ_z, σ_theta, σ_r, Steel_fraction
 
     
 #%% D0FUS model
 
-def Winding_Pack_D0FUS(R_0, a, b, sigma_max, J_max, B_max, omega, n, Choice_solving_TF_method):
+def Winding_Pack_D0FUS(R_0, a, b, sigma_max, J_max, B_max, omega, n):
     
     """
     Computes the winding pack thickness and stress ratio under Tresca criterion.
@@ -829,15 +824,16 @@ def Winding_Pack_D0FUS(R_0, a, b, sigma_max, J_max, B_max, omega, n, Choice_solv
     """
     
     plot = False
+    Choice_solving_TF_method = 'brentq'
     R_ext = R_0 - a - b
 
     if R_ext <= 0:
-        return(np.nan, np.nan)
+        return np.nan, np.nan, np.nan, np.nan, np.nan
         # raise ValueError("R_ext must be positive. Check R_0, a, and b.")
 
     ln_term = np.log((R_0 + a + b) / (R_ext))
     if ln_term <= 0:
-        return(np.nan, np.nan)
+        return np.nan, np.nan, np.nan, np.nan, np.nan
         # raise ValueError("Invalid logarithmic term: ensure R_0 + a + b > R_0 - a - b")
 
     def alpha(R_sep):
@@ -891,7 +887,7 @@ def Winding_Pack_D0FUS(R_0, a, b, sigma_max, J_max, B_max, omega, n, Choice_solv
                 R_sep_solution = R_vals[i + 1]
                 break
         if R_sep_solution is None:
-            return np.nan, np.nan
+            return np.nan, np.nan, np.nan, np.nan, np.nan
 
     elif Choice_solving_TF_method == 'brentq':
         found = False
@@ -908,25 +904,25 @@ def Winding_Pack_D0FUS(R_0, a, b, sigma_max, J_max, B_max, omega, n, Choice_solv
                 pass
             R1 = R2
         if not found:
-            return np.nan, np.nan
+            return np.nan, np.nan, np.nan, np.nan, np.nan
     else:
-        raise ValueError("Invalid method. Use 'scan' or 'auto'.")
+        raise ValueError("Invalid method Use 'manual' or 'brentq'")
 
     # === Final stress calculation ===
     a_val = alpha(R_sep_solution)
     g_val = gamma(a_val, n)
 
     if np.isnan(a_val) or np.isnan(g_val):
-        return np.nan, np.nan
+        return np.nan, np.nan, np.nan, np.nan, np.nan
 
     try:
         sigma_r = B_max**2 / (2 * μ0 * g_val)
         sigma_z = (omega / (1 - a_val)) * B_max**2 * R_ext**2 / (2 * μ0 * (R_ext**2 - R_sep_solution**2)) * ln_term
+        sigma_theta = 0
     except Exception:
-        return np.nan, np.nan
+        return np.nan, np.nan, np.nan, np.nan, np.nan
 
     winding_pack_thickness = R_ext - R_sep_solution
-    ratio_tension = sigma_z / sigma_max
 
     # === Optional plot ===
     if plot:
@@ -944,8 +940,10 @@ def Winding_Pack_D0FUS(R_0, a, b, sigma_max, J_max, B_max, omega, n, Choice_solv
         plt.legend()
         plt.tight_layout()
         plt.show()
+        
+    Steel_fraction = (1-a_val)
 
-    return winding_pack_thickness, ratio_tension
+    return winding_pack_thickness, sigma_r, sigma_z, sigma_theta, Steel_fraction
 
 
 def Nose_D0FUS(R_ext_Nose, sigma_max, omega, B_max, R_0, a, b):
@@ -1005,21 +1003,21 @@ def f_TF_D0FUS(a, b, R0, σ_TF , J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n)
     
     if Choice_Buck_Wedg == "Wedging":
         
-        (c_WP, ratio_tension) = Winding_Pack_D0FUS( R0, a, b, σ_TF, J_max_TF, B_max_TF, omega, n, Choice_solving_TF_method)
+        c_WP, σ_r, σ_z, σ_theta, Steel_fraction  = Winding_Pack_D0FUS( R0, a, b, σ_TF, J_max_TF, B_max_TF, omega, n)
         
         # Vérification que c_WP est valide
         if c_WP is None or np.isnan(c_WP) or c_WP < 0:
-            return(np.nan, np.nan)
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
         c_Nose = R0 - a - b - c_WP - Nose_D0FUS(R0 - a - b - c_WP, σ_TF, omega, B_max_TF, R0, a, b)
 
         # Vérification que c_Nose est valide
         if c_Nose is None or np.isnan(c_Nose) or c_Nose < 0:
-            return(np.nan, np.nan)
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
         # Vérification que la somme ne dépasse pas R0 - a - b
         if (c_WP + c_Nose) > (R0 - a - b):
-            return(np.nan, np.nan)
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
         # Epaisseur totale de la bobine
         c  = c_WP + c_Nose + c_BP
@@ -1030,19 +1028,22 @@ def f_TF_D0FUS(a, b, R0, σ_TF , J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n)
             print(f'Nose width : {c_Nose}')
             print(f'Backplate width : {c_BP}')
     
-    elif Choice_Buck_Wedg == "Bucking" or "Plug":
+    elif Choice_Buck_Wedg == "Bucking" or Choice_Buck_Wedg == "Plug":
         
-        (c, ratio_tension) = Winding_Pack_D0FUS(R0, a, b, σ_TF, J_max_TF, B_max_TF, omega, n , Choice_solving_TF_method)
+        c_WP, σ_r, σ_z, σ_theta, Steel_fraction = Winding_Pack_D0FUS(R0, a, b, σ_TF, J_max_TF, B_max_TF, omega, n)
         
-        # Vérification que c_WP est valide
+        c = c_WP
+        c_Nose = 0
+        
+        # Vérification que c est valide
         if c is None or np.isnan(c) or c < 0 or c > R0 - a - b :
-            return(np.nan, np.nan)
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
     else : 
         print( "Choose a valid mechanical configuration" )
-        return(np.nan, np.nan)
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
-    return(c, ratio_tension)
+    return c, c_WP, c_Nose, σ_z, σ_theta, σ_r, Steel_fraction
 
 #%% TF benchmark
 
@@ -1519,12 +1520,12 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     else:
         if debug:
             print("[f_CS_ACAD] Invalid mechanical choice:", Choice_Buck_Wedg)
-        return (np.nan, np.nan, np.nan, np.nan)
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
     if RCS_ext <= 0.0:
         if debug:
             print("[f_CS_ACAD] Non-positive RCS_ext:", RCS_ext)
-        return (np.nan, np.nan, np.nan, np.nan)
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
     # Total flux for CS
     ΨCS = ΨPI + ΨRampUp + Ψplateau - ΨPF
@@ -1550,16 +1551,18 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     if J_max_CS < Tol_CS:
         if debug:
             print(f"[STEP 1] Non-positive J_max_CS: {J_max_CS:.2e} A/m²")
-        return (np.nan, np.nan, np.nan, np.nan)
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
     
     if debug:
         print(f"[STEP 1] J_max_CS at B={B_CS_thin:.2f} T: {J_max_CS:.2e} A/m²")
     
-    # Compute separatrix radius (steel/superconductor interface)
-    # From thick solenoid flux formula and Ampere's law:
-    # Φ = (2π/3) * B * (R_ext³ + R_ext*R_sep² + R_sep³) / (R_ext + R_sep)
-    # With B = μ₀ * J * d_SU and some algebra:
-    # R_sep³ = R_ext³ - (3*Φ) / (2π * μ₀ * J)
+    """
+    Compute separatrix radius (steel/superconductor interface)
+    From thick solenoid flux formula and Ampere's law:
+    Φ = (2π/3) * B * (R_ext³ + R_ext*R_sep² + R_sep³) / (R_ext + R_sep)
+    With B = μ₀ * J * d_SU and some algebra:
+    R_sep³ = R_ext³ - (3*Φ) / (2π * μ₀ * J)
+    """
     
     RCS_sep_cubed = RCS_ext**3 - (3 * ΨCS) / (2 * np.pi * μ0 * J_max_CS)
     
@@ -1567,7 +1570,7 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
         if debug:
             print(f"[STEP 1] Invalid RCS_sep³: {RCS_sep_cubed:.2e} (negative or zero)")
             print(f"  This means J_max_CS is too low to generate required flux")
-        return (np.nan, np.nan, np.nan, np.nan)
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
     
     RCS_sep = RCS_sep_cubed**(1/3)
     
@@ -1604,9 +1607,13 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     # If plug model:
     if Choice_Buck_Wedg == 'Plug' and abs(P_CS - P_TF) <= abs(P_TF):
         # No steel, conductor directly compress the central plug
-        d_total = d_SU
+        d = d_SU
         alpha = 1
-        return(d_total, alpha, B_CS, J_max_CS)
+        σ_z = 0
+        σ_theta = 0
+        σ_r = 0
+        Steel_fraction = 1 - alpha
+        return d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS
     
     def stress_residual(d_SS):
         """
@@ -1678,7 +1685,7 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
         if debug:
             print("[STEP 2] No sign changes found in stress_residual")
             print(f"  d_SS range: [{d_SS_min:.4f}, {d_SS_max:.4f}] m")
-        return (np.nan, np.nan, np.nan, np.nan)
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
     
     # Refine each sign change interval with brentq
     valid_solutions = []
@@ -1703,7 +1710,7 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     if len(valid_solutions) == 0:
         if debug:
             print("[STEP 2] No valid d_SS solution found after refinement")
-        return (np.nan, np.nan, np.nan, np.nan)
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
     
     # Select smallest steel thickness (most compact design)
     d_SS = min(valid_solutions)
@@ -1714,12 +1721,23 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     
     d_total = d_SS + d_SU
     alpha = d_SU / d_total
+    # Compute stress in steel based on mechanical configuration:
+    if Choice_Buck_Wedg == 'Bucking':
+        σ_theta = abs(np.nanmax([P_TF, abs(P_CS - P_TF)])) * RCS_sep / d_SS
+        σ_r = 0
+    elif Choice_Buck_Wedg == 'Wedging':
+        σ_theta = abs(P_CS * RCS_sep / d_SS)
+        σ_r = 0
+    elif Choice_Buck_Wedg == 'Plug':
+        if abs(P_CS - P_TF) > abs(P_TF):
+            σ_r = abs(abs(P_CS - P_TF) * RCS_sep / d_SS)
+            σ_theta = 0
     
     # Final sanity checks
     if alpha < Tol_CS or alpha > 1.0 - Tol_CS:
         if debug:
             print(f"[FINAL] Invalid alpha: {alpha:.4f}")
-        return (np.nan, np.nan, np.nan, np.nan)
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
     
     if debug:
         print(f"\n[FINAL SOLUTION]")
@@ -1734,8 +1752,13 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
         flux_check = 2 * np.pi * B_CS * (RCS_ext**2 + RCS_ext * RCS_sep + RCS_sep**2) / 3
         print(f"  Flux check: {flux_check:.2f} Wb (target: {ΨCS:.2f} Wb)")
         print(f"  Flux error: {abs(flux_check - ΨCS)/ΨCS * 100:.2f}%")
+        
     
-    return (d_total, alpha, B_CS, J_max_CS)
+    d = d_total
+    Steel_fraction = 1 - alpha
+    σ_z = 0
+    
+    return d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS
 
     
 #%% CS D0FUS model
@@ -1829,12 +1852,12 @@ def f_CS_D0FUS( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
     else:
         if debug:
             print("[f_CS_D0FUS] Invalid mechanical choice:", Choice_Buck_Wedg)
-        return (np.nan, np.nan, np.nan, np.nan)
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
     if RCS_ext <= 0.0:
         if debug:
             print("[f_CS_D0FUS] Non-positive RCS_ext:", RCS_ext)
-        return (np.nan, np.nan, np.nan, np.nan)
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
     # total flux for CS
     ΨCS = ΨPI + ΨRampUp + Ψplateau - ΨPF
@@ -1849,7 +1872,7 @@ def f_CS_D0FUS( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
         if d < Tol_CS or d > RCS_ext - Tol_CS:
             if debug:
                 print("d problem")
-            return (np.nan, np.nan, np.nan, np.nan)
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
         # --- R_int ---
         RCS_int = RCS_ext - d
@@ -1866,15 +1889,15 @@ def f_CS_D0FUS( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
         if J_max_CS < Tol_CS:
             if debug:
                 print(f"J problem: non-positive current density J_max_CS={J_max_CS:.2e}")
-            return (np.nan, np.nan, np.nan, np.nan)
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         if alpha < Tol_CS or alpha > 1.0 - Tol_CS:
             if debug:
                 print(f"alpha problem: {alpha:.4f} outside valid range (0, 1)")
-            return (np.nan, np.nan, np.nan, np.nan)
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         if B_CS < Tol_CS or B_CS > B_max_CS:
             if debug:
                 print(f"B_CS problem: non-positive field B_CS={B_CS:.3f}")
-            return (np.nan, np.nan, np.nan, np.nan)
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
         # --- Compute the stresses ---
         # Pressures
@@ -1885,7 +1908,7 @@ def f_CS_D0FUS( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
         if abs(denom_stress) < 1e-30:
             if debug:
                 print("denom_stress problem")
-            return (np.nan, np.nan, np.nan, np.nan)
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
         # mechanical models (thick cylinder approximations)
         if Choice_Buck_Wedg == 'Bucking':
@@ -1895,8 +1918,12 @@ def f_CS_D0FUS( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
             # Strong bucking case (J_CS = 0)
             Sigma_strong = (2.0 * P_TF * RCS_ext**2 / denom_stress) / (1.0 - alpha)
             Sigma_CS = max(abs(Sigma_light), abs(Sigma_strong))
+            σ_theta = Sigma_CS
+            σ_r = 0
         elif Choice_Buck_Wedg == 'Wedging':
             Sigma_CS = abs((P_CS * (RCS_ext**2 + RCS_int**2) / denom_stress) / (1.0 - alpha))
+            σ_theta = Sigma_CS
+            σ_r = 0
         elif Choice_Buck_Wedg == 'Plug':
             
             def gamma(alpha_val, n_val):
@@ -1920,26 +1947,33 @@ def f_CS_D0FUS( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
                 # Strong bucking case (J_CS = 0)
                 Sigma_strong = (2.0 * P_TF * RCS_ext**2 / denom_stress) / (1.0 - alpha)
                 Sigma_CS = max(abs(Sigma_light), abs(Sigma_strong))
+                σ_theta = Sigma_CS
+                σ_r = 0
             # Else, plug case:
             elif abs(P_CS - P_TF) <= abs(P_TF):
                 # Gamma computation
                 gamma = gamma(alpha, n_CS)
                 # sigma_r computation
                 Sigma_CS = abs(abs(P_TF) / gamma)
+                σ_r = Sigma_CS
+                σ_theta = 0
             else:
-                return (np.nan, np.nan, np.nan, np.nan)
+                return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         else:
             if debug:
                 print("Choice buck wedg problem")
-            return (np.nan, np.nan, np.nan, np.nan)
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
         # --- Sanity checks ---
         if Sigma_CS < Tol_CS:
             if debug:
                 print(f"Sigma_CS problem: non-positive {Sigma_CS/1e6:.3f}")
-            return (np.nan, np.nan, np.nan, np.nan)
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+        
+        σ_z = 0
+        Steel_fraction = 1 - alpha
 
-        return (float(B_CS), float(Sigma_CS), float(alpha), float(J_max_CS))
+        return (float(Sigma_CS), float(σ_z),float(σ_theta),float(σ_r), float(Steel_fraction), float(B_CS), float(J_max_CS))
     
     # ------------------------------------------------------------------
     # Root function
@@ -1947,7 +1981,7 @@ def f_CS_D0FUS( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
     
     # define helper function for root search
     def f_sigma_diff(d):
-        B_CS, Sigma_CS, alpha, J_max_CS = d_to_solve(d)
+        Sigma_CS, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = d_to_solve(d)
         if not np.isfinite(Sigma_CS):
             return np.nan
         val = Sigma_CS - σ_CS 
@@ -2049,29 +2083,29 @@ def f_CS_D0FUS( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
             if np.isnan(d_sol):
                 continue
             try:
-                B_CS, Sigma_CS, alpha, J_max_CS = d_to_solve(d_sol)
-                valid_solutions.append((d_sol, alpha, B_CS, J_max_CS))
+                Sigma_CS, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = d_to_solve(d_sol)
+                valid_solutions.append((d_sol, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS))
             except Exception:
                 continue
     
         if len(valid_solutions) == 0:
             if debug:
                 print("[f_CS_D0FUS] Aucune solution valide trouvée.")
-            return (np.nan, np.nan, np.nan, np.nan)
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
     
         # --------------------------------------------------------------
         # Sélection de la meilleure racine
         # --------------------------------------------------------------
         valid_solutions.sort(key=lambda x: x[0])  # plus petite épaisseur
-        d_sol, alpha_sol, B_CS_sol, J_sol = valid_solutions[0]
+        d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = valid_solutions[0]
     
-        return (d_sol, alpha_sol, B_CS_sol, J_sol)
+        return d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS
     
     
     # --- Try to find a valid solution ---
-    d_sol, alpha_sol, B_CS_sol, J_sol = find_d_solution()
+    d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = find_d_solution()
 
-    return (d_sol, alpha_sol, B_CS_sol, J_sol)
+    return d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS
 
 debug_CS = 0
 if __name__ == "__main__" and debug_CS == 1:
@@ -2174,12 +2208,12 @@ def f_CS_CIRCE( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
     else:
         if debug:
             print("[f_CS_D0FUS] Invalid mechanical choice:", Choice_Buck_Wedg)
-        return (np.nan, np.nan, np.nan, np.nan)
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
     if RCS_ext <= 0.0:
         if debug:
             print("[f_CS_D0FUS] Non-positive RCS_ext:", RCS_ext)
-        return (np.nan, np.nan, np.nan, np.nan)
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
     # total flux for CS
     ΨCS = ΨPI + ΨRampUp + Ψplateau - ΨPF
@@ -2194,7 +2228,7 @@ def f_CS_CIRCE( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
         if d < 0.0 + Tol_CS or d > RCS_ext - Tol_CS:
             if debug:
                 print("d problem")
-            return (np.nan, np.nan, np.nan, np.nan)
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
         # --- R_int ---
         RCS_int = RCS_ext - d
@@ -2211,15 +2245,15 @@ def f_CS_CIRCE( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
         if J_max_CS < Tol_CS:
             if debug:
                 print(f"J problem: non-positive current density J_max_CS={J_max_CS:.2e}")
-            return (np.nan, np.nan, np.nan, np.nan)
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         if alpha < Tol_CS or alpha > 1.0 - Tol_CS:
             if debug:
                 print(f"alpha problem: {alpha:.4f} outside valid range (0, 1)")
-            return (np.nan, np.nan, np.nan, np.nan)
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         if B_CS < Tol_CS or B_CS > B_max_CS:
             if debug:
                 print(f"B_CS problem: non-positive field B_CS={B_CS:.3f}")
-            return (np.nan, np.nan, np.nan, np.nan)
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
         # --- Compute the stresses ---
         # Pressures
@@ -2257,6 +2291,9 @@ def f_CS_CIRCE( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
             SigRtot, SigTtot, urtot, Rvec, P = F_CIRCE0D(disR, R, J, B, Pi, Pe, E, nu, config)
             Sigma_CS_strong = max(np.abs(SigTtot)) * 1/(1-alpha)
             
+            σ_theta = max(np.abs(SigTtot)) * 1/(1-alpha)
+            σ_r = max(np.abs(SigRtot)) * 1/(1-alpha)
+            
             # Final sigma
             Sigma_CS = max(Sigma_CS_light, Sigma_CS_strong)
             
@@ -2274,6 +2311,9 @@ def f_CS_CIRCE( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
             # Appeler la fonction principale
             SigRtot, SigTtot, urtot, Rvec, P = F_CIRCE0D(disR, R, J, B, Pi, Pe, E, nu, config)
             Sigma_CS = max(np.abs(SigTtot)) * 1/(1-alpha)
+            
+            σ_theta = max(np.abs(SigTtot)) * 1/(1-alpha)
+            σ_r = max(np.abs(SigRtot)) * 1/(1-alpha)
             
         elif Choice_Buck_Wedg == 'Plug':
             
@@ -2323,6 +2363,9 @@ def f_CS_CIRCE( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
                 
                 # Final sigma
                 Sigma_CS = max(Sigma_CS_light, Sigma_CS_strong)
+                
+                σ_theta = max(np.abs(SigTtot)) * 1/(1-alpha)
+                σ_r = max(np.abs(SigRtot)) * 1/(1-alpha)
             
             # Else, plug case:
             elif abs(P_CS - P_TF) <= abs(P_TF):
@@ -2341,24 +2384,29 @@ def f_CS_CIRCE( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
                 # Appeler la fonction principale
                 SigRtot, SigTtot, urtot, Rvec, P = F_CIRCE0D(disR, R, J, B, Pi, Pe, E, nu, config)
                 Sigma_CS = max(np.abs(SigTtot)) * 1/gamma
+                σ_theta = max(np.abs(SigTtot)) * 1/gamma
+                σ_r = max(np.abs(SigRtot)) * 1/gamma
                 
             else:
                 if debug:
                     print("Plug pressure problem")
-                return (np.nan, np.nan, np.nan, np.nan)
+                return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
             
         else:
             if debug:
                 print("Choice buck wedg problem")
-            return (np.nan, np.nan, np.nan, np.nan)
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
         # --- Sanity checks ---
         if Sigma_CS < Tol_CS:
             if debug:
                 print(f"Sigma_CS problem: non-positive {Sigma_CS/1e6:.3f}")
-            return (np.nan, np.nan, np.nan, np.nan)
-
-        return (float(B_CS), float(Sigma_CS), float(alpha), float(J_max_CS))
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+        
+        σ_z = 0
+        Steel_fraction = 1 - alpha
+        
+        return (float(Sigma_CS), float(σ_z),float(σ_theta),float(σ_r), float(Steel_fraction), float(B_CS), float(J_max_CS))
     
     # ------------------------------------------------------------------
     # Root function
@@ -2437,29 +2485,28 @@ def f_CS_CIRCE( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
             if np.isnan(d_sol):
                 continue
             try:
-                B_CS, Sigma_CS, alpha, J_max_CS = d_to_solve(d_sol)
-                valid_solutions.append((d_sol, alpha, B_CS, J_max_CS))
+                σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = d_to_solve(d_sol)
+                valid_solutions.append((d_sol, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS))
             except Exception:
                 continue
     
         if len(valid_solutions) == 0:
             if debug:
                 print("[f_CS_D0FUS] Aucune solution valide trouvée.")
-            return (np.nan, np.nan, np.nan, np.nan)
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
     
         # --------------------------------------------------------------
         # Sélection de la meilleure racine
         # --------------------------------------------------------------
         valid_solutions.sort(key=lambda x: x[0])  # plus petite épaisseur
-        d_sol, alpha_sol, B_CS_sol, J_sol = valid_solutions[0]
+        d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = valid_solutions[0]
     
-        return (d_sol, alpha_sol, B_CS_sol, J_sol)
-    
+        return d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS
     
     # --- Try to find a valid solution ---
-    d_sol, alpha_sol, B_CS_sol, J_sol = find_d_solution()
+    d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = find_d_solution()
 
-    return (d_sol, alpha_sol, B_CS_sol, J_sol)
+    return d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS
 
     
 #%% CS Benchmark
@@ -2682,4 +2729,4 @@ if __name__ == "__main__":
 # Permettrait aussi de mettre la répartition en tension en rapport de surface
 #%% Print
 
-print("D0FUS_radial_build_functions loaded")
+# print("D0FUS_radial_build_functions loaded")

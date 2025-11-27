@@ -10,7 +10,6 @@ try:
 except ImportError:
     from D0FUS_parameterization import *
 
-
 #%% Physical Functions
 
 def f_Kappa(A,Option_Kappa, κ_manual):
@@ -740,7 +739,7 @@ def f_cost(a,b,c,d,R0,κ,P_fus):
     V_TF = 8*np.pi*(R0-a-b-(c/2))*c*((κ+1)*a+(2*b)+c) # Rectangular TF model coil
     V_CS = 2*np.pi*((R0-a-b-c)**2-(R0-a-b-c-d)**2)*(2*(a*κ+b+c)) # h approx to 2*(a*κ+b+c) and cylindrical model
     
-    cost = (V_BB+V_TF+V_CS) / P_fus
+    cost = (V_BB + V_TF + V_CS) / P_fus
     return cost
 
 def f_P_sep(P_fus, P_CD):
@@ -1241,7 +1240,7 @@ def f_PLH(eta_RF, f_RP, P_CD):
     P_LH = (1/eta_RF)*(1/f_RP)*P_CD
     return P_LH
 
-def f_P_(I_Ohm, Tbar, R0, a, kappa):
+def f_P_Ohm(I_Ohm, Tbar, R0, a, kappa):
     """
     Estimate the Ohmic heating power in a tokamak
     
@@ -1964,4 +1963,4 @@ def f_Get_parameter_scaling_law(Scaling_Law):
 
 #%%
 
-print("D0FUS_physical_functions loaded")
+# print("D0FUS_physical_functions loaded")
