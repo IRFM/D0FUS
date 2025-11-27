@@ -5,27 +5,25 @@ Author: Auclair Timothe
 #%% Imports
 import sys
 import os
-import re
-from pathlib import Path
-try: get_ipython().magic('autoreload 2') # Activating auto-reload
-except: pass
 
 # Add D0FUS_EXE to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'D0FUS_EXE'))
 
-from D0FUS_EXE import D0FUS_run, D0FUS_scan
+# Import all necessary modules
+from D0FUS_BIB.D0FUS_parameterization import *
+from D0FUS_EXE import D0FUS_scan, D0FUS_run, D0FUS_genetic
 
 #%% Mode detection
 
 def detect_mode_from_input(input_file):
     """
-    Detect if input file is for RUN or SCAN mode
+    Detect if input file is for RUN, SCAN, or OPTIMIZATION mode
     
     Returns:
-        tuple: ('run' or 'scan', list of scan parameter tuples)
+        tuple: ('run', 'scan', or 'optimization', additional parameters)
         
     Raises:
-        ValueError: if 1 or >2 brackets found
+        ValueError: if invalid configuration
         FileNotFoundError: if input file doesn't exist
     """
     if not os.path.exists(input_file):
@@ -34,72 +32,113 @@ def detect_mode_from_input(input_file):
     with open(input_file, 'r', encoding='utf-8') as f:
         content = f.read()
     
-    # Find all bracket patterns: parameter = [min, max, n_points]
-    bracket_pattern = r'^\s*(\w+)\s*=\s*\[([^\]]+)\]'
+    # Find all bracket patterns: parameter = [values]
+    bracket_pattern = r'^\s*(\w+)\s*[:=]\s*\[([^\]]+)\]'
     matches = re.findall(bracket_pattern, content, re.MULTILINE)
     
-    n_brackets = len(matches)
-    
-    # Parse the bracket values for SCAN mode
-    scan_params = []
-    for param_name, values_str in matches:
-        values = re.split(r'[,;]', values_str)
-        if len(values) != 3:
-            raise ValueError(
-                f"\n Invalid scan parameter {param_name}: Expected 3 values [min, max, n_points], "
-                f"got {len(values)} values.\n"
-                f"Example: {param_name} = [min_value, max_value, number_of_points]"
-            )
-        try:
-            min_val = float(values[0].strip())
-            max_val = float(values[1].strip())
-            n_points = int(float(values[2].strip()))
-            scan_params.append((param_name, min_val, max_val, n_points))
-        except ValueError as e:
-            raise ValueError(
-                f"\n Invalid values for scan parameter {param_name}: {values_str}\n"
-                f"Values must be numeric: [min, max, n_points]\n"
-                f"Error: {str(e)}"
-            )
-    
-    if n_brackets == 0:
+    if not matches:
         # No brackets → RUN mode
         return 'run', []
-    elif n_brackets == 2:
-        # Exactly 2 brackets → SCAN mode
-        return 'scan', scan_params
-    elif n_brackets == 1:
-        # Only 1 bracket → ERROR
-        param_name = scan_params[0][0]
+    
+    # Classify each bracket parameter
+    scan_params = []      # [min, max, n_points]
+    opt_params = {}       # [min, max]
+    
+    for param_name, values_str in matches:
+        values = re.split(r'[,;]', values_str)
+        values = [v.strip() for v in values if v.strip()]
+        
+        if len(values) == 2:
+            # 2 values → OPTIMIZATION parameter
+            try:
+                min_val = float(values[0])
+                max_val = float(values[1])
+                opt_params[param_name] = (min_val, max_val)
+            except ValueError as e:
+                raise ValueError(
+                    f"\n Invalid values for parameter {param_name}: {values_str}\n"
+                    f"Values must be numeric: [min, max]\n"
+                    f"Error: {str(e)}"
+                )
+        elif len(values) == 3:
+            # 3 values → SCAN parameter
+            try:
+                min_val = float(values[0])
+                max_val = float(values[1])
+                n_points = int(float(values[2]))
+                scan_params.append((param_name, min_val, max_val, n_points))
+            except ValueError as e:
+                raise ValueError(
+                    f"\n Invalid values for scan parameter {param_name}: {values_str}\n"
+                    f"Values must be numeric: [min, max, n_points]\n"
+                    f"Error: {str(e)}"
+                )
+        else:
+            raise ValueError(
+                f"\n Invalid bracket format for {param_name}: {values_str}\n"
+                f"Expected:\n"
+                f"  - [min, max] for optimization\n"
+                f"  - [min, max, n_points] for scan\n"
+            )
+    
+    # Determine mode based on what we found
+    n_scan = len(scan_params)
+    n_opt = len(opt_params)
+    
+    if n_opt > 0 and n_scan == 0:
+        # Only optimization parameters → OPTIMIZATION mode
+        if n_opt < 2:
+            param_name = list(opt_params.keys())[0]
+            raise ValueError(
+                f"\n Invalid optimization: Found only 1 parameter ({param_name}).\n"
+                f"\n"
+                f"OPTIMIZATION mode requires at least 2 parameters with [min, max].\n"
+                f"\n"
+                f"Example:\n"
+                f"  R0 = [3, 9]\n"
+                f"  a = [1, 3]\n"
+                f"  Bmax = [10, 16]\n"
+            )
+        return 'optimization', opt_params
+    
+    elif n_scan > 0 and n_opt == 0:
+        # Only scan parameters → SCAN mode
+        if n_scan == 1:
+            param_name = scan_params[0][0]
+            raise ValueError(
+                f"\n Invalid scan: Found only 1 parameter ({param_name}).\n"
+                f"\n"
+                f"SCAN mode requires exactly 2 parameters with [min, max, n_points].\n"
+                f"\n"
+                f"Example:\n"
+                f"  R0 = [3, 9, 25]\n"
+                f"  a = [1, 3, 25]\n"
+            )
+        elif n_scan == 2:
+            return 'scan', scan_params
+        else:
+            param_names = [p[0] for p in scan_params]
+            raise ValueError(
+                f"\n Invalid scan: Found {n_scan} parameters: {', '.join(param_names)}.\n"
+                f"\n"
+                f"SCAN mode requires exactly 2 parameters.\n"
+            )
+    
+    elif n_opt > 0 and n_scan > 0:
+        # Mixed parameters → ERROR
         raise ValueError(
-            f"\n Invalid input file: Found only 1 scan parameter ({param_name}).\n"
+            f"\n Invalid input file: Mixed parameter formats detected.\n"
+            f"  - {n_opt} optimization parameter(s) with [min, max]\n"
+            f"  - {n_scan} scan parameter(s) with [min, max, n_points]\n"
             f"\n"
-            f"SCAN mode requires exactly 2 parameters with brackets [min, max, n_points].\n"
-            f"For RUN mode, remove all brackets from the input file.\n"
-            f"\n"
-            f"Example for SCAN:\n"
-            f"  R0 = [3, 9, 25]\n"
-            f"  a = [1, 3, 25]\n"
-            f"\n"
-            f"Example for RUN:\n"
-            f"  R0 = 9\n"
-            f"  a = 3\n"
+            f"Please choose ONE mode:\n"
+            f"  - OPTIMIZATION: Use [min, max] for all variable parameters\n"
+            f"  - SCAN: Use [min, max, n_points] for exactly 2 parameters\n"
+            f"  - RUN: Remove all brackets for fixed values\n"
         )
-    else:
-        # More than 2 brackets → ERROR
-        param_names = [p[0] for p in scan_params]
-        raise ValueError(
-            f"\n Invalid input file: Found {n_brackets} scan parameters: {', '.join(param_names)}.\n"
-            f"\n"
-            f"SCAN mode requires exactly 2 parameters with brackets [min, max, n_points].\n"
-            f"Please select only 2 parameters to scan.\n"
-            f"\n"
-            f"Example:\n"
-            f"  R0 = [3, 9, 25]     ← scan parameter 1\n"
-            f"  a = [1, 3, 25]      ← scan parameter 2\n"
-            f"  Bmax = 12           ← fixed parameter\n"
-            f"  P_fus = 2000        ← fixed parameter\n"
-        )
+    
+    # Should not reach here
+    return 'run', []
 
 #%% Main functions
 
@@ -114,6 +153,42 @@ def print_banner():
     ╚═══════════════════════════════════════════════════╝
     """
     print(banner)
+
+def print_usage():
+    """Print usage information"""
+    usage = """
+Usage:
+    python D0FUS.py [input_file]
+    
+If no input file is provided, interactive mode will start.
+
+Modes (detected automatically from input file format):
+    
+    RUN mode:          Single point calculation
+                       No brackets in input file
+                       Example: R0 = 9
+    
+    SCAN mode:         2D parameter space exploration
+                       Exactly 2 parameters with [min, max, n_points]
+                       Example: R0 = [3, 9, 25]
+                                a = [1, 3, 25]
+    
+    OPTIMIZATION mode: Genetic algorithm optimization
+                       2+ parameters with [min, max] (no n_points)
+                       Example: R0 = [3, 9]
+                                a = [1, 3]
+                                Bmax = [10, 16]
+
+Detection rules:
+    • [min, max] format (2 values) → OPTIMIZATION (need 2+ parameters)
+    • [min, max, n] format (3 values) → SCAN (need exactly 2 parameters)
+    • No brackets → RUN
+    • Cannot mix formats in same file
+
+For help:
+    python D0FUS.py --help
+    """
+    print(usage)
 
 def list_input_files():
     """List available input files in D0FUS_INPUTS directory"""
@@ -141,10 +216,13 @@ def select_input_file():
     for i, file in enumerate(input_files, 1):
         # Try to detect mode for each file
         try:
-            mode, scan_params = detect_mode_from_input(str(file))
+            mode, params = detect_mode_from_input(str(file))
             if mode == 'scan':
-                param_names = [p[0] for p in scan_params]
+                param_names = [p[0] for p in params]
                 mode_str = f"SCAN ({param_names[0]} × {param_names[1]})"
+            elif mode == 'optimization':
+                param_names = list(params.keys())
+                mode_str = f"OPTIMIZATION ({len(param_names)} params)"
             else:
                 mode_str = "RUN"
             print(f"  {i}. {file.name:<30} [{mode_str}]")
@@ -188,7 +266,7 @@ def execute_with_mode_detection(input_file):
     
     # Detect mode from input file
     try:
-        mode, scan_params = detect_mode_from_input(input_file)
+        mode, params = detect_mode_from_input(input_file)
         
         if mode == 'run':
             # RUN mode detected
@@ -200,18 +278,39 @@ def execute_with_mode_detection(input_file):
         
         elif mode == 'scan':
             # SCAN mode detected
-            param_names = [p[0] for p in scan_params]
+            param_names = [p[0] for p in params]
             print("\n" + "="*60)
             print(f"Mode: SCAN (2D parameter space)")
             print(f"Scan parameters: {param_names[0]} × {param_names[1]}")
             print(f"Input: {os.path.basename(input_file)}")
             
             # Display scan ranges
-            for param_name, min_val, max_val, n_points in scan_params:
+            for param_name, min_val, max_val, n_points in params:
                 print(f"  {param_name}: [{min_val}, {max_val}] with {n_points} points")
             print("="*60 + "\n")
             
             D0FUS_scan.main(input_file)
+        
+        elif mode == 'optimization':
+            # OPTIMIZATION mode detected
+            param_names = list(params.keys())
+            print("\n" + "="*60)
+            print(f"Mode: OPTIMIZATION (genetic algorithm)")
+            print(f"Optimization parameters: {', '.join(param_names)}")
+            print(f"Input: {os.path.basename(input_file)}")
+            
+            # Display optimization ranges
+            for param_name, (min_val, max_val) in params.items():
+                print(f"  {param_name}: [{min_val}, {max_val}]")
+            print("="*60 + "\n")
+            
+            # Run genetic optimization with default parameters
+            D0FUS_genetic.run_genetic_optimization(input_file, 
+                                         population_size=50,
+                                         generations=100,
+                                         crossover_rate=0.7,
+                                         mutation_rate=0.2,
+                                         verbose=True)
     
     except ValueError as e:
         # Invalid number of brackets or parsing error
