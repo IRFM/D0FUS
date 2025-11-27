@@ -1,6 +1,14 @@
-R0 = 6
 a = 1.6
+R0 = 6
+b = 1.2
+Option_Kappa = Manual
+κ_manual = 1.77
 P_fus = 2000
 Bmax = 20
-b = 1.2
-Tbar = 14   
+Supra_choice = Rebco
+Choice_Buck_Wedg = Bucking
+Tbar = 12.5  
+Operation_mode = Pulsed 
+Temps_Plateau_input = 7200
+P_aux_input = 0.2
+Bootstrap_choice = Segal
