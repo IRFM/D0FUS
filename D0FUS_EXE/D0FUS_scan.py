@@ -7,12 +7,10 @@ Supports scanning any 2 parameters dynamically
 
 Author: Auclair Timothe
 """
+#%% Import
 
 import sys
 import os
-import re
-from datetime import datetime
-import shutil
 
 # Add parent directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -20,15 +18,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 # Import all necessary modules
 from D0FUS_BIB.D0FUS_parameterization import *
 from D0FUS_BIB.D0FUS_radial_build_functions import *
-
-# Try to import physical functions if they exist in a separate file
-try:
-    from D0FUS_BIB.D0FUS_physical_functions import *
-except ImportError:
-    pass
-
+from D0FUS_BIB.D0FUS_physical_functions import *
 from D0FUS_EXE.D0FUS_run import run, Parameters
 
+
+#%% Code
 
 def parse_scan_parameter(line):
     """
@@ -168,7 +162,6 @@ def generic_2D_scan(scan_params, fixed_params, params_obj):
         'Gamma_n': np.zeros((len(param1_values), len(param2_values))),
         'L_H': np.zeros((len(param1_values), len(param2_values))),
         'f_alpha': np.zeros((len(param1_values), len(param2_values))),
-        'TF_ratio': np.zeros((len(param1_values), len(param2_values))),
         'Ip': np.zeros((len(param1_values), len(param2_values))),
         'n': np.zeros((len(param1_values), len(param2_values))),
         'beta_N': np.zeros((len(param1_values), len(param2_values))),
@@ -219,7 +212,8 @@ def generic_2D_scan(scan_params, fixed_params, params_obj):
                  Gamma_n,
                  f_alpha, tau_alpha,
                  J_TF, J_CS,
-                 TF_ratio,
+                 c, c_WP_TF, c_Nose_TF, σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF,
+                 d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS, J_CS,
                  r_minor, r_sep, r_c, r_d,
                  κ, κ_95, δ, δ_95) = results
                 
@@ -241,7 +235,6 @@ def generic_2D_scan(scan_params, fixed_params, params_obj):
                 matrices['Gamma_n'][y, x] = Gamma_n
                 matrices['L_H'][y, x] = P_sep / P_Thresh if P_Thresh > 0 else np.nan
                 matrices['f_alpha'][y, x] = f_alpha * 100
-                matrices['TF_ratio'][y, x] = TF_ratio * 100
                 matrices['Ip'][y, x] = Ip
                 matrices['n'][y, x] = nbar
                 matrices['beta_N'][y, x] = betaN
@@ -300,11 +293,11 @@ def plot_scan_results(matrices, param1_values, param2_values, param1_name, param
     if iso_param is None:
         iso_param = input("Choose iso-contour parameter (Ip, n, beta, q95, B0, BCS, c, d, c&d): ").strip()
     if bg_param is None:
-        bg_param = input("Choose background parameter (Heat, Cost, Q, Gamma_n, L_H, Alpha, TF, B0, BCS): ").strip()
+        bg_param = input("Choose background parameter (Heat, Cost, Q, Gamma_n, L_H, Alpha, B0, BCS): ").strip()
     
     # Font sizes
-    font_topological = 20
-    font_background = 28
+    font_topological = 22
+    font_background = 22
     font_subtitle = 15
     font_legend = 20
     font_other = 15
@@ -504,12 +497,6 @@ def plot_scan_results(matrices, param1_values, param2_values, param1_name, param
         ax.clabel(contour_bg, inline=True, fmt='%d', fontsize=font_background)
         white_line = mlines.Line2D([], [], linewidth=linewidth, color='white', 
                                    linestyle='dashed', label='Alpha fraction [%]')
-    elif bg_param == 'TF':
-        contour_bg = ax.contour(inv_matrices['TF_ratio'], levels=np.arange(0, 100, 5), 
-                               colors='white', linestyles='dashed', linewidths=linewidth)
-        ax.clabel(contour_bg, inline=True, fmt='%d', fontsize=font_background)
-        white_line = mlines.Line2D([], [], linewidth=linewidth, color='white', 
-                                   linestyle='dashed', label='TF tension fraction [%]')
     elif bg_param == 'B0':
         contour_bg = ax.contour(inv_B0_mask, levels=np.arange(0, 25, 0.5), 
                                colors='white', linestyles='dashed', linewidths=linewidth)
@@ -542,7 +529,7 @@ def save_scan_results(fig, matrices, param1_values, param2_values, param1_name, 
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_name = f"Scan_D0FUS_{timestamp}"
-    output_path = os.path.join(output_dir, output_name)
+    output_path = os.path.join(output_dir,'scan', output_name)
     
     # Create directory
     os.makedirs(output_path, exist_ok=True)
@@ -572,8 +559,6 @@ def save_scan_results(fig, matrices, param1_values, param2_values, param1_name, 
     fig_filename = f"scan_map_{param1_name}_{param2_name}_{iso_param}_{bg_param}.png"
     fig_path = os.path.join(output_path, fig_filename)
     fig.savefig(fig_path, dpi=300, bbox_inches='tight')
-    
-    print(f"✓ Scan figure saved to: {fig_path}")
     print(f"✓ All results saved to: {output_path}\n")
     
     # Reset matplotlib to defaults
