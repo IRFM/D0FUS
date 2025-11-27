@@ -15,6 +15,7 @@
 * Give references for the models used, e.g. for the confinement time scaling laws -> Timothé
 * Remove function in function
 * only 1  __name__ == '__main__' per file
+* Check pep8 conventions
 
 Comments from Sebastian Kay Conde Lorenzo: 
 * On LaTEx strings, use the string modifier "r" (e.g: r"$\alpha$") because, otherwise, "\[...]" indicates a special character in an unformatted text (currently it's a warning, but could lead to silent errors).
