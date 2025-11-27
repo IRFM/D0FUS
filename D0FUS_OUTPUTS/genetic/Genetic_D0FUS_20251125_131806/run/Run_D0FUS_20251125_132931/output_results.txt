@@ -1,0 +1,70 @@
+=========================================================================
+=== Calculation Results ===
+-------------------------------------------------------------------------
+[I] R0 (Major Radius)                               : 4.768 [m]
+[I] a (Minor Radius)                                : 1.279 [m]
+[I] b (BB & Nshield thickness)                      : 1.200 [m]
+[O] c (TF coil thickness)                           : 0.858 [m]
+[O] d (CS thickness)                                : 0.254 [m]
+[O] R0-a-b-c-d                                      : 1.176 [m]
+-------------------------------------------------------------------------
+[O] Kappa (Elongation)                              : 1.773 
+[O] Kappa_95 (Elongation at 95%)                    : 1.583 
+[O] Delta (Triangularity)                           : 0.464 
+[O] Delta_95 (Triangularity at 95%)                 : 0.309 
+[O] Volume (Plasma)                                 : 257.175 [m^3]
+[O] Surface (1rst Wall)                             : 340.307 [m²]
+[I] Mechanical configuration                        : Wedging 
+[I] Superconductor technology                       : Rebco 
+-------------------------------------------------------------------------
+[I] Bmax (Maximum Magnetic Field - TF)              : 16.530 [T]
+[O] B0 (Central Magnetic Field)                     : 7.935 [T]
+[O] BCS (Magnetic Field CS)                         : 16.481 [T]
+[O] J_E-TF (Engineering current density TF)         : 237.414 [MA/m²]
+[O] J_E-CS (Engineering current density CS)         : 237.832 [MA/m²]
+[O] Steel ratio TF                                  : 75.714 [%]
+[O] Steel ratio CS                                  : 78.321 [%]
+-------------------------------------------------------------------------
+[I] P_fus (Fusion Power)                            : 2000.000 [MW]
+[O] P_CD (CD Power)                                 : 114.532 [MW]
+[O] P_S (Synchrotron Power)                         : 4.434 [MW]
+[O] P_B (Bremsstrahlung Power)                      : 25.081 [MW]
+[O] eta_CD (CD Efficiency)                          : 0.367 [MA/MW-m²]
+[O] Q (Energy Gain Factor)                          : 17.462
+[O] P_elec-net (Net Electrical Power)               : 731.852 [MW]
+[O] Cost ((V_BB+V_TF+V_CS)/P_fus)                   : 0.837 [m^3]
+-------------------------------------------------------------------------
+[I] H (Scaling Law factor)                          : 1.000 
+[I] Operation (Pulsed / Steady)                     : Steady-State 
+[I] t (Plateau Time)                                : 0.000 
+[O] tau_E (Confinement Time)                        : 0.782 [s]
+[O] Ip (Plasma Current)                             : 12.862 [MA]
+[O] Ib (Bootstrap Current)                          : 8.942 [MA]
+[O] ICD (Current Drive)                             : 3.920 [MA]
+[O] IOhm (Ohmic Current)                            : 0.000 [MA]
+[O] f_b (Bootstrap Fraction)                        : 69.523 [%]
+-------------------------------------------------------------------------
+[I] Tbar (Mean Temperature)                         : 12.981 [keV]
+[O] nbar (Average Density)                          : 2.249 [10^20 m^-3]
+[O] nG (Greenwald Density)                          : 2.502 [10^20 m^-3]
+[O] pbar (Average Pressure)                         : 0.979 [MPa]
+[O] Alpha Fraction                                  : 6.002 [%]
+[O] Alpha Confinement Time                          : 0.151 [s]
+[O] Thermal Energy Content                          : 360.434 [MJ]
+-------------------------------------------------------------------------
+[O] Beta_T (Toroidal Beta)                          : 3.907 [%]
+[O] Beta_P (Poloidal Beta)                          : 1.260
+[O] Beta_N (Normalized Beta)                        : 3.084 [%]
+-------------------------------------------------------------------------
+[O] q* (Kink Safety Factor)                         : 2.193
+[O] q95 (Safety Factor at 95%)                      : 2.783
+-------------------------------------------------------------------------
+[O] P_sep (Separatrix Power)                        : 512.259 [MW]
+[O] P_Thresh (L-H Power Threshold)                  : 143.786 [MW]
+[O] (P_sep - P_thresh) / S                          : 1.169 [MW/m²]
+[O] P_sep / S                                       : 1.505 [MW/m²]
+[O] Heat scaling (P_sep / R0)                       : 107.441 [MW/m]
+[O] Parallel Heat Flux (P_sep*B0 / R0)              : 852.509 [MW-T/m]
+[O] Poloidal Heat Flux (P_sep*B0) / (q95*R0*A)      : 17.236 [MW-T/m]
+[O] Gamma_n (Neutron Flux)                          : 4.624 [MW/m²]
+=========================================================================
