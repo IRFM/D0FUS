@@ -4,10 +4,10 @@ Generates a single design point with full output
 Author: Auclair Timothe
 """
 
+#%% Imports standards
+
 import sys
 import os
-from datetime import datetime
-import shutil
 
 # Add parent directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -15,13 +15,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 # Import all necessary modules
 from D0FUS_BIB.D0FUS_parameterization import *
 from D0FUS_BIB.D0FUS_radial_build_functions import *
+from D0FUS_BIB.D0FUS_physical_functions import *
 
-# Try to import physical functions if they exist in a separate file
-try:
-    from D0FUS_BIB.D0FUS_physical_functions import *
-except ImportError:
-    pass  # Functions might be in radial_build_functions
-
+#%% Code
 
 class Parameters:
     """Class to handle input parameters"""
@@ -46,12 +42,14 @@ class Parameters:
         self.L_H_Scaling_choice = 'New_Ip'
         self.Bootstrap_choice = 'Freidberg'
         self.Operation_mode = 'Steady-State'
-        self.fatigue = 1
         
         if self.Operation_mode == 'Pulsed':
             self.Temps_Plateau_input = 120 * 60
-            self.P_aux_input = 120
-            self.fatigue = 2
+            self.P_aux_input = 100
+            if self.Choice_Buck_Wedg == 'Wedging':
+                self.fatigue = 2
+            else:
+                self.fatigue = 1
         else:
             self.Temps_Plateau_input = 0
             self.P_aux_input = 0
@@ -123,7 +121,7 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
     # Fraction of vertical tension allocated to the winding pack of the TF coils
     if Choice_Buck_Wedg == "Wedging":
         omega_TF = 1/2
-    elif Choice_Buck_Wedg == "Bucking":
+    elif Choice_Buck_Wedg == "Bucking" or Choice_Buck_Wedg == "Plug":
         omega_TF = 1
     else: 
         print('Choose a valid mechanical configuration')
@@ -166,11 +164,11 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
 
         # Initialize power inputs based on operation mode
         if Operation_mode == 'Steady-State':
-            P_Aux_alpha_init = P_fus / Q
+            P_Aux_alpha_init = abs(P_fus / Q)
             P_Ohm_alpha_init = 0
         elif Operation_mode == 'Pulsed':
-            P_Aux_alpha_init = P_aux_input
-            P_Ohm_alpha_init = P_fus / Q - P_Aux_alpha_init
+            P_Aux_alpha_init = abs(P_aux_input)
+            P_Ohm_alpha_init = abs(P_fus / Q - P_Aux_alpha_init)
         else:
             print("Choose a valid operation mode")
         # Confinement time calculation
@@ -203,6 +201,7 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
             Q_alpha = f_Q(P_fus, P_CD_alpha, P_Ohm_alpha)
             
         elif Operation_mode == 'Pulsed':
+        
             # Current drive efficienty (complex calculation)
             eta_CD_alpha = f_etaCD(a, R0, B0_solution, nbar_alpha, Tbar, nu_n, nu_T)
             # Pulsed mode: P_CD is a fixed INPUT from user
@@ -215,6 +214,7 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
             P_Ohm_alpha = f_P_Ohm(I_Ohm_alpha, Tbar, R0, a, κ)
             # Q factor including both CD and Ohmic power
             Q_alpha = f_Q(P_fus, P_CD_alpha, P_Ohm_alpha)
+           
         else:
             print("Choose a valid operation mode")
         # Helium fraction
@@ -226,17 +226,19 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
         # Residuals
         f_alpha_residual = abs(new_f_alpha - f_alpha) / (abs(new_f_alpha) + epsilon) * 100
         Q_residual = abs(Q - Q_alpha) / (abs(Q_alpha) + epsilon) * 100
-        
-        # print("DBG: f_alpha, Q ->", f_alpha, Q, "P_CD_alpha", P_CD_alpha, "P_Ohm_alpha", P_Ohm_alpha, "Q_alpha", Q_alpha)
-        
+
         return [f_alpha_residual, Q_residual]
     
     def solve_f_alpha_Q():
         """
-        Solve for f_alpha and Q with robust convergence verification.
+        Solve for f_alpha and Q with progressive robustness strategy:
+        1. Fast search with 'hybr'
+        2. Robust search with 'lm'
+        3. Very robust search with 'df-sane'
+        4. Grid search with 'lm' as last resort
         """
         
-        def verify_solution(f_alpha, Q, residuals, tolerance=1e-3):
+        def verify_solution(f_alpha, Q, residuals, tolerance=1e-2):
             """
             Verify if the solution is physically valid and numerically converged.
             
@@ -248,6 +250,7 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
             Returns:
                 bool: True if solution is valid
             """
+            
             # Check physical bounds
             if not (0 <= f_alpha <= 1 and Q >= 0):
                 return False
@@ -255,29 +258,59 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
             # Check numerical convergence
             if abs(residuals[0]) > tolerance or abs(residuals[1]) > tolerance:
                 return False
-            
-            # Check if values are reasonable
-            if Q > 1e6 or f_alpha < 1e-6:  # Adjust based on your physics
-                return False
                 
             return True
         
-        # Step 1: Try multiple initial guesses with verification
-        initial_guesses = [
-            [0.05, 50],
-            [0.05, 1000],
-            [0.05, 1],
-        ]
+        def is_duplicate_solution(sol, solutions_list, tol_f_alpha=1e-2, tol_Q=1.0):
+            """
+            Check if solution is a duplicate of existing solutions.
+            """
+            
+            for existing_sol in solutions_list:
+                if (abs(existing_sol['f_alpha'] - sol['f_alpha']) < tol_f_alpha and 
+                    abs(existing_sol['Q'] - sol['Q']) < tol_Q):
+                    return True
+            return False
         
-        methods = ['lm', 'hybr']
+        def select_best_solution(valid_solutions):
+            """
+            Select solution with highest Q value
+            
+            Args:
+                valid_solutions: List of valid solution dictionaries
+            
+            Returns:
+                tuple: (f_alpha, Q) of best solution or None if no solutions
+            """
+            
+            if not valid_solutions:
+                return None
+            
+            # Maximize Q
+            best = max(valid_solutions, key=lambda x: x['Q'])
+            return (best['f_alpha'], best['Q'])
         
-        for guess in initial_guesses:
-            for method in methods:
+        def try_method_with_guesses(method_name, initial_guesses, tolerance=1):
+            """
+            Try solving with a specific method and multiple initial guesses.
+            
+            Args:
+                method_name: Name of scipy.optimize.root method
+                initial_guesses: List of [f_alpha, Q] initial guesses
+                tolerance: Convergence tolerance
+            
+            Returns:
+                List of valid solutions found
+            """
+            
+            valid_solutions = []
+            
+            for guess in initial_guesses:
                 try:
                     result = root(
                         to_solve_f_alpha_and_Q,
                         guess,
-                        method=method,
+                        method=method_name,
                         tol=1e-8
                     )
                     
@@ -288,61 +321,84 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
                         residuals = to_solve_f_alpha_and_Q([f_alpha, Q])
                         
                         # Verify this is a true convergence
-                        if verify_solution(f_alpha, Q, residuals, tolerance=0.1):  # 0.1% tolerance
-                            # print(f"Valid solution: f_alpha={f_alpha:.6f}, Q={Q:.1f}, "
-                            #      f"residuals=[{residuals[0]:.2e}, {residuals[1]:.2e}]")
-                            return (f_alpha, Q)
-                        else:
-                            pass
-                            # print(f"Invalid solution from guess {guess}: "
-                            #      f"f_alpha={f_alpha:.6f}, Q={Q:.1f}, "
-                            #      f"residuals=[{residuals[0]:.2e}, {residuals[1]:.2e}]")
+                        if verify_solution(f_alpha, Q, residuals, tolerance=tolerance):
+                            sol_dict = {
+                                'f_alpha': f_alpha,
+                                'Q': Q,
+                                'residuals': residuals,
+                                'residual_norm': np.sqrt(residuals[0]**2 + residuals[1]**2),
+                                'method': method_name,
+                                'guess': guess
+                            }
                             
+                            # Only add if not duplicate
+                            if not is_duplicate_solution(sol_dict, valid_solutions):
+                                valid_solutions.append(sol_dict)
+                        
                 except Exception as e:
                     continue
+            
+            return valid_solutions
         
-        # Step 2: Grid search if all direct methods fail
-        # print("Direct methods failed, trying grid search...")
-        f_alpha_guesses = [0.001, 0.01, 0.1, 0.3]
-        Q_guesses = [1, 10, 100, 1000, 1e5]
+        # Define initial guesses for all methods
+        initial_guesses = [
+            [0.05, 50],
+            [0.05, 1000],
+            [0.05, 1],
+            [0.05, 5000],
+        ]
         
-        best_solution = None
-        best_residual_norm = float('inf')
+        # ========================================================================
+        # STEP 1: Fast search with 'hybr'
+        # ========================================================================
+        valid_solutions = try_method_with_guesses('hybr', initial_guesses, tolerance=1)
         
-        for f_a in f_alpha_guesses:
-            for Q_guess in Q_guesses:
-                try:
-                    result = root(
-                        to_solve_f_alpha_and_Q,
-                        [f_a, Q_guess],
-                        method='hybr',
-                        tol=1e-8
-                    )
-                    
-                    if result.success:
-                        f_alpha, Q = result.x
-                        residuals = to_solve_f_alpha_and_Q([f_alpha, Q])
-                        
-                        if verify_solution(f_alpha, Q, residuals, tolerance=0.1):
-                            return (f_alpha, Q)
-                        
-                        # Keep best solution even if not perfect
-                        residual_norm = np.sqrt(residuals[0]**2 + residuals[1]**2)
-                        if residual_norm < best_residual_norm and 0 <= f_alpha <= 1 and Q >= 0:
-                            best_residual_norm = residual_norm
-                            best_solution = (f_alpha, Q, residuals)
-                            
-                except Exception as e:
-                    continue
+        if valid_solutions:
+            best_solution = select_best_solution(valid_solutions)
+            if best_solution:
+                return best_solution
         
-        # Return best solution if no perfect one found
-        if best_solution is not None and best_residual_norm < 1.0:  # 1% acceptable
-            f_alpha, Q, residuals = best_solution
-            # print(f"Returning best solution (not perfect): f_alpha={f_alpha:.6f}, Q={Q:.1f}, "
-            #       f"residuals=[{residuals[0]:.2e}, {residuals[1]:.2e}]")
-            return (f_alpha, Q)
+        # ========================================================================
+        # STEP 2: Robust search with 'lm'
+        # ========================================================================
+        valid_solutions = try_method_with_guesses('lm', initial_guesses, tolerance=1)
         
-        # print("No valid solution found")
+        if valid_solutions:
+            best_solution = select_best_solution(valid_solutions)
+            if best_solution:
+                return best_solution
+        
+        # ========================================================================
+        # STEP 3: Very robust search with 'df-sane'
+        # ========================================================================
+        valid_solutions = try_method_with_guesses('df-sane', initial_guesses, tolerance=1)
+        
+        if valid_solutions:
+            best_solution = select_best_solution(valid_solutions)
+            if best_solution:
+                return best_solution
+        
+        # ========================================================================
+        # STEP 4: Grid search with 'df-sane' as last resort
+        # ========================================================================
+        f_alpha_guesses = [0.001, 0.01, 0.1, 0.3, 0.5]
+        Q_guesses = [1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1, 10, 100, 1000, 1e4, 1e5, 1e6]
+        
+        grid_guesses = [[f_a, Q_g] for f_a in f_alpha_guesses for Q_g in Q_guesses]
+        
+        # Use only 'lm' for grid search
+        valid_solutions = try_method_with_guesses('df-sane', grid_guesses, tolerance=1)
+        
+        if valid_solutions:
+            
+            best_solution = select_best_solution(valid_solutions)
+            if best_solution:
+                return best_solution
+        
+        # ========================================================================
+        # No solution found
+        # ========================================================================
+        # print("No valid solution found after all attempts")
         return np.nan, np.nan
 
     f_alpha_solution, Q_solution = solve_f_alpha_Q()
@@ -461,19 +517,19 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
     
     # Calculate the radial build
     if Radial_build_model == "academic":
-        (c, Winding_pack_tension_ratio) = f_TF_academic(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg)
+        (c, c_WP_TF, c_Nose_TF, σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF) = f_TF_academic(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg)
         (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, I_Ohm_solution, Bmax, a, b, c, R0, κ, nbar_solution, Tbar, Ce, Temps_Plateau_input, li_solution, Choice_Buck_Wedg)
-        (d, Alpha, B_CS, J_CS) = f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, Bmax, σ_CS,
+        (d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS, J_CS) = f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, Bmax, σ_CS,
                            Supra_choice, J_max_CS_conducteur, T_helium, f_Cu, f_Cool, f_In, Choice_Buck_Wedg)
     elif Radial_build_model == "D0FUS":
-        (c, Winding_pack_tension_ratio) = f_TF_D0FUS(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg, omega_TF, n_TF)
+        (c, c_WP_TF, c_Nose_TF, σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF) = f_TF_D0FUS(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg, omega_TF, n_TF)
         (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, I_Ohm_solution, Bmax, a, b, c, R0, κ, nbar_solution, Tbar, Ce, Temps_Plateau_input, li_solution, Choice_Buck_Wedg)
-        (d, Alpha, B_CS, J_CS) = f_CS_D0FUS(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, Bmax, σ_CS,
+        (d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS, J_CS) = f_CS_D0FUS(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, Bmax, σ_CS,
                            Supra_choice, J_max_CS_conducteur, T_helium, f_Cu, f_Cool, f_In, Choice_Buck_Wedg)
     elif Radial_build_model == "CIRCEE":
-        (c, Winding_pack_tension_ratio) = f_TF_D0FUS(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg, omega_TF, n_TF)
+        (c, c_WP_TF, c_Nose_TF, σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF) = f_TF_D0FUS(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg, omega_TF, n_TF)
         (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, I_Ohm_solution, Bmax, a, b, c, R0, κ, nbar_solution, Tbar, Ce, Temps_Plateau_input, li_solution, Choice_Buck_Wedg)
-        (d, Alpha, B_CS, J_CS) = f_CS_CIRCEE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, Bmax, σ_CS,
+        (d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS, J_CS) = f_CS_CIRCEE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, Bmax, σ_CS,
                            Supra_choice, J_max_CS_conducteur, T_helium, f_Cu, f_Cool, f_In, Choice_Buck_Wedg)
     else:
         print('Choose a valid mechanical model')
@@ -495,7 +551,9 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
             Gamma_n_solution,
             f_alpha_solution, tau_alpha,
             J_max_TF_conducteur, J_max_CS_conducteur,
-            Winding_pack_tension_ratio, R0-a, R0-a-b, R0-a-b-c, R0-a-b-c-d,
+            c, c_WP_TF, c_Nose_TF, σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF,
+            d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS, J_CS,
+            R0-a, R0-a-b, R0-a-b-c, R0-a-b-c-d,
             κ, κ_95, δ, δ_95)
 
 
@@ -503,7 +561,7 @@ def save_run_output(params, results, output_dir, input_file_path=None):
     """Save run results to timestamped directory with complete output"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_name = f"Run_D0FUS_{timestamp}"
-    output_path = os.path.join(output_dir, output_name)
+    output_path = os.path.join(output_dir,'run', output_name)
     
     # Create directory
     os.makedirs(output_path, exist_ok=True)
@@ -536,7 +594,8 @@ def save_run_output(params, results, output_dir, input_file_path=None):
      Gamma_n,
      f_alpha, tau_alpha,
      J_TF, J_CS,
-     TF_ratio,
+     c, c_WP_TF, c_Nose_TF, σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF,
+     d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS, J_CS,
      r_minor, r_sep, r_c, r_d,
      κ, κ_95, δ, δ_95) = results
     
@@ -581,6 +640,8 @@ def save_run_output(params, results, output_dir, input_file_path=None):
         print(f"[O] BCS (Magnetic Field CS)                         : {B_CS:.3f} [T]", file=dual_output)
         print(f"[O] J_E-TF (Engineering current density TF)         : {J_TF/1e6:.3f} [MA/m²]", file=dual_output)
         print(f"[O] J_E-CS (Engineering current density CS)         : {J_CS/1e6:.3f} [MA/m²]", file=dual_output)
+        print(f"[O] Steel ratio TF                                  : {Steel_fraction_TF*100:.3f} [%]", file=dual_output)
+        print(f"[O] Steel ratio CS                                  : {Steel_fraction_CS*100:.3f} [%]", file=dual_output)
         print("-------------------------------------------------------------------------", file=dual_output)
         print(f"[I] P_fus (Fusion Power)                            : {params.P_fus:.3f} [MW]", file=dual_output)
         print(f"[O] P_CD (CD Power)                                 : {P_CD:.3f} [MW]", file=dual_output)
