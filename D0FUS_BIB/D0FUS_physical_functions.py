@@ -1,17 +1,12 @@
-# -*- coding: utf-8 -*-
 """
-Created on Thu Jan  9 14:31:18 2025
-
-@author: TA276941
+Created on: Dec 2023
+Author: Auclair Timothe
 """
 
 #%% Import
 
-from D0FUS_parameterization import *
-
-# Ajouter le répertoire 'D0FUS_BIB' au chemin de recherche de Python
-sys.path.append(os.path.join(os.path.dirname(__file__), 'D0FUS_BIB'))
-
+from .D0FUS_import import *
+from .D0FUS_parameterization import *
 
 #%% Physical Functions
 
@@ -742,7 +737,7 @@ def f_cost(a,b,c,d,R0,κ,P_fus):
     V_TF = 8*np.pi*(R0-a-b-(c/2))*c*((κ+1)*a+(2*b)+c) # Rectangular TF model coil
     V_CS = 2*np.pi*((R0-a-b-c)**2-(R0-a-b-c-d)**2)*(2*(a*κ+b+c)) # h approx to 2*(a*κ+b+c) and cylindrical model
     
-    cost = (V_BB+V_TF+V_CS) / P_fus
+    cost = (V_BB + V_TF + V_CS) / P_fus
     return cost
 
 def f_P_sep(P_fus, P_CD):
@@ -976,46 +971,6 @@ def f_Ip(tauE, R0, a, κ, δ, nbar, B0, Atomic_mass, P_Alpha, P_Ohm, P_Aux, P_ra
     Ip = ((tauE/Denominateur)**inv_cI) # in MA
     
     return Ip
-    
-def f_Ip_Auclair(tauE, R0, a, kappa, delta, nbar, B0, Atomic_mass, P_Alpha, P_Ohm, P_Aux, P_rad):
-    """
-    Calculate the plasma current (Ip) using the Auclair scaling law.
-
-    Parameters
-    ----------
-    tauE : Energy confinement time [s]
-    R0 : Major radius [m]
-    a : Minor radius [m]
-    kappa : Elongation
-    delta : Triangularity
-    nbar : Mean electron density [1e19 m^-3]
-    B0 : Central magnetic field [T]
-    Atomic_mass : Mean ion mass [AMU]
-    P_Alpha : Alpha power [MW]
-    P_Aux : Auxiliary power [MW]
-    P_Ohm : Ohmic power [MW]
-    P_rad : Radiated power [MW]
-    
-    Returns
-    -------
-    Ip : Plasma current [MA]
-
-    Scaling law (WLS multivariable, Auclair, STD5 database):
-    Ip [MA] ≈ exp(1.119) * tauE^0.366 * B0^0.332 * ne^0.043 * P^0.252 *
-              R0^0.161 * (1+delta)^-0.121 * kappa^0.448 * (a/R0)^1.047 * Atomic_mass^-0.028
-    """
-    
-    one_plus_delta = 1 + delta
-    epsilon = a / R0
-    P = P_Alpha + P_Ohm + P_Aux - P_rad  # Total heating in MW
-
-    Ip = np.exp(1.119) * tauE**0.366 * B0**0.332 * nbar**0.043 * \
-         P**0.252 * R0**0.161 * one_plus_delta**-0.121 * \
-         kappa**0.448 * epsilon**1.047 * Atomic_mass**-0.028
-
-    return Ip  # MA
-
-
 
 def f_Freidberg_Ib(R0, a, κ, pbar, Ip):
     """
@@ -1059,13 +1014,15 @@ def f_Freidberg_Ib(R0, a, κ, pbar, Ip):
     Ib = num / denom / 1e6
     return Ib
 
-# Freidberg case : Ib = 6.3
-# print('Ib Freidberg test case [MA] : 6.3')
-# print(f'Ib original test case [MA] : {round(f_Freidberg_Ib(5.34, 1.34, 1.7, 0.76, 14.3),1)}')
-
-# ARC case : Ib = 5.03
-# print('Ib ARC [MA] : 5.03')
-# print(f'Ib original ARC [MA] : {round(f_Freidberg_Ib(3.3, 1.1, 1.84, 0.58, 7.8),1)}')
+if __name__ == "__main__":
+    
+    # Freidberg case : Ib = 6.3
+    print('Ib Freidberg test case [MA] : 6.3')
+    print(f'Ib original test case [MA] : {round(f_Freidberg_Ib(5.34, 1.34, 1.7, 0.76, 14.3),1)}')
+    
+    # ARC case : Ib = 5.03
+    print('Ib ARC [MA] : 5.03')
+    print(f'Ib original ARC [MA] : {round(f_Freidberg_Ib(3.3, 1.1, 1.84, 0.58, 7.8),1)}')
 
 def calculate_CB(nu_J, nu_p):
     """
@@ -1145,8 +1102,9 @@ def f_Segal_Ib(nu_n, nu_T, epsilon, kappa, n20, Tk, R0, I_M):
 
     return I_b
 
-# ARC case
-# print(f'Ib Segal ARC [MA] : {round(f_Segal_Ib(0.385, 0.929, 0.34, 1.84, 1.3, 14, 3.3, 7.8),1)}')
+if __name__ == "__main__":
+    # ARC case
+    print(f'Ib Segal ARC [MA] : {round(f_Segal_Ib(0.385, 0.929, 0.34, 1.84, 1.3, 14, 3.3, 7.8),1)}')
 
 def f_etaCD(a, R0, B0, nbar, Tbar, nu_n, nu_T):
     """
@@ -1182,7 +1140,7 @@ def f_etaCD(a, R0, B0, nbar, Tbar, nu_n, nu_T):
     eta_CD = 1.2 / (n_parall**2)
     return eta_CD
 
-def f_PCD(R0, nbar, Ip, Ib, eta_CD):
+def f_PCD(R0, nbar, I_CD, eta_CD):
     """
     
     Estimate the Currend Drive (CD) power needed
@@ -1192,36 +1150,15 @@ def f_PCD(R0, nbar, Ip, Ib, eta_CD):
     a : Minor radius [m]
     R0 : Major radius [m]
     n_bar : The mean electronic density [1e20p/m^3]
-    Ip : Plasma current [MA]
-    Ib : Bootstrap current [MA]
-        
-    Returns
-    -------
-    P_CD : Current drive power injected [MW]
-    
-    """
-    P_CD = R0*nbar*abs(Ip-Ib)/eta_CD
-    return P_CD
-
-def f_I_CD(R0, nbar, eta_CD, P_CD):
-    """
-    
-    Estimate the Currend Drive (CD) current from the CD power
-    
-    Parameters
-    ----------
-    a : Minor radius [m]
-    R0 : Major radius [m]
-    n_bar : The mean electronic density [1e20p/m^3]
-    P_CD : Current drive power injected [MW]
-        
-    Returns
-    -------
     I_CD : Current drive current [MA]
+        
+    Returns
+    -------
+    P_CD : Current drive power to inject [MW]
     
     """
-    I_CD = P_CD*eta_CD / (R0*nbar)
-    return I_CD
+    P_CD = R0 * nbar * I_CD / eta_CD
+    return P_CD
 
 def f_I_Ohm(Ip, Ib, I_CD):
     """
@@ -1260,6 +1197,27 @@ def f_ICD(Ip, Ib, I_Ohm):
     """
     I_CD = abs(Ip - Ib - I_Ohm)
     return I_CD
+
+def f_I_CD(R0, nbar, eta_CD, P_CD):
+    """
+    
+    Estimate the Currend Drive (CD) current from the CD power
+    
+    Parameters
+    ----------
+    a : Minor radius [m]
+    R0 : Major radius [m]
+    n_bar : The mean electronic density [1e20p/m^3]
+    P_CD : Current drive power injected [MW]
+        
+    Returns
+    -------
+    I_CD : Current drive current [MA]
+    
+    """
+    I_CD = P_CD*eta_CD / (R0*nbar)
+    return I_CD
+
 
 def f_PLH(eta_RF, f_RP, P_CD):
     """
@@ -1362,10 +1320,11 @@ def P_Thresh_Martin(n_bar, B0, a, R0, κ, Atomic_mass):
     
     return P_Martin
 
-# Test ITER :
-# P_Thresh_Martin(1, 5.3, 2, 6, 1.7, 2.5)
-# Test WEST :
-# print(P_Thresh_Martin(0.6, 3.7, 0.72, 2.4, 1.3, 2))
+if __name__ == "__main__":
+    # Test ITER :
+    print(f'ITER Martin limit: {P_Thresh_Martin(1, 5.3, 2, 6, 1.7, 2.5)}MW')
+    # Test WEST :
+    print(f'WEST Martin limit: {P_Thresh_Martin(0.6, 3.7, 0.72, 2.4, 1.3, 2)}MW')
 
 def P_Thresh_New_S(n_bar, B0, a, R0, κ, Atomic_mass):
     """
@@ -1404,9 +1363,9 @@ def P_Thresh_New_S(n_bar, B0, a, R0, κ, Atomic_mass):
     
     return P_New_S
 
-# Test ITER :
-# P_Thresh_New_S(1, 5.3, 2, 6, 1.7, 2.5)
-# print(P_Thresh_New_S(0.6, 3.7, 0.72, 2.4, 1.3, 2))
+if __name__ == "__main__":
+    # Test ITER :
+    print(f'ITER Delabie limit: {P_Thresh_New_S(0.6, 3.7, 0.72, 2.4, 1.3, 2)}')
 
 def P_Thresh_New_Ip(n_bar, B0, a, R0, κ, Ip, Atomic_mass):
     """
@@ -1443,8 +1402,9 @@ def P_Thresh_New_Ip(n_bar, B0, a, R0, κ, Ip, Atomic_mass):
     
     return P_New_Ip
 
-# Test ITER :
-# P_Thresh_New_Ip(1, 5.3, 2, 6, 1.7,15, 2.5)
+if __name__ == "__main__":
+    # Test ITER :
+    print(f'ITER Delabie refined limit: {P_Thresh_New_Ip(1, 5.3, 2, 6, 1.7,15, 2.5)}')
 
 def f_q95(B0, Ip, R0, a, κ, δ):
     """
@@ -1542,10 +1502,10 @@ def f_tau_alpha(n_bar, T_bar, tauE, C_Alpha, nu_T):
 
     return tau_alpha_value
 
-
-# Test
-# print(f"ITER Helium fraction: {round(f_He_fraction(1, 9, 3.1, 5),3)}") # ITER : ?%
-# print(f"EU-DEMO Helium fraction: {round(f_He_fraction(1.2, 12.5, 4.6, 5),3)}") # DEMO : 16%
+if __name__ == "__main__":
+    # Test
+    print(f"ITER Helium predicted fraction: {round(f_He_fraction(1, 9, 3.1, 5),3)}") # ITER : ?%
+    print(f"EU-DEMO Helium predicted fraction: {round(f_He_fraction(1.2, 12.5, 4.6, 5),3)}") # DEMO : 16%
 
 def f_surface_premiere_paroi(kappa, R0, a):
     """
@@ -1656,7 +1616,7 @@ def f_P_1rst_wall_Lmod(P_sep_solution, Surface_solution):
     
     return P_1rst_wall_Lmod
 
-def f_P_synchrotron(T0_keV, R, a, Bt, ne0, kappa, alpha_n, alpha_T, beta_T, r):
+def f_P_synchrotron(T0_keV, R, a, Bt, ne0, kappa, alpha_n, alpha_T, r):
     """
     Calculate the total synchrotron radiation power (in MW) using the
     improved formulation from Albajar et al. (2001).
@@ -1679,8 +1639,6 @@ def f_P_synchrotron(T0_keV, R, a, Bt, ne0, kappa, alpha_n, alpha_T, beta_T, r):
         Density profile peaking parameter
     alpha_T : float
         Temperature profile peaking parameter
-    beta_T : float
-        Temperature shape factor
     r : float, optional
         Wall reflection coefficient (default=0.9)
 
@@ -1695,6 +1653,9 @@ def f_P_synchrotron(T0_keV, R, a, Bt, ne0, kappa, alpha_n, alpha_T, beta_T, r):
     Improved calculation of synchrotron radiation losses in realistic tokamak plasmas. 
     Nuclear Fusion, 41(6), 665.
     """
+    # Temperature shape factor ?
+    # To check
+    beta_T = 2 
     # Aspect ratio
     A = R / a
     
@@ -2000,4 +1961,4 @@ def f_Get_parameter_scaling_law(Scaling_Law):
 
 #%%
 
-print("D0FUS_physical_functions loaded")
+# print("D0FUS_physical_functions loaded")

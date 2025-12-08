@@ -1,19 +1,12 @@
-# -*- coding: utf-8 -*-
 """
-Created on Thu Jun  6 09:31:26 2024
-
-@author: TA276941
-
-Sets constants and parameters which are not initialized in D0FUS_run.py
+Created on: Dec 2023
+Author: Auclair Timothe
 """
 #%% Import
 
-from D0FUS_import import *
+from .D0FUS_import import *
 
-# Adds 'D0FUS_BIB' directory to Python search tree
-sys.path.append(os.path.join(os.path.dirname(__file__), 'D0FUS_BIB'))
-
-#%% 
+#%% Code
 
 # Physical constants
 E_ELEM  = 1.6e-19           # Electron charge [Coulomb]
@@ -31,11 +24,8 @@ Zeff = 1                    # Zeff du plasma (default :1)
 r_synch = 0.5               # Synchrotron reflection coefficient of the wall
 
 # Plasma stability limits
-betaN = 2.8  # Beta Troyon limit
-q = 2.5      # Safety factor limit
-
-Choice_solving_CS_method = "brentq" # "brentq" or "manual" for debugging
-Choice_solving_TF_method = "brentq" # "brentq" or "manual" for debugging
+betaN_limit = 2.8  # Beta Troyon limit
+q_limit = 2.5      # Safety factor limit
 
 # Steel
 σ_manual = 1500         # MPa
@@ -58,6 +48,7 @@ c_BP = 0.07                   # Backplate thickness [m]
 
 # CS
 Gap = 0.1            # Gap between wedging and bucking CS and TF [m]
+n_CS = 1
 
 # Current density scaling
 T_helium = 4.2           # K temeprature de l'helium considéré
@@ -90,12 +81,6 @@ theta_deg = 2.7      # Angle d'incidence sur les PFU pour calcul du flux de chal
 # Hide runtime-related warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
-# Create a directory to save images if it doesn't exist
-# save_directory = "Graphs"
-save_directory = os.path.join(os.getcwd(), "Graphs", "Données brutes")
-
-os.makedirs(save_directory, exist_ok=True)
-
 #%%
 
-print("D0FUS_parameterization loaded")
+# print("D0FUS_parameterization loaded")

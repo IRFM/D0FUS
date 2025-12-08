@@ -1,8 +1,8 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Tue Jun 25 13:30:05 2024
+from __future__ import annotations
 
-@author: TA276941
+"""
+Created on: Dec 2023
+Author: Auclair Timothe
 """
 
 #%% Import
@@ -11,11 +11,15 @@ Created on Tue Jun 25 13:30:05 2024
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
+from datetime import datetime
+import shutil
 import math
 import time
 import warnings
 import sys
 import importlib
+import re
+from pathlib import Path
 
 # Importations de bibliothèques scientifiques et de calcul numérique
 import numpy as np
@@ -32,11 +36,13 @@ from scipy.optimize import (
     basinhopping,
     brentq,
     bisect,
-    root
+    least_squares,
+    shgo
 )
 from scipy.interpolate import interp1d
 from scipy.interpolate import griddata
 from scipy.integrate import quad
+from scipy.signal import find_peaks
 
 # Importations de bibliothèques de visualisation
 import matplotlib.pyplot as plt
@@ -49,7 +55,13 @@ from pandas.plotting import table
 from tqdm import tqdm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
+# Gentic research
+import json
+import random
+from matplotlib.gridspec import GridSpec
+from deap import base, creator, tools, algorithms
+
 #%%
 
-print("D0FUS_import loaded")
+# print("D0FUS_import loaded")
 

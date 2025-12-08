@@ -1,16 +1,12 @@
-# -*- coding: utf-8 -*-
 """
-Created on Thu Jan  9 14:32:03 2025
-
-@author: TA276941
+Created on: Dec 2023
+Author: Auclair Timothe
 """
 
 #%% Import
 
-from D0FUS_physical_functions import *
-
-# Ajouter le répertoire 'D0FUS_BIB' au chemin de recherche de Python
-sys.path.append(os.path.join(os.path.dirname(__file__), 'D0FUS_BIB'))
+from .D0FUS_import import *
+from .D0FUS_parameterization import *
 
 #%% print
 
@@ -21,11 +17,11 @@ if __name__ == "__main__":
 
 def Steel(Chosen_Steel):
     if Chosen_Steel == '316L':
-        σ = 660.E6        # Mechanical limit of the steel considered in [Pa]
+        σ = 660*1e6        # Mechanical limit of the steel considered in [Pa]
     elif Chosen_Steel == 'N50H':
-        σ = 1000.E6        # Mechanical limit of the steel considered in [Pa]
+        σ = 1000*1e6       # Mechanical limit of the steel considered in [Pa]
     elif Chosen_Steel == 'Manual':
-        σ = σ_manual*1.E6        # Mechanical limit of the steel considered in [Pa]
+        σ = σ_manual*1e6   # Mechanical limit of the steel considered in [Pa]
     else : 
         print('Choose a valid steel')
     return(σ)
@@ -34,7 +30,7 @@ def Steel(Chosen_Steel):
 
 def Jc_Nb3Sn(B, T, Nb3Sn_PARAMS, Eps):
     """
-    Calculate the critical current density Jc for a given Nb3Sn TFEU4 wire
+    Compute the critical current density Jc for a given Nb3Sn TFEU4 wire
     as a function of the magnetic field B (in T), temperature T (in K),
     and thixotropic strain Eps.
 
@@ -75,13 +71,9 @@ def Jc_Nb3Sn(B, T, Nb3Sn_PARAMS, Eps):
         - Ca2 * Eps
     )
     Tc0 = Tcm * s2Eps**(1/3)
-    # b0 not used in final formula, but calculable if needed
-    # b0 = Bc2m * s2Eps
     t = T / Tc0
     one_minus_t152 = (1 - t**1.52)
     b = B / (Bc2m * s2Eps * one_minus_t152)
-    # Tc variable not used in final Jc but can be returned
-    # Tc = Tcm * s2Eps * one_minus_t152
     
     # Jc formula before geometry
     Jc_raw = (C1 / B) * s2Eps * one_minus_t152 * (1 - t**2) * b**exponent_p * (1 - b)**exponent_q
@@ -142,9 +134,9 @@ def Jc_Rebco(B, T, REBCO_PARAMS, Tet):
     """
     Calculate the critical current density Jc for a REBCO tape according to the CERN2014 scaling.
     Inputs:
-        B   : Magnetic field (T), scalar or array-like.
-        T   : Temperature (K), scalar or array-like.
-        Tet : Angle (rad), scalar or array-like (0 = poor orientation).
+        B   : Magnetic field (T)
+        T   : Temperature (K)
+        Tet : Angle (rad) (0 = poor orientation)
         params : Optional dict to override DEFAULT_PARAMS_REBCO.
 
     Returns:
@@ -191,39 +183,74 @@ def Jc(Supra_choice, B_supra , T_He):
     
     # Current density
     if Supra_choice == "Nb3Sn"  :
+        
+        Nb3Sn_option = 'TFEU4'
+        
+        if Nb3Sn_option == 'TFEU4':
 
-        # Nb3Sn TFEU4 parameters LTS
-        Nb3Sn_PARAMS = {
-            'Ca1': 44.48,
-            'Ca2': 0.0,
-            'Eps0a': 0.00256,
-            'Epsm': -0.00049,
-            'Bc2m': 32.97,
-            'Tcm': 16.06,
-            'C1': 19922.0,
-            'p': 0.63,
-            'q': 2.1,
-            'dbrin': 0.82e-3,
-            'CuNCu': 1.01,
-        }
+            # Nb3Sn TFEU4
+            Nb3Sn_PARAMS = {
+                'Ca1': 44.48,
+                'Ca2': 0.0,
+                'Eps0a': 0.00256,
+                'Epsm': -0.00049,
+                'Bc2m': 32.97,
+                'Tcm': 16.06,
+                'C1': 19922.0,
+                'p': 0.63,
+                'q': 2.1,
+                'dbrin': 0.82e-3,
+            }
+        
+        elif Nb3Sn_option == 'ITERTF':
+        
+            # Nb3Sn ITER TF
+            Nb3Sn_PARAMS = {
+                'Ca1': 44,
+                'Ca2': 4,
+                'Eps0a': 0.00256,
+                'Epsm': -0.0003253075,
+                'Bc2m': 32.97,
+                'Tcm': 16.06,
+                'C1': 16500,
+                'p': 0.63,
+                'q': 2.1,
+                'dbrin': 0.82e-3,
+            }
+            
+        elif Nb3Sn_option == 'ITERCS':
+        
+            # Nb3Sn ITER CS CICC
+            Nb3Sn_PARAMS = {
+                'Ca1': 53,
+                'Ca2': 8,
+                'Eps0a': 0.0097,
+                'Epsm': -0.0003253075,
+                'Bc2m': 32.57,
+                'Tcm': 17.17,
+                'C1': 18700,
+                'p': 0.62,
+                'q': 2.125,
+                'dbrin': 0.82e-3,
+            }
         
         Jc = Jc_Nb3Sn(B_supra, T_He + Marge_T_Helium + Marge_T_Nb3Sn , Nb3Sn_PARAMS, Eps)
         
     elif Supra_choice == "Rebco"  :
 
-        # Paramètres par défaut pour REBCO (CERN 2014)
+        # CERN 2014
         REBCO_PARAMS = {
-            'trebco': 1.5e-6,   # épaisseur de la couche supraconductrice [m]
-            'w': 4e-3,          # largeur du ruban [m]
-            'Tc0': 93.0,        # température critique zéro champ [K]
+            'trebco': 1.5e-6 *203/156,   # best: 203, worst: 156, default: 156
+            'w': 4e-3,
+            'Tc0': 93.0,                 
             'n': 1.0,
-            'Bi0c': 140.0,      # [T]
-            'Alfc': 1.41e12,    # [A/m^2]
+            'Bi0c': 140.0,               
+            'Alfc': 1.41e12,            
             'pc': 0.313,
             'qc': 0.867,
             'gamc': 3.09,
-            'Bi0ab': 250.0,     # [T]
-            'Alfab': 83.8e12,   # [A/m^2]
+            'Bi0ab': 250.0,                
+            'Alfab': 83.8e12,   
             'pab': 1.023,
             'qab': 4.45,
             'gamab': 4.73,
@@ -251,16 +278,11 @@ def Jc(Supra_choice, B_supra , T_He):
         }
         
         Jc = Jc_NbTi(B_supra, T_He + Marge_T_Helium + Marge_T_NbTi , NbTi_PARAMS)
-
-    elif Supra_choice == "Manual"  :
-
-        Jc = 50.E6
         
     else :
         print("Please choose a proper superconductor")
     
     return(Jc)
-
 
 #%% Jc test
 
@@ -269,7 +291,7 @@ if __name__ == "__main__":
     from mpl_toolkits.mplot3d import Axes3D
     
     # Test
-    B_test = 8
+    B_test = 6.5
     T_test = 4.2
     Jc_val_NbTi = Jc("NbTi", B_test , T_test)
     print(f"Jc NbTi (T = {T_test} K, B = {B_test} T) = {Jc_val_NbTi/1e6:.2f} MA/m²")
@@ -286,10 +308,10 @@ if __name__ == "__main__":
     
     # —––––––––––––––––––––––––––––––––––––
     # Plot 2D à 4.2 K
-    T0 = 4.2 - Marge_T_NbTi
-    J_NbTi_42 = Jc("NbTi", B_vals, T0)/1e6
-    J_Nb3Sn_42 = Jc("Nb3Sn", B_vals, T0)/1e6
-    J_Rebco_42 = Jc("Rebco", B_vals, T0)/1e6
+    T0 = 4.2
+    J_NbTi_42 = Jc("NbTi", B_vals, T0 - Marge_T_NbTi)/1e6
+    J_Nb3Sn_42 = Jc("Nb3Sn", B_vals, T0 - Marge_T_Nb3Sn)/1e6
+    J_Rebco_42 = Jc("Rebco", B_vals, T0 - Marge_T_Rebco)/1e6
     
     plt.figure(figsize=(6,4))
     plt.plot(B_vals, J_NbTi_42, label='NbTi @ 4.2 K', lw=2)
@@ -598,11 +620,94 @@ def F_CIRCE0D(disR, R, J, B, Pi, Pe, E, nu, config):
 
 if __name__ == "__main__":
     print("##################################################### TF Model ##########################################################")
-    
+
+#%% Number of TF to satisfy ripple
+
+def Number_TF_coils(R0, a, b, ripple_adm, L_min):
+    """
+    Find the minimum number of toroidal field (TF) coils required
+    to keep the magnetic field ripple below a target value and satisfy
+    a minimum toroidal access.
+
+    Model (Wesson, 'Tokamaks', p.169):
+        Ripple ≈ ((R0 - a - b)/(R0 + a))**N_TF + ((R0 + a)/(R0 + a + b + Delta))**N_TF
+        L_access = 2 * pi * r2 / N_TF
+
+    Parameters
+    ----------
+    R0 : float
+        Major radius of the plasma [m]
+    a : float
+        Minor radius of the plasma [m]
+    b : float
+        Base radial distance between plasma edge and TF coil [m]
+    ripple_adm : float
+        Maximum admissible ripple (fraction, e.g. 0.01 for 1%)
+    delta_max : float
+        Maximum additional radial margin to scan [m]
+    L_min : float
+        Minimum toroidal access [m]
+
+    Returns
+    -------
+    N_TF : int
+        Minimum integer number of TF coils satisfying ripple <= ripple_adm
+        and L_access >= L_min
+    ripple_val : float
+        Corresponding ripple value
+    Delta : float
+        Additional margin added to r2 to satisfy both constraints
+    """
+
+    N_min = 1
+    N_max = 200
+    delta_step = 0.01
+    delta_max = 6
+
+    if ripple_adm <= 0 or ripple_adm >= 1:
+        raise ValueError("ripple_adm must be a fraction between 0 and 1.")
+    if b <= 0:
+        raise ValueError("b must be positive (coil must be outside the plasma).")
+    if L_min <= 0:
+        raise ValueError("L_min must be positive.")
+
+    # Scan Delta from 0 to delta_max
+    Delta = 0.0
+    while Delta <= delta_max:
+        r2 = R0 + a + b + Delta
+        for N_TF in range(N_min, N_max + 1):
+            ripple = ((R0 - a - b) / (R0 + a)) ** N_TF + ((R0 + a) / r2) ** N_TF
+            L_access = 2 * math.pi * r2 / N_TF
+            if ripple <= ripple_adm and L_access >= L_min:
+                return N_TF, ripple, Delta
+        Delta += delta_step
+
+    raise ValueError(f"No N_TF and Delta combination found up to Delta_max={delta_max} m "
+                     f"satisfying ripple ≤ {ripple_adm} and L_access ≥ {L_min} m")
+
+
+# -------------------------
+# Example usage
+# -------------------------
+if __name__ == "__main__":
+    R0 = 6.2           # [m] major radius
+    a = 2.0            # [m] minor radius
+    b = 1.2            # [m] base radial distance
+    ripple_adm = 0.01  # 1% ripple
+    L_min = 3.5        # [m] minimum toroidal access
+
+    N_TF, ripple, Delta = Number_TF_coils(R0, a, b, ripple_adm, L_min)
+    r2 = R0 + a + b + Delta
+
+    print(f"Minimum number of TF coils: {N_TF}")
+    print(f"Ripple = {ripple*100:.3f}%")
+    print(f"Additional Delta = {Delta:.3f} m")
+    print(f"L_access = {2*math.pi*r2/N_TF:.3f} m")
+
     
 #%% Academic model
 
-def f_TF_academic(a, b, R0, σ_TF, J_max_TF, Bmax, Choice_Buck_Wedg):
+def f_TF_academic(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg):
     """
     Calculate the thickness of the TF coil using a 2-layer thin cylinder model.
 
@@ -619,7 +724,7 @@ def f_TF_academic(a, b, R0, σ_TF, J_max_TF, Bmax, Choice_Buck_Wedg):
         Magnetic permeability of free space.
     J_max_TF : float
         Maximum current density of the chosen Supra + Cu + He (A/m²).
-    Bmax : float
+    B_max_TF : float
         Maximum magnetic field (T).
     Choice_Buck_Wedg : str
         Mechanical option, either "Bucking" or "Wedging".
@@ -630,9 +735,29 @@ def f_TF_academic(a, b, R0, σ_TF, J_max_TF, Bmax, Choice_Buck_Wedg):
     ratio_tension : float
         Ratio of axial to total stress.
     """
+    
+    def f_B0(Bmax, a, b, R0):
+        """
+        
+        Estimate the magnetic field in the centre of the plasma
+        
+        Parameters
+        ----------
+        Bmax : The magnetic field at the inboard of the Toroidal Field (TF) coil [T]
+        a : Minor radius [m]
+        b : Thickness of the First Wall+ the Breeding Blanket+ The Neutron shield+ The Vacuum Vessel + Gaps [m]
+        R0 : Major radius [m]
+
+        Returns
+        -------
+        B0 : The estimated central magnetic field [T]
+        
+        """
+        B0 = Bmax*(1-((a+b)/R0))
+        return B0
 
     # 1. Calculate the central magnetic field B0 based on geometry and maximum field
-    B0 = f_B0(Bmax, a, b, R0)
+    B0 = f_B0(B_max_TF, a, b, R0)
 
     # 2. Inner (inboard leg) and outer (outboard leg) radii
     R1_0 = R0 - a - b
@@ -657,24 +782,26 @@ def f_TF_academic(a, b, R0, σ_TF, J_max_TF, Bmax, Choice_Buck_Wedg):
         T = abs(((np.pi * B0 * 2 * R0**2) / μ0 * math.log(R2 / R1) - F_CClamp) * coef_inboard_tension)
     else:
         # Invalid geometric conditions
-        return np.nan, np.nan
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
-    # 8. Radial pressure P due to the magnetic field Bmax
-    P = Bmax**2 / (2 * μ0)
+    # 8. Radial pressure P due to the magnetic field B_max_TF
+    P = B_max_TF**2 / (2 * μ0)
 
     # 9. Mechanical option choice: "bucking" or "wedging"
-    if Choice_Buck_Wedg == "Bucking":
+    if Choice_Buck_Wedg == "Bucking" or "Plug":
         # Thickness c2 for bucking, valid if R1 >> c
         c_Nose = (B0**2 * R0**2) * math.log(R2 / R1) / (2 * μ0 * 2 * R1 * (σ_TF - P))
         σ_r = P  # Radial stress
         σ_z = T / (2 * np.pi * R1 * c_Nose)  # Axial stress
-        ratio_tension = σ_z / (σ_z + σ_r)
+        σ_theta = 0
+
     elif Choice_Buck_Wedg == "Wedging":
         # Thickness c2 for wedging, valid if R1 >> c
         c_Nose = (B0**2 * R0**2) / (2 * μ0 * R1 * σ_TF) * (1 + math.log(R2 / R1) / 2)
         σ_theta = P * R1 / c_Nose  # Circumferential stress
         σ_z = T / (2 * np.pi * R1 * c_Nose)  # Axial stress
-        ratio_tension = σ_z / (σ_theta + σ_z)
+        σ_r = 0
+        
     else:
         raise ValueError("Choose 'Bucking' or 'Wedging' as the mechanical option.")
 
@@ -683,14 +810,16 @@ def f_TF_academic(a, b, R0, σ_TF, J_max_TF, Bmax, Choice_Buck_Wedg):
 
     # Verify that c_WP is valid
     if c is None or np.isnan(c) or c < 0 or c > (c_WP + c_Nose) or c > R0 - a - b:
-        return np.nan, np.nan
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+    
+    Steel_fraction = c_Nose / c
 
-    return c, ratio_tension
+    return c, c_WP, c_Nose, σ_z, σ_theta, σ_r, Steel_fraction
 
     
 #%% D0FUS model
 
-def Winding_Pack_D0FUS(R_0, a, b, sigma_max, J_max, B_max, omega, n, Choice_solving_TF_method):
+def Winding_Pack_D0FUS(R_0, a, b, sigma_max, J_max, B_max, omega, n):
     
     """
     Computes the winding pack thickness and stress ratio under Tresca criterion.
@@ -712,15 +841,16 @@ def Winding_Pack_D0FUS(R_0, a, b, sigma_max, J_max, B_max, omega, n, Choice_solv
     """
     
     plot = False
+    Choice_solving_TF_method = 'brentq'
     R_ext = R_0 - a - b
 
     if R_ext <= 0:
-        return(np.nan, np.nan)
+        return np.nan, np.nan, np.nan, np.nan, np.nan
         # raise ValueError("R_ext must be positive. Check R_0, a, and b.")
 
     ln_term = np.log((R_0 + a + b) / (R_ext))
     if ln_term <= 0:
-        return(np.nan, np.nan)
+        return np.nan, np.nan, np.nan, np.nan, np.nan
         # raise ValueError("Invalid logarithmic term: ensure R_0 + a + b > R_0 - a - b")
 
     def alpha(R_sep):
@@ -774,7 +904,7 @@ def Winding_Pack_D0FUS(R_0, a, b, sigma_max, J_max, B_max, omega, n, Choice_solv
                 R_sep_solution = R_vals[i + 1]
                 break
         if R_sep_solution is None:
-            return np.nan, np.nan
+            return np.nan, np.nan, np.nan, np.nan, np.nan
 
     elif Choice_solving_TF_method == 'brentq':
         found = False
@@ -791,25 +921,25 @@ def Winding_Pack_D0FUS(R_0, a, b, sigma_max, J_max, B_max, omega, n, Choice_solv
                 pass
             R1 = R2
         if not found:
-            return np.nan, np.nan
+            return np.nan, np.nan, np.nan, np.nan, np.nan
     else:
-        raise ValueError("Invalid method. Use 'scan' or 'auto'.")
+        raise ValueError("Invalid method Use 'manual' or 'brentq'")
 
     # === Final stress calculation ===
     a_val = alpha(R_sep_solution)
     g_val = gamma(a_val, n)
 
     if np.isnan(a_val) or np.isnan(g_val):
-        return np.nan, np.nan
+        return np.nan, np.nan, np.nan, np.nan, np.nan
 
     try:
         sigma_r = B_max**2 / (2 * μ0 * g_val)
         sigma_z = (omega / (1 - a_val)) * B_max**2 * R_ext**2 / (2 * μ0 * (R_ext**2 - R_sep_solution**2)) * ln_term
+        sigma_theta = 0
     except Exception:
-        return np.nan, np.nan
+        return np.nan, np.nan, np.nan, np.nan, np.nan
 
     winding_pack_thickness = R_ext - R_sep_solution
-    ratio_tension = sigma_z / sigma_max
 
     # === Optional plot ===
     if plot:
@@ -827,8 +957,10 @@ def Winding_Pack_D0FUS(R_0, a, b, sigma_max, J_max, B_max, omega, n, Choice_solv
         plt.legend()
         plt.tight_layout()
         plt.show()
+        
+    Steel_fraction = (1-a_val)
 
-    return winding_pack_thickness, ratio_tension
+    return winding_pack_thickness, sigma_r, sigma_z, sigma_theta, Steel_fraction
 
 
 def Nose_D0FUS(R_ext_Nose, sigma_max, omega, B_max, R_0, a, b):
@@ -864,7 +996,7 @@ def Nose_D0FUS(R_ext_Nose, sigma_max, omega, B_max, R_0, a, b):
     
     return Ri
 
-def f_TF_D0FUS(a, b, R0, σ_TF , J_max_TF, Bmax, Choice_Buck_Wedg, omega, n):
+def f_TF_D0FUS(a, b, R0, σ_TF , J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n):
     
     """
     Calculate the thickness of the TF coil using a 2 layer thick cylinder model 
@@ -877,7 +1009,7 @@ def f_TF_D0FUS(a, b, R0, σ_TF , J_max_TF, Bmax, Choice_Buck_Wedg, omega, n):
     σ_TF : Yield strength of the TF steel (MPa)
     μ0 : Magnetic permeability of free space
     J_max_TF : Maximum current density of the chosen Supra + Cu + He (A/m²)
-    Bmax : Maximum magnetic field (T)
+    B_max_TF : Maximum magnetic field (T)
 
     Returns:
     c : TF width
@@ -888,21 +1020,21 @@ def f_TF_D0FUS(a, b, R0, σ_TF , J_max_TF, Bmax, Choice_Buck_Wedg, omega, n):
     
     if Choice_Buck_Wedg == "Wedging":
         
-        (c_WP, ratio_tension) = Winding_Pack_D0FUS( R0, a, b, σ_TF, J_max_TF, Bmax, omega, n, Choice_solving_TF_method)
+        c_WP, σ_r, σ_z, σ_theta, Steel_fraction  = Winding_Pack_D0FUS( R0, a, b, σ_TF, J_max_TF, B_max_TF, omega, n)
         
         # Vérification que c_WP est valide
         if c_WP is None or np.isnan(c_WP) or c_WP < 0:
-            return(np.nan, np.nan)
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
-        c_Nose = R0 - a - b - c_WP - Nose_D0FUS(R0 - a - b - c_WP, σ_TF, omega, Bmax, R0, a, b)
+        c_Nose = R0 - a - b - c_WP - Nose_D0FUS(R0 - a - b - c_WP, σ_TF, omega, B_max_TF, R0, a, b)
 
         # Vérification que c_Nose est valide
         if c_Nose is None or np.isnan(c_Nose) or c_Nose < 0:
-            return(np.nan, np.nan)
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
         # Vérification que la somme ne dépasse pas R0 - a - b
         if (c_WP + c_Nose) > (R0 - a - b):
-            return(np.nan, np.nan)
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
         # Epaisseur totale de la bobine
         c  = c_WP + c_Nose + c_BP
@@ -913,19 +1045,22 @@ def f_TF_D0FUS(a, b, R0, σ_TF , J_max_TF, Bmax, Choice_Buck_Wedg, omega, n):
             print(f'Nose width : {c_Nose}')
             print(f'Backplate width : {c_BP}')
     
-    elif Choice_Buck_Wedg == "Bucking":
+    elif Choice_Buck_Wedg == "Bucking" or Choice_Buck_Wedg == "Plug":
         
-        (c, ratio_tension) = Winding_Pack_D0FUS(R0, a, b, σ_TF, J_max_TF, Bmax, omega, n , Choice_solving_TF_method)
+        c_WP, σ_r, σ_z, σ_theta, Steel_fraction = Winding_Pack_D0FUS(R0, a, b, σ_TF, J_max_TF, B_max_TF, omega, n)
         
-        # Vérification que c_WP est valide
+        c = c_WP
+        c_Nose = 0
+        
+        # Vérification que c est valide
         if c is None or np.isnan(c) or c < 0 or c > R0 - a - b :
-            return(np.nan, np.nan)
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
     else : 
         print( "Choose a valid mechanical configuration" )
-        return(np.nan, np.nan)
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
-    return(c, ratio_tension)
+    return c, c_WP, c_Nose, σ_z, σ_theta, σ_r, Steel_fraction
 
 #%% TF benchmark
 
@@ -934,274 +1069,208 @@ if __name__ == "__main__":
     def get_machine_parameters_TF(machine_name):
 
         machines = {
-            "SF": {
-                "a_TF": 1.6,
-                "b_TF": 1.2,
-                "R0_TF": 6,
-                "σ_TF_tf": 660e6,
-                "T_supra": 4.2,
-                "Bmax_TF": 20,
-                "n_TF": 1,
-                "supra_TF" : "Rebco",
-            },
-            # """
+            "SF": { "a_TF": 1.6, "b_TF": 1.2, "R0_TF": 6, "σ_TF_tf": 660e6, "T_supra": 4.2, "B_max_TF_TF": 20,
+                   "n_TF": 1, "supra_TF" : "Rebco", "config" : "Wedging", "J" : 600e6},
             # Source : PEPR SupraFusion
-            # """
-            
-            "ITER": {
-                "a_TF": 2,
-                "b_TF": 1.23,
-                "R0_TF": 6.2,
-                "σ_TF_tf": 660e6,
-                "T_supra": 4.2,
-                "Bmax_TF": 11.8,
-                "n_TF": 1,
-                "supra_TF" : "Nb3Sn",
-            },
-            # """
+
+            "ITER": { "a_TF": 2, "b_TF": 1.23, "R0_TF": 6.2, "σ_TF_tf": 660e6, "T_supra": 4.2, "B_max_TF_TF": 11.8,
+                     "n_TF": 1, "supra_TF" : "Nb3Sn", "config" : "Wedging", "J" : 140e6},
             # Source : Sborchia, C., Fu, Y., Gallix, R., Jong, C., Knaster, J., & Mitchell, N. (2008). Design and specifications of the ITER TF coils. IEEE transactions on applied superconductivity, 18(2), 463-466.
-            # """
             
-            "DEMO": {
-                "a_TF": 2.92,
-                "b_TF": 1.9,
-                "R0_TF": 9.07,
-                "σ_TF_tf": 660e6,
-                "T_supra": 4.2,
-                "Bmax_TF": 13,
-                "n_TF": 1/2, # Fig 2
-                "supra_TF" : "Nb3Sn",
-            },
-            # """
+            "DEMO": { "a_TF": 2.92, "b_TF": 1.9, "R0_TF": 9.07, "σ_TF_tf": 660e6, "T_supra": 4.2, "B_max_TF_TF": 13,
+                     "n_TF": 1/2, "supra_TF" : "Nb3Sn", "config" : "Wedging", "J" : 150e6},
             # Source : Federici, G., Siccinio, M., Bachmann, C., Giannini, L., Luongo, C., & Lungaroni, M. (2024). Relationship between magnetic field and tokamak size—a system engineering perspective and implications to fusion development. Nuclear Fusion, 64(3), 036025.
-            # """
             
-            "CFETR": {
-                "a_TF": 2.2,
-                "b_TF": 1.52,
-                "R0_TF": 7.2,
-                "σ_TF_tf": 1000e6,
-                "T_supra": 4.2,
-                "Bmax_TF": 14,
-                "n_TF": 1,
-                "supra_TF" : "Nb3Sn",
-            },
-            # """
+            "CFETR": { "a_TF": 2.2, "b_TF": 1.52, "R0_TF": 7.2, "σ_TF_tf": 1000e6, "T_supra": 4.2, "B_max_TF_TF": 14,
+                      "n_TF": 1, "supra_TF" : "Nb3Sn", "config" : "Wedging", "J" : 150e6},
             # Source : Wu, Y., Li, J., Shen, G., Zheng, J., Liu, X., Long, F., ... & Han, H. (2021). Preliminary design of CFETR TF prototype coil. Journal of Fusion Energy, 40, 1-14.
-            # """
             
-            "EAST": {
-                "a_TF": 0.45,
-                "b_TF": 0.45,
-                "R0_TF": 1.85,
-                "σ_TF_tf": 660e6,
-                "T_supra": 3.7,
-                "Bmax_TF": 7.2,
-                "n_TF": 1,
-                "supra_TF" : "NbTi",
-            },
-            # """
+            "EAST": { "a_TF": 0.45, "b_TF": 0.45, "R0_TF": 1.85, "σ_TF_tf": 660e6, "T_supra": 4.2,
+                     "B_max_TF_TF": 7.2, "n_TF": 1, "supra_TF" : "NbTi", "config" : "Wedging", "J" : 200e6},
             # Source : Chen, S. L., Villone, F., Xiao, B. J., Barbato, L., Luo, Z. P., Liu, L., ... & Xing, Z. (2016). 3D passive stabilization of n= 0 MHD modes in EAST tokamak. Scientific Reports, 6(1), 32440.
             # Source : Yi, S., Wu, Y., Liu, B., Long, F., & Hao, Q. W. (2014). Thermal analysis of toroidal field coil in EAST at 3.7 K. Fusion Engineering and Design, 89(4), 329-334.
             # Source : Chen, W., Pan, Y., Wu, S., Weng, P., Gao, D., Wei, J., ... & Chen, S. (2006). Fabrication of the toroidal field superconducting coils for the EAST device. IEEE transactions on applied superconductivity, 16(2), 902-905.
-            # """
             
-            "K-STAR": {
-                "a_TF": 0.5,
-                "b_TF": 0.35,
-                "R0_TF": 1.8,
-                "σ_TF_tf": 660e6,
-                "T_supra": 4.2 ,
-                "Bmax_TF": 7.2,
-                "n_TF": 1,
-                "supra_TF" : "Nb3Sn",
-            },
-            # """
-            # Source : Oh, Y. K., Choi, C. H., Sa, J. W., Ahn, H. J., Cho, K. J., Park, Y. M., ... & Lee, G. S. (2002, January). Design overview of the KSTAR magnet structures. In Proceedings of the 19th IEEE/IPSS Symposium on Fusion Engineering. 19th SOFE (Cat. No. 02CH37231) (pp. 400-403). IEEE.
-            # Source : Choi, C. H., Sa, J. W., Park, H. K., Hong, K. H., Shin, H., Kim, H. T., ... & Hong, C. D. (2005, January). Fabrication of the KSTAR toroidal field coil structure. In 20th IAEA fusion energy conference 2004. Conference proceedings (No. IAEA-CSP--25/CD, pp. 6-6).
-            # Source : Oh, Y. K., Choi, C. H., Sa, J. W., Lee, D. K., You, K. I., Jhang, H. G., ... & Lee, G. S. (2002). KSTAR magnet structure design. IEEE transactions on applied superconductivity, 11(1), 2066-2069.
-            # Résultats au final difficilement comparable car tehcnologie de Nb3Sn ancienne et moins performante que celle considéré ici dans notre scaling pour J
-            # Si on rentre a la main la densité de courant, on retrouve bien les bons ordres de grandeur
-            # """
+            "K-STAR": { "a_TF": 0.5, "b_TF": 0.35, "R0_TF": 1.8, "σ_TF_tf": 660e6, "T_supra": 4.2 , "B_max_TF_TF": 7.2,
+                       "n_TF": 1, "supra_TF" : "Nb3Sn", "config" : "Wedging", "J" : 200e6},
+            # Source :
+            # Oh, Y. K., Choi, C. H., Sa, J. W., Ahn, H. J., Cho, K. J., Park, Y. M., ... & Lee, G. S. (2002, January). Design overview of the KSTAR magnet structures. In Proceedings of the 19th IEEE/IPSS Symposium on Fusion Engineering. 19th SOFE (Cat. No. 02CH37231) (pp. 400-403). IEEE.
+            # Choi, C. H., Sa, J. W., Park, H. K., Hong, K. H., Shin, H., Kim, H. T., ... & Hong, C. D. (2005, January). Fabrication of the KSTAR toroidal field coil structure. In 20th IAEA fusion energy conference 2004. Conference proceedings (No. IAEA-CSP--25/CD, pp. 6-6).
+            # Oh, Y. K., Choi, C. H., Sa, J. W., Lee, D. K., You, K. I., Jhang, H. G., ... & Lee, G. S. (2002). KSTAR magnet structure design. IEEE transactions on applied superconductivity, 11(1), 2066-2069.
     
-            "ARC": {
-                "a_TF": 1.07,
-                "b_TF": 0.89,
-                "R0_TF": 3.3,
-                "σ_TF_tf": 660e6,
-                "T_supra": 20,
-                "supra_TF" : "Rebco",
-                # Source :
-                # Hartwig, Z. S., Vieira, R. F., Sorbom, B. N., Badcock, R. A., Bajko, M., Beck, W. K., ... & Zhou, L. (2020). VIPER: an industrially scalable high-current high-temperature superconductor cable. Superconductor Science and Technology, 33(11), 11LT01.
-                # Kuznetsov, S., Ames, N., Adams, J., Radovinsky, A., & Salazar, E. (2024). Analysis of Strains in SPARC CS PIT-VIPER Cables. IEEE Transactions on Applied Superconductivity.
-                # Sanabria, C., Radovinsky, A., Craighill, C., Uppalapati, K., Warner, A., Colque, J., ... & Brunner, D. (2024). Development of a high current density, high temperature superconducting cable for pulsed magnets. Superconductor Science and Technology, 37(11), 115010.
-                "Bmax_TF": 23,
-                "n_TF": 1,
-            },
-            # """
-            # Source : Sorbom, B. N., Ball, J., Palmer, T. R., Mangiarotti, F. J., Sierchio, J. M., Bonoli, P., ... & Whyte, D. G. (2015). ARC: A compact, high-field, fusion nuclear science facility and demonstration power plant with demountable magnets. Fusion Engineering and Design, 100, 378-405.
-            # """
+            "ARC": { "a_TF": 1.07, "b_TF": 0.89, "R0_TF": 3.3, "σ_TF_tf": 1000e6, "T_supra": 20, "supra_TF" : "Rebco",
+                    "B_max_TF_TF": 23, "n_TF": 1, "config" : "Plug", "J" : 600e6},
+            # Source :
+            # Hartwig, Z. S., Vieira, R. F., Sorbom, B. N., Badcock, R. A., Bajko, M., Beck, W. K., ... & Zhou, L. (2020). VIPER: an industrially scalable high-current high-temperature superconductor cable. Superconductor Science and Technology, 33(11), 11LT01.
+            # Kuznetsov, S., Ames, N., Adams, J., Radovinsky, A., & Salazar, E. (2024). Analysis of Strains in SPARC CS PIT-VIPER Cables. IEEE Transactions on Applied Superconductivity.
+            # Sanabria, C., Radovinsky, A., Craighill, C., Uppalapati, K., Warner, A., Colque, J., ... & Brunner, D. (2024). Development of a high current density, high temperature superconducting cable for pulsed magnets. Superconductor Science and Technology, 37(11), 115010.
+            # Sorbom, B. N., Ball, J., Palmer, T. R., Mangiarotti, F. J., Sierchio, J. M., Bonoli, P., ... & Whyte, D. G. (2015). ARC: A compact, high-field, fusion nuclear science facility and demonstration power plant with demountable magnets. Fusion Engineering and Design, 100, 378-405.
             
-            "SPARC": {
-                "a_TF": 0.57,
-                "b_TF": 0.18,
-                "R0_TF": 1.85,
-                "σ_TF_tf": 660e6,
-                "T_supra": 20,    
-                "Bmax_TF": 20,
-                "n_TF": 1,
-                "supra_TF" : "Rebco",
-            },
-            # """
+            "SPARC": { "a_TF": 0.57, "b_TF": 0.18, "R0_TF": 1.85, "σ_TF_tf": 1000e6, "T_supra": 20,     "B_max_TF_TF": 20,
+                      "n_TF": 1, "supra_TF" : "Rebco", "config" : "Bucking" , "J" : 600e6},
             # Source : Creely, A. J., Greenwald, M. J., Ballinger, S. B., Brunner, D., Canik, J., Doody, J., ... & Sparc Team. (2020). Overview of the SPARC tokamak. Journal of Plasma Physics, 86(5), 865860502.
-            # """
             
-            "JT60-SA": {
-                "a_TF": 1.18,
-                "b_TF": 0.27,
-                "R0_TF": 2.96,
-                "σ_TF_tf": 660e6,
-                "T_supra": 4.6,
-                # Source : Operating Parameters in 
-                # Koide, Y., Yoshida, K., Wanner, M., Barabaschi, P., Cucchiaro, A., Davis, S., ... & Zani, L. (2015). JT-60SA superconducting magnet system. Nuclear Fusion, 55(8), 086001.
-                "Bmax_TF": 5.65,
-                "n_TF": 1,
-                "supra_TF" : "NbTi",
-            }
-            # """
-            # Source : Polli, G. M., Cucchiaro, A., Cocilovo, V., Corato, V., Rossi, P., Drago, G., ... & Tomarchio, V. (2019). JT-60SA toroidal field coils procured by ENEA: A final review. Fusion Engineering and Design, 146, 2489-2493.
-            # """
+            "JT60-SA": { "a_TF": 1.18, "b_TF": 0.27, "R0_TF": 2.96, "σ_TF_tf": 660e6, "T_supra": 4.2,
+                        "B_max_TF_TF": 5.65, "n_TF": 1, "supra_TF" : "NbTi", "config" : "Wedging", "J" : 150e6/1.95}
+            # Source :
+            # 150 / 1.95 to take into account the ratio of Cu to Supra = 1.95 and not 1, see table 4 of
+            # Obana, Tetsuhiro, et al. "Conductor and joint test results of JT-60SA CS and EF coils using the NIFS test facility." Cryogenics 73 (2016): 25-41.
+            # Koide, Y., Yoshida, K., Wanner, M., Barabaschi, P., Cucchiaro, A., Davis, S., ... & Zani, L. (2015). JT-60SA superconducting magnet system. Nuclear Fusion, 55(8), 086001.
+            # Polli, G. M., Cucchiaro, A., Cocilovo, V., Corato, V., Rossi, P., Drago, G., ... & Tomarchio, V. (2019). JT-60SA toroidal field coils procured by ENEA: A final review. Fusion Engineering and Design, 146, 2489-2493.
         }
     
         return machines.get(machine_name, None)
     
-    
     # === BENCHMARK ===
 
-    # === Machines à tester ===
-    machines = ["CFETR", "DEMO", "ITER", "ARC" , "SPARC", "JT60-SA", "EAST", "K-STAR"]
+    # === Machines to test ===
+    machines = ["ITER", "DEMO", "JT60-SA", "EAST", "ARC", "SPARC"]
     
-    # === Résultats stockés ===
+    # === Helper function for clean results ===
+    def clean_result(val):
+        """Return a clean float or NaN if invalid/complex."""
+        # Handle tuples (extract first element)
+        if isinstance(val, tuple):
+            val = val[0]
+        # Handle None, NaN, or complex
+        if val is None or np.isnan(val) or np.iscomplex(val):
+            return np.nan
+        # Return rounded float
+        return round(float(np.real(val)), 2)
+    
+    # === Accumulate results ===
     table = []
     
     for machine in machines:
+        # Get machine parameters
         params = get_machine_parameters_TF(machine)
         if params is None:
             continue
         
-        # Paramètres d'entrée
+        # Unpack input parameters
         a = params["a_TF"]
         b = params["b_TF"]
         R0 = params["R0_TF"]
         σ = params["σ_TF_tf"]
         T_supra = params["T_supra"]
-        Bmax = params["Bmax_TF"]
+        B_max_TF = params["B_max_TF_TF"]
         n = params["n_TF"]
         Supra_choice_TF = params["supra_TF"]
-    
-        Jmax = Jc(Supra_choice_TF, Bmax, T_supra) * f_Cu * f_Cool * f_In
-        Jmax_MApm2 = Jmax / 1e6
-    
-        def clean_result(val):
-            if isinstance(val, tuple):
-                val = val[0]
-            if np.iscomplex(val) or val is None or np.isnan(val):
-                return np.nan
-            return round(val, 2)
-    
-        # === CIRCE ===
-        out_wedg_CIRCE = f_TF_D0FUS(a, b, R0, σ, Jmax, Bmax, "Wedging", omega=0.5, n=n)
-        out_buck_CIRCE = f_TF_D0FUS(a, b, R0, σ, Jmax, Bmax, "Bucking", omega=1.0, n=n)
-    
-        # Ajout au tableau
+        config = params["config"]  # Get machine-specific configuration
+        Jc_manual = params["J"]
+        
+        print(f'Machine: {machine}')
+        Jmax = Jc_manual * f_Cu * f_Cool * f_In
+        print(f'Considered current density [MA/m²] (full strain value): {Jc_manual/1e6}')
+        Jmax_D0FUS = Jc(Supra_choice_TF, B_max_TF, T_supra) * f_Cu * f_Cool * f_In
+        print(f'If calculated by D0FUS model [MA/m²] (full strain value): {np.round(Jc(Supra_choice_TF, B_max_TF, T_supra)/1e6,0)}')
+        
+        # === Run D0FUS model for machine-specific configuration ===
+        if config == "Wedging":
+            thickness = f_TF_D0FUS(a, b, R0, σ, Jmax, B_max_TF, "Wedging", omega=0.5, n=n)
+        else:  # Bucking
+            thickness = f_TF_D0FUS(a, b, R0, σ, Jmax, B_max_TF, "Bucking", omega=1.0, n=n)
+        
+        # Store results
         table.append({
             "Machine": machine,
-            "J [MA/m²]" : clean_result(Jmax_MApm2),
-            "Wedging (m)": clean_result(out_wedg_CIRCE),
-            "Bucking (m)": clean_result(out_buck_CIRCE),
+            "Config": config,
+            "J [MA/m²]": clean_result(Jmax / 1e6/(f_Cu * f_Cool * f_In)),
+            "σ [MPa]" : σ/1e6,
+            "Thickness [m]": clean_result(thickness),
         })
     
-    # === Conversion en DataFrame ===
+    # === Display Table ===
     df = pd.DataFrame(table)
-    fig, ax = plt.subplots(figsize=(5, 2))
+    fig, ax = plt.subplots(figsize=(6, 2))
     ax.axis('off')
-    tbl = ax.table(cellText=df.values, colLabels=df.columns, loc='center', cellLoc='center')
+    
+    tbl = ax.table(
+        cellText=df.values,
+        colLabels=df.columns,
+        cellLoc='center',
+        loc='center'
+    )
+    
     tbl.auto_set_font_size(False)
     tbl.set_fontsize(10)
-    tbl.scale(1.2, 1.2)
-    plt.title("TF thickness results with D0FUS model", fontsize=14, pad=20)
+    tbl.scale(1.2, 1.5)
+    
+    # Color header row
+    for i in range(len(df.columns)):
+        tbl[(0, i)].set_facecolor('#4CAF50')
+        tbl[(0, i)].set_text_props(weight='bold', color='white')
+    
+    # Alternate row colors for better readability
+    for i in range(1, len(df) + 1):
+        for j in range(len(df.columns)):
+            if i % 2 == 0:
+                tbl[(i, j)].set_facecolor('#f0f0f0')
+    
+    plt.title("TF Thickness Results", 
+              fontsize=14, pad=20, weight='bold')
+    plt.tight_layout()
     plt.show()
 
 #%% TF plot
     
 if __name__ == "__main__":
 
-    # Extract individual parameters from the dictionary
-    # ARC like
+    # EU DEMO
     a_TF = 3
     b_TF = 1.7
     R0_TF = 9
     # Default values
-    σ_TF_tf = 660e6
+    σ_TF_tf = 860e6
     n_TF = 1
 
-    # === Bmax_TF RANGE DEFINITION ===
-    Bmax_values = np.linspace(0, 25, 50)  # Magnetic field range (0 T to 25 T)
+    # === B_max_TF_TF RANGE DEFINITION ===
+    B_max_TF_values = np.linspace(0, 25, 50)  # Magnetic field range (0 T to 25 T)
 
     # === INITIALIZE RESULT LISTS ===
     academic_w = []
     academic_b = []
     d0fus_w = []
     d0fus_b = []
-    # CIRCE_w = []
-    # CIRCE_b = []
 
     # === COMPUTATION LOOP ===
-    for Bmax_TF in Bmax_values:
+    for B_max_TF_TF in B_max_TF_values:
         
-        T_supra = 4.2
-        J_max_TF_tf = Jc("Rebco", Bmax_TF, T_supra) * f_Cu * f_Cool * f_In
+        T_supra = 20
+        J_max_TF_tf = Jc("Rebco", B_max_TF_TF, T_supra) * f_Cu * f_Cool * f_In
         
         # Academic models
-        res_acad_w = f_TF_academic(a_TF, b_TF, R0_TF, σ_TF_tf, J_max_TF_tf, Bmax_TF, "Wedging")
-        res_acad_b = f_TF_academic(a_TF, b_TF, R0_TF, σ_TF_tf, J_max_TF_tf, Bmax_TF, "Bucking")
+        res_acad_w = f_TF_academic(a_TF, b_TF, R0_TF, σ_TF_tf, J_max_TF_tf, B_max_TF_TF, "Wedging")
+        res_acad_b = f_TF_academic(a_TF, b_TF, R0_TF, σ_TF_tf, J_max_TF_tf, B_max_TF_TF, "Bucking")
 
         # D0FUS models (γ = 0.5 for Wedging, γ = 1 for Bucking)
-        res_d0fus_w = f_TF_D0FUS(a_TF, b_TF, R0_TF, σ_TF_tf, J_max_TF_tf, Bmax_TF, "Wedging", 0.5, n_TF)
-        res_d0fus_b = f_TF_D0FUS(a_TF, b_TF, R0_TF, σ_TF_tf, J_max_TF_tf, Bmax_TF, "Bucking", 1, n_TF)
-
-        # D0FUS models (γ = 0.5 for Wedging, γ = 1 for Bucking)
-        # res_CIRCE_w = f_TF_CIRCE(a_TF, b_TF, R0_TF, σ_TF_tf, J_max_TF_tf, Bmax_TF, "Wedging", 0.5, n_TF)
-        # res_CIRCE_b = f_TF_CIRCE(a_TF, b_TF, R0_TF, σ_TF_tf, J_max_TF_tf, Bmax_TF, "Bucking", 1, n_TF)
+        res_d0fus_w = f_TF_D0FUS(a_TF, b_TF, R0_TF, σ_TF_tf, J_max_TF_tf, B_max_TF_TF, "Wedging", 0.5, n_TF)
+        res_d0fus_b = f_TF_D0FUS(a_TF, b_TF, R0_TF, σ_TF_tf, J_max_TF_tf, B_max_TF_TF, "Bucking", 1, n_TF)
 
         # Store results (only first return value assumed to be thickness)
         academic_w.append(res_acad_w[0])
         academic_b.append(res_acad_b[0])
-        d0fus_w.append(res_d0fus_w[0]-0.07)
+        d0fus_w.append(res_d0fus_w[0])
         d0fus_b.append(res_d0fus_b[0])
-        # CIRCE_w.append(res_CIRCE_w[0]-0.07)
-        # CIRCE_b.append(res_CIRCE_b[0])
     
     # Couleurs par modèle : bleu, vert, rouge
     colors = ['#1f77b4', '#2ca02c', '#d62728']
     
     # MADE fit
     
-    x = np.array([0, 11.25, 13.25, 14.75, 16, 17, 18, 19, 19.75,20.5, 21.25, 22])
-    y = np.array([0, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8, 2, 2.2, 2.4, 2.65])
+    x = np.array([11.25, 13.25, 14.75, 16, 17, 18, 19, 19.75,20.5, 21.25, 22, 22.5])
+    y = np.array([0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8, 2, 2.2, 2.4, 2.65, 2.85])
     
     # --- FIGURE 1 : Wedging ---
-    plt.figure(figsize=(7, 7))
+    plt.figure(figsize=(5, 5))
     
-    plt.plot(Bmax_values, academic_w, color=colors[0], linestyle='-', linewidth=2,
-             marker='o', markersize=6, markevery=5, label='Academic Wedging')
-    plt.plot(Bmax_values, d0fus_w, color=colors[1], linestyle='-', linewidth=2,
-             marker='s', markersize=6, markevery=5, label='D0FUS Wedging')
-    # plt.plot(Bmax_values, CIRCE_w, color=colors[2], linestyle='-', linewidth=2,
-             # marker='^', markersize=6, markevery=5, label='CIRCE Wedging')
-    plt.scatter(x, y, color="black", label="MADE")
+    plt.plot(B_max_TF_values, academic_w, color=colors[0], linestyle='-', linewidth=2,
+             label='Academic Wedging')
+    plt.plot(B_max_TF_values, d0fus_w, color=colors[1], linestyle='-', linewidth=2,
+             label='D0FUS Wedging')
+    plt.scatter(x, y, color="black", marker = 'x', s=80, label="MADE")
     
-    plt.xlabel('Maximum magnetic field Bmax (T)', fontsize=14)
+    plt.xlabel('TF magnetic field (T)', fontsize=14)
     plt.ylabel('TF thickness [m]', fontsize=14)
     plt.title('Mechanical models comparison: Wedging', fontsize=16)
     plt.legend(fontsize=12, loc='best', frameon=True)
@@ -1210,16 +1279,14 @@ if __name__ == "__main__":
     plt.show()
     
     # --- FIGURE 2 : Bucking ---
-    plt.figure(figsize=(7, 7))
+    plt.figure(figsize=(5, 5))
     
-    plt.plot(Bmax_values, academic_b, color=colors[0], linestyle='-', linewidth=2,
-             marker='o', markersize=6, markevery=5, label='ACADEMIC Bucking')
-    plt.plot(Bmax_values, d0fus_b, color=colors[1], linestyle='-', linewidth=2,
-             marker='s', markersize=6, markevery=5, label='D0FUS Bucking')
-    # plt.plot(Bmax_values, CIRCE_b, color=colors[2], linestyle='-', linewidth=2,
-             # marker='^', markersize=6, markevery=5, label='CIRCE Bucking')
+    plt.plot(B_max_TF_values, academic_b, color=colors[0], linestyle='-', linewidth=2,
+             label='ACADEMIC Bucking')
+    plt.plot(B_max_TF_values, d0fus_b, color=colors[1], linestyle='-', linewidth=2,
+             label='D0FUS Bucking')
     
-    plt.xlabel('Maximum magnetic field Bmax (T)', fontsize=14)
+    plt.xlabel('TF magnetic field (T)', fontsize=14)
     plt.ylabel('TF thickness [m]', fontsize=14)
     plt.title('Mechanical models comparison: Bucking', fontsize=16)
     plt.legend(fontsize=12, loc='best', frameon=True)
@@ -1234,7 +1301,7 @@ if __name__ == "__main__":
 
 #%% Magnetic flux calculation
 
-def Magnetic_flux(Ip, I_Ohm, Bmax, a, b, c, R0, κ, nbar, Tbar, Ce, Temps_Plateau, Li, Choice_Buck_Wedg):
+def Magnetic_flux(Ip, I_Ohm, B_max_TF, a, b, c, R0, κ, nbar, Tbar, Ce, Temps_Plateau, Li, Choice_Buck_Wedg):
     """
     Calculate the magnetic flux components for a tokamak plasma.
 
@@ -1243,7 +1310,7 @@ def Magnetic_flux(Ip, I_Ohm, Bmax, a, b, c, R0, κ, nbar, Tbar, Ce, Temps_Platea
         Plasma current (MA).
     I_Ohm : float
         Ohmic current (MA).
-    Bmax : float
+    B_max_TF : float
         Maximum magnetic field (T).
     a : float
         Minor radius (m).
@@ -1280,9 +1347,29 @@ def Magnetic_flux(Ip, I_Ohm, Bmax, a, b, c, R0, κ, nbar, Tbar, Ce, Temps_Platea
     # Convert currents from MA to A
     Ip = Ip * 1e6
     I_Ohm = I_Ohm * 1e6
+    
+    def f_B0(Bmax, a, b, R0):
+        """
+        
+        Estimate the magnetic field in the centre of the plasma
+        
+        Parameters
+        ----------
+        Bmax : The magnetic field at the inboard of the Toroidal Field (TF) coil [T]
+        a : Minor radius [m]
+        b : Thickness of the First Wall+ the Breeding Blanket+ The Neutron shield+ The Vacuum Vessel + Gaps [m]
+        R0 : Major radius [m]
+
+        Returns
+        -------
+        B0 : The estimated central magnetic field [T]
+        
+        """
+        B0 = Bmax*(1-((a+b)/R0))
+        return B0
 
     # Toroidal magnetic field
-    B0 = f_B0(Bmax, a, b, R0)
+    B0 = f_B0(B_max_TF, a, b, R0)
 
     # Length of the last closed flux surface
     L = np.pi * np.sqrt(2 * (a**2 + (κ * a)**2))
@@ -1291,7 +1378,7 @@ def Magnetic_flux(Ip, I_Ohm, Bmax, a, b, c, R0, κ, nbar, Tbar, Ce, Temps_Platea
     βp = 4 / μ0 * L**2 * nbar * 1e20 * E_ELEM * 1e3 * Tbar / Ip**2  # 0.62 for ITER # Boltzmann constant [J/keV]
 
     # External radius of the CS
-    if Choice_Buck_Wedg == 'Bucking':
+    if Choice_Buck_Wedg == 'Bucking' or Choice_Buck_Wedg == 'Plug':
         RCS_ext = R0 - a - b - c
     elif Choice_Buck_Wedg == 'Wedging':
         RCS_ext = R0 - a - b - c - Gap
@@ -1344,7 +1431,7 @@ if __name__ == "__main__":
     b_cs = 1.25
     c_cs = 0.90
     R0_cs = 6.2
-    Bmax_cs = 13
+    B_max_TF_cs = 13
     configuration = "Wedging"
     T_CS = 4.2
     κ_cs = 1.7                    # Elongation
@@ -1359,10 +1446,10 @@ if __name__ == "__main__":
     
     # Compute total magnetic flux contributions using provided function
     ΨPI, ΨRampUp, Ψplateau, ΨPF = Magnetic_flux(
-        Ip_cs, I_Ohm_cs, Bmax_cs,
+        Ip_cs, I_Ohm_cs, B_max_TF_cs,
         a_cs, b_cs, c_cs, R0_cs,
         κ_cs, nbar_cs, Tbar_cs,
-        Ce_cs, Temps_Plateau_cs, Li_cs, Choice_Buck_Wedg
+        Ce_cs, Temps_Plateau_cs, Li_cs
     )
     
     # Print benchmark results in a clear format
@@ -1376,389 +1463,587 @@ if __name__ == "__main__":
 
 #%% CS academic model
 
-def f_CS_academic(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, σ_CS, J_max_CS, Choice_Buck_Wedg):
+def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, σ_CS,
+              Supra_choice_CS, Jc_manual, T_Helium, f_Cu, f_Cool, f_In, Choice_Buck_Wedg):
     """
-    Calculate the CS thickness considering a thin layer approximation and a 2-cylinder (superconductor + steel) approach.
-
-    Parameters:
+    Calculate the Central Solenoid (CS) thickness using thin-layer approximation 
+    and a 2-cylinder model (superconductor + steel structure).
+    
+    Simplified approach:
+    1) Estimate B_CS using thin cylinder approximation from flux
+    2) Compute J_max_CS at this field (single evaluation, no iteration)
+    3) Determine d_SU directly from flux and current density
+    4) Find d_SS using brentq to satisfy mechanical stress constraint
+    
+    Parameters
+    ----------
     ΨPI : float
-        Flux needed for plasma initiation (Wb).
+        Plasma initiation flux (Wb)
     ΨRampUp : float
-        Total ramp-up flux (Wb).
+        Current ramp-up flux swing (Wb)
     Ψplateau : float
-        Flux related to the plateau (Wb).
+        Flat-top operational flux (Wb)
     ΨPF : float
-        Available flux from the PF system (Wb).
+        Poloidal field coil contribution (Wb)
     a : float
-        Minor radius (m).
+        Plasma minor radius (m)
     b : float
-        First Wall + Breeding Blanket + Neutron Shield + Gaps (m).
+        Cumulative radial build: 1st wall + breeding blanket + neutron shield + gaps (m)
     c : float
-        TF coil thickness (m).
+        Toroidal field (TF) coil radial thickness (m)
     R0 : float
-        Major radius (m).
-    Bmax : float
-        Maximum magnetic field (T).
+        Major radius (m)
+    B_max_TF : float
+        Maximum TF coil magnetic field (T)
+    B_max_CS : float
+        Maximum CS magnetic field (T) [currently unused in implementation]
     σ_CS : float
-        Yield strength of the CS steel (MPa).
-    μ0 : float
-        Magnetic permeability of free space.
-    J_max_CS : float
-        Maximum current density of the chosen superconductor + Cu + He (A/m²).
+        Yield strength of CS structural steel (Pa)
+    Supra_choice_CS : str
+        Superconductor type identifier for Jc calculation
+    Jc_manual : float
+        If needed, manual current density
+    T_Helium : float
+        Helium coolant temperature (K)
+    f_Cu : float
+        Copper fraction in conductor
+    f_Cool : float
+        Cooling fraction
+    f_In : float
+        Insulation fraction
     Choice_Buck_Wedg : str
-        Mechanical configuration ('Bucking' or 'Wedging').
+        Mechanical support configuration: 'Bucking', 'Wedging', or 'Plug'
+    
+    Returns
+    -------
+    tuple of float
+        (d, alpha, B_CS, J_max_CS)
+        - d : CS radial thickness (m)
+        - alpha : Conductor volume fraction (dimensionless, 0 < alpha < 1)
+        - B_CS : CS magnetic field (T)
+        - J_max_CS : Maximum current density in conductor (A/m²)
+        
+        Returns (nan, nan, nan, nan) if no physically valid solution exists.
+    
+    Notes
+    -----
+    - Uses thin-wall cylinder approximation for initial B_CS estimation
+    - B_CS, J_max_CS, and d_SU determined analytically (no iteration)
+    - Only d_SS requires iterative solving via brentq
+    - Mechanical models vary by support configuration:
+        * Bucking: CS bears TF support loads, two limiting cases evaluated
+        * Wedging: CS isolated from TF by gap, pure hoop stress
+        * Plug: Central plug supports TF, combined pressure loading
 
-    Returns:
-    tuple: A tuple containing the calculated values:
-        d : CS width (m).
-        alpha : Percentage of conductor.
-        B_CS : CS magnetic field (T).
+    References
+    ----------
+    [Auclair et al. NF 2026]
     """
+    
+    # ------------------------------------------------------------------
+    # Initialization
+    # ------------------------------------------------------------------
+    
+    # Debug option
+    debug = False
+    Tol_CS = 1e-3
+    Gap = 0.05  # Wedging gap (m) - adjust if needed
 
-    # External radius of the CS
-    if Choice_Buck_Wedg == 'Bucking':
+    # --- Compute external CS radius depending on mechanical choice ---
+    if Choice_Buck_Wedg in ('Bucking', 'Plug'):
         RCS_ext = R0 - a - b - c
     elif Choice_Buck_Wedg == 'Wedging':
         RCS_ext = R0 - a - b - c - Gap
     else:
-        print("Choose between Wedging and Bucking")
-        return (np.nan, np.nan, np.nan)
+        if debug:
+            print("[f_CS_ACAD] Invalid mechanical choice:", Choice_Buck_Wedg)
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
-    # First layer solely composed of conductor
+    if RCS_ext <= 0.0:
+        if debug:
+            print("[f_CS_ACAD] Non-positive RCS_ext:", RCS_ext)
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+
+    # Total flux for CS
     ΨCS = ΨPI + ΨRampUp + Ψplateau - ΨPF
-    RCS_sep = (RCS_ext**3 - (3 * ΨCS) / (2 * np.pi * μ0 * J_max_CS))**(1/3)
-    B_CS = μ0 * J_max_CS * (RCS_ext - RCS_sep)
     
-    if B_CS > Bmax :
-        return (np.nan, np.nan, np.nan)
-
-    # Second layer solely composed of steel
-    def CS_to_solve(d_SS):
+    # ------------------------------------------------------------------
+    # STEP 1: Determine B_CS, J_max_CS, and d_SU analytically
+    # ------------------------------------------------------------------
+    
+    # Thin cylinder approximation for initial estimate of B_CS
+    # Φ = π * R² * B  →  B = Φ / (π * R²)
+    B_CS_thin = ΨCS / (np.pi * RCS_ext**2)
+    
+    if debug:
+        print(f"[STEP 1] Thin cylinder B_CS estimate: {B_CS_thin:.2f} T")
+    
+    # Compute maximum current density at this field
+    # J depends on B through superconductor critical current properties
+    if Supra_choice_CS == 'Manual':
+        J_max_CS = Jc_manual * f_Cu * f_Cool * f_In
+    else:
+        J_max_CS = Jc(Supra_choice_CS, B_CS_thin, T_Helium) * f_Cu * f_Cool * f_In
+    
+    if J_max_CS < Tol_CS:
+        if debug:
+            print(f"[STEP 1] Non-positive J_max_CS: {J_max_CS:.2e} A/m²")
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+    
+    if debug:
+        print(f"[STEP 1] J_max_CS at B={B_CS_thin:.2f} T: {J_max_CS:.2e} A/m²")
+    
+    """
+    Compute separatrix radius (steel/superconductor interface)
+    From thick solenoid flux formula and Ampere's law:
+    Φ = (2π/3) * B * (R_ext³ + R_ext*R_sep² + R_sep³) / (R_ext + R_sep)
+    With B = μ₀ * J * d_SU and some algebra:
+    R_sep³ = R_ext³ - (3*Φ) / (2π * μ₀ * J)
+    """
+    
+    RCS_sep_cubed = RCS_ext**3 - (3 * ΨCS) / (2 * np.pi * μ0 * J_max_CS)
+    
+    if RCS_sep_cubed <= 0:
+        if debug:
+            print(f"[STEP 1] Invalid RCS_sep³: {RCS_sep_cubed:.2e} (negative or zero)")
+            print(f"  This means J_max_CS is too low to generate required flux")
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+    
+    RCS_sep = RCS_sep_cubed**(1/3)
+    
+    # Superconductor thickness
+    d_SU = RCS_ext - RCS_sep
+    
+    if d_SU <= Tol_CS or d_SU >= RCS_ext - Tol_CS:
+        if debug:
+            print(f"[STEP 1] Invalid d_SU: {d_SU:.4f} m (out of physical bounds)")
+        return (np.nan, np.nan, np.nan, np.nan)
+    
+    # Recompute B_CS with thick solenoid formula for accuracy
+    B_CS = 3 * ΨCS / (2 * np.pi * (RCS_ext**2 + RCS_ext * RCS_sep + RCS_sep**2))
+    
+    if B_CS > B_max_CS:
+        if debug:
+            print(f"[STEP 1] Too high B_CS")
+        return (np.nan, np.nan, np.nan, np.nan)
+    
+    if debug:
+        print(f"[STEP 1] Superconductor sizing complete:")
+        print(f"  d_SU = {d_SU:.4f} m")
+        print(f"  RCS_sep = {RCS_sep:.4f} m")
+        print(f"  B_CS (refined) = {B_CS:.2f} T")
+    
+    # ------------------------------------------------------------------
+    # STEP 2: Find steel thickness d_SS using brentq
+    # ------------------------------------------------------------------
+    
+    # Magnetic pressures (constant, computed once)
+    P_CS = B_CS**2 / (2.0 * μ0)
+    P_TF = B_max_TF**2 / (2.0 * μ0)
+    
+    # If plug model:
+    if Choice_Buck_Wedg == 'Plug' and abs(P_CS - P_TF) <= abs(P_TF):
+        # No steel, conductor directly compress the central plug
+        d = d_SU
+        alpha = 1
+        σ_z = 0
+        σ_theta = 0
+        σ_r = 0
+        Steel_fraction = 1 - alpha
+        return d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS
+    
+    def stress_residual(d_SS):
         """
-        Calculate the mechanical stress and return the difference with the target stress σ_CS.
+        Residual function: Sigma_CS(d_SS) - σ_CS
+        
+        Parameters
+        ----------
+        d_SS : float
+            Steel layer thickness [m]
+        
+        Returns
+        -------
+        float
+            Stress residual [Pa], or nan if unphysical
         """
-        # J cross B magnetic pressure
-        P_CS = B_CS**2 / (2 * μ0)
-        # Magnetic pressure
-        P_TF = Bmax**2 / (2 * μ0)
+        
+        # Geometric constraint check
+        if d_SS <= Tol_CS:
+            return np.nan
+        
+        d_total = d_SS + d_SU
+        if d_total >= RCS_ext - Tol_CS:
+            return np.nan
+        
+        # Compute stress in steel based on mechanical configuration:
         if Choice_Buck_Wedg == 'Bucking':
-            Sigma_CS = np.nanmax([P_TF, abs(P_CS - P_TF)]) * RCS_sep / d_SS
+            # CS bears TF support loads, two limiting cases evaluated
+            # σ_hoop = P * R / t, taking maximum of two loading scenarios
+            Sigma_CS = abs(np.nanmax([P_TF, abs(P_CS - P_TF)])) * RCS_sep / d_SS
+            
         elif Choice_Buck_Wedg == 'Wedging':
-            Sigma_CS = P_CS * RCS_sep / d_SS
+            # CS isolated from TF by gap, pure hoop stress from CS pressure
+            Sigma_CS = abs(P_CS * RCS_sep / d_SS)
+            
         elif Choice_Buck_Wedg == 'Plug':
-            Sigma_CS = np.nanmax([(P_CS-P_TF),P_TF])
+            # If the CS pressure is dominant (if not, filtered before)
+            if abs(P_CS - P_TF) > abs(P_TF):
+                # classical bucking case
+                Sigma_CS = abs(abs(P_CS - P_TF) * RCS_sep / d_SS)
+            else:
+                return np.nan
         else:
-            raise ValueError("Choose between 'Wedging' and 'Bucking'")
-        val = Sigma_CS - σ_CS
-        # Convert to log to smooth abrupt jumps and facilitate root finding
-        return np.sign(val) * np.log1p(abs(val))
+            return np.nan
+        
+        # Sanity check
+        if Sigma_CS < Tol_CS:
+            return np.nan
+        
+        # Return residual: we want Sigma_CS = σ_CS
+        return Sigma_CS - σ_CS
+    
+    # Search for sign changes in stress residual
+    d_SS_min = Tol_CS
+    d_SS_max = RCS_ext - d_SU - Tol_CS
+    
+    # Sample the residual function to find sign changes
+    d_SS_vals = np.linspace(d_SS_min, d_SS_max, 200)
+    sign_changes = []
+    
+    for i in range(1, len(d_SS_vals)):
+        y1 = stress_residual(d_SS_vals[i-1])
+        y2 = stress_residual(d_SS_vals[i])
+        
+        # Check for sign change (both values must be finite)
+        if np.isfinite(y1) and np.isfinite(y2) and y1 * y2 < 0:
+            sign_changes.append((d_SS_vals[i-1], d_SS_vals[i]))
+    
+    if len(sign_changes) == 0:
+        if debug:
+            print("[STEP 2] No sign changes found in stress_residual")
+            print(f"  d_SS range: [{d_SS_min:.4f}, {d_SS_max:.4f}] m")
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+    
+    # Refine each sign change interval with brentq
+    valid_solutions = []
+    
+    for interval in sign_changes:
+        try:
+            d_SS_sol = brentq(stress_residual, interval[0], interval[1], xtol=1e-9)
+            
+            # Verify the solution satisfies physical constraints
+            Sigma_check = stress_residual(d_SS_sol) + σ_CS
+            
+            if Sigma_check > 0:
+                valid_solutions.append(d_SS_sol)
+                
+                if debug:
+                    print(f"[STEP 2] Valid d_SS found: {d_SS_sol:.4f} m")
+                    print(f"  Sigma_CS = {Sigma_check/1e6:.1f} MPa")
+                    
+        except ValueError:
+            continue
+    
+    if len(valid_solutions) == 0:
+        if debug:
+            print("[STEP 2] No valid d_SS solution found after refinement")
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+    
+    # Select smallest steel thickness (most compact design)
+    d_SS = min(valid_solutions)
+    
+    # ------------------------------------------------------------------
+    # STEP 3: Compute final outputs
+    # ------------------------------------------------------------------
+    
+    d_total = d_SS + d_SU
+    alpha = d_SU / d_total
+    # Compute stress in steel based on mechanical configuration:
+    if Choice_Buck_Wedg == 'Bucking':
+        σ_theta = abs(np.nanmax([P_TF, abs(P_CS - P_TF)])) * RCS_sep / d_SS
+        σ_r = 0
+    elif Choice_Buck_Wedg == 'Wedging':
+        σ_theta = abs(P_CS * RCS_sep / d_SS)
+        σ_r = 0
+    elif Choice_Buck_Wedg == 'Plug':
+        if abs(P_CS - P_TF) > abs(P_TF):
+            σ_r = abs(abs(P_CS - P_TF) * RCS_sep / d_SS)
+            σ_theta = 0
+    
+    # Final sanity checks
+    if alpha < Tol_CS or alpha > 1.0 - Tol_CS:
+        if debug:
+            print(f"[FINAL] Invalid alpha: {alpha:.4f}")
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+    
+    if debug:
+        print(f"\n[FINAL SOLUTION]")
+        print(f"  d_total = {d_total:.4f} m")
+        print(f"  d_SS = {d_SS:.4f} m ({d_SS/d_total*100:.1f}%)")
+        print(f"  d_SU = {d_SU:.4f} m ({d_SU/d_total*100:.1f}%)")
+        print(f"  alpha = {alpha:.4f}")
+        print(f"  B_CS = {B_CS:.2f} T")
+        print(f"  J_max_CS = {J_max_CS:.2e} A/m²")
+        
+        # Verify flux
+        flux_check = 2 * np.pi * B_CS * (RCS_ext**2 + RCS_ext * RCS_sep + RCS_sep**2) / 3
+        print(f"  Flux check: {flux_check:.2f} Wb (target: {ΨCS:.2f} Wb)")
+        print(f"  Flux error: {abs(flux_check - ΨCS)/ΨCS * 100:.2f}%")
+        
+    
+    d = d_total
+    Steel_fraction = 1 - alpha
+    σ_z = 0
+    
+    return d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS
 
+    
+#%% CS D0FUS model
+
+def f_CS_D0FUS( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, σ_CS,
+    Supra_choice_CS, Jc_manual, T_Helium, f_Cu, f_Cool, f_In, Choice_Buck_Wedg):
+    
+    """
+    Calculate the Central Solenoid (CS) thickness using thick-layer approximation
+    
+    The function solves for CS geometry by balancing electromagnetic stresses 
+    with structural limits, accounting for different mechanical configurations.
+    
+    Parameters
+    ----------
+    ΨPI : float
+        Plasma initiation flux (Wb)
+    ΨRampUp : float
+        Current ramp-up flux swing (Wb)
+    Ψplateau : float
+        Flat-top operational flux (Wb)
+    ΨPF : float
+        Poloidal field coil contribution (Wb)
+    a : float
+        Plasma minor radius (m)
+    b : float
+        Cumulative radial build: 1st wall + breeding blanket + neutron shield + gaps (m)
+    c : float
+        Toroidal field (TF) coil radial thickness (m)
+    R0 : float
+        Major radius (m)
+    B_max_TF : float
+        Maximum TF coil magnetic field (T)
+    B_max_CS : float
+        Maximum CS magnetic field (T) [currently unused in implementation]
+    σ_CS : float
+        Yield strength of CS structural steel (Pa)
+    Supra_choice_CS : str
+        Superconductor type identifier for Jc calculation
+    Jc_manual : float
+        If needed, manual current density
+    T_Helium : float
+        Helium coolant temperature (K)
+    f_Cu : float
+        Copper fraction in conductor
+    f_Cool : float
+        Cooling fraction
+    f_In : float
+        Insulation fraction
+    Choice_Buck_Wedg : str
+        Mechanical support configuration: 'Bucking', 'Wedging', or 'Plug'
+    
+    Returns
+    -------
+    tuple of float
+        (d, alpha, B_CS, J_max_CS)
+        - d : CS radial thickness (m)
+        - alpha : Conductor volume fraction (dimensionless, 0 < alpha < 1)
+        - B_CS : CS magnetic field (T)
+        - J_max_CS : Maximum current density in conductor (A/m²)
+        
+        Returns (nan, nan, nan, nan) if no physically valid solution exists.
+    
+    Notes
+    -----
+    - Uses thick-wall cylinder approximation for stress calculation
+    - Mechanical models vary by support configuration:
+        * Bucking: CS bears TF support loads, two limiting cases evaluated
+        * Wedging: CS isolated from TF by gap, pure hoop stress
+        * Plug: Central plug supports TF, combined pressure loading
+    - Numerical tolerances (Tol_CS ~ 1e-3) critical for solution filtering
+
+    References
+    ----------
+    [Auclair et al. NF 2026]
+    """
+    
+    # ------------------------------------------------------------------
+    # Initialisation
+    # ------------------------------------------------------------------
+    
+    # Debug option
+    debug = False
+    Tol_CS = 1e-3
+
+    # --- compute external CS radius depending on mechanical choice ---
+    if Choice_Buck_Wedg in ('Bucking', 'Plug'):
+        RCS_ext = R0 - a - b - c
+    elif Choice_Buck_Wedg == 'Wedging':
+        RCS_ext = R0 - a - b - c - Gap
+    else:
+        if debug:
+            print("[f_CS_D0FUS] Invalid mechanical choice:", Choice_Buck_Wedg)
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+
+    if RCS_ext <= 0.0:
+        if debug:
+            print("[f_CS_D0FUS] Non-positive RCS_ext:", RCS_ext)
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+
+    # total flux for CS
+    ΨCS = ΨPI + ΨRampUp + Ψplateau - ΨPF
+    
+    # ------------------------------------------------------------------
+    # Main function
+    # ------------------------------------------------------------------
+
+    def d_to_solve(d):
+        
+        # --- Sanity checks ---
+        if d < Tol_CS or d > RCS_ext - Tol_CS:
+            if debug:
+                print("d problem")
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+        
+        # --- R_int ---
+        RCS_int = RCS_ext - d
+        
+        # --- Compute B, J , alpha ---
+        B_CS = 3 * ΨCS / (2 * np.pi * (RCS_ext**2 + RCS_ext * RCS_int + RCS_int**2))
+        if Supra_choice_CS == 'Manual':
+            J_max_CS = Jc_manual * f_Cu * f_Cool * f_In
+        else :
+            J_max_CS = Jc(Supra_choice_CS, B_CS, T_Helium) * f_Cu * f_Cool * f_In
+        alpha = B_CS / (μ0 * J_max_CS * d)
+        
+        # --- Sanity checks ---
+        if J_max_CS < Tol_CS:
+            if debug:
+                print(f"J problem: non-positive current density J_max_CS={J_max_CS:.2e}")
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+        if alpha < Tol_CS or alpha > 1.0 - Tol_CS:
+            if debug:
+                print(f"alpha problem: {alpha:.4f} outside valid range (0, 1)")
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+        if B_CS < Tol_CS or B_CS > B_max_CS:
+            if debug:
+                print(f"B_CS problem: non-positive field B_CS={B_CS:.3f}")
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+        
+        # --- Compute the stresses ---
+        # Pressures
+        P_CS = B_CS**2 / (2.0 * μ0)
+        P_TF = B_max_TF**2 / (2.0 * μ0) * (R0 - a - b) / RCS_ext
+        # denominateur commun
+        denom_stress = RCS_ext**2 - RCS_int**2
+        if abs(denom_stress) < 1e-30:
+            if debug:
+                print("denom_stress problem")
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+
+        # mechanical models (thick cylinder approximations)
+        if Choice_Buck_Wedg == 'Bucking':
+            # Light bucking case (J_CS = max)
+            Sigma_light = ((P_CS * (RCS_ext**2 + RCS_int**2) / denom_stress) -
+                           (2.0 * P_TF * RCS_ext**2 / denom_stress)) / (1.0 - alpha)
+            # Strong bucking case (J_CS = 0)
+            Sigma_strong = (2.0 * P_TF * RCS_ext**2 / denom_stress) / (1.0 - alpha)
+            Sigma_CS = max(abs(Sigma_light), abs(Sigma_strong))
+            σ_theta = Sigma_CS
+            σ_r = 0
+        elif Choice_Buck_Wedg == 'Wedging':
+            Sigma_CS = abs((P_CS * (RCS_ext**2 + RCS_int**2) / denom_stress) / (1.0 - alpha))
+            σ_theta = Sigma_CS
+            σ_r = 0
+        elif Choice_Buck_Wedg == 'Plug':
+            
+            def gamma(alpha_val, n_val):
+                if alpha_val <= 0 or alpha_val >= 1:
+                    return np.nan
+                A = 2 * np.pi + 4 * alpha_val * (n_val - 1)
+                discriminant = A**2 - 4 * np.pi * (np.pi - 4 * alpha_val)
+                if discriminant < 0:
+                    return np.nan
+                val = (A - np.sqrt(discriminant)) / (2 * np.pi)
+                if val < 0 or val > 1:
+                    return np.nan
+                return val
+
+            # If the CS pressure is dominant:
+            if abs(P_CS - P_TF) > abs(P_TF):
+                # classical bucking case
+                # Light bucking case (J_CS = max)
+                Sigma_light = ((P_CS * (RCS_ext**2 + RCS_int**2) / denom_stress) -
+                               (2.0 * P_TF * RCS_ext**2 / denom_stress)) / (1.0 - alpha)
+                # Strong bucking case (J_CS = 0)
+                Sigma_strong = (2.0 * P_TF * RCS_ext**2 / denom_stress) / (1.0 - alpha)
+                Sigma_CS = max(abs(Sigma_light), abs(Sigma_strong))
+                σ_theta = Sigma_CS
+                σ_r = 0
+            # Else, plug case:
+            elif abs(P_CS - P_TF) <= abs(P_TF):
+                # Gamma computation
+                gamma = gamma(alpha, n_CS)
+                # sigma_r computation
+                Sigma_CS = abs(abs(P_TF) / gamma)
+                σ_r = Sigma_CS
+                σ_theta = 0
+            else:
+                return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+        else:
+            if debug:
+                print("Choice buck wedg problem")
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+        
+        # --- Sanity checks ---
+        if Sigma_CS < Tol_CS:
+            if debug:
+                print(f"Sigma_CS problem: non-positive {Sigma_CS/1e6:.3f}")
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+        
+        σ_z = 0
+        Steel_fraction = 1 - alpha
+
+        return (float(Sigma_CS), float(σ_z),float(σ_theta),float(σ_r), float(Steel_fraction), float(B_CS), float(J_max_CS))
+    
+    # ------------------------------------------------------------------
+    # Root function
+    # ------------------------------------------------------------------
+    
+    # define helper function for root search
+    def f_sigma_diff(d):
+        Sigma_CS, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = d_to_solve(d)
+        if not np.isfinite(Sigma_CS):
+            return np.nan
+        val = Sigma_CS - σ_CS 
+        return val  # we want this to be 0
+    
+    # ------------------------------------------------------------------
+    # Plot option
+    # ------------------------------------------------------------------
+    
     def plot_function_CS(CS_to_solve, x_range):
         """
-        Visualize the function over a given range to understand its behavior.
+        Visualise la fonction sur une plage donnée pour comprendre son comportement
         """
-        x = np.linspace(x_range[0], x_range[1], 10000)
+        
+        x = x_range
         y = [CS_to_solve(xi) for xi in x]
+        
         plt.figure(figsize=(10, 6))
-        plt.plot(x, y, 'b-', label='CS_to_solve(d_SS)')
+        plt.plot(x, y, 'b-', label='CS_to_solve(d)')
         plt.axhline(y=0, color='r', linestyle='--', label='y=0')
         plt.grid(True)
-        plt.xlabel('d_SS')
+        plt.xlabel('d')
         plt.ylabel('Function Value')
-        plt.title('Behavior of CS_to_solve')
+        plt.title('Comportement de CS_to_solve')
         plt.legend()
-        # Identify points where the function changes sign
-        zero_crossings = []
-        for i in range(len(y)-1):
-            if y[i] * y[i+1] <= 0:
-                zero_crossings.append((x[i]))
-        return zero_crossings
-
-    # Detect sign changes
-    def find_sign_changes(f, a, b, n=1000):
-        """
-        Detect intervals where the function changes sign.
-        """
-        x_vals = np.linspace(a, b, n)
-        y_vals = np.array([f(x) for x in x_vals])
-        sign_changes = []
-        for i in range(1, len(x_vals)):
-            if y_vals[i-1] * y_vals[i] < 0:  # Sign change detected
-                sign_changes.append((x_vals[i-1], x_vals[i]))
-        return sign_changes
-
-    # Refine zero crossings with brentq
-    def refine_zeros(f, sign_change_intervals):
-        """
-        Use Brent's method to refine zero crossings.
-        """
-        roots = []
-        for a, b in sign_change_intervals:
-            try:
-                root = brentq(f, a, b)  # Brent guarantees convergence if a sign change is detected
-                roots.append(root)
-            except ValueError:
-                pass  # If Brent fails, ignore the interval
-        return roots if roots else [np.nan]  # If no roots are found, return np.nan
-
-    # Find solutions using Brent's method
-    def find_d_SS_solution_brentq(a, b, n=100):
-        """
-        Find zero crossings of CS_to_solve between a and b.
-        """
-        sign_change_intervals = find_sign_changes(CS_to_solve, a, b, n)
-        roots = refine_zeros(CS_to_solve, sign_change_intervals)
-        return roots
-
-    # Verify that the solution is a valid zero crossing
-    def is_valid_root(f, root, epsilon=1e-4, tol=1e-6):
-        """
-        Verify if root is a true zero crossing and not a local minimum.
-        - Check that |f(root)| is close to 0 (precision tol)
-        - Check for a sign change around root (epsilon)
-        """
-        if np.abs(f(root)) > tol:
-            return False  # The function is not close to 0 -> failure
-        f_left = f(root - epsilon)
-        f_right = f(root + epsilon)
-        if np.sign(f_left) != np.sign(f_right):  # Sign change around root
-            return True
-        else:
-            return False  # Probably a local minimum
-
-    # Find the smallest valid solution with fsolve
-    def find_d_SS_solution_fsolve(initial_guesses):
-        """
-        Find a solution with fsolve ensuring it is a valid zero crossing.
-        - initial_guesses: List of starting points for fsolve
-        - Return the smallest valid solution or np.nan if no correct root is found
-        """
-        valid_solutions = []
-        for guess in initial_guesses:
-            root_candidate, info, ier, msg = fsolve(CS_to_solve, guess, full_output=True)
-            if ier == 1:  # Check if convergence was successful
-                root = root_candidate[0]
-                if is_valid_root(CS_to_solve, root):  # Verify it is a valid zero crossing
-                    valid_solutions.append(root)
-        return min(valid_solutions) if valid_solutions else np.nan  # Take the smallest solution
-
-    def find_d_SS_solution_root(a, b):
-        """
-        Find zero crossings of CS_to_solve using scipy.optimize.root.
-        """
-        initial_guesses = np.linspace(a, b, 10)
-        valid_solutions = []
-        for guess in initial_guesses:
-            sol = root(CS_to_solve, guess, method='hybr')
-            if sol.success and is_valid_root(CS_to_solve, sol.x[0]):
-                valid_solutions.append(sol.x[0])
-        return min(valid_solutions) if valid_solutions else np.nan
-
-    def is_valid_root(f, root, epsilon=0.01, tol=1e6):
-        """
-        Verify if root is a true zero crossing and not a local minimum.
-        """
-        if np.abs(f(root)) > tol:
-            return False  # The function is not close to 0 -> failure
-        f_left = f(root - epsilon)
-        f_right = f(root + epsilon)
-        return np.sign(f_left) != np.sign(f_right)  # Sign change around root
-
-    def CS_filters(d_SS_solution):
-        tol = 1e-6
-        # Preliminary calculations
-        RCS_int_solution = RCS_sep - d_SS_solution
-        alpha = (RCS_ext**2 - RCS_sep**2) / (RCS_ext**2 - RCS_int_solution**2)
-        # Apply robust constraints with tolerances
-        if d_SS_solution < tol or d_SS_solution > RCS_sep - tol:
-            return False
-        if RCS_int_solution < tol:
-            return False
-        if alpha < tol or alpha > 1 - tol:
-            return False
-        return True
-
-    try:
-        """
-        ### `fsolve`
-        Based on the Newton-Raphson method (and its quasi-Newton variants)
-        Uses the local derivative to adjust the root approximation
-        Problem: May converge to a local minimum instead of a true zero crossing if the derivative is weak
-        ### `brentq`
-        Based on Brent's method (hybrid between bisection and secant)
-        Requires an interval `[a, b]` with a sign change
-        Advantage: Guaranteed to find an exact zero crossing if a sign change is detected
-        ### `root`
-        General method to find the roots of a nonlinear function
-        Allows using multiple algorithms (`hybr`, `lm`, `broyden1`, `broyden2`, etc.)
-        By default (`method='hybr'`), it relies on an approach derived from Powell's algorithm (similar to Newton-Raphson)
-        Problem: Like `fsolve`, it may converge to a local minimum instead of a true zero crossing if the derivative is weak
-        ### `manual`
-        General method to find the roots of a nonlinear function
-        Custom method iterating over all solutions and looking for sign changes
-        Problem: Less precise and computationally expensive
-        Advantage: Impossible to be more robust and simple
-        """
-        if Choice_solving_CS_method == "fsolve":
-            # List of initial estimates to cover multiple possible roots
-            initial_guesses = np.linspace(0, RCS_sep, 10)  # 10 points between 0 and RCS_sep
-            # Find the solution with fsolve
-            d_SS_solution = find_d_SS_solution_fsolve(initial_guesses)
-            valid_solutions = [sol for sol in d_SS_solutions if not np.isnan(sol) and CS_filters(sol)]
-            if valid_solutions:
-                d_SS_solution = min(valid_solutions)  # Take the smallest solution
-            else:
-                return (np.nan, np.nan, np.nan)
-        elif Choice_solving_CS_method == "brentq":
-            # Find the solution with brentq
-            d_SS_solutions = find_d_SS_solution_brentq(0, RCS_sep)
-            # Filter valid solutions (exclude np.nan) and select the smallest
-            valid_solutions = [sol for sol in d_SS_solutions if not np.isnan(sol) and CS_filters(sol)]
-            if valid_solutions:
-                d_SS_solution = min(valid_solutions)  # Take the smallest solution
-            else:
-                return (np.nan, np.nan, np.nan)
-        elif Choice_solving_CS_method == "root":
-            d_SS_solutions = find_d_SS_solution_root(0, RCS_sep)
-            valid_solutions = [sol for sol in d_SS_solutions if not np.isnan(sol) and CS_filters(sol)]
-            if valid_solutions:
-                d_SS_solution = min(valid_solutions)  # Take the smallest solution
-            else:
-                return (np.nan, np.nan, np.nan)
-        elif Choice_solving_CS_method == "manual":
-            d_SS_solutions = plot_function_CS(CS_to_solve, [0, RCS_sep])
-            # Filter valid solutions (exclude np.nan) and select the smallest
-            valid_solutions = [sol for sol in d_SS_solutions if not np.isnan(sol) and CS_filters(sol)]
-            if valid_solutions:
-                d_SS_solution = min(valid_solutions)  # Take the smallest solution
-            else:
-                return (np.nan, np.nan, np.nan)
-        else:
-            print("Choose a valid method for the CS")
-            return (np.nan, np.nan, np.nan)
-
-        #### Results filtering ####
-        tol = 1e-6
-        # Preliminary calculations
-        RCS_int_solution = RCS_sep - d_SS_solution
-        alpha = (RCS_ext**2 - RCS_sep**2) / (RCS_ext**2 - RCS_int_solution**2)
-        # Apply robust constraints with tolerances
-        if d_SS_solution < tol or d_SS_solution > RCS_sep - tol:
-            return (np.nan, np.nan, np.nan)
-        elif alpha < tol or alpha > 1 - tol:
-            return (np.nan, np.nan, np.nan)
-        elif RCS_int_solution < tol:
-            return (np.nan, np.nan, np.nan)
-        else:
-            d = RCS_ext - RCS_int_solution
-            return (d, alpha, B_CS)
-    except Exception as e:
-        return (np.nan, np.nan, np.nan)
-
-    
-#%% D0FUS model
-
-def f_CS_D0FUS(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0 , Bmax, σ_CS, J_max_CS, Choice_Buck_Wedg):
-    
-    """
-    Calculate the CS thickness considering a thick layer approximation and a 2 cylinder (supra + steel) approach
-
-    Parameters:
-    a : Minor radius (m)
-    b : 1rst Wall + Breeding Blanket + Neutron Shield + Gaps (m)
-    c : TF thickness (m)
-    R0 : Major radius (m)
-    B0 : Central magnetic field (m)
-    σ_CS : Yield strength of the CS steel (Pa)
-    μ0 : Magnetic permeability of free space
-    J_max_CS : Maximum current density of the chosen Supra + Cu + He (A/m²)
-    Choice_Buck_Wedg : Mechanical configuration
-
-    Returns:
-    tuple: A tuple containing the calculated values :
-    (d, Alpha, B_CS)
-    With
-    d : CS width
-    Alpha : % of conductor
-    B_CS : CS magnetic field
-    
-    Always pay attention : the calculations are not exact, so for filtering, 
-    and manipulation of the solutions, need to take a margin ~ 1e-4
-    (has been the cause of several bugs especially in the research of the best solution)
-    
-    """
-    
-    debuging_CS = 0
-    
-    # External radius of the CS
-    if Choice_Buck_Wedg == 'Bucking':
-        RCS_ext = R0 - a - b - c
-    elif Choice_Buck_Wedg == 'Wedging':
-        RCS_ext = R0 - a - b - c - Gap
-    else:
-        print("Choose between Wedging and Bucking")
-        return (np.nan, np.nan, np.nan)
-    
-    # Fonction cible
-    def CS_to_solve(d):
-        
-        """
-        Calcule la contrainte mécanique et retourne la différence avec la contrainte cible σ_CS.
-        """
-        
-        # Preliminary calculations
-        RCS_int = RCS_ext - d
-        # Dilution coeficient
-        alpha = 3 * (ΨPI + ΨRampUp + Ψplateau - ΨPF) / (2 * np.pi * μ0 * J_max_CS * (RCS_ext - RCS_int) * (RCS_ext**2 + RCS_ext * RCS_int + RCS_int**2))
-        # CS magnetic field
-        B_CS = μ0 * J_max_CS * alpha * (RCS_ext - RCS_int)
-        
-        # magnetic pressure to support from the CS
-        P_CS = B_CS**2 / (2 * μ0)
-        # magnetic pressure to support from the TF
-        P_TF = Bmax**2 / (2 * μ0) * (R0 - a - b) / (RCS_ext)
-    
-        if Choice_Buck_Wedg == 'Bucking':
-            # Light bucking
-            Sigma_light = (P_CS * (RCS_ext**2 + RCS_int**2) / (RCS_ext**2 - RCS_int**2) - (2 * P_TF * RCS_ext**2) / (RCS_ext**2 - RCS_int**2))  * 1 / (1 - alpha)
-            # Strong bucking
-            Sigma_strong = (2 * P_TF * RCS_ext**2) / (RCS_ext**2 - RCS_int**2) * (1 / (1 - alpha))
-            # Final sigma
-            Sigma_CS = np.nanmax([abs(Sigma_light), abs(Sigma_strong)])
-            
-        elif Choice_Buck_Wedg == 'Wedging':
-            Sigma_CS = 1 / (1 - alpha) * (P_CS * ((RCS_ext**2 + RCS_int**2) / (RCS_ext**2 - RCS_int**2)))
-            
-        elif Choice_Buck_Wedg == 'Plug':
-            Sigma_CS = 1 / (1 - alpha) * np.nanmax([(P_CS-P_TF),P_TF])
-            
-        else:
-            raise ValueError("Choose between 'Wedging' and 'Bucking'")
-            
-        val = Sigma_CS - σ_CS
-        # passage en log afin de lisser les sauts abruptes qui peuvent arriver et faciliter la recherche de racines
-        return np.sign(val) * np.log1p(abs(val))
-    
-    def plot_function_CS(CS_to_solve, x_range):
-        """
-        Visualise la fonction sur une plage donnée pour comprendre son comportement
-        """
-        
-        x = np.linspace(x_range[0], x_range[1], 10000)
-        y = [CS_to_solve(xi) for xi in x]
-        
-        plot_option_function = 0
-        
-        if plot_option_function ==1:
-            plt.figure(figsize=(10, 6))
-            plt.plot(x, y, 'b-', label='CS_to_solve(d)')
-            plt.axhline(y=0, color='r', linestyle='--', label='y=0')
-            plt.grid(True)
-            plt.xlabel('d')
-            plt.ylabel('Function Value')
-            plt.ylim(-1e10,1e10)
-            plt.title('Comportement de CS_to_solve')
-            plt.legend()
         
         # Identifier les points où la fonction change de signe
         zero_crossings = []
@@ -1767,640 +2052,499 @@ def f_CS_D0FUS(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0 , Bmax, σ_CS, J_max
                 zero_crossings.append((x[i]))
         return zero_crossings
     
-    # Détection des changements de signe
+    # --------------------------------------------------------------
+    # Sign change detection
+    # --------------------------------------------------------------
     def find_sign_changes(f, a, b, n):
-        """ 
-        Détecte les intervalles où la fonction change de signe.
-        """
         x_vals = np.linspace(a, b, n)
         y_vals = np.array([f(x) for x in x_vals])
-        
         sign_changes = []
         for i in range(1, len(x_vals)):
-            if y_vals[i-1] * y_vals[i] < 0:  # Changement de signe détecté
+            if not (np.isfinite(y_vals[i-1]) and np.isfinite(y_vals[i])):
+                continue
+            if y_vals[i-1] * y_vals[i] < 0:
                 sign_changes.append((x_vals[i-1], x_vals[i]))
-    
         return sign_changes
-    
-    # Raffinement des passages par zéro avec brentq
-    def refine_zeros(f, sign_change_intervals):
-        """ 
-        Utilise la méthode de Brent pour affiner les passages par zéro.
-        """
+
+    # --------------------------------------------------------------
+    # Reffinement with BrentQ
+    # --------------------------------------------------------------
+    def refine_zeros(f, intervals):
         roots = []
-        for a, b in sign_change_intervals:
+        for a, b in intervals:
             try:
-                root = brentq(f, a, b)  # Brent garantit une convergence si un changement de signe est détecté
+                root = brentq(f, a, b)
                 roots.append(root)
             except ValueError:
-                pass  # Si Brent échoue, on ignore l'intervalle
-    
-        return roots if roots else [np.nan]  # Si aucune racine n'est trouvée, retourne np.nan
-    
-    # Recherche des solutions en utilisant la méthode de Brent
-    def find_d_solution_brentq(a, b, n = 1000):
-        """
-        Trouve les passages par zéro de CS_to_solve entre a et b.
-        """
-        sign_change_intervals = find_sign_changes(CS_to_solve, a, b, n)
-        roots = refine_zeros(CS_to_solve, sign_change_intervals)
-    
+                continue
         return roots
+
+    # ------------------------------------------------------------------
+    # Root-finding
+    # ------------------------------------------------------------------
     
-    # Vérification que la solution est bien un passage par zéro
-    def is_valid_root(f, root, epsilon=1e-4, tol=1e-4):
+    def find_d_solution():
         """
-        Vérifie si root est un vrai passage par zéro et non un minimum local.
-        - Vérifie que |f(root)| est proche de 0 (précision tol)
-        - Vérifie un changement de signe autour de root (epsilon)
+        Trouve d tel que Sigma_CS = σ_CS en utilisant une détection de changement de signe
+        puis un raffinement avec la méthode de Brent.
+        Retourne (d_sol, alpha, B_CS, J_max_CS)
         """
-        if np.abs(f(root)) > tol:
-            return False  # La fonction n'est pas proche de 0 -> échec
     
-        f_left = f(root - epsilon)
-        f_right = f(root + epsilon)
+        d_min = Tol_CS
+        d_max = RCS_ext - Tol_CS
     
-        if np.sign(f_left) != np.sign(f_right):  # Changement de signe autour de root
-            return True
-        else:
-            return False  # Probablement un minimum local
+        if debug:
+            plot_function_CS(f_sigma_diff, np.linspace(d_min, d_max, 200))
+        
+        # --------------------------------------------------------------
+        # Recherche des intervalles puis des racines
+        # --------------------------------------------------------------
+        sign_intervals = find_sign_changes(f_sigma_diff, d_min, d_max, n=1500)
+        roots = refine_zeros(f_sigma_diff, sign_intervals)
+        
+        if debug:
+            print(f'Possible solutions : {len(roots)}')
+            for root in roots:
+                print(f'Solutions: {root}')
+                print(d_to_solve(root))
+            if len(roots) == 0:
+                print("[f_CS_D0FUS] Aucun changement de signe détecté.")
+            else:
+                print(f"[f_CS_D0FUS] Racines candidates détectées : {roots}")
     
-    # Trouver la plus petite solution valide avec fsolve
-    def find_d_solution_fsolve(initial_guesses):
-        """
-        Cherche une solution avec fsolve en s'assurant qu'il s'agit bien d'un passage par zéro.
-        - initial_guesses : Liste de points de départ pour fsolve
-        - Retourne la plus petite solution valide ou np.nan si aucune racine correcte n'est trouvée
-        """
+        # --------------------------------------------------------------
+        # Filtrage des racines valides
+        # --------------------------------------------------------------
         valid_solutions = []
+        for d_sol in roots:
+            if np.isnan(d_sol):
+                continue
+            try:
+                Sigma_CS, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = d_to_solve(d_sol)
+                valid_solutions.append((d_sol, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS))
+            except Exception:
+                continue
     
-        for guess in initial_guesses:
-            root_candidate, info, ier, msg = fsolve(CS_to_solve, guess, full_output=True)
+        if len(valid_solutions) == 0:
+            if debug:
+                print("[f_CS_D0FUS] Aucune solution valide trouvée.")
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
     
-            if ier == 1:  # Vérifier si la convergence a réussi
-                root = root_candidate[0]
-                if is_valid_root(CS_to_solve, root):  # Vérifier que c'est bien un passage par zéro
-                    valid_solutions.append(root)
+        # --------------------------------------------------------------
+        # Sélection de la meilleure racine
+        # --------------------------------------------------------------
+        valid_solutions.sort(key=lambda x: x[0])  # plus petite épaisseur
+        d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = valid_solutions[0]
     
-        return min(valid_solutions) if valid_solutions else np.nan  # Prendre la plus petite solution
+        return d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS
     
-    def find_d_solution_root(a, b):
-        """
-        Trouve les passages par zéro de CS_to_solve en utilisant scipy.optimize.root.
-        """
-        initial_guesses = np.linspace(a, b, 10)
-        valid_solutions = []
     
-        for guess in initial_guesses:
-            sol = root(CS_to_solve, guess, method='hybr')
-            if sol.success and is_valid_root(CS_to_solve, sol.x[0]):
-                valid_solutions.append(sol.x[0])
-        return min(valid_solutions) if valid_solutions else np.nan
+    # --- Try to find a valid solution ---
+    d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = find_d_solution()
 
-    def CS_filters(d_solution):
-        
-        tol=1e-6
-        
-        # Preliminary calculations
-        RCS_int = RCS_ext - d_solution
-        # Dilution coefficient
-        alpha = 3 * (ΨPI + ΨRampUp + Ψplateau - ΨPF) / (2 * np.pi * μ0 * J_max_CS * (RCS_ext - RCS_int) * (RCS_ext**2 + RCS_ext * RCS_int + RCS_int**2))
-        # CS magnetic field
-        B_CS = μ0 * J_max_CS * alpha * (RCS_ext - RCS_int)
-        
-        # Apply robust constraints with tolerances
-        if d_solution < tol or d_solution > RCS_ext - tol:
-            return False
-        if B_CS < tol or B_CS > Bmax - tol:
-            return False
-        if alpha <  tol or alpha > 1 - tol:
-            return False
-        
-        return True
+    return d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS
+
+debug_CS = 0
+if __name__ == "__main__" and debug_CS == 1:
+    J_CS = Jc('Nb3Sn', 13, 4.2)
+    print(f'Predicted current density ITER: {np.round(J_CS/1e6,2)}')
+    print("ITER like")
+    print(f_CS_D0FUS(0, 0, 230, 0, 2, 1.25, 0.9, 6.2, 11.8, 40, 400e6, 'Manual', J_CS, 4.2, 0.5, 0.7, 0.75, 'Wedging'))
+    print("ARC like")
+    print(f_CS_D0FUS(0, 0, 32, 0, 1.07, 0.89, 0.64, 3.3, 23, 40, 500e6, 'Manual', 800e6, 4.2, 0.5, 0.7, 0.75, 'Plug'))
+    print("SPARC like")
+    print(f_CS_D0FUS(0, 0, 42, 0, 0.57, 0.18, 0.35, 1.85, 20, 40, 500e6, 'Manual', 800e6, 4.2, 0.5, 0.7, 0.75, 'Bucking'))
     
-    try:
-        
-        """
-        ### `fsolve`  
-        Basé sur la méthode de Newton-Raphson (et ses variantes quasi-Newtoniennes)
-        Utilise la dérivée locale pour ajuster l'approximation de la racine  
-        Problème : Peut converger vers un **minimum local** au lieu d'un vrai passage par zéro si la dérivée est faible  
-        
-        ### `brentq`  
-        Basé sur la méthode de Brent (hybride entre la bissection et la sécante)
-        Nécessite un intervalle `[a, b]` avec un changement de signe
-        Avantage : Garantie de trouver un passage exact par zéro si un changement de signe est détecté
-        
-        ### `root`  
-        Méthode générale pour trouver les racines d’une fonction non linéaire
-        Permet d'utiliser plusieurs algorithmes (`hybr`, `lm`, `broyden1`, `broyden2`, etc.)  
-        Par défaut (`method='hybr'`), il repose sur une approche dérivée de **l’algorithme de Powell** (similaire à Newton-Raphson)  
-        Problème : Comme `fsolve`, il peut converger vers un minimum local au lieu d’un vrai passage par zéro si la dérivée est faible
-        
-        ### `manual`  
-        Méthode générale pour trouver les racines d’une fonction non linéaire
-        Méthode maison parcourant toute les solutions et cherchant les changement de signe
-        Problème : peu précise et couteuse en temps de calcul
-        Avantage : Impossible de faire plus robuste et simple
-        """
-        if Choice_solving_CS_method == "fsolve":
-            
-            # Liste d'estimations initiales pour couvrir plusieurs racines possibles
-            initial_guesses = np.linspace(0, RCS_ext, 10)  # 10 points entre 1e-3 et RCS_sep
-            # Trouver la solution avec fsolve
-            d_solutions = find_d_solution_fsolve(initial_guesses)
-            # print(d_SS_solution_fsolve)
-            # Filtrer les solutions valides (exclure np.nan) et sélectionner la plus petite
-            valid_solutions = [sol for sol in d_solutions if not np.isnan(sol) and CS_filters(sol)]
-            
-            if valid_solutions:
-                d_solution = min(valid_solutions)  # Prendre la plus petite solution
-                # print(d_SS_solution)
-            else :
-                return(np.nan, np.nan, np.nan, np.nan)
-            
-        elif Choice_solving_CS_method == "brentq":
-            
-            # Trouver la solution avec brentq
-            d_solutions = find_d_solution_brentq(0, RCS_ext)
-            # Filtrer les solutions valides (exclure np.nan) et sélectionner la plus petite
-            valid_solutions = [sol for sol in d_solutions if not np.isnan(sol) and CS_filters(sol)]
-            
-            if debuging_CS == 1:
-                print(f'D0FUS CS solutions : {valid_solutions}')
-            
-            if valid_solutions:
-                d_solution = min(valid_solutions)  # Prendre la plus petite solution
-                # print(d_solution)
-            else :
-                return(np.nan, np.nan, np.nan, np.nan)
-            
-        elif Choice_solving_CS_method == "root":
-            
-            d_solutions = find_d_solution_root(0, RCS_ext)
-            # print(d_SS_solution)
-            # Filtrer les solutions valides (exclure np.nan) et sélectionner la plus petite
-            valid_solutions = [sol for sol in d_solutions if not np.isnan(sol) and CS_filters(sol)]
-            
-            if valid_solutions:
-                d_solution = min(valid_solutions)  # Prendre la plus petite solution
-                # print(d_SS_solution)
-            else :
-                return(np.nan, np.nan, np.nan, np.nan)
-            
-        elif Choice_solving_CS_method == "manual":
-
-            d_solutions = plot_function_CS(CS_to_solve, [0, RCS_ext])
-            # Filtrer les solutions valides (exclure np.nan) et sélectionner la plus petite
-            valid_solutions = [sol for sol in d_solutions if not np.isnan(sol) and CS_filters(sol)]
-            
-            if valid_solutions:
-                d_solution = min(valid_solutions)  # Prendre la plus petite solution
-                # print(d_SS_solution)
-            else :
-                return(np.nan, np.nan, np.nan, np.nan)
-            
-        else:
-            print("Choisissez une méthode valide pour le CS")
-            return (np.nan, np.nan, np.nan, np.nan)
-            
-#---------------------------------------------------------------------------------------------------------------------------------------- 
-        #### Results ####
-        tol=1e-6
-        # Preliminary calculations
-        RCS_int = RCS_ext - d_solution
-        # Dilution coefficient
-        alpha = 3 * (ΨPI + ΨRampUp + Ψplateau - ΨPF) / (2 * np.pi * μ0 * J_max_CS * (RCS_ext - RCS_int) * (RCS_ext**2 + RCS_ext * RCS_int + RCS_int**2))
-        # CS magnetic field
-        B_CS = μ0 * J_max_CS * alpha * (RCS_ext - RCS_int)
-        
-        if __name__ == "__main__" and debuging_CS == 1:
-            print(f'D0FUS CS width : {d_solution}')
-            print(f'D0FUS CS alpha : {alpha}')
-            print(f'D0FUS CS field : {B_CS}')
-    
-        # Apply robust constraints with tolerances
-        if d_solution < tol or d_solution > RCS_ext - tol:
-            return (np.nan, np.nan, np.nan, np.nan)
-        if B_CS < tol or B_CS > Bmax - tol:
-            return (np.nan, np.nan, np.nan, np.nan)
-        if alpha <  tol or alpha > 1 - tol:
-            return (np.nan, np.nan, np.nan, np.nan)
-        
-        return (d_solution, alpha, B_CS, J_max_CS)
-
-    except Exception as e:
-        return (np.nan, np.nan, np.nan, np.nan)
-
 #%% CS D0FUS & CIRCE
 
-def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0 , Bmax, σ_CS, J_max_CS, Choice_Buck_Wedg):
+def f_CS_CIRCE( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, σ_CS,
+    Supra_choice_CS, Jc_manual, T_Helium, f_Cu, f_Cool, f_In, Choice_Buck_Wedg):
     
     """
-    Calculate the CS thickness considering a thick layer approximation and a 2 cylinder (supra + steel) approach
-
-    Parameters:
-    a : Minor radius (m)
-    b : 1rst Wall + Breeding Blanket + Neutron Shield + Gaps (m)
-    c : TF thickness (m)
-    R0 : Major radius (m)
-    B0 : Central magnetic field (m)
-    σ_CS : Yield strength of the CS steel (Pa)
-    μ0 : Magnetic permeability of free space
-    J_max_CS : Maximum current density of the chosen Supra + Cu + He (A/m²)
-    Choice_Buck_Wedg : Mechanical configuration
-
-    Returns:
-    tuple: A tuple containing the calculated values :
-    (d, Alpha, B_CS)
-    With
-    d : CS width
-    Alpha : % of conductor
-    B_CS : CS magnetic field
+    Calculate the Central Solenoid (CS) thickness using CIRCE:
+    The function solves for CS geometry by balancing electromagnetic stresses 
+    with structural limits, accounting for different mechanical configurations.
     
-    Always pay attention : the calculations are not exact, so for filtering, 
-    and manipulation of the solutions, need to take a margin ~ 1e-4
-    (has been the cause of several bugs especially in the research of the best solution)
+    Parameters
+    ----------
+    ΨPI : float
+        Plasma initiation flux (Wb)
+    ΨRampUp : float
+        Current ramp-up flux swing (Wb)
+    Ψplateau : float
+        Flat-top operational flux (Wb)
+    ΨPF : float
+        Poloidal field coil contribution (Wb)
+    a : float
+        Plasma minor radius (m)
+    b : float
+        Cumulative radial build: 1st wall + breeding blanket + neutron shield + gaps (m)
+    c : float
+        Toroidal field (TF) coil radial thickness (m)
+    R0 : float
+        Major radius (m)
+    B_max_TF : float
+        Maximum TF coil magnetic field (T)
+    B_max_CS : float
+        Maximum CS magnetic field (T) [currently unused in implementation]
+    σ_CS : float
+        Yield strength of CS structural steel (Pa)
+    Supra_choice_CS : str
+        Superconductor type identifier for Jc calculation
+    Jc_manual : float
+        If needed, manual current density
+    T_Helium : float
+        Helium coolant temperature (K)
+    f_Cu : float
+        Copper fraction in conductor
+    f_Cool : float
+        Cooling fraction
+    f_In : float
+        Insulation fraction
+    Choice_Buck_Wedg : str
+        Mechanical support configuration: 'Bucking', 'Wedging', or 'Plug'
     
+    Returns
+    -------
+    tuple of float
+        (d, alpha, B_CS, J_max_CS)
+        - d : CS radial thickness (m)
+        - alpha : Conductor volume fraction (dimensionless, 0 < alpha < 1)
+        - B_CS : CS magnetic field (T)
+        - J_max_CS : Maximum current density in conductor (A/m²)
+        
+        Returns (nan, nan, nan, nan) if no physically valid solution exists.
+    
+    Notes
+    -----
+    - Uses CIRCE for mechanical calculations
+    - Mechanical models vary by support configuration:
+        * Bucking: CS bears TF support loads, two limiting cases evaluated
+        * Wedging: CS isolated from TF by gap, pure hoop stress
+        * Plug: Central plug supports TF, combined pressure loading
+    - Numerical tolerances (Tol_CS ~ 1e-3) is critical for solution filtering
+
+    References
+    ----------
+    [Auclair et al. NF 2026]
     """
     
-    debuging_CS = 0
+    # ------------------------------------------------------------------
+    # Initialisation
+    # ------------------------------------------------------------------
     
-    # External radius of the CS
-    if Choice_Buck_Wedg == 'Bucking':
+    # Debug option
+    debug = False
+    Tol_CS = 1e-3
+
+    # --- compute external CS radius depending on mechanical choice ---
+    if Choice_Buck_Wedg in ('Bucking', 'Plug'):
         RCS_ext = R0 - a - b - c
     elif Choice_Buck_Wedg == 'Wedging':
         RCS_ext = R0 - a - b - c - Gap
     else:
-        print("Choose between Wedging and Bucking")
-        return (np.nan, np.nan, np.nan)
+        if debug:
+            print("[f_CS_D0FUS] Invalid mechanical choice:", Choice_Buck_Wedg)
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+
+    if RCS_ext <= 0.0:
+        if debug:
+            print("[f_CS_D0FUS] Non-positive RCS_ext:", RCS_ext)
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+
+    # total flux for CS
+    ΨCS = ΨPI + ΨRampUp + Ψplateau - ΨPF
     
-    # Fonction cible
-    def CS_to_solve(d):
+    # ------------------------------------------------------------------
+    # Main function
+    # ------------------------------------------------------------------
+
+    def d_to_solve(d):
         
-        """
-        Calcule la contrainte mécanique et retourne la différence avec la contrainte cible σ_CS.
-        """
+        # --- Sanity checks ---
+        if d < 0.0 + Tol_CS or d > RCS_ext - Tol_CS:
+            if debug:
+                print("d problem")
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
-        # Preliminary calculations
+        # --- R_int ---
         RCS_int = RCS_ext - d
-        # Dilution coeficient
-        alpha = 3 * (ΨPI + ΨRampUp + Ψplateau - ΨPF) / (2 * np.pi * μ0 * J_max_CS * (RCS_ext - RCS_int) * (RCS_ext**2 + RCS_ext * RCS_int + RCS_int**2))
-        # CS magnetic field
-        B_CS = μ0 * J_max_CS * alpha * (RCS_ext - RCS_int)
         
-        # magnetic pressure to support from the CS
-        P_CS = B_CS**2 / (2 * μ0)
-        # magnetic pressure to support from the TF
-        P_TF = Bmax**2 / (2 * μ0) * (R0 - a - b) / (RCS_ext)
-    
+        # --- Compute B, J , alpha ---
+        B_CS = 3 * ΨCS / (2 * np.pi * (RCS_ext**2 + RCS_ext * RCS_int + RCS_int**2))
+        if Supra_choice_CS == 'Manual':
+            J_max_CS = Jc_manual * f_Cu * f_Cool * f_In
+        else :
+            J_max_CS = Jc(Supra_choice_CS, B_CS, T_Helium) * f_Cu * f_Cool * f_In
+        alpha = B_CS / (μ0 * J_max_CS * d)
+        
+        # --- Sanity checks ---
+        if J_max_CS < Tol_CS:
+            if debug:
+                print(f"J problem: non-positive current density J_max_CS={J_max_CS:.2e}")
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+        if alpha < Tol_CS or alpha > 1.0 - Tol_CS:
+            if debug:
+                print(f"alpha problem: {alpha:.4f} outside valid range (0, 1)")
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+        if B_CS < Tol_CS or B_CS > B_max_CS:
+            if debug:
+                print(f"B_CS problem: non-positive field B_CS={B_CS:.3f}")
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+        
+        # --- Compute the stresses ---
+        # Pressures
+        P_CS = B_CS**2 / (2.0 * μ0)
+        P_TF = B_max_TF**2 / (2.0 * μ0) * (R0 - a - b) / RCS_ext
+        
+        # --- CIRCE computation ---
         if Choice_Buck_Wedg == 'Bucking':
             
-            # Light bucking
-            disR = 20                               # Pas de discrétisation
-            R = np.array([(RCS_ext-d),RCS_ext])     # Radii
-            J = np.array([J_max_CS*alpha])          # Current densities
-            B = np.array([B_CS])                    # Magnetic fields
-            Pi = 0                                  # Internal pressure
-            Pe = P_TF                               # External pressure
-            E = np.array([Young_modul_Steel*(1-alpha)])         # Young's modul
-            nu = nu_Steel*(1-alpha)                                       # Poisson's ratio
-            config = np.array([0])                  # TF = 1 , CS = 0
+            # J_CS = Maximal: Light bucking
+            disR = 20                                           # Pas de discrétisation
+            R = np.array([RCS_int,RCS_ext])                     # Radii
+            J = np.array([J_max_CS*alpha])                      # Current densities
+            B = np.array([B_CS])                                # Magnetic fields
+            Pi = 0                                              # Internal pressure
+            Pe = P_TF                                           # External pressure
+            E = np.array([Young_modul_Steel])                # Young's modul
+            nu = nu_Steel                                       # Poisson's ratio
+            config = np.array([0])                              # TF = 1 , CS = 0
             # Appeler la fonction principale
             SigRtot, SigTtot, urtot, Rvec, P = F_CIRCE0D(disR, R, J, B, Pi, Pe, E, nu, config)
-            Sigma_CS_light = max(np.abs(SigTtot))
+            Sigma_CS_light = max(np.abs(SigTtot)) * 1/(1-alpha)
             
-            # Strong bucking
-            disR = 20                               # Pas de discrétisation
-            R = np.array([(RCS_ext-d),RCS_ext])     # Radii
-            J = np.array([0])                       # Current densities
-            B = np.array([0])                       # Magnetic fields
-            Pi = 0                                  # Internal pressure
-            Pe = P_TF                               # External pressure
-            E = np.array([Young_modul_Steel*(1-alpha)])         # Young's modul
-            nu = nu_Steel*(1-alpha)                               # Poisson's ratio
-            config = np.array([0])                  # TF = 1 , CS = 0
+            # J_CS = 0 : Strong Bucking
+            disR = 20                                          # Pas de discrétisation
+            R = np.array([RCS_int,RCS_ext])                    # Radii
+            J = np.array([0])                                  # Current densities
+            B = np.array([0])                                  # Magnetic fields
+            Pi = 0                                             # Internal pressure
+            Pe = P_TF                                          # External pressure
+            E = np.array([Young_modul_Steel])                  # Young's modul
+            nu = nu_Steel                                      # Poisson's ratio
+            config = np.array([0])                             # TF = 1 , CS = 0
             # Appeler la fonction principale
             SigRtot, SigTtot, urtot, Rvec, P = F_CIRCE0D(disR, R, J, B, Pi, Pe, E, nu, config)
-            Sigma_CS_strong = max(np.abs(SigTtot))
+            Sigma_CS_strong = max(np.abs(SigTtot)) * 1/(1-alpha)
+            
+            σ_theta = max(np.abs(SigTtot)) * 1/(1-alpha)
+            σ_r = max(np.abs(SigRtot)) * 1/(1-alpha)
             
             # Final sigma
-            Sigma_CS = np.nanmax([abs(Sigma_CS_light), abs(Sigma_CS_strong)])
-            
-            val = Sigma_CS - σ_CS
+            Sigma_CS = max(Sigma_CS_light, Sigma_CS_strong)
             
         elif Choice_Buck_Wedg == 'Wedging':
             
-            disR = 20                               # Pas de discrétisation
-            R = np.array([(RCS_ext-d),RCS_ext])     # Radii
-            J = np.array([J_max_CS*alpha])          # Current densities
-            B = np.array([B_CS])                    # Magnetic fields
-            Pi = 0                                  # Internal pressure
-            Pe = 0                                  # External pressure
-            E = np.array([Young_modul_Steel*(1-alpha)])         # Young's modul
-            nu = nu_Steel*(1-alpha)                               # Poisson's ratio
-            config = np.array([0])                  # TF = 1 , CS = 0
+            disR = 20                                           # Pas de discrétisation
+            R = np.array([RCS_int,RCS_ext])                     # Radii
+            J = np.array([J_max_CS*alpha])                      # Current densities
+            B = np.array([B_CS])                                # Magnetic fields
+            Pi = 0                                              # Internal pressure
+            Pe = 0                                              # External pressure
+            E = np.array([Young_modul_Steel])                   # Young's modul
+            nu = nu_Steel#                                      # Poisson's ratio
+            config = np.array([0])                              # TF = 1 , CS = 0
             # Appeler la fonction principale
             SigRtot, SigTtot, urtot, Rvec, P = F_CIRCE0D(disR, R, J, B, Pi, Pe, E, nu, config)
-            Sigma_CS = np.nanmax([np.abs(SigTtot)])
+            Sigma_CS = max(np.abs(SigTtot)) * 1/(1-alpha)
             
-            val = Sigma_CS - σ_CS
+            σ_theta = max(np.abs(SigTtot)) * 1/(1-alpha)
+            σ_r = max(np.abs(SigRtot)) * 1/(1-alpha)
             
         elif Choice_Buck_Wedg == 'Plug':
             
-            # Light bucking
-            disR = 20                               # Pas de discrétisation
-            R = np.array([(RCS_ext-d),RCS_ext])     # Radii
-            J = np.array([J_max_CS*alpha])          # Current densities
-            B = np.array([B_CS])                    # Magnetic fields
-            Pi = P_TF                                  # Internal pressure
-            Pe = P_TF                               # External pressure
-            E = np.array([Young_modul_Steel*(1-alpha)])         # Young's modul
-            nu = nu_Steel*(1-alpha)                                       # Poisson's ratio
-            config = np.array([0])                  # TF = 1 , CS = 0
-            # Appeler la fonction principale
-            SigRtot, SigTtot, urtot, Rvec, P = F_CIRCE0D(disR, R, J, B, Pi, Pe, E, nu, config)
-            Sigma_CS_light = max(np.abs(SigTtot))
+            def gamma(alpha_val, n_val):
+                if alpha_val <= 0 or alpha_val >= 1:
+                    return np.nan
+                A = 2 * np.pi + 4 * alpha_val * (n_val - 1)
+                discriminant = A**2 - 4 * np.pi * (np.pi - 4 * alpha_val)
+                if discriminant < 0:
+                    return np.nan
+                val = (A - np.sqrt(discriminant)) / (2 * np.pi)
+                if val < 0 or val > 1:
+                    return np.nan
+                return val
             
-            # Strong bucking
-            disR = 20                               # Pas de discrétisation
-            R = np.array([(RCS_ext-d),RCS_ext])     # Radii
-            J = np.array([0])                       # Current densities
-            B = np.array([0])                       # Magnetic fields
-            Pi = P_TF                                  # Internal pressure
-            Pe = P_TF                               # External pressure
-            E = np.array([Young_modul_Steel*(1-alpha)])         # Young's modul
-            nu = nu_Steel*(1-alpha)                               # Poisson's ratio
-            config = np.array([0])                  # TF = 1 , CS = 0
-            # Appeler la fonction principale
-            SigRtot, SigTtot, urtot, Rvec, P = F_CIRCE0D(disR, R, J, B, Pi, Pe, E, nu, config)
-            Sigma_CS_strong = max(np.abs(SigTtot))
+            # If the CS pressure is dominant:
+            if abs(P_CS - P_TF) > abs(P_TF):
+                
+                # classical bucking:
+                # J_CS = Maximal: Light bucking
+                disR = 20                                           # Pas de discrétisation
+                R = np.array([RCS_int,RCS_ext])                     # Radii
+                J = np.array([J_max_CS*alpha])                      # Current densities
+                B = np.array([B_CS])                                # Magnetic fields
+                Pi = 0                                              # Internal pressure
+                Pe = P_TF                                           # External pressure
+                E = np.array([Young_modul_Steel])                   # Young's modul
+                nu = nu_Steel                                       # Poisson's ratio
+                config = np.array([0])                              # TF = 1 , CS = 0
+                # Appeler la fonction principale
+                SigRtot, SigTtot, urtot, Rvec, P = F_CIRCE0D(disR, R, J, B, Pi, Pe, E, nu, config)
+                Sigma_CS_light = max(np.abs(SigTtot)) * 1/(1-alpha)
+                
+                # J_CS = 0 : Strong Bucking
+                disR = 20                                          # Pas de discrétisation
+                R = np.array([RCS_int,RCS_ext])                    # Radii
+                J = np.array([0])                                  # Current densities
+                B = np.array([0])                                  # Magnetic fields
+                Pi = 0                                             # Internal pressure
+                Pe = P_TF                                          # External pressure
+                E = np.array([Young_modul_Steel])                  # Young's modul
+                nu = nu_Steel                                      # Poisson's ratio
+                config = np.array([0])                             # TF = 1 , CS = 0
+                # Appeler la fonction principale
+                SigRtot, SigTtot, urtot, Rvec, P = F_CIRCE0D(disR, R, J, B, Pi, Pe, E, nu, config)
+                Sigma_CS_strong = max(np.abs(SigTtot)) * 1/(1-alpha)
+                
+                # Final sigma
+                Sigma_CS = max(Sigma_CS_light, Sigma_CS_strong)
+                
+                σ_theta = max(np.abs(SigTtot)) * 1/(1-alpha)
+                σ_r = max(np.abs(SigRtot)) * 1/(1-alpha)
             
-            # Final sigma
-            Sigma_CS = np.nanmax([abs(Sigma_CS_light), abs(Sigma_CS_strong)])
-            
-            val = Sigma_CS - σ_CS
+            # Else, plug case:
+            elif abs(P_CS - P_TF) <= abs(P_TF):
+                # Gamma computation
+                gamma = gamma(alpha, n_CS)
+                # sigma_r computation
+                disR = 20                               # Pas de discrétisation
+                R = np.array([(RCS_ext-d),RCS_ext])     # Radii
+                J = np.array([0])                       # Current densities
+                B = np.array([0])                       # Magnetic fields
+                Pi = P_TF                               # Internal pressure
+                Pe = P_TF                               # External pressure
+                E = np.array([Young_modul_Steel])       # Young's modul
+                nu = nu_Steel                           # Poisson's ratio
+                config = np.array([0])                  # TF = 1 , CS = 0
+                # Appeler la fonction principale
+                SigRtot, SigTtot, urtot, Rvec, P = F_CIRCE0D(disR, R, J, B, Pi, Pe, E, nu, config)
+                Sigma_CS = max(np.abs(SigTtot)) * 1/gamma
+                σ_theta = max(np.abs(SigTtot)) * 1/gamma
+                σ_r = max(np.abs(SigRtot)) * 1/gamma
+                
+            else:
+                if debug:
+                    print("Plug pressure problem")
+                return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
             
         else:
-            raise ValueError("Choose between 'Wedging' and 'Bucking'")
+            if debug:
+                print("Choice buck wedg problem")
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
+        # --- Sanity checks ---
+        if Sigma_CS < Tol_CS:
+            if debug:
+                print(f"Sigma_CS problem: non-positive {Sigma_CS/1e6:.3f}")
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
-        # passage en log afin de lisser les sauts abruptes qui peuvent arriver et faciliter la recherche de racines
-        return np.sign(val) * np.log1p(abs(val))
+        σ_z = 0
+        Steel_fraction = 1 - alpha
+        
+        return (float(Sigma_CS), float(σ_z),float(σ_theta),float(σ_r), float(Steel_fraction), float(B_CS), float(J_max_CS))
     
-    def plot_function_CS(CS_to_solve, x_range):
-        """
-        Visualise la fonction sur une plage donnée pour comprendre son comportement
-        """
-        
-        x = np.linspace(x_range[0], x_range[1], 10000)
-        y = [CS_to_solve(xi) for xi in x]
-        
-        plot_option_function = 0
-        
-        if plot_option_function ==1:
-            plt.figure(figsize=(10, 6))
-            plt.plot(x, y, 'b-', label='CS_to_solve(d)')
-            plt.axhline(y=0, color='r', linestyle='--', label='y=0')
-            plt.grid(True)
-            plt.xlabel('d')
-            plt.ylabel('Function Value')
-            plt.ylim(-1e10,1e10)
-            plt.title('Comportement de CS_to_solve')
-            plt.legend()
-        
-        # Identifier les points où la fonction change de signe
-        zero_crossings = []
-        for i in range(len(y)-1):
-            if y[i] * y[i+1] <= 0:
-                zero_crossings.append((x[i]))
-        return zero_crossings
+    # ------------------------------------------------------------------
+    # Root function
+    # ------------------------------------------------------------------
     
-    # Détection des changements de signe
+    # define helper function for root search
+    def f_sigma_diff(d):
+        B_CS, Sigma_CS, alpha, J_max_CS = d_to_solve(d)
+        if not np.isfinite(Sigma_CS):
+            return np.nan
+        val = Sigma_CS - σ_CS 
+        return val  # we want this to be 0
+    
+    # --------------------------------------------------------------
+    # Sign change detection
+    # --------------------------------------------------------------
     def find_sign_changes(f, a, b, n):
-        """ 
-        Détecte les intervalles où la fonction change de signe.
-        """
         x_vals = np.linspace(a, b, n)
         y_vals = np.array([f(x) for x in x_vals])
-        
         sign_changes = []
         for i in range(1, len(x_vals)):
-            if y_vals[i-1] * y_vals[i] < 0:  # Changement de signe détecté
+            if not (np.isfinite(y_vals[i-1]) and np.isfinite(y_vals[i])):
+                continue
+            if y_vals[i-1] * y_vals[i] < 0:
                 sign_changes.append((x_vals[i-1], x_vals[i]))
-    
         return sign_changes
-    
-    # Raffinement des passages par zéro avec brentq
-    def refine_zeros(f, sign_change_intervals):
-        """ 
-        Utilise la méthode de Brent pour affiner les passages par zéro.
-        """
+
+    # --------------------------------------------------------------
+    # Reffinement with BrentQ
+    # --------------------------------------------------------------
+    def refine_zeros(f, intervals):
         roots = []
-        for a, b in sign_change_intervals:
+        for a, b in intervals:
             try:
-                root = brentq(f, a, b)  # Brent garantit une convergence si un changement de signe est détecté
+                root = brentq(f, a, b)
                 roots.append(root)
             except ValueError:
-                pass  # Si Brent échoue, on ignore l'intervalle
-    
-        return roots if roots else [np.nan]  # Si aucune racine n'est trouvée, retourne np.nan
-    
-    # Recherche des solutions en utilisant la méthode de Brent
-    def find_d_solution_brentq(a, b, n = 1000):
-        """
-        Trouve les passages par zéro de CS_to_solve entre a et b.
-        """
-        sign_change_intervals = find_sign_changes(CS_to_solve, a, b, n)
-        roots = refine_zeros(CS_to_solve, sign_change_intervals)
-    
+                continue
         return roots
+
+    # ------------------------------------------------------------------
+    # Root-finding
+    # ------------------------------------------------------------------
     
-    # Vérification que la solution est bien un passage par zéro
-    def is_valid_root(f, root, epsilon=1e-4, tol=1e-4):
+    def find_d_solution():
         """
-        Vérifie si root est un vrai passage par zéro et non un minimum local.
-        - Vérifie que |f(root)| est proche de 0 (précision tol)
-        - Vérifie un changement de signe autour de root (epsilon)
+        Trouve d tel que Sigma_CS = σ_CS en utilisant une détection de changement de signe
+        puis un raffinement avec la méthode de Brent.
+        Retourne (d_sol, alpha, B_CS, J_max_CS)
         """
-        if np.abs(f(root)) > tol:
-            return False  # La fonction n'est pas proche de 0 -> échec
     
-        f_left = f(root - epsilon)
-        f_right = f(root + epsilon)
+        d_min = Tol_CS
+        d_max = RCS_ext - Tol_CS
+        
+        # --------------------------------------------------------------
+        # Recherche des intervalles puis des racines
+        # --------------------------------------------------------------
+        sign_intervals = find_sign_changes(f_sigma_diff, d_min, d_max, n=1500)
+        roots = refine_zeros(f_sigma_diff, sign_intervals)
     
-        if np.sign(f_left) != np.sign(f_right):  # Changement de signe autour de root
-            return True
-        else:
-            return False  # Probablement un minimum local
+        if debug:
+            print(f'Possible solutions : {len(roots)}')
+            for root in roots:
+                print(f'Solutions: {root}')
+                print(d_to_solve(root))
+            if len(roots) == 0:
+                print("[f_CS_D0FUS] Aucun changement de signe détecté.")
+            else:
+                print(f"[f_CS_D0FUS] Racines candidates détectées : {roots}")
     
-    # Trouver la plus petite solution valide avec fsolve
-    def find_d_solution_fsolve(initial_guesses):
-        """
-        Cherche une solution avec fsolve en s'assurant qu'il s'agit bien d'un passage par zéro.
-        - initial_guesses : Liste de points de départ pour fsolve
-        - Retourne la plus petite solution valide ou np.nan si aucune racine correcte n'est trouvée
-        """
+        # --------------------------------------------------------------
+        # Filtrage des racines valides
+        # --------------------------------------------------------------
         valid_solutions = []
+        for d_sol in roots:
+            if np.isnan(d_sol):
+                continue
+            try:
+                σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = d_to_solve(d_sol)
+                valid_solutions.append((d_sol, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS))
+            except Exception:
+                continue
     
-        for guess in initial_guesses:
-            root_candidate, info, ier, msg = fsolve(CS_to_solve, guess, full_output=True)
+        if len(valid_solutions) == 0:
+            if debug:
+                print("[f_CS_D0FUS] Aucune solution valide trouvée.")
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
     
-            if ier == 1:  # Vérifier si la convergence a réussi
-                root = root_candidate[0]
-                if is_valid_root(CS_to_solve, root):  # Vérifier que c'est bien un passage par zéro
-                    valid_solutions.append(root)
+        # --------------------------------------------------------------
+        # Sélection de la meilleure racine
+        # --------------------------------------------------------------
+        valid_solutions.sort(key=lambda x: x[0])  # plus petite épaisseur
+        d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = valid_solutions[0]
     
-        return min(valid_solutions) if valid_solutions else np.nan  # Prendre la plus petite solution
+        return d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS
     
-    def find_d_solution_root(a, b):
-        """
-        Trouve les passages par zéro de CS_to_solve en utilisant scipy.optimize.root.
-        """
-        initial_guesses = np.linspace(a, b, 10)
-        valid_solutions = []
-    
-        for guess in initial_guesses:
-            sol = root(CS_to_solve, guess, method='hybr')
-            if sol.success and is_valid_root(CS_to_solve, sol.x[0]):
-                valid_solutions.append(sol.x[0])
-        return min(valid_solutions) if valid_solutions else np.nan
+    # --- Try to find a valid solution ---
+    d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = find_d_solution()
 
-    def CS_filters(d_solution):
-        
-        tol=1e-6
-        
-        # Preliminary calculations
-        RCS_int = RCS_ext - d_solution
-        # Dilution coefficient
-        alpha = 3 * (ΨPI + ΨRampUp + Ψplateau - ΨPF) / (2 * np.pi * μ0 * J_max_CS * (RCS_ext - RCS_int) * (RCS_ext**2 + RCS_ext * RCS_int + RCS_int**2))
-        # CS magnetic field
-        B_CS = μ0 * J_max_CS * alpha * (RCS_ext - RCS_int)
-        
-        # Apply robust constraints with tolerances
-        if d_solution < tol or d_solution > RCS_ext - tol:
-            return False
-        if B_CS < tol or B_CS > Bmax - tol:
-            return False
-        if alpha <  tol or alpha > 1 - tol:
-            return False
-        
-        return True
-    
-    try:
-        
-        """
-        ### `fsolve`  
-        Basé sur la méthode de Newton-Raphson (et ses variantes quasi-Newtoniennes)
-        Utilise la dérivée locale pour ajuster l'approximation de la racine  
-        Problème : Peut converger vers un **minimum local** au lieu d'un vrai passage par zéro si la dérivée est faible  
-        
-        ### `brentq`  
-        Basé sur la méthode de Brent (hybride entre la bissection et la sécante)
-        Nécessite un intervalle `[a, b]` avec un changement de signe
-        Avantage : Garantie de trouver un passage exact par zéro si un changement de signe est détecté
-        
-        ### `root`  
-        Méthode générale pour trouver les racines d’une fonction non linéaire
-        Permet d'utiliser plusieurs algorithmes (`hybr`, `lm`, `broyden1`, `broyden2`, etc.)  
-        Par défaut (`method='hybr'`), il repose sur une approche dérivée de **l’algorithme de Powell** (similaire à Newton-Raphson)  
-        Problème : Comme `fsolve`, il peut converger vers un minimum local au lieu d’un vrai passage par zéro si la dérivée est faible
-        
-        ### `manual`  
-        Méthode générale pour trouver les racines d’une fonction non linéaire
-        Méthode maison parcourant toute les solutions et cherchant les changement de signe
-        Problème : peu précise et couteuse en temps de calcul
-        Avantage : Impossible de faire plus robuste et simple
-        """
-        
-        if Choice_solving_CS_method == "fsolve":
-            
-            # Liste d'estimations initiales pour couvrir plusieurs racines possibles
-            initial_guesses = np.linspace(0, RCS_ext, 10)  # 10 points entre 1e-3 et RCS_sep
-            # Trouver la solution avec fsolve
-            d_solutions = find_d_solution_fsolve(initial_guesses)
-            # print(d_SS_solution_fsolve)
-            # Filtrer les solutions valides (exclure np.nan) et sélectionner la plus petite
-            valid_solutions = [sol for sol in d_solutions if not np.isnan(sol) and CS_filters(sol)]
-            
-            if valid_solutions:
-                d_solution = min(valid_solutions)  # Prendre la plus petite solution
-                # print(d_SS_solution)
-            else :
-                return(np.nan, np.nan, np.nan, np.nan)
-            
-        elif Choice_solving_CS_method == "brentq":
-            
-            # Trouver la solution avec brentq
-            d_solutions = find_d_solution_brentq(0, RCS_ext)
-            # Filtrer les solutions valides (exclure np.nan) et sélectionner la plus petite
-            valid_solutions = [sol for sol in d_solutions if not np.isnan(sol) and CS_filters(sol)]
-            
-            if debuging_CS == 1:
-                print(f'D0FUS CS solutions : {valid_solutions}')
-            
-            if valid_solutions:
-                d_solution = min(valid_solutions)  # Prendre la plus petite solution
-                # print(d_solution)
-            else :
-                return(np.nan, np.nan, np.nan, np.nan)
-            
-        elif Choice_solving_CS_method == "root":
-            
-            d_solutions = find_d_solution_root(0, RCS_ext)
-            # print(d_SS_solution)
-            # Filtrer les solutions valides (exclure np.nan) et sélectionner la plus petite
-            valid_solutions = [sol for sol in d_solutions if not np.isnan(sol) and CS_filters(sol)]
-            
-            if valid_solutions:
-                d_solution = min(valid_solutions)  # Prendre la plus petite solution
-                # print(d_SS_solution)
-            else :
-                return(np.nan, np.nan, np.nan, np.nan)
-            
-        elif Choice_solving_CS_method == "manual":
+    return d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS
 
-            d_solutions = plot_function_CS(CS_to_solve, [0, RCS_ext])
-            # Filtrer les solutions valides (exclure np.nan) et sélectionner la plus petite
-            valid_solutions = [sol for sol in d_solutions if not np.isnan(sol) and CS_filters(sol)]
-            
-            if valid_solutions:
-                d_solution = min(valid_solutions)  # Prendre la plus petite solution
-                # print(d_SS_solution)
-            else :
-                return(np.nan, np.nan, np.nan, np.nan)
-            
-        else:
-            print("Choisissez une méthode valide pour le CS")
-            return (np.nan, np.nan, np.nan, np.nan)
-            
-#---------------------------------------------------------------------------------------------------------------------------------------- 
-        #### Results ####
-        tol=1e-6
-        # Preliminary calculations
-        RCS_int = RCS_ext - d_solution
-        # Dilution coefficient
-        alpha = 3 * (ΨPI + ΨRampUp + Ψplateau - ΨPF) / (2 * np.pi * μ0 * J_max_CS * (RCS_ext - RCS_int) * (RCS_ext**2 + RCS_ext * RCS_int + RCS_int**2))
-        # CS magnetic field
-        B_CS = μ0 * J_max_CS * alpha * (RCS_ext - RCS_int)
-        
-        if __name__ == "__main__" and debuging_CS == 1:
-            print(f'D0FUS CS width : {d_solution}')
-            print(f'D0FUS CS alpha : {alpha}')
-            print(f'D0FUS CS field : {B_CS}')
-    
-        # Apply robust constraints with tolerances
-        if d_solution < tol or d_solution > RCS_ext - tol:
-            return (np.nan, np.nan, np.nan, np.nan)
-        if B_CS < tol or B_CS > Bmax - tol:
-            return (np.nan, np.nan, np.nan, np.nan)
-        if alpha <  tol or alpha > 1 - tol:
-            return (np.nan, np.nan, np.nan, np.nan)
-        
-        return (d_solution, alpha, B_CS, J_max_CS)
-
-    except Exception as e:
-        return (np.nan, np.nan, np.nan, np.nan)
     
 #%% CS Benchmark
 
@@ -2408,266 +2552,213 @@ if __name__ == "__main__":
 
     # === Machines definition with their CS parameters and target Ψplateau ===
     machines = {
-        "ITER":    {"Ψplateau": 230, "a_cs": 2.00, "b_cs": 1.25, "c_cs": 0.90, "R0_cs": 6.20, "B_cs": 13, "σ_CS": 330e6, "config": "Wedging", "SupraChoice": "Nb3Sn", "T_CS": 4.2 - 1},
-        "EU-DEMO": {"Ψplateau": 600, "a_cs": 2.92, "b_cs": 1.80, "c_cs": 1.19, "R0_cs": 9.07, "B_cs": 13.5, "σ_CS": 330e6, "config": "Wedging", "SupraChoice": "Nb3Sn", "T_CS": 4.2 - 1.5},
-        "JT60-SA": {"Ψplateau":  40, "a_cs": 1.18, "b_cs": 0.27, "c_cs": 0.45, "R0_cs": 2.96, "B_cs": 8.9, "σ_CS": 330e6, "config": "Wedging", "SupraChoice": "Nb3Sn", "T_CS": 4.2 + 1},
-        # Source : Operating Parameters in 
-        # Koide, Y., Yoshida, K., Wanner, M., Barabaschi, P., Cucchiaro, A., Davis, S., ... & Zani, L. (2015). JT-60SA superconducting magnet system. Nuclear Fusion, 55(8), 086001.
-        "EAST":    {"Ψplateau":  10, "a_cs": 0.45, "b_cs": 0.4, "c_cs": 0.25, "R0_cs": 1.85, "B_cs": 4.7, "σ_CS": 330e6, "config": "Wedging", "SupraChoice": "NbTi", "T_CS": 4.20 + 0.82},
-        "ARC":     {"Ψplateau":  32, "a_cs": 1.07, "b_cs": 0.89, "c_cs": 0.64, "R0_cs": 3.30, "B_cs": 12.9, "σ_CS": 500e6, "config": "Bucking", "SupraChoice": "Rebco", "T_CS": 20},
-        "SPARC":   {"Ψplateau":  30, "a_cs": 0.57, "b_cs": 0.18, "c_cs": 0.35, "R0_cs": 1.85, "B_cs": 25, "σ_CS": 500e6, "config": "Bucking", "SupraChoice": "Rebco", "T_CS": 20},
-    }
+        "ITER":    {"J_CS":150e6, "Ψplateau": 230, "a_cs": 2.00, "b_cs": 1.25, "c_cs": 0.90, "R0_cs": 6.20, "B_TF": 11.8, "B_cs": 13, "σ_CS": 330e6, "config": "Wedging", "SupraChoice": "Nb3Sn", "T_CS": 4.2},
+        "EU-DEMO": {"J_CS":150e6, "Ψplateau": 600, "a_cs": 2.92, "b_cs": 1.80, "c_cs": 1.19, "R0_cs": 9.07, "B_TF": 13, "B_cs": 13.5, "σ_CS": 330e6, "config": "Wedging", "SupraChoice": "Nb3Sn", "T_CS": 4.2},
+        "JT60-SA": {"J_CS":150e6, "Ψplateau":  40, "a_cs": 1.18, "b_cs": 0.27, "c_cs": 0.45, "R0_cs": 2.96, "B_TF": 5.65, "B_cs": 8.9, "σ_CS": 330e6, "config": "Wedging", "SupraChoice": "Nb3Sn", "T_CS": 4.2},
+        "EAST":    {"J_CS":120e6*(2/3), "Ψplateau":  10, "a_cs": 0.45, "b_cs": 0.4, "c_cs": 0.25, "R0_cs": 1.85, "B_TF": 7.2, "B_cs": 4.7, "σ_CS": 330e6, "config": "Wedging", "SupraChoice": "NbTi", "T_CS": 4.2},
+        # * 2/3 to account for the copper representation in EAST cables, see PF system:
+        # Wu, Songtao, and EAST team. "An overview of the EAST project." Fusion Engineering and Design 82.5-14 (2007): 463-471.
+        "ARC":     {"J_CS":600e6, "Ψplateau":  32, "a_cs": 1.07, "b_cs": 0.89, "c_cs": 0.64, "R0_cs": 3.30, "B_TF": 23, "B_cs": 12.9, "σ_CS": 1000e6, "config": "Plug", "SupraChoice": "Rebco", "T_CS": 20},
+        "SPARC":   {"J_CS":600e6, "Ψplateau":  42, "a_cs": 0.57, "b_cs": 0.18, "c_cs": 0.35, "R0_cs": 1.85, "B_TF": 20, "B_cs": 25, "σ_CS": 1000e6, "config": "Bucking", "SupraChoice": "Rebco", "T_CS": 20},
+    }   # No fatigue in bucking or plug
 
     # === Accumulate rows for DataFrame ===
-    rows = []
-    for name, p in machines.items():
+    rows_Acad = []
+    rows_D0FUS = []
+    rows_CIRCE = []
+    
+    for name, p in tqdm(machines.items(), desc='Scanning machines'):
         # Unpack inputs
         Ψplateau = p["Ψplateau"]
         a, b, c, R0 = p["a_cs"], p["b_cs"], p["c_cs"], p["R0_cs"]
-        Bcs, σ = p["B_cs"], p["σ_CS"]
+        B_TF, B_cs, σ = p["B_TF"], p["B_cs"], p["σ_CS"]
         Supra_Choice, T_CS = p["SupraChoice"], p["T_CS"]
-        Jmax = Jc(Supra_Choice, Bcs, T_CS) * f_Cu * f_Cool * f_In
-        print(f"{name} : J = {np.round(Jmax/1e6,2)} MA/m² for Bcs = {Bcs} , T_CS = {T_CS} and {Supra_Choice}")
-        Bmax = 50
+        J_CS = p["J_CS"]
+        config = p["config"]  # Get machine-specific configuration
+        
+        B_max_CS = 50
 
-        # Call the models
-        acad_w = f_CS_academic(0, 0, Ψplateau, 0, a, b, c, R0, Bmax, σ, Jmax, "Wedging")
-        acad_b = f_CS_academic(0, 0, Ψplateau, 0, a, b, c, R0, Bcs, σ, Jmax, "Bucking")
-        d0fus_w = f_CS_D0FUS(0, 0, Ψplateau, 0, a, b, c, R0, Bmax, σ, Jmax, "Wedging")
-        d0fus_b = f_CS_D0FUS(0, 0, Ψplateau, 0, a, b, c, R0, Bcs, σ, Jmax, "Bucking")
+        # Call the models with machine-specific configuration
+        acad = f_CS_ACAD(0, 0, Ψplateau, 0, a, b, c, R0, B_TF, B_max_CS, σ, 
+                         'Manual', J_CS, T_Helium, f_Cu, f_Cool, f_In, config)
+        d0fus = f_CS_D0FUS(0, 0, Ψplateau, 0, a, b, c, R0, B_TF, B_max_CS, σ, 
+                           'Manual', J_CS, T_CS, f_Cu, f_Cool, f_In, config)
+        circe = f_CS_CIRCE(0, 0, Ψplateau, 0, a, b, c, R0, B_TF, B_max_CS, σ, 
+                           'Manual', J_CS, T_CS, f_Cu, f_Cool, f_In, config)
         
         def clean_result(val):
-            # Élimine les valeurs complexes ou NaN
-            if np.iscomplex(val) or val is None or np.isnan(val):
+            """Return a clean float or NaN if invalid/complex."""
+            # Handle None
+            if val is None:
                 return np.nan
-            return round(val, 2)
+            # Convert to plain float (handles np.float64, etc.)
+            val = np.real(val)
+            # Check for complex or nan
+            if np.iscomplexobj(val) or not np.isfinite(val):
+                return np.nan
+            # Return rounded float
+            return round(float(val), 2)
 
-        # Build one row combining inputs + outputs
-        rows.append({
+        # Build one row combining inputs + outputs for each model
+        rows_Acad.append({
             "Machine":        name,
-            "Ψ [Wb]":  Ψplateau,
+            "Config":         config,
+            "Ψ [Wb]":         Ψplateau,
             "σ_CS [MPa]":     σ / 1e6,
-            "J [MA/m²]": clean_result(Jmax/ 1e6) ,
-            "T [K]": clean_result(T_CS),
-            "Width W [m]":  clean_result(d0fus_w[0]),
-            "B_CS W [T]" : clean_result(d0fus_w[2]),
-            "Width B [m]":  clean_result(d0fus_b[0]),
-            "B_CS B [T]" : clean_result(d0fus_b[2]),
+            "Width [m]":      clean_result(acad[0]),
+            "B_CS [T]":       clean_result(acad[2]),
         })
-
-    # === Print table ===
-    df = pd.DataFrame(rows)
+        
+        rows_D0FUS.append({
+            "Machine":        name,
+            "Config":         config,
+            "Ψ [Wb]":         Ψplateau,
+            "σ_CS [MPa]":     σ / 1e6,
+            "Width [m]":      clean_result(d0fus[0]),
+            "B_CS [T]":       clean_result(d0fus[2]),
+        })
+        
+        rows_CIRCE.append({
+            "Machine":        name,
+            "Config":         config,
+            "Ψ [Wb]":         Ψplateau,
+            "σ_CS [MPa]":     σ / 1e6,
+            "Width [m]":      clean_result(circe[0]),
+            "B_CS [T]":       clean_result(circe[2]),
+        })
     
-    # === Création d'une figure avec tableau ===
-    fig, ax = plt.subplots(figsize=(9, 2))   # largeur/hauteur ajustables
+    # === Print table D0FUS ===
+    df_d0fus = pd.DataFrame(rows_D0FUS)
+    fig, ax = plt.subplots(figsize=(7, 2.5))
     ax.axis("off")
-    
-    # Création du tableau
     table = ax.table(
-        cellText=df.values,
-        colLabels=df.columns,
+        cellText=df_d0fus.values,
+        colLabels=df_d0fus.columns,
         cellLoc="center",
         loc="center"
     )
-    
-    # Mise en forme
     table.auto_set_font_size(False)
     table.set_fontsize(9)
-    table.scale(1.2, 1.2)  # élargir pour lisibilité
+    table.scale(1.2, 1.5)
     
-    plt.title("CS Benchmark Summary", fontsize=14, pad=20)
+    # Color header
+    for i in range(len(df_d0fus.columns)):
+        table[(0, i)].set_facecolor('#2196F3')
+        table[(0, i)].set_text_props(weight='bold', color='white')
+    
+    plt.title("CS D0FUS Benchmark", 
+              fontsize=14, pad=20, weight='bold')
+    plt.tight_layout()
     plt.show()
-    
+
 #%% CS plot
 
 if __name__ == "__main__":
-    
-    # === Paramètres d'entrée ===
-    a_cs = 2
+
+    # === Input parameters ===
+    a_cs = 3
     b_cs = 1.2
-    c_cs = 0.9
-    R0_cs = 6
-    Bmax_cs = 13
-    σ_CS_cs = 660e6
-    J_max_CS_cs = 50e6
+    c_cs = 2
+    R0_cs = 9
+    B_max_TF_cs = 13
+    B_max_CS = 50
+    T_He_CS = 4.75
+    σ_CS_cs = 300e6 # Red curve on fig.2 of the Sarasola paper
+    J_CS = 120e6 # Directly cited in Sarasola paper
     
-    # === Scan de Ψplateau ===
-    psi_values = np.linspace(0, 400, 50)
-    
-    # === Listes de résultats ===
-    acad_w, acad_b = [], []
-    d0fus_w, d0fus_b = [], []
-    CIRCE_w, CIRCE_b = [], []
-    
-    acad_B_w, acad_B_b = [], []
-    d0fus_B_w, d0fus_B_b = [], []
-    CIRCE_B_w, CIRCE_B_b = [], []
-    
-    # === Boucle sur Ψplateau ===
-    for psi in psi_values:
-        # Academic
-        res_acad_w = f_CS_academic(0, 0, psi, 0, a_cs, b_cs, c_cs, R0_cs, Bmax_cs, σ_CS_cs, J_max_CS_cs, "Wedging")
-        res_acad_b = f_CS_academic(0, 0, psi, 0, a_cs, b_cs, c_cs, R0_cs, Bmax_cs, σ_CS_cs, J_max_CS_cs, "Bucking")
+    # === Ψplateau scan range ===
+    psi_values = np.linspace(0, 500, 100)
 
-        # D0FUS
-        res_d0fus_w = f_CS_D0FUS(0, 0, psi, 0, a_cs, b_cs, c_cs, R0_cs, Bmax_cs, σ_CS_cs, J_max_CS_cs, "Wedging")
-        res_d0fus_b = f_CS_D0FUS(0, 0, psi, 0, a_cs, b_cs, c_cs, R0_cs, Bmax_cs, σ_CS_cs, J_max_CS_cs, "Bucking")
-
-        # CIRCE
-        res_CIRCE_w = f_CS_CIRCE(0, 0, psi, 0, a_cs, b_cs, c_cs, R0_cs, Bmax_cs, σ_CS_cs, J_max_CS_cs, "Wedging")
-        res_CIRCE_b = f_CS_CIRCE(0, 0, psi, 0, a_cs, b_cs, c_cs, R0_cs, Bmax_cs, σ_CS_cs, J_max_CS_cs, "Bucking")
-        
-        # Stockage épaisseur
-        acad_w.append(res_acad_w[0])
-        acad_b.append(res_acad_b[0])
-        d0fus_w.append(res_d0fus_w[0])
-        d0fus_b.append(res_d0fus_b[0])
-        CIRCE_w.append(res_CIRCE_w[0])
-        CIRCE_b.append(res_CIRCE_b[0])
-        
-        # Stockage champ magnétique
-        acad_B_w.append(res_acad_w[2])
-        acad_B_b.append(res_acad_b[2])
-        d0fus_B_w.append(res_d0fus_w[2])
-        d0fus_B_b.append(res_d0fus_b[2])
-        CIRCE_B_w.append(res_CIRCE_w[2])
-        CIRCE_B_b.append(res_CIRCE_b[2])
-    
-    # === Couleurs par modèle ===
-    colors = {
-        "Academic": "blue",
-        "D0FUS": "green",
-        "CIRCE": "red"
+    # === Result storage ===
+    results = {
+        "Academic": {"Wedging": {"thickness": [], "B": []},
+                     "Bucking": {"thickness": [], "B": []},
+                     "Plug": {"thickness": [], "B": []}},
+        "D0FUS": {"Wedging": {"thickness": [], "B": []},
+                  "Bucking": {"thickness": [], "B": []},
+                  "Plug": {"thickness": [], "B": []}},
+        "CIRCE": {"Wedging": {"thickness": [], "B": []},
+                  "Bucking": {"thickness": [], "B": []},
+                  "Plug": {"thickness": [], "B": []}}
     }
-    
-    # === FIGURE 1 : Wedging – Épaisseur ===
-    plt.figure(figsize=(5, 5))
-    plt.plot(psi_values, acad_w, color=colors["Academic"], linestyle='-', linewidth=2, label="Academic Wedging")
-    plt.plot(psi_values, d0fus_w, color=colors["D0FUS"], linestyle='-', linewidth=2, label="D0FUS Wedging")
-    plt.plot(psi_values, CIRCE_w, color=colors["CIRCE"], linestyle='-', linewidth=2, label="CIRCE Wedging")
-    
-    plt.xlabel("Ψplateau (Wb)", fontsize=12)
-    plt.ylabel("CS thickness [m]", fontsize=12)
-    plt.title("Ψplateau scan – Wedging comparison", fontsize=14)
-    plt.ylim(bottom=0)   # <-- Force le départ à 0
-    plt.grid(True, linestyle='--', alpha=0.7)
-    plt.legend(fontsize=10, loc='best')
-    plt.tight_layout()
-    plt.show()
-    
-    # === FIGURE 2 : Bucking – Épaisseur ===
-    plt.figure(figsize=(5, 5))
-    plt.plot(psi_values, acad_b, color=colors["Academic"], linestyle='-', linewidth=2, label="Academic Bucking")
-    plt.plot(psi_values, d0fus_b, color=colors["D0FUS"], linestyle='-', linewidth=2, label="D0FUS Bucking")
-    plt.plot(psi_values, CIRCE_b, color=colors["CIRCE"], linestyle='-', linewidth=2, label="CIRCE Bucking")
-    
-    plt.xlabel("Ψplateau (Wb)", fontsize=12)
-    plt.ylabel("CS thickness [m]", fontsize=12)
-    plt.title("Ψplateau scan – Bucking comparison", fontsize=14)
-    plt.ylim(bottom=0)   # <-- Force le départ à 0
-    plt.grid(True, linestyle='--', alpha=0.7)
-    plt.legend(fontsize=10, loc='best')
-    plt.tight_layout()
-    plt.show()
-    
-    # === FIGURE 3 : Wedging – Champ magnétique ===
-    plt.figure(figsize=(5, 5))
-    plt.plot(psi_values, acad_B_w, color=colors["Academic"], linestyle='-', linewidth=2, label="Academic Wedging")
-    plt.plot(psi_values, d0fus_B_w, color=colors["D0FUS"], linestyle='-', linewidth=2, label="D0FUS Wedging")
-    plt.plot(psi_values, CIRCE_B_w, color=colors["CIRCE"], linestyle='-', linewidth=2, label="CIRCE Wedging")
-    
-    plt.xlabel("Ψplateau (Wb)", fontsize=12)
-    plt.ylabel("B CS [T]", fontsize=12)
-    plt.title("Ψplateau scan – Wedging comparison (Magnetic field)", fontsize=14)
-    plt.grid(True, linestyle='--', alpha=0.7)
-    plt.legend(fontsize=10, loc='best')
-    plt.tight_layout()
-    plt.show()
-    
-    # === FIGURE 4 : Bucking – Champ magnétique ===
-    plt.figure(figsize=(5, 5))
-    plt.plot(psi_values, acad_B_b, color=colors["Academic"], linestyle='-', linewidth=2, label="Academic Bucking")
-    plt.plot(psi_values, d0fus_B_b, color=colors["D0FUS"], linestyle='-', linewidth=2, label="D0FUS Bucking")
-    plt.plot(psi_values, CIRCE_B_b, color=colors["CIRCE"], linestyle='-', linewidth=2, label="CIRCE Bucking")
-    
-    plt.xlabel("Ψplateau (Wb)", fontsize=12)
-    plt.ylabel("B CS [T]", fontsize=12)
-    plt.title("Ψplateau scan – Bucking comparison (Magnetic field)", fontsize=14)
-    plt.grid(True, linestyle='--', alpha=0.7)
-    plt.legend(fontsize=10, loc='best')
-    plt.tight_layout()
-    plt.show()
-        
-#%%  Solenoid comparison CIRCE vs D0FUS
 
-if __name__ == "__main__":
-    
-    print('-------------------------------------------------------------------------------------------')
-    
-    # D0FUS model :
-    R_ext_test = 2.1
-    Flux_théorique = 132   # Rapport d'aspect fin
-    Flux_théorique = 263.5   # rapport d'aspect épais
-    Sigma_theorique = 300e6 # Steel
-    J_CS_théorique = 50e6 # Conductor
-    B_CS_theorique = 20 # Initialisation
-    calcul_D0FUS = f_CS_D0FUS(0, Flux_théorique, 0, 0, 0, 0, 0, R_ext_test , B_CS_theorique, Sigma_theorique, J_CS_théorique, "Wedging")
-    
-    alpha_test = np.round(calcul_D0FUS[1],2)
-    
-    print(f'Epaisseur D0FUS prediction: {np.round(calcul_D0FUS[0],2)} m')
-    print(f'Alpha D0FUS prediction: {np.round(calcul_D0FUS[1]*100,2)} %')
-    print(f'B D0FUS prediction: {np.round(calcul_D0FUS[2],2)} T')
-    print(f'J D0FUS prediction: {np.round(calcul_D0FUS[3]/1e6,2)} MA')
-    print(f'Sigma D0FUS prediction: {np.round(Sigma_theorique*(1-calcul_D0FUS[1])/1e6,2)} MPA')
-    
-    print('-------------------------------------------------------------------------------------------')
+    # === Reference data (external or experimental) ===
+    ref_thickness = [1.3, 1.2, 1.1, 1.0, 0.9, 0.8, 0.7, 0.6, 0.5]  # [m]
+    ref_flux = [209*2, 209*2, 208*2, 205*2, 200*2, 192*2, 185*2, 177*2, 161*2]  # [Wb]
 
-    # Parameters :
-    R_ext_test = 2.1 - 0.1
-    R_int_test = R_ext_test - calcul_D0FUS[0]
-    B_CS_test = calcul_D0FUS[2]
-    J_CS_test = J_CS_théorique * alpha_test
-    P_mag_test = B_CS_test**2 / (2*μ0)
+    # Dictionnaire pour stocker les durées
+    timings = {"Academic": 0.0, "D0FUS": 0.0, "CIRCE": 0.0}
     
-    # D0FUS calculus :
-    calcul_type = np.round(P_mag_test * (R_ext_test**2+R_int_test**2)/(R_ext_test**2-R_int_test**2)/1e6,2)
-    print(f'Sigma_Steel manual surface crosscheck: {calcul_type} MPa')
-    print('-------------------------------------------------------------------------------------------')
+    # === Main loop over Ψplateau ===
+    for psi in tqdm(psi_values,desc = 'Scanning Psi'):
+        for config in ['Wedging', 'Bucking', 'Plug']:
+            # --- Academic model ---
+            start = time.time()
+            res_acad = f_CS_ACAD(0, 0, psi, 0, a_cs, b_cs, c_cs, R0_cs,
+                      B_max_TF_cs, B_max_CS, σ_CS_cs, 'Manual', J_CS, T_Helium, f_Cu, f_Cool, f_In, config)
+            timings["Academic"] += time.time() - start
     
-    # CIRCE modèle surfacique :
-    disR = 100                      # Pas de discrétisation
-    R = np.array([R_int_test,R_ext_test])       # Radii
-    J = np.array([0])            # Current densities
-    B = np.array([0])               # Magnetic fields
-    Pi = P_mag_test             # Internal pressure
-    Pe = 0                          # External pressure
-    E = np.array([Young_modul_Steel])           # Young's moduli
-    nu = nu_Steel                       # Poisson's ratio
-    config = np.array([0])          # Wedging or bucking
+            # --- D0FUS model ---
+            start = time.time()
+            res_d0fus = f_CS_D0FUS(0, 0, psi, 0, a_cs, b_cs, c_cs, R0_cs,
+                      B_max_TF_cs, B_max_CS, σ_CS_cs, 'Manual', J_CS, T_Helium, f_Cu, f_Cool, f_In, config)
+            timings["D0FUS"] += time.time() - start
     
-    # Appeler la fonction principale
-    SigRtot, SigTtot, urtot, Rvec, P = F_CIRCE0D(disR, R, J, B, Pi, Pe, E, nu, config)
-    Sig_Steel = np.round(max(np.abs(SigTtot/1e6)),2)
-    print(f'Sigma_Steel CIRCE surface prediction: {Sig_Steel} MPa')
-    print(f'Erreur D0FUS vs CIRCE: {np.round((calcul_type-Sig_Steel) / calcul_type * 100, 2)} %')
-    print('-------------------------------------------------------------------------------------------')
+            # --- CIRCE model ---
+            start = time.time()
+            res_CIRCE = f_CS_CIRCE(0, 0, psi, 0, a_cs, b_cs, c_cs, R0_cs,
+                      B_max_TF_cs, B_max_CS, σ_CS_cs, 'Manual', J_CS, T_Helium, f_Cu, f_Cool, f_In, config)
+            timings["CIRCE"] += time.time() - start
     
-    # CIRCE modèle volumique :
-    disR = 100                      # Pas de discrétisation
-    R = np.array([R_int_test,R_ext_test])       # Radii
-    J = np.array([J_CS_test])            # Current densities
-    B = np.array([B_CS_test])              # Magnetic fields
-    Pi = 0                          # Internal pressure
-    Pe = 0                          # External pressure
-    E = np.array([Young_modul_Steel*(1-alpha_test)])           # Young's modul
-    nu = nu_Steel                      # Poisson's ratio
-    config = np.array([0])          # TF = 1 , CS = 0
-    # Appeler la fonction principale
-    SigRtot, SigTtot, urtot, Rvec, P = F_CIRCE0D(disR, R, J, B, Pi, Pe, E, nu, config)
-    Sig_Steel = np.round(max(np.abs(SigTtot/1e6)),2)
-    print(f'Sigma_Steel CIRCE volume prediction: {Sig_Steel} MPa')
-    print(f'Erreur D0FUS vs CIRCE: {np.round((calcul_type-Sig_Steel) / max(calcul_type,Sig_Steel) * 100, 2)} %')
+            # --- Store results ---
+            results["Academic"][config]["thickness"].append(res_acad[0])
+            results["Academic"][config]["B"].append(res_acad[2])
+    
+            results["D0FUS"][config]["thickness"].append(res_d0fus[0])
+            results["D0FUS"][config]["B"].append(res_d0fus[2])
+    
+            results["CIRCE"][config]["thickness"].append(res_CIRCE[0])
+            results["CIRCE"][config]["B"].append(res_CIRCE[2])
+    
+    # === Fin des calculs ===
+    print("\n=== Temps d'exécution total par modèle ===")
+    for model, duration in timings.items():
+        print(f"{model:>8s} : {duration:.3f} s")
+
+
+    # === Colors for each model ===
+    colors = {"Academic": "blue", "D0FUS": "green", "CIRCE": "red"}
+
+    # === Plotting function ===
+    def plot_config(config, quantity, ylabel, title_suffix, ref_data=False):
+        plt.figure(figsize=(5, 5))
+        for model in results.keys():
+            plt.plot(psi_values,
+                     results[model][config][quantity],
+                     color=colors[model],
+                     linestyle='-',
+                     linewidth=2,
+                     label=f"{model} {config}")
+
+        if ref_data:
+            plt.scatter(ref_flux, ref_thickness, color="black",
+                        marker='x', s=50, label="MADE")
+
+        plt.xlabel("Ψplateau (Wb)", fontsize=12)
+        plt.ylabel(ylabel, fontsize=12)
+        plt.title(f"{config} comparison ({title_suffix})", fontsize=14)
+        plt.grid(True, linestyle='--', alpha=0.7)
+        plt.legend(fontsize=10, loc='best')
+        plt.tight_layout()
+        plt.show()
+
+    # === Generate all figures ===
+    for config in ["Wedging", "Bucking", "Plug"]:
+        # Thickness plots
+        plot_config(config, "thickness", "CS thickness [m]", "Coil thickness", ref_data=(config == "Wedging"))
+
+        # Magnetic field plots
+        plot_config(config, "B", "B CS [T]", "Magnetic field")
 
 #%% Note:
 # CIRCE TF double cylindre en wedging ? voir multi cylindre pour grading ?
@@ -2675,4 +2766,4 @@ if __name__ == "__main__":
 # Permettrait aussi de mettre la répartition en tension en rapport de surface
 #%% Print
 
-print("D0FUS_radial_build_functions loaded")
+# print("D0FUS_radial_build_functions loaded")
