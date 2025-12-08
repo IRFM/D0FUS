@@ -4,12 +4,9 @@ Author: Auclair Timothe
 """
 
 #%% Import
-try:
-    from .D0FUS_parameterization import *
-    from .D0FUS_physical_functions import *
-except ImportError:
-    from D0FUS_parameterization import *
-    from .D0FUS_physical_functions import *
+
+from .D0FUS_import import *
+from .D0FUS_parameterization import *
 
 #%% print
 
@@ -738,6 +735,26 @@ def f_TF_academic(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg):
     ratio_tension : float
         Ratio of axial to total stress.
     """
+    
+    def f_B0(Bmax, a, b, R0):
+        """
+        
+        Estimate the magnetic field in the centre of the plasma
+        
+        Parameters
+        ----------
+        Bmax : The magnetic field at the inboard of the Toroidal Field (TF) coil [T]
+        a : Minor radius [m]
+        b : Thickness of the First Wall+ the Breeding Blanket+ The Neutron shield+ The Vacuum Vessel + Gaps [m]
+        R0 : Major radius [m]
+
+        Returns
+        -------
+        B0 : The estimated central magnetic field [T]
+        
+        """
+        B0 = Bmax*(1-((a+b)/R0))
+        return B0
 
     # 1. Calculate the central magnetic field B0 based on geometry and maximum field
     B0 = f_B0(B_max_TF, a, b, R0)
@@ -1330,6 +1347,26 @@ def Magnetic_flux(Ip, I_Ohm, B_max_TF, a, b, c, R0, κ, nbar, Tbar, Ce, Temps_Pl
     # Convert currents from MA to A
     Ip = Ip * 1e6
     I_Ohm = I_Ohm * 1e6
+    
+    def f_B0(Bmax, a, b, R0):
+        """
+        
+        Estimate the magnetic field in the centre of the plasma
+        
+        Parameters
+        ----------
+        Bmax : The magnetic field at the inboard of the Toroidal Field (TF) coil [T]
+        a : Minor radius [m]
+        b : Thickness of the First Wall+ the Breeding Blanket+ The Neutron shield+ The Vacuum Vessel + Gaps [m]
+        R0 : Major radius [m]
+
+        Returns
+        -------
+        B0 : The estimated central magnetic field [T]
+        
+        """
+        B0 = Bmax*(1-((a+b)/R0))
+        return B0
 
     # Toroidal magnetic field
     B0 = f_B0(B_max_TF, a, b, R0)

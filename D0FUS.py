@@ -1,6 +1,7 @@
 """
 D0FUS - Design 0-dimensional for Fusion Systems
 Author: Auclair Timothe
+
 """
 #%% Imports
 import sys
@@ -31,6 +32,24 @@ def detect_mode_from_input(input_file):
     
     with open(input_file, 'r', encoding='utf-8') as f:
         content = f.read()
+    
+    # Extract genetic algorithm parameters if present
+    genetic_params = {}
+    genetic_keywords = {
+        'population_size': ('population_size', int),
+        'generations': ('generations', int),
+        'crossover_rate': ('crossover_rate', float),
+        'mutation_rate': ('mutation_rate', float)
+    }
+    
+    for keyword, (param_name, param_type) in genetic_keywords.items():
+        pattern = rf'^\s*{keyword}\s*[:=]\s*([0-9.]+)'
+        match = re.search(pattern, content, re.MULTILINE | re.IGNORECASE)
+        if match:
+            try:
+                genetic_params[param_name] = param_type(match.group(1))
+            except ValueError:
+                raise ValueError(f"Invalid value for {keyword}: {match.group(1)}")
     
     # Find all bracket patterns: parameter = [values]
     bracket_pattern = r'^\s*(\w+)\s*[:=]\s*\[([^\]]+)\]'
@@ -99,7 +118,7 @@ def detect_mode_from_input(input_file):
                 f"  a = [1, 3]\n"
                 f"  Bmax = [10, 16]\n"
             )
-        return 'optimization', opt_params
+        return 'optimization', (opt_params, genetic_params)
     
     elif n_scan > 0 and n_opt == 0:
         # Only scan parameters → SCAN mode
@@ -178,6 +197,12 @@ Modes (detected automatically from input file format):
                        Example: R0 = [3, 9]
                                 a = [1, 3]
                                 Bmax = [10, 16]
+                       
+                       Optional genetic algorithm parameters:
+                       population_size = 50     (default: 50)
+                       generations = 100        (default: 100)
+                       crossover_rate = 0.7     (default: 0.7)
+                       mutation_rate = 0.2      (default: 0.2)
 
 Detection rules:
     • [min, max] format (2 values) → OPTIMIZATION (need 2+ parameters)
@@ -293,24 +318,43 @@ def execute_with_mode_detection(input_file):
         
         elif mode == 'optimization':
             # OPTIMIZATION mode detected
-            param_names = list(params.keys())
+            opt_params, genetic_params = params
+            param_names = list(opt_params.keys())
             print("\n" + "="*60)
             print(f"Mode: OPTIMIZATION (genetic algorithm)")
             print(f"Optimization parameters: {', '.join(param_names)}")
             print(f"Input: {os.path.basename(input_file)}")
             
             # Display optimization ranges
-            for param_name, (min_val, max_val) in params.items():
+            for param_name, (min_val, max_val) in opt_params.items():
                 print(f"  {param_name}: [{min_val}, {max_val}]")
+            
+            # Display genetic algorithm parameters
+            print("\nGenetic algorithm parameters:")
+            default_params = {
+                'population_size': 50,
+                'generations': 100,
+                'crossover_rate': 0.7,
+                'mutation_rate': 0.2
+            }
+            for param_name, default_value in default_params.items():
+                actual_value = genetic_params.get(param_name, default_value)
+                status = "" if param_name in genetic_params else " (default)"
+                print(f"  {param_name}: {actual_value}{status}")
+            
             print("="*60 + "\n")
             
-            # Run genetic optimization with default parameters
-            D0FUS_genetic.run_genetic_optimization(input_file, 
-                                         population_size=50,
-                                         generations=100,
-                                         crossover_rate=0.7,
-                                         mutation_rate=0.2,
-                                         verbose=True)
+            # Prepare parameters for genetic optimization
+            ga_params = {
+                'population_size': genetic_params.get('population_size', 50),
+                'generations': genetic_params.get('generations', 100),
+                'crossover_rate': genetic_params.get('crossover_rate', 0.7),
+                'mutation_rate': genetic_params.get('mutation_rate', 0.2),
+                'verbose': True
+            }
+            
+            # Run genetic optimization with specified or default parameters
+            D0FUS_genetic.run_genetic_optimization(input_file, **ga_params)
     
     except ValueError as e:
         # Invalid number of brackets or parsing error

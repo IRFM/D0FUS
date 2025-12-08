@@ -5,10 +5,8 @@ Author: Auclair Timothe
 
 #%% Import
 
-try:
-    from .D0FUS_parameterization import *
-except ImportError:
-    from D0FUS_parameterization import *
+from .D0FUS_import import *
+from .D0FUS_parameterization import *
 
 #%% Physical Functions
 

@@ -4,10 +4,15 @@
 # Fixed parameters use standard values
 
 # Optimization parameters (genetic algorithm will vary these)
-a: [1, 2]       # Minor radius
-R0: [4, 7]      # Major radius [m]
-Bmax: [12, 25]  # Maximum magnetic field [T]
-Tbar: [10, 18]     # Plasma temperature [keV]
+a: [1, 3]       # Minor radius
+R0: [4, 8]      # Major radius [m]
+Bmax: [18, 24]  # Maximum magnetic field [T]
+
+# Genetic algorithm parameters (optional - if not specified, defaults are used)
+population_size = 20     # Number of individuals in each generation (default: 50)
+generations = 20         # Number of generations to evolve (default: 100)
+crossover_rate = 0.9     # Crossover probability (default: 0.7)
+mutation_rate = 0.15     # Mutation probability (default: 0.2)
 
 Option_Kappa = Wenninger        # Elongation model: Stambaugh, Freidberg, Wenninger, Manual
 
@@ -19,8 +24,6 @@ Chosen_Steel = 316L             # Steel type: 316L, N50H, Manual
 Bootstrap_choice = Freidberg    # Bootstrap model: Freidberg, Segal
 
 Operation_mode = Steady-State   # Steady-State or Pulsed
-
-P_fus = 1000
 
 # Note: The genetic algorithm will find the optimal combination
 # of a, R0, Bmax, and T that minimizes cost while satisfying
