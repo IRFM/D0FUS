@@ -1,5 +1,5 @@
 """
-D0FUS - Design 0-dimensional for Fusion Systems
+D0FUS - Design 0-dimensional for FUsion Systems
 Author: Auclair Timothe
 
 """
@@ -7,8 +7,9 @@ Author: Auclair Timothe
 import sys
 import os
 
-# Add D0FUS_EXE to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'D0FUS_EXE'))
+# Add the path
+project_root = os.path.dirname(__file__)
+sys.path.insert(0, project_root)
 
 # Import all necessary modules
 from D0FUS_BIB.D0FUS_parameterization import *

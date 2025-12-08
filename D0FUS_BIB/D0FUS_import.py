@@ -1,67 +1,75 @@
 from __future__ import annotations
 
 """
-Created on: Dec 2023
-Author: Auclair Timothe
+D0FUS Import Module
+===================
+Central import module for the D0FUS (Design 0-dimensional for FUsion Systems) project.
+
+Created: December 2023
+Author: Auclair Timothé
 """
 
-#%% Import
+#%% Environment Configuration
 
-# Importations de bibliothèques standards
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
-from datetime import datetime
-import shutil
+#%% Standard Library Imports
+
+import json
 import math
+import random
+import re
+import shutil
+import sys
 import time
 import warnings
-import sys
 import importlib
-import re
+from datetime import datetime
 from pathlib import Path
 
-# Importations de bibliothèques scientifiques et de calcul numérique
+#%% Scientific Computing Libraries
+
 import numpy as np
 import pandas as pd
 import sympy as sp
+
+#%% Scipy - Optimization and Numerical Methods
+
+from scipy.integrate import quad
+from scipy.interpolate import interp1d, griddata
 from scipy.optimize import (
-    fsolve,
-    differential_evolution,
-    root_scalar,
-    minimize_scalar,
-    minimize,
-    bisect,
-    root,
     basinhopping,
-    brentq,
     bisect,
+    brentq,
+    differential_evolution,
+    fsolve,
     least_squares,
+    minimize,
+    minimize_scalar,
+    root,
+    root_scalar,
     shgo
 )
-from scipy.interpolate import interp1d
-from scipy.interpolate import griddata
-from scipy.integrate import quad
 from scipy.signal import find_peaks
 
-# Importations de bibliothèques de visualisation
+#%% Visualization Libraries
+
 import matplotlib.pyplot as plt
-import matplotlib.lines as mlines
 import matplotlib.colors as mcolors
+import matplotlib.lines as mlines
 import matplotlib.patches as mpatches
-from matplotlib.ticker import MultipleLocator
 from matplotlib.colors import Normalize
+from matplotlib.gridspec import GridSpec
+from matplotlib.ticker import MultipleLocator
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from pandas.plotting import table
 from tqdm import tqdm
-from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-# Gentic research
-import json
-import random
-from matplotlib.gridspec import GridSpec
-from deap import base, creator, tools, algorithms
+#%% Genetic Algorithm Libraries
+
+from deap import algorithms, base, creator, tools
 
 #%%
 
 # print("D0FUS_import loaded")
-

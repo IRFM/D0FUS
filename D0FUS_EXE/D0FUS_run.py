@@ -131,7 +131,7 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
      alpha_R, alpha_B, alpha_n, alpha_I, alpha_P) = f_Get_parameter_scaling_law(Scaling_Law)
 
     # Plasma geometry
-    κ = f_Kappa(R0/a, Option_Kappa, κ_manual)
+    κ = f_Kappa(R0/a, Option_Kappa, κ_manual, ms)
     κ_95 = f_Kappa_95(κ)
     δ = f_Delta(κ)
     δ_95 = f_Delta_95(δ)

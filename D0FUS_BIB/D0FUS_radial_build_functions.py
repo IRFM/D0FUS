@@ -5,8 +5,22 @@ Author: Auclair Timothe
 
 #%% Import
 
-from .D0FUS_import import *
-from .D0FUS_parameterization import *
+# When imported as a module (normal usage in production)
+if __name__ != "__main__":
+    from .D0FUS_import import *
+    from .D0FUS_parameterization import *
+
+# When executed directly (for testing and development)
+else:
+    import sys
+    import os
+    
+    # Add parent directory to path to allow absolute imports
+    sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+    
+    # Import using absolute paths for standalone execution
+    from D0FUS_BIB.D0FUS_import import *
+    from D0FUS_BIB.D0FUS_parameterization import *
 
 #%% print
 
@@ -287,7 +301,6 @@ def Jc(Supra_choice, B_supra , T_He):
 #%% Jc test
 
 if __name__ == "__main__":
-
     from mpl_toolkits.mplot3d import Axes3D
     
     # Test
@@ -299,15 +312,14 @@ if __name__ == "__main__":
     print(f"Jc (Nb3Sn T = {T_test} K, B = {B_test} T) = {Jc_val_Nb3Sn/1e6:.2f} MA/m²")
     Jc_val_Rebco = Jc("Rebco", B_test , T_test)
     print(f"Jc (Rebco T = {T_test} K, B = {B_test} T) = {Jc_val_Rebco/1e6:.2f} MA/m²")
-
     # —––––––––––––––––––––––––––––––––––––
-    # 1) Plages et calculs
+    # 1) Ranges and calculations
     B_vals = np.linspace(0, 45, 100)
     T_vals = np.linspace(2, 30, 100)
     B_mesh, T_mesh = np.meshgrid(B_vals, T_vals)
     
     # —––––––––––––––––––––––––––––––––––––
-    # Plot 2D à 4.2 K
+    # 2D plot at 4.2 K
     T0 = 4.2
     J_NbTi_42 = Jc("NbTi", B_vals, T0 - Marge_T_NbTi)/1e6
     J_Nb3Sn_42 = Jc("Nb3Sn", B_vals, T0 - Marge_T_Nb3Sn)/1e6
@@ -329,9 +341,9 @@ if __name__ == "__main__":
     plt.show()
     
     # —––––––––––––––––––––––––––––––––––––
-    # Surfaces 3D
+    # 3D surfaces
     
-    # Calcul des densités critiques
+    # Critical current density calculation
     J_NbTi = Jc("NbTi", B_mesh, T_mesh)/1e6
     J_Nb3Sn = Jc("Nb3Sn", B_mesh, T_mesh)/1e6
     J_Rebco = Jc("Rebco", B_mesh, T_mesh)/1e6
@@ -341,13 +353,13 @@ if __name__ == "__main__":
             cmap='viridis',        
             edgecolor='none',      
             antialiased=True,      
-            rcount=100, ccount=100 # résolution
+            rcount=100, ccount=100 # resolution
         )
         ax.set_xlabel('B (T)')
         ax.set_ylabel('T (K)')
         ax.set_zlabel('Jc (MA/m²)')
         ax.set_title(title)
-        # colorbar intégrée
+        # integrated colorbar
         plt.colorbar(surf, ax=ax, shrink=0.6, pad=0.1)
     
     fig = plt.figure(figsize=(12,5))
@@ -358,7 +370,7 @@ if __name__ == "__main__":
     ax2 = fig.add_subplot(122, projection='3d')
     plot_surface(ax2, B_mesh, T_mesh, J_Rebco, 'Jc_Rebco(B, T)')
     
-    # Ajuster l'angle de vue
+    # Adjust viewing angle
     for ax in (ax1, ax2):
         ax.view_init(elev=25, azim=135)
     
@@ -372,249 +384,770 @@ if __name__ == "__main__":
     
 #%% CIRCE 0D module
 
-def MD1v2(ri, r0, re, Enmoins1, En, nu, J0, B0, J1, B1, Pi, config):
-    """
-    Calcul des contraintes et déplacements pour un cylindre épais avec body load en multi-couches.
-    """
-    K1nmoins1 = J0 * B0 / (r0 - ri)
-    K1n = J1 * B1 / (re - r0)
-    
-    if config[0] == 1:
-        K2nmoins1 = -J0 * B0 * ri / (r0 - ri)
-    else:
-        K2nmoins1 = -J0 * B0 * r0 / (r0 - ri)
-    
-    if config[1] == 1:
-        K2n = -J1 * B1 * r0 / (re - r0)
-    else:
-        K2n = -J1 * B1 * re / (re - r0)
-    
-    MD1 = (1 + nu) / En * re**2 * (K1n * (nu + 3) / 8 + K2n * (nu + 2) / (3 * (re + r0))) + \
-      (1 - nu) / En * ((K2n * (nu + 2) / 3) * (re**2 + r0**2 + re * r0) / (re + r0) + \
-      (re**2 + r0**2) * K1n * (nu + 3) / 8) - \
-      (1 + nu) / Enmoins1 * ri**2 * (K1nmoins1 * (nu + 3) / 8 + K2nmoins1 * (nu + 2) / (3 * (r0 + ri))) - \
-      (1 - nu) / Enmoins1 * ((K2nmoins1 * (nu + 2) / 3) * (r0**2 + ri**2 + r0 * ri) / (r0 + ri) + \
-      (r0**2 + ri**2) * K1nmoins1 * (nu + 3) / 8) + \
-      (1 - nu**2) / 8 * r0**2 * (K1nmoins1 / Enmoins1 - K1n / En) + \
-      (1 - nu**2) / 3 * r0 * (K2nmoins1 / Enmoins1 - K2n / En) - \
-          Pi * (-2 * ri**2) / (Enmoins1 * (r0**2 - ri**2))
+"""
+F_CIRCE0D - Analytical stress solver for multilayer thick cylinders
+====================================================================
 
-    return MD1
+This module implements the analytical solution for the elasticity problem of
+concentric cylinder stacks subjected to:
+- Internal and external pressures (Pi, Pe)
+- Electromagnetic body loads (J × B) with linear radial profile
 
-def MDendv2(ri, r0, re, Enmoins1, En, nu, J0, B0, J1, B1, Pe, config):
+Theory
+------
+For each layer, the Lorentz body force is modeled as:
+    f_r(r) = J(r) × B(r) ≈ K1·r + K2
+
+where K1 and K2 depend on the field configuration (increasing/decreasing).
+
+The axisymmetric equilibrium equation:
+    dσr/dr + (σr - σθ)/r + f_r = 0
+
+is solved analytically with Hooke's law, yielding expressions for σr, σθ, 
+and ur as functions of integration constants.
+
+Boundary conditions are:
+- σr(ri) = -Pi  (internal pressure)
+- σr(re) = -Pe  (external pressure)
+- Continuity of ur at interfaces
+
+The code handles multilayer structures where each layer can have different:
+- Young's modulus E (e.g., conductor vs structural steel)
+- Current density J (can be zero for passive layers)
+- Magnetic field B
+- Field profile configuration
+
+References
+----------
+- Timoshenko & Goodier, "Theory of Elasticity"
+- CIRCE B.Boudes (CEA)
+
+Author: Tim (D0FUS project)
+"""
+
+import numpy as np
+from typing import List, Tuple
+from dataclasses import dataclass
+
+
+@dataclass
+class LayerResult:
+    """Results for a single layer."""
+    r: np.ndarray          # Radial positions [m]
+    sigma_r: np.ndarray    # Radial stress [Pa]
+    sigma_t: np.ndarray    # Hoop stress [Pa]
+    u_r: np.ndarray        # Radial displacement [m]
+
+
+def compute_body_load_coefficients(
+    J: float, 
+    B: float, 
+    r_inner: float, 
+    r_outer: float, 
+    config: int
+) -> Tuple[float, float]:
     """
-    Calcul des contraintes et déplacements pour un cylindre épais avec body load en multi-couches.
-    """
-    K1nmoins1 = J0 * B0 / (r0 - ri)
-    K1n = J1 * B1 / (re - r0)
+    Compute K1 and K2 coefficients for the linear body load profile.
     
-    if config[0] == 1:
-        K2nmoins1 = -J0 * B0 * ri / (r0 - ri)
-    else:
-        K2nmoins1 = -J0 * B0 * r0 / (r0 - ri)
+    The volumetric force profile is: f(r) = K1·r + K2
     
-    if config[1] == 1:
-        K2n = -J1 * B1 * r0 / (re - r0)
-    else:
-        K2n = -J1 * B1 * re / (re - r0)
-    
-    MDend = (1 + nu) / En * re**2 * (K1n * (nu + 3) / 8 + K2n * (nu + 2) / (3 * (re + r0))) + \
-        (1 - nu) / En * ((K2n * (nu + 2) / 3) * (re**2 + r0**2 + re * r0) / (re + r0) + \
-        (re**2 + r0**2) * K1n * (nu + 3) / 8) - \
-        (1 + nu) / Enmoins1 * ri**2 * (K1nmoins1 * (nu + 3) / 8 + K2nmoins1 * (nu + 2) / (3 * (r0 + ri))) - \
-        (1 - nu) / Enmoins1 * ((K2nmoins1 * (nu + 2) / 3) * (r0**2 + ri**2 + r0 * ri) / (r0 + ri) + \
-        (r0**2 + ri**2) * K1nmoins1 * (nu + 3) / 8) + \
-        (1 - nu**2) / 8 * r0**2 * (K1nmoins1 / Enmoins1 - K1n / En) + \
-        (1 - nu**2) / 3 * r0 * (K2nmoins1 / Enmoins1 - K2n / En) - \
-        Pe * (-2 * re**2) / (En * (re**2 - r0**2))
-
-    return MDend
-
-def MDv2(ri, r0, re, Enmoins1, En, nu, J0, B0, J1, B1, config):
-    """
-    Calcul des contraintes et déplacements pour un cylindre épais avec body load en multi-couches.
-    """
-    K1nmoins1 = J0 * B0 / (r0 - ri)
-    K1n = J1 * B1 / (re - r0)
-    
-    if config[0] == 1:
-        K2nmoins1 = -J0 * B0 * ri / (r0 - ri)
-    else:
-        K2nmoins1 = -J0 * B0 * r0 / (r0 - ri)
-    
-    if config[1] == 1:
-        K2n = -J1 * B1 * r0 / (re - r0)
-    else:
-        K2n = -J1 * B1 * re / (re - r0)
-    
-    MD = (1 + nu) / En * re**2 * (K1n * (nu + 3) / 8 + K2n * (nu + 2) / (3 * (re + r0))) + \
-     (1 - nu) / En * ((K2n * (nu + 2) / 3) * (re**2 + r0**2 + re * r0) / (re + r0) + \
-     (re**2 + r0**2) * K1n * (nu + 3) / 8) - \
-     (1 + nu) / Enmoins1 * ri**2 * (K1nmoins1 * (nu + 3) / 8 + K2nmoins1 * (nu + 2) / (3 * (r0 + ri))) - \
-     (1 - nu) / Enmoins1 * ((K2nmoins1 * (nu + 2) / 3) * (r0**2 + ri**2 + r0 * ri) / (r0 + ri) + \
-     (r0**2 + ri**2) * K1nmoins1 * (nu + 3) / 8) + \
-     (1 - nu**2) / 8 * r0**2 * (K1nmoins1 / Enmoins1 - K1n / En) + \
-     (1 - nu**2) / 3 * r0 * (K2nmoins1 / Enmoins1 - K2n / En)
-
-    return MD
-
-def MG1v2(ri, r0, re, Enmoins1, En, nu):
-    """
-    Calcul des coefficients de la matrice de rigidité pour un cylindre épais avec body load en multi-couches.
-    """
-    MG1 = [(((1 + nu) * re**2 + (1 - nu) * r0**2) / (En * (re**2 - r0**2))) + \
-       (((1 + nu) * ri**2 + (1 - nu) * r0**2) / (Enmoins1 * (r0**2 - ri**2))),
-       (-2*re**2)/(En*(re**2-r0**2)) ]
-    
-    return MG1
-    
-def MGendv2(ri, r0, re, Enmoins1, En, nu):
-    """
-    Calcul des coefficients de la matrice de rigidité pour un cylindre épais avec body load en multi-couches.
-    """
-    MGendv2 = [(-2 * ri**2) / (Enmoins1 * (r0**2 - ri**2)), \
-         (((1 + nu) * re**2 + (1 - nu) * r0**2) / (En * (re**2 - r0**2))) + \
-         (((1 + nu) * ri**2 + (1 - nu) * r0**2) / (Enmoins1 * (r0**2 - ri**2)))]
-
-    return MGendv2
-
-def MGv2(ri, r0, re, Enmoins1, En, nu):
-    """
-    Calcul des coefficients de la matrice de rigidité pour un cylindre épais avec body load en multi-couches.
-    """
-    MG = [(-2 * ri**2) / (Enmoins1 * (r0**2 - ri**2)), \
-      (((1 + nu) * re**2 + (1 - nu) * r0**2) / (En * (re**2 - r0**2))) + \
-      (((1 + nu) * ri**2 + (1 - nu) * r0**2) / (Enmoins1 * (r0**2 - ri**2))),\
-         (-2*re**2)/(En*(re**2-r0**2)) ]
-
-    return MG
-   
-def F_CIRCE0D(disR, R, J, B, Pi, Pe, E, nu, config):
-    """
-    F_CIRCE0D main function
-    """
-    
-   
-    nlayer = len(E)
-
-    if nlayer == 1:        
-
-        SigRtot = []
-        SigTtot = []
-        urtot = []
-        P = [Pi, Pe]
-        Rvec = []
+    Parameters
+    ----------
+    J : float
+        Average current density in the layer [A/m²]
+    B : float
+        Characteristic magnetic field [T]
+    r_inner : float
+        Inner radius of the layer [m]
+    r_outer : float
+        Outer radius of the layer [m]
+    config : int
+        Field profile configuration:
+        - 1 : Decreasing field (B max at r_inner) → typical for CS
+        - 2 : Increasing field (B max at r_outer) → typical for TF
         
-    elif nlayer == 2:
-        ri = R[0]
-        r0 = R[1]
-        re = R[2]
-        Enmoins1 = E[0]
-        En = E[1]
-        J0 = J[0]
-        J1 = J[1]
-        B0 = B[0]
-        B1 = B[1]
-        K1nmoins1 = J[0] * B[0] / (R[1] -R[0])
-        K1n = J1 * B1 / (re - r0)
-   
-        if config[0] == 1:
-            K2nmoins1 = -J0 * B0 * ri / (r0 - ri)
-        else:
-            K2nmoins1 = -J0 * B0 * r0 / (r0 - ri)
+    Returns
+    -------
+    K1, K2 : float
+        Linear profile coefficients for f(r) = K1·r + K2
         
-        if config[1] == 1:
-              K2n = -J1 * B1 * r0 / (re - r0)
-        else:
-            K2n = -J1 * B1 * re / (re - r0)
-        
-        MGtot = np.array([[((1 + nu) * re**2 + (1 - nu) * r0**2) / (En * (re**2 - r0**2)) + \
-                           (((1 + nu) * ri**2 + (1 - nu) * r0**2) / (Enmoins1 * (r0**2 - ri**2)))]])
-        
-        MDtot = np.array([[(1 + nu) / En * re**2 * (K1n * (nu + 3) / 8 + K2n * (nu + 2) / (3 * (re + r0))) + \
-                           (1 - nu) / En * ((K2n * (nu + 2) / 3) * (re**2 + r0**2 + re * r0) / (re + r0) + \
-                           (re**2 + r0**2) * K1n * (nu + 3) / 8) - \
-                       (1 + nu) / Enmoins1 * ri**2 * (K1nmoins1 * (nu + 3) / 8 + K2nmoins1 * (nu + 2) / (3 * (r0 + ri))) - \
-                       (1 - nu) / Enmoins1 * ((K2nmoins1 * (nu + 2) / 3) * (r0**2 + ri**2 + r0 * ri) / (r0 + ri) + \
-                       (r0**2 + ri**2) * K1nmoins1 * (nu + 3) / 8) + \
-                       (1 - nu**2) / 8 * r0**2 * (K1nmoins1 / Enmoins1 - K1n / En) + \
-                       (1 - nu**2) / 3 * r0 * (K2nmoins1 / Enmoins1 - K2n / En) - \
-                       Pi * (-2 * ri**2) / (Enmoins1 * (r0**2 - ri**2)) - \
-                       Pe * (-2 * re**2) / (En * (re**2 - r0**2))]])
+    Notes
+    -----
+    For an infinite solenoid, B(r) is linear in r.
+    - Config 1: B(r) = B_max·(r_outer - r)/(r_outer - r_inner) → decreasing
+    - Config 2: B(r) = B_max·(r - r_inner)/(r_outer - r_inner) → increasing
     
-        P = np.linalg.inv(MGtot) @ MDtot
-        SigRtot = []
-        SigTtot = []
-        urtot = []
-        P = [Pi, P[0], Pe]
-        Rvec = []
-        
-
+    For passive layers (J=0 or B=0), both K1 and K2 are zero.
+    """
+    dr = r_outer - r_inner
+    
+    # Handle passive layers (no electromagnetic load)
+    if J == 0 or B == 0 or dr == 0:
+        return 0.0, 0.0
+    
+    K1 = J * B / dr
+    
+    if config == 1:
+        # Field maximum at r_inner (decreasing outward)
+        K2 = -J * B * r_inner / dr
     else:
-        MDtot = np.zeros((nlayer - 1, 1))
-        MGtot = np.zeros((nlayer - 1, nlayer - 1))
+        # Field maximum at r_outer (increasing outward)
+        K2 = -J * B * r_outer / dr
     
-        for ilayer in range(2, nlayer+1):
-            if ilayer == 2:
-                MGtot[ilayer - 2, ilayer - 2:ilayer ] = MG1v2(R[ilayer - 2], R[ilayer - 1], R[ilayer],
-                                                               E[ilayer - 2], E[ilayer - 1], nu)
-                MDtot[ilayer - 2] = MD1v2(R[ilayer - 2], R[ilayer - 1], R[ilayer], E[ilayer - 2], E[ilayer - 1], nu,
-                                         J[ilayer - 2], B[ilayer - 2], J[ilayer - 1], B[ilayer - 1], Pi,
-                                         [config[ilayer - 2], config[ilayer - 1]])
-            elif ilayer == nlayer:
-                MGtot[ilayer - 2, ilayer - 3:ilayer - 1] = MGendv2(R[ilayer - 2], R[ilayer - 1], R[ilayer],
-                                                                 E[ilayer - 2], E[ilayer - 1], nu)
-                MDtot[ilayer - 2] = MDendv2(R[ilayer - 2], R[ilayer - 1], R[ilayer], E[ilayer - 2], E[ilayer - 1], nu,
-                                            J[ilayer - 2], B[ilayer - 2], J[ilayer - 1], B[ilayer - 1], Pe,
-                                            [config[ilayer - 2], config[ilayer - 1]])
+    return K1, K2
+
+
+def _build_continuity_rhs_first(
+    ri: float, r0: float, re: float,
+    E_prev: float, E_curr: float, nu: float,
+    J_prev: float, B_prev: float, J_curr: float, B_curr: float,
+    Pi: float, config: List[int]
+) -> float:
+    """
+    Build the right-hand side of the continuity equation for the first interface.
+    
+    Includes the internal pressure Pi contribution.
+    """
+    K1_prev, K2_prev = compute_body_load_coefficients(J_prev, B_prev, ri, r0, config[0])
+    K1_curr, K2_curr = compute_body_load_coefficients(J_curr, B_curr, r0, re, config[1])
+    
+    # Contribution from outer layer (n)
+    term_ext = (
+        (1 + nu) / E_curr * re**2 * (K1_curr * (nu + 3) / 8 + K2_curr * (nu + 2) / (3 * (re + r0))) +
+        (1 - nu) / E_curr * (
+            (K2_curr * (nu + 2) / 3) * (re**2 + r0**2 + re * r0) / (re + r0) +
+            (re**2 + r0**2) * K1_curr * (nu + 3) / 8
+        )
+    )
+    
+    # Contribution from inner layer (n-1)
+    term_int = (
+        (1 + nu) / E_prev * ri**2 * (K1_prev * (nu + 3) / 8 + K2_prev * (nu + 2) / (3 * (r0 + ri))) +
+        (1 - nu) / E_prev * (
+            (K2_prev * (nu + 2) / 3) * (r0**2 + ri**2 + r0 * ri) / (r0 + ri) +
+            (r0**2 + ri**2) * K1_prev * (nu + 3) / 8
+        )
+    )
+    
+    # Jump terms at interface (discontinuity in material properties)
+    jump_term = (
+        (1 - nu**2) / 8 * r0**2 * (K1_prev / E_prev - K1_curr / E_curr) +
+        (1 - nu**2) / 3 * r0 * (K2_prev / E_prev - K2_curr / E_curr)
+    )
+    
+    # Internal pressure contribution
+    pressure_term = -Pi * (-2 * ri**2) / (E_prev * (r0**2 - ri**2))
+    
+    return term_ext - term_int + jump_term + pressure_term
+
+
+def _build_continuity_rhs_last(
+    ri: float, r0: float, re: float,
+    E_prev: float, E_curr: float, nu: float,
+    J_prev: float, B_prev: float, J_curr: float, B_curr: float,
+    Pe: float, config: List[int]
+) -> float:
+    """
+    Build the right-hand side for the last interface.
+    
+    Includes the external pressure Pe contribution.
+    """
+    K1_prev, K2_prev = compute_body_load_coefficients(J_prev, B_prev, ri, r0, config[0])
+    K1_curr, K2_curr = compute_body_load_coefficients(J_curr, B_curr, r0, re, config[1])
+    
+    # Same terms as internal interfaces
+    term_ext = (
+        (1 + nu) / E_curr * re**2 * (K1_curr * (nu + 3) / 8 + K2_curr * (nu + 2) / (3 * (re + r0))) +
+        (1 - nu) / E_curr * (
+            (K2_curr * (nu + 2) / 3) * (re**2 + r0**2 + re * r0) / (re + r0) +
+            (re**2 + r0**2) * K1_curr * (nu + 3) / 8
+        )
+    )
+    
+    term_int = (
+        (1 + nu) / E_prev * ri**2 * (K1_prev * (nu + 3) / 8 + K2_prev * (nu + 2) / (3 * (r0 + ri))) +
+        (1 - nu) / E_prev * (
+            (K2_prev * (nu + 2) / 3) * (r0**2 + ri**2 + r0 * ri) / (r0 + ri) +
+            (r0**2 + ri**2) * K1_prev * (nu + 3) / 8
+        )
+    )
+    
+    jump_term = (
+        (1 - nu**2) / 8 * r0**2 * (K1_prev / E_prev - K1_curr / E_curr) +
+        (1 - nu**2) / 3 * r0 * (K2_prev / E_prev - K2_curr / E_curr)
+    )
+    
+    # External pressure contribution
+    pressure_term = -Pe * (-2 * re**2) / (E_curr * (re**2 - r0**2))
+    
+    return term_ext - term_int + jump_term + pressure_term
+
+
+def _build_continuity_rhs_middle(
+    ri: float, r0: float, re: float,
+    E_prev: float, E_curr: float, nu: float,
+    J_prev: float, B_prev: float, J_curr: float, B_curr: float,
+    config: List[int]
+) -> float:
+    """
+    Build the right-hand side for internal interfaces.
+    
+    No pressure terms (pressures are at boundaries only).
+    """
+    K1_prev, K2_prev = compute_body_load_coefficients(J_prev, B_prev, ri, r0, config[0])
+    K1_curr, K2_curr = compute_body_load_coefficients(J_curr, B_curr, r0, re, config[1])
+    
+    term_ext = (
+        (1 + nu) / E_curr * re**2 * (K1_curr * (nu + 3) / 8 + K2_curr * (nu + 2) / (3 * (re + r0))) +
+        (1 - nu) / E_curr * (
+            (K2_curr * (nu + 2) / 3) * (re**2 + r0**2 + re * r0) / (re + r0) +
+            (re**2 + r0**2) * K1_curr * (nu + 3) / 8
+        )
+    )
+    
+    term_int = (
+        (1 + nu) / E_prev * ri**2 * (K1_prev * (nu + 3) / 8 + K2_prev * (nu + 2) / (3 * (r0 + ri))) +
+        (1 - nu) / E_prev * (
+            (K2_prev * (nu + 2) / 3) * (r0**2 + ri**2 + r0 * ri) / (r0 + ri) +
+            (r0**2 + ri**2) * K1_prev * (nu + 3) / 8
+        )
+    )
+    
+    jump_term = (
+        (1 - nu**2) / 8 * r0**2 * (K1_prev / E_prev - K1_curr / E_curr) +
+        (1 - nu**2) / 3 * r0 * (K2_prev / E_prev - K2_curr / E_curr)
+    )
+    
+    return term_ext - term_int + jump_term
+
+
+def _build_stiffness_row_first(
+    ri: float, r0: float, re: float,
+    E_prev: float, E_curr: float, nu: float
+) -> List[float]:
+    """
+    Build the first row of the stiffness matrix.
+    
+    Coefficients for [P1, P2] (P0 = Pi is not a variable).
+    """
+    # Diagonal coefficient (continuity at interface 1)
+    diag = (
+        ((1 + nu) * re**2 + (1 - nu) * r0**2) / (E_curr * (re**2 - r0**2)) +
+        ((1 + nu) * ri**2 + (1 - nu) * r0**2) / (E_prev * (r0**2 - ri**2))
+    )
+    
+    # Off-diagonal coefficient (coupling with P2)
+    off_diag = (-2 * re**2) / (E_curr * (re**2 - r0**2))
+    
+    return [diag, off_diag]
+
+
+def _build_stiffness_row_last(
+    ri: float, r0: float, re: float,
+    E_prev: float, E_curr: float, nu: float
+) -> List[float]:
+    """
+    Build the last row of the stiffness matrix.
+    
+    Coefficients for [P_{n-2}, P_{n-1}] (P_n = Pe is not a variable).
+    """
+    # Off-diagonal coefficient (coupling with P_{n-2})
+    off_diag = (-2 * ri**2) / (E_prev * (r0**2 - ri**2))
+    
+    # Diagonal coefficient
+    diag = (
+        ((1 + nu) * re**2 + (1 - nu) * r0**2) / (E_curr * (re**2 - r0**2)) +
+        ((1 + nu) * ri**2 + (1 - nu) * r0**2) / (E_prev * (r0**2 - ri**2))
+    )
+    
+    return [off_diag, diag]
+
+
+def _build_stiffness_row_middle(
+    ri: float, r0: float, re: float,
+    E_prev: float, E_curr: float, nu: float
+) -> List[float]:
+    """
+    Build an intermediate row of the stiffness matrix.
+    
+    Tridiagonal coefficients for [P_{i-1}, P_i, P_{i+1}].
+    """
+    # Sub-diagonal coefficient
+    sub_diag = (-2 * ri**2) / (E_prev * (r0**2 - ri**2))
+    
+    # Diagonal coefficient
+    diag = (
+        ((1 + nu) * re**2 + (1 - nu) * r0**2) / (E_curr * (re**2 - r0**2)) +
+        ((1 + nu) * ri**2 + (1 - nu) * r0**2) / (E_prev * (r0**2 - ri**2))
+    )
+    
+    # Super-diagonal coefficient
+    super_diag = (-2 * re**2) / (E_curr * (re**2 - r0**2))
+    
+    return [sub_diag, diag, super_diag]
+
+
+def compute_layer_stresses(
+    r: np.ndarray,
+    ri: float, re: float,
+    P_inner: float, P_outer: float,
+    K1: float, K2: float,
+    E: float, nu: float
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Compute stresses and displacements within a single layer.
+    
+    Parameters
+    ----------
+    r : np.ndarray
+        Radial positions [m]
+    ri, re : float
+        Inner and outer radii of the layer [m]
+    P_inner, P_outer : float
+        Pressures at inner and outer interfaces [Pa]
+    K1, K2 : float
+        Body load profile coefficients
+    E : float
+        Young's modulus [Pa]
+    nu : float
+        Poisson's ratio [-]
+        
+    Returns
+    -------
+    sigma_r, sigma_t, u_r : np.ndarray
+        Radial stress, hoop stress [Pa] and radial displacement [m]
+        
+    Notes
+    -----
+    Generalized Lamé solution with linear body load.
+    For passive layers (K1=K2=0), this reduces to the classical Lamé solution.
+    """
+    # Integration constants (modified Lamé equations)
+    C1 = (
+        K1 * (nu + 3) / 8 + 
+        K2 * (nu + 2) / (3 * (re + ri)) - 
+        (P_inner - P_outer) / (re**2 - ri**2)
+    )
+    
+    C2 = (
+        (K2 * (nu + 2) / 3) * (re**2 + ri**2 + re * ri) / (re + ri) +
+        (P_outer * re**2 - P_inner * ri**2) / (re**2 - ri**2) +
+        (re**2 + ri**2) * K1 * (nu + 3) / 8
+    )
+    
+    # Radial stress: σr = A/r² + B·r² + C·r + D
+    sigma_r = (
+        re**2 * ri**2 / r**2 * C1 + 
+        K1 * (nu + 3) / 8 * r**2 + 
+        K2 * (nu + 2) / 3 * r - 
+        C2
+    )
+    
+    # Hoop stress: σθ = -A/r² + B'·r² + C'·r + D
+    sigma_t = (
+        -re**2 * ri**2 / r**2 * C1 + 
+        K1 * (3 * nu + 1) / 8 * r**2 + 
+        K2 * (2 * nu + 1) / 3 * r - 
+        C2
+    )
+    
+    # Radial displacement (generalized plane strain Hooke's law)
+    u_r = r / E * (
+        -re**2 * ri**2 / r**2 * C1 * (1 + nu) + 
+        (1 - nu**2) / 8 * K1 * r**2 +
+        (1 - nu**2) / 3 * K2 * r - 
+        C2 * (1 - nu)
+    )
+    
+    return sigma_r, sigma_t, u_r
+
+
+def F_CIRCE0D(
+    n_points: int,
+    R: List[float],
+    J: List[float],
+    B: List[float],
+    Pi: float,
+    Pe: float,
+    E: List[float],
+    nu: float,
+    config: List[int]
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Main stress solver for multilayer cylinders.
+    
+    Solves the axisymmetric elasticity problem for a stack of n concentric
+    cylinders subjected to pressures and electromagnetic body loads (J × B).
+    
+    This function supports heterogeneous structures where:
+    - Active layers (conductors) have J > 0 and experience Lorentz forces
+    - Passive layers (structural) have J = 0 and only transmit stresses
+    
+    Parameters
+    ----------
+    n_points : int
+        Number of radial discretization points per layer
+    R : List[float]
+        Interface radii [m], length (n_layers + 1)
+        R = [r0, r1, r2, ..., rn] where r0 is the inner radius
+    J : List[float]
+        Current densities per layer [A/m²]
+        Use J=0 for passive/structural layers
+    B : List[float]
+        Characteristic magnetic fields per layer [T]
+        For passive layers, this value is irrelevant (multiplied by J=0)
+    Pi : float
+        Internal pressure (at r = R[0]) [Pa]
+    Pe : float
+        External pressure (at r = R[-1]) [Pa]
+    E : List[float]
+        Young's moduli per layer [Pa]
+        Typical values: ~50 GPa for smeared conductor, ~200 GPa for steel
+    nu : float
+        Poisson's ratio (assumed identical for all layers) [-]
+    config : List[int]
+        Field profile configuration per layer:
+        - 1 : Decreasing field (max at r_inner)
+        - 2 : Increasing field (max at r_outer)
+        For passive layers, this value is irrelevant
+        
+    Returns
+    -------
+    sigma_r : np.ndarray
+        Radial stress over the entire domain [Pa]
+    sigma_t : np.ndarray
+        Hoop stress over the entire domain [Pa]
+    u_r : np.ndarray
+        Radial displacement over the entire domain [m]
+    r_vec : np.ndarray
+        Corresponding radial positions [m]
+    P : np.ndarray
+        Pressures at interfaces (including Pi and Pe) [Pa]
+        
+    Raises
+    ------
+    ValueError
+        If input dimensions are inconsistent
+        
+    Examples
+    --------
+    >>> # Two-layer case: conductor + steel jacket
+    >>> R = [1.0, 1.5, 1.7]           # radii [m]
+    >>> J = [50e6, 0.0]               # current density: conductor, passive steel
+    >>> B = [13.0, 0.0]               # magnetic field [T]
+    >>> E = [50e9, 200e9]             # Young's modulus: smeared conductor, steel
+    >>> sigma_r, sigma_t, u_r, r, P = F_CIRCE0D(50, R, J, B, 0, 0, E, 0.3, [1, 1])
+    """
+    n_layers = len(E)
+    
+    # Input validation
+    if len(R) != n_layers + 1:
+        raise ValueError(f"R must have {n_layers + 1} elements, got {len(R)}")
+    if len(J) != n_layers or len(B) != n_layers or len(config) != n_layers:
+        raise ValueError("J, B, and config must have the same number of elements as E")
+    
+    # --- Solve for interface pressures ---
+    
+    if n_layers == 1:
+        # Trivial case: single layer, no internal interfaces
+        P = np.array([Pi, Pe])
+        
+    elif n_layers == 2:
+        # Two-layer case: single unknown pressure P1
+        # Scalar system: MG * P1 = MD
+        
+        ri, r0, re = R[0], R[1], R[2]
+        E_prev, E_curr = E[0], E[1]
+        
+        # Stiffness matrix (scalar)
+        MG = (
+            ((1 + nu) * re**2 + (1 - nu) * r0**2) / (E_curr * (re**2 - r0**2)) +
+            ((1 + nu) * ri**2 + (1 - nu) * r0**2) / (E_prev * (r0**2 - ri**2))
+        )
+        
+        # Right-hand side (body loads + boundary pressures)
+        MD = _build_continuity_rhs_first(
+            ri, r0, re, E_prev, E_curr, nu,
+            J[0], B[0], J[1], B[1], Pi, [config[0], config[1]]
+        )
+        MD += -Pe * (-2 * re**2) / (E_curr * (re**2 - r0**2))
+        
+        P1 = MD / MG
+        P = np.array([Pi, P1, Pe])
+        
+    else:
+        # General case: n_layers - 1 unknown pressures
+        # Tridiagonal matrix system: MG @ P_vec = MD
+        
+        n_unknowns = n_layers - 1
+        MG = np.zeros((n_unknowns, n_unknowns))
+        MD = np.zeros(n_unknowns)
+        
+        for i in range(n_unknowns):
+            # Interface i+1 is between layer i and layer i+1
+            ri = R[i]
+            r0 = R[i + 1]
+            re = R[i + 2]
+            E_prev = E[i]
+            E_curr = E[i + 1]
+            
+            if i == 0:
+                # First interface
+                row = _build_stiffness_row_first(ri, r0, re, E_prev, E_curr, nu)
+                MG[i, i:i+2] = row
+                MD[i] = _build_continuity_rhs_first(
+                    ri, r0, re, E_prev, E_curr, nu,
+                    J[i], B[i], J[i+1], B[i+1], Pi,
+                    [config[i], config[i+1]]
+                )
+                
+            elif i == n_unknowns - 1:
+                # Last interface
+                row = _build_stiffness_row_last(ri, r0, re, E_prev, E_curr, nu)
+                MG[i, i-1:i+1] = row
+                MD[i] = _build_continuity_rhs_last(
+                    ri, r0, re, E_prev, E_curr, nu,
+                    J[i], B[i], J[i+1], B[i+1], Pe,
+                    [config[i], config[i+1]]
+                )
+                
             else:
-                MGtot[ilayer - 2, ilayer - 3 : ilayer] = MGv2(R[ilayer - 2], R[ilayer - 1], R[ilayer],
-                                                               E[ilayer - 2], E[ilayer - 1], nu)
-                MDtot[ilayer - 2] = MDv2(R[ilayer - 2], R[ilayer - 1], R[ilayer], E[ilayer - 2], E[ilayer - 1], nu,
-                                         J[ilayer - 2], B[ilayer - 2], J[ilayer - 1], B[ilayer - 1],
-                                         [config[ilayer - 2], config[ilayer - 1]])
+                # Intermediate interface
+                row = _build_stiffness_row_middle(ri, r0, re, E_prev, E_curr, nu)
+                MG[i, i-1:i+2] = row
+                MD[i] = _build_continuity_rhs_middle(
+                    ri, r0, re, E_prev, E_curr, nu,
+                    J[i], B[i], J[i+1], B[i+1],
+                    [config[i], config[i+1]]
+                )
+        
+        # Solve linear system
+        P_internal = np.linalg.solve(MG, MD)
+        P = np.concatenate([[Pi], P_internal, [Pe]])
     
-
-        P = np.linalg.inv(MGtot) @ MDtot
-        SigRtot = []
-        SigTtot = []
-        urtot = []
-        P = [[Pi], P,[ Pe]]
-        Rvec = []
-        P = np.vstack(P)
-
-    for ilayer in range(nlayer):
-        K1 = J[ilayer] * B[ilayer] / (R[ilayer + 1] - R[ilayer])
-        if config[ilayer] == 1:
-            K2 = -J[ilayer] * B[ilayer] * R[ilayer] / (R[ilayer + 1] - R[ilayer])
-        else:
-            K2 = -J[ilayer] * B[ilayer] * R[ilayer + 1] / (R[ilayer + 1] - R[ilayer])
-
-        re = R[ilayer + 1]
-        ri = R[ilayer]
-        r = np.linspace(R[ilayer], R[ilayer + 1],  disR)
+    # --- Compute stresses and displacements per layer ---
+    
+    sigma_r_list = []
+    sigma_t_list = []
+    u_r_list = []
+    r_list = []
+    
+    for i in range(n_layers):
+        ri = R[i]
+        re = R[i + 1]
         
-        C1 = K1 * (nu + 3) / 8 + K2 * (nu + 2) / (3 * (re + ri)) - (P[ilayer] - P[ilayer + 1]) / (re**2 - ri**2)
-        C2 = (K2 * (nu + 2) / 3) * ((re**2 + ri**2 + re * ri) / (re + ri)) + \
-             (P[ilayer + 1] * re**2 - P[ilayer] * ri**2) / (re**2 - ri**2) + \
-             (re**2 + ri**2) * K1 * (nu + 3) / 8
+        K1, K2 = compute_body_load_coefficients(J[i], B[i], ri, re, config[i])
         
-        SigR = re**2 * ri**2 / r**2 * C1 + K1 * (nu + 3) / 8 * r**2 + K2 * (nu + 2) / 3 * r - C2
-        SigT = -re**2 * ri**2 / r**2 * C1 + K1 * (3 * nu + 1) / 8 * r**2 + K2 * (2 * nu + 1) / 3 * r - C2
-        ur = r / E[ilayer] * (-re**2 * ri**2 / r**2 * C1 * (1 + nu) + (1 - nu**2) / 8 * K1 * r**2 + \
-                               (1 - nu**2) / 3 * K2 * r - C2 * (1 - nu))
+        r = np.linspace(ri, re, n_points)
         
-        SigRtot.append(SigR)
-        SigTtot.append(SigT)
-        urtot.append(ur)
-        Rvec.append(r)
-      
-    SigRtot = np.concatenate(SigRtot)
-    SigTtot = np.concatenate(SigTtot)
-    urtot = np.concatenate(urtot)
-    Rvec = np.concatenate(Rvec)  
+        sigma_r, sigma_t, u_r = compute_layer_stresses(
+            r, ri, re, P[i], P[i+1], K1, K2, E[i], nu
+        )
+        
+        sigma_r_list.append(sigma_r)
+        sigma_t_list.append(sigma_t)
+        u_r_list.append(u_r)
+        r_list.append(r)
+    
+    # Concatenate results
+    sigma_r_total = np.concatenate(sigma_r_list)
+    sigma_t_total = np.concatenate(sigma_t_list)
+    u_r_total = np.concatenate(u_r_list)
+    r_vec = np.concatenate(r_list)
+    
+    return sigma_r_total, sigma_t_total, u_r_total, r_vec, P
 
-    return SigRtot, SigTtot, urtot, Rvec, P
+
+def compute_von_mises_stress(sigma_r: np.ndarray, sigma_t: np.ndarray) -> np.ndarray:
+    """
+    Compute von Mises equivalent stress in axisymmetric conditions.
+    
+    For an axisymmetric stress state (σr, σθ, σz=0):
+        σ_VM = sqrt(σr² + σθ² - σr·σθ)
+    
+    Parameters
+    ----------
+    sigma_r : np.ndarray
+        Radial stress [Pa]
+    sigma_t : np.ndarray
+        Hoop stress [Pa]
+        
+    Returns
+    -------
+    sigma_vm : np.ndarray
+        von Mises stress [Pa]
+    """
+    return np.sqrt(sigma_r**2 + sigma_t**2 - sigma_r * sigma_t)
+
+
+def compute_tresca_stress(sigma_r: np.ndarray, sigma_t: np.ndarray) -> np.ndarray:
+    """
+    Compute Tresca equivalent stress in axisymmetric conditions.
+    
+    Parameters
+    ----------
+    sigma_r : np.ndarray
+        Radial stress [Pa]
+    sigma_t : np.ndarray
+        Hoop stress [Pa]
+        
+    Returns
+    -------
+    sigma_tresca : np.ndarray
+        Tresca stress [Pa]
+    """
+    sigma_z = np.zeros_like(sigma_r)  # Zero axial stress
+    
+    # Principal stress differences
+    diff1 = np.abs(sigma_r - sigma_t)
+    diff2 = np.abs(sigma_t - sigma_z)
+    diff3 = np.abs(sigma_z - sigma_r)
+    
+    return np.maximum(np.maximum(diff1, diff2), diff3)
+
+
+#%% TEST CASES CIRCE
+
+if __name__ == "__main__":
+    import matplotlib.pyplot as plt
+    
+    print("=" * 70)
+    print("F_CIRCE0D - Validation Tests")
+    print("=" * 70)
+    
+    nu = 0.3  # Poisson's ratio (common to all tests)
+    
+    # --- Test 1: Simple cylinder under pressure (Lamé validation) ---
+    print("\n--- Test 1: Pressurized cylinder (Lamé solution) ---")
+    
+    R_lame = [1.0, 2.0]
+    J_lame = [0.0]  # No current (passive)
+    B_lame = [0.0]
+    E_lame = [200e9]  # Steel
+    Pi_lame = 100e6  # 100 MPa internal pressure
+    Pe_lame = 0.0
+    
+    sigma_r, sigma_t, u_r, r, P = F_CIRCE0D(
+        100, R_lame, J_lame, B_lame, Pi_lame, Pe_lame, E_lame, nu, [1]
+    )
+    
+    # Analytical Lamé solution
+    a, b = R_lame[0], R_lame[1]
+    sigma_r_lame = Pi_lame * a**2 / (b**2 - a**2) * (1 - b**2 / r**2)
+    sigma_t_lame = Pi_lame * a**2 / (b**2 - a**2) * (1 + b**2 / r**2)
+    
+    err_r = np.max(np.abs(sigma_r - sigma_r_lame)) / Pi_lame * 100
+    err_t = np.max(np.abs(sigma_t - sigma_t_lame)) / Pi_lame * 100
+    
+    print(f"  Max error σr: {err_r:.2e} %")
+    print(f"  Max error σθ: {err_t:.2e} %")
+    print(f"  σr(ri) = {sigma_r[0]/1e6:.2f} MPa (expected: {-Pi_lame/1e6:.2f} MPa)")
+    print(f"  σr(re) = {sigma_r[-1]/1e6:.2f} MPa (expected: 0 MPa)")
+    
+    # --- Test 2: CS with 3 active layers ---
+    print("\n--- Test 2: Central Solenoid with 3 active layers ---")
+    
+    # ITER-like CS parameters
+    R_cs = [1.3, 1.5, 1.7, 2.0]  # 3 layers
+    J_cs = [40e6, 45e6, 50e6]    # Increasing current density
+    B_cs = [13.0, 11.0, 8.0]    # Decreasing field
+    E_cs = [50e9, 50e9, 50e9]   # Smeared conductor modulus
+    Pi_cs = 0.0
+    Pe_cs = 0.0
+    config_cs = [1, 1, 1]  # All decreasing field profile
+    
+    sigma_r_cs, sigma_t_cs, u_r_cs, r_cs, P_cs = F_CIRCE0D(
+        50, R_cs, J_cs, B_cs, Pi_cs, Pe_cs, E_cs, nu, config_cs
+    )
+    
+    sigma_vm_cs = compute_von_mises_stress(sigma_r_cs, sigma_t_cs)
+    
+    print(f"  Max σθ: {np.max(np.abs(sigma_t_cs))/1e6:.1f} MPa")
+    print(f"  Max σ_VM: {np.max(sigma_vm_cs)/1e6:.1f} MPa")
+    print(f"  Max displacement: {np.max(np.abs(u_r_cs))*1000:.3f} mm")
+    
+    # --- Test 3: COMPOSITE STRUCTURE - Conductor + Steel jacket ---
+    print("\n--- Test 3: Composite structure (Conductor + Steel jacket) ---")
+    
+    # Configuration: superconducting winding pack + external steel jacket
+    # The conductor generates J×B forces, the steel jacket provides structural support
+    
+    R_composite = [1.0, 1.4, 1.5]  # Inner conductor (40 cm), steel jacket (10 cm)
+    J_composite = [50e6, 0.0]      # Current only in conductor, J=0 in steel
+    B_composite = [13.0, 0.0]      # Field in conductor region, irrelevant for steel
+    E_composite = [50e9, 200e9]    # Smeared conductor (~50 GPa), Steel (~200 GPa)
+    Pi_composite = 0.0
+    Pe_composite = 0.0
+    config_composite = [1, 1]      # Decreasing field in conductor
+    
+    sigma_r_comp, sigma_t_comp, u_r_comp, r_comp, P_comp = F_CIRCE0D(
+        100, R_composite, J_composite, B_composite, 
+        Pi_composite, Pe_composite, E_composite, nu, config_composite
+    )
+    
+    sigma_vm_comp = compute_von_mises_stress(sigma_r_comp, sigma_t_comp)
+    
+    # Find interface index
+    idx_interface = np.argmin(np.abs(r_comp - R_composite[1]))
+    
+    # Separate conductor and steel regions
+    sigma_vm_cond = sigma_vm_comp[:idx_interface+1]
+    sigma_vm_steel = sigma_vm_comp[idx_interface:]
+    
+    print(f"  Geometry:")
+    print(f"    - Conductor: ri={R_composite[0]} m, re={R_composite[1]} m, E={E_composite[0]/1e9:.0f} GPa")
+    print(f"    - Steel jacket: ri={R_composite[1]} m, re={R_composite[2]} m, E={E_composite[1]/1e9:.0f} GPa")
+    print(f"  Results:")
+    print(f"    Conductor - Max σ_VM: {np.max(sigma_vm_cond)/1e6:.1f} MPa")
+    print(f"    Steel jacket - Max σ_VM: {np.max(sigma_vm_steel)/1e6:.1f} MPa")
+    print(f"    Radial displacement at outer surface: {u_r_comp[-1]*1000:.3f} mm")
+    
+    # --- Generate figures ---
+    print("\n--- Generating figures ---")
+    
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4.5))
+    
+    # Test 1: Lamé validation
+    ax1 = axes[0]
+    ax1.plot(r, sigma_r/1e6, 'b-', linewidth=2, label='σr (CIRCE0D)')
+    ax1.plot(r, sigma_t/1e6, 'r-', linewidth=2, label='σθ (CIRCE0D)')
+    ax1.plot(r, sigma_r_lame/1e6, 'b--', linewidth=1.5, label='σr (Lamé)')
+    ax1.plot(r, sigma_t_lame/1e6, 'r--', linewidth=1.5, label='σθ (Lamé)')
+    ax1.set_xlabel('r [m]')
+    ax1.set_ylabel('Stress [MPa]')
+    ax1.set_title('Test 1: Pressurized cylinder (Lamé)')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # Test 2: CS 3 layers
+    ax2 = axes[1]
+    ax2.plot(r_cs, sigma_r_cs/1e6, 'b-', linewidth=2, label='σr')
+    ax2.plot(r_cs, sigma_t_cs/1e6, 'r-', linewidth=2, label='σθ')
+    ax2.plot(r_cs, sigma_vm_cs/1e6, 'g--', linewidth=2, label='σ_VM')
+    for ri in R_cs[1:-1]:
+        ax2.axvline(ri, color='gray', linestyle=':', alpha=0.5)
+    ax2.set_xlabel('r [m]')
+    ax2.set_ylabel('Stress [MPa]')
+    ax2.set_title('Test 2: CS with 3 active layers')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    # Test 3: Composite (conductor + steel)
+    ax3 = axes[2]
+    ax3.plot(r_comp, sigma_r_comp/1e6, 'b-', linewidth=2, label='σr')
+    ax3.plot(r_comp, sigma_t_comp/1e6, 'r-', linewidth=2, label='σθ')
+    ax3.plot(r_comp, sigma_vm_comp/1e6, 'g--', linewidth=2, label='σ_VM')
+    ax3.axvline(R_composite[1], color='orange', linestyle='-', linewidth=2)
+    ax3.axvspan(R_composite[0], R_composite[1], alpha=0.2, color='blue', label='Conductor')
+    ax3.axvspan(R_composite[1], R_composite[2], alpha=0.2, color='gray', label='Steel')
+    ax3.set_xlabel('r [m]')
+    ax3.set_ylabel('Stress [MPa]')
+    ax3.set_title('Test 3: Conductor + Steel jacket')
+    ax3.legend(loc='upper right', fontsize=8)
+    ax3.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.show()
 
 #%% print
 
@@ -1449,7 +1982,7 @@ if __name__ == "__main__":
         Ip_cs, I_Ohm_cs, B_max_TF_cs,
         a_cs, b_cs, c_cs, R0_cs,
         κ_cs, nbar_cs, Tbar_cs,
-        Ce_cs, Temps_Plateau_cs, Li_cs
+        Ce_cs, Temps_Plateau_cs, Li_cs, configuration 
     )
     
     # Print benchmark results in a clear format
@@ -1617,7 +2150,7 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     if d_SU <= Tol_CS or d_SU >= RCS_ext - Tol_CS:
         if debug:
             print(f"[STEP 1] Invalid d_SU: {d_SU:.4f} m (out of physical bounds)")
-        return (np.nan, np.nan, np.nan, np.nan)
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
     
     # Recompute B_CS with thick solenoid formula for accuracy
     B_CS = 3 * ΨCS / (2 * np.pi * (RCS_ext**2 + RCS_ext * RCS_sep + RCS_sep**2))
@@ -1625,7 +2158,7 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     if B_CS > B_max_CS:
         if debug:
             print(f"[STEP 1] Too high B_CS")
-        return (np.nan, np.nan, np.nan, np.nan)
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
     
     if debug:
         print(f"[STEP 1] Superconductor sizing complete:")
@@ -2451,11 +2984,10 @@ def f_CS_CIRCE( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
     
     # define helper function for root search
     def f_sigma_diff(d):
-        B_CS, Sigma_CS, alpha, J_max_CS = d_to_solve(d)
+        Sigma_CS, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = d_to_solve(d)
         if not np.isfinite(Sigma_CS):
             return np.nan
-        val = Sigma_CS - σ_CS 
-        return val  # we want this to be 0
+        return Sigma_CS - σ_CS # we want this to be 0
     
     # --------------------------------------------------------------
     # Sign change detection
@@ -2522,7 +3054,7 @@ def f_CS_CIRCE( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
             if np.isnan(d_sol):
                 continue
             try:
-                σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = d_to_solve(d_sol)
+                Sigma_CS, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = d_to_solve(d_sol)
                 valid_solutions.append((d_sol, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS))
             except Exception:
                 continue
@@ -2575,6 +3107,7 @@ if __name__ == "__main__":
         Supra_Choice, T_CS = p["SupraChoice"], p["T_CS"]
         J_CS = p["J_CS"]
         config = p["config"]  # Get machine-specific configuration
+        T_Helium = p["T_CS"]
         
         B_max_CS = 50
 
@@ -2605,8 +3138,8 @@ if __name__ == "__main__":
             "Config":         config,
             "Ψ [Wb]":         Ψplateau,
             "σ_CS [MPa]":     σ / 1e6,
-            "Width [m]":      clean_result(acad[0]),
-            "B_CS [T]":       clean_result(acad[2]),
+            "Width [m]":      clean_result(acad[0]),   # d
+            "B_CS [T]":       clean_result(acad[5]),   # B_CS (index 5, pas 2!)
         })
         
         rows_D0FUS.append({
@@ -2615,7 +3148,7 @@ if __name__ == "__main__":
             "Ψ [Wb]":         Ψplateau,
             "σ_CS [MPa]":     σ / 1e6,
             "Width [m]":      clean_result(d0fus[0]),
-            "B_CS [T]":       clean_result(d0fus[2]),
+            "B_CS [T]":       clean_result(d0fus[5]),  # B_CS
         })
         
         rows_CIRCE.append({
@@ -2624,7 +3157,7 @@ if __name__ == "__main__":
             "Ψ [Wb]":         Ψplateau,
             "σ_CS [MPa]":     σ / 1e6,
             "Width [m]":      clean_result(circe[0]),
-            "B_CS [T]":       clean_result(circe[2]),
+            "B_CS [T]":       clean_result(circe[5]),  # B_CS
         })
     
     # === Print table D0FUS ===
@@ -2667,7 +3200,7 @@ if __name__ == "__main__":
     J_CS = 120e6 # Directly cited in Sarasola paper
     
     # === Ψplateau scan range ===
-    psi_values = np.linspace(0, 500, 100)
+    psi_values = np.linspace(0, 500, 30)
 
     # === Result storage ===
     results = {
@@ -2712,13 +3245,13 @@ if __name__ == "__main__":
     
             # --- Store results ---
             results["Academic"][config]["thickness"].append(res_acad[0])
-            results["Academic"][config]["B"].append(res_acad[2])
+            results["Academic"][config]["B"].append(res_acad[5])
     
             results["D0FUS"][config]["thickness"].append(res_d0fus[0])
-            results["D0FUS"][config]["B"].append(res_d0fus[2])
+            results["D0FUS"][config]["B"].append(res_d0fus[5])
     
             results["CIRCE"][config]["thickness"].append(res_CIRCE[0])
-            results["CIRCE"][config]["B"].append(res_CIRCE[2])
+            results["CIRCE"][config]["B"].append(res_CIRCE[5])
     
     # === Fin des calculs ===
     print("\n=== Temps d'exécution total par modèle ===")

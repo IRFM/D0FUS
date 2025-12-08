@@ -1,0 +1,25 @@
+# D0FUS Input Parameters
+# Generated on 2025-12-08 08:50:30
+
+P_fus = 2000
+R0 = 5.774447496629836
+a = 1.3233658194445235
+Option_Kappa = Wenninger
+κ_manual = 1.7
+Bmax = 18.275067243456157
+Supra_choice = Rebco
+Radial_build_model = D0FUS
+b = 1.2
+Choice_Buck_Wedg = Wedging
+Chosen_Steel = 316L
+Scaling_Law = IPB98(y,2)
+H = 1
+Tbar = 14
+nu_T = 1
+nu_n = 0.1
+L_H_Scaling_choice = New_Ip
+Bootstrap_choice = Freidberg
+Operation_mode = Steady-State
+Temps_Plateau_input = 0
+P_aux_input = 0
+fatigue = 1

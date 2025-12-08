@@ -1,84 +1,113 @@
 """
-Created on: Dec 2023
-Author: Auclair Timothe
+D0FUS Parameterization Module
+==============================
+Physical constants, material properties, and default parameters for tokamak design.
+
+Created: December 2023
+Author: Auclair Timothé
 """
-#%% Import
+
+#%% Imports
 
 from .D0FUS_import import *
 
-#%% Code
+#%% Physical Constants
 
-# Physical constants
-E_ELEM  = 1.6e-19           # Electron charge [Coulomb]
-M_E     = 9.1094E-31        # kg
-M_I     = 2 * 1.6726E-27    # kg
-μ0      = 4.*np.pi*1.E-7    # Henri/m
-EPS_0   = 8.8542E-12        # Farad/m
+# Fundamental constants
+E_ELEM = 1.6e-19            # Elementary charge [C]
+M_E = 9.1094e-31            # Electron mass [kg]
+M_I = 2 * 1.6726e-27        # Ion mass (deuterium) [kg]
+μ0 = 4.0 * np.pi * 1.0e-7   # Vacuum permeability [H/m]
+EPS_0 = 8.8542e-12          # Vacuum permittivity [F/m]
 
-# Fusion constants
-E_ALPHA = 3.5 *1.E6*E_ELEM  # Joule
-E_N     = 14.1*1.E6*E_ELEM  # Joule
-E_F     = 22.4*1.E6*E_ELEM  # Joule (considering all N react with Li)
-Atomic_mass  = 2.5          # average atomic mass in AMU
-Zeff = 1                    # Zeff du plasma (default :1)
-r_synch = 0.5               # Synchrotron reflection coefficient of the wall
+#%% Fusion Reaction Parameters
 
-# Plasma stability limits
-betaN_limit = 2.8  # Beta Troyon limit
-q_limit = 2.5      # Safety factor limit
+# Energy release per reaction
+E_ALPHA = 3.5 * 1.0e6 * E_ELEM   # Alpha particle energy [J]
+E_N = 14.1 * 1.0e6 * E_ELEM      # Neutron energy [J]
+E_F = 22.4 * 1.0e6 * E_ELEM      # Total fusion energy (assuming all neutrons react with Li) [J]
 
-# Steel
-σ_manual = 1500         # MPa
-nu_Steel = 0.29         # Poisson's ratio [CIRCEE model]
-Young_modul_Steel = 200e9   # Young modulus for steel [CIRCEE model]
-Young_modul_Glass_Fiber = 90e9  # Young modulus for glass fiber [CIRCEE model]
-# S glass found in https://www.engineeringtoolbox.com/polymer-composite-fibers-d_1226.html
+# Plasma composition
+Atomic_mass = 2.5       # Average atomic mass [AMU]
+Zeff = 1                # Effective charge (default: 1)
+r_synch = 0.5           # Synchrotron radiation reflection coefficient
 
-C_Alpha = 5     # Helium dilution tuning parameter
+#%% Plasma Stability Limits
 
-# Flux
-Ce = 0.45            # Ejima constant
-ITERPI = 20          # ITER plasma induction current [Wb]
+betaN_limit = 2.8       # Troyon beta limit [% m T/MA]
+q_limit = 2.5           # Minimum safety factor (q95 or q*)
+ms = 0.3                # Vertical stability margin parameter
 
-# TF
-coef_inboard_tension = 1/2    # Paramètre représentant la répartition jambe interne / externe de la tension
-F_CClamp = 0e6                # C-Clamp limit in N , max order of magnitude from DDD : 30e6 N and of 60e6 N from [Bachmann (2023) FED]
-n_TF = 1                      # Asymetry conductor parameter 
-c_BP = 0.07                   # Backplate thickness [m]
+#%% Material Properties
 
-# CS
-Gap = 0.1            # Gap between wedging and bucking CS and TF [m]
-n_CS = 1
+# Structural steel
+σ_manual = 1500                 # Manual stress limit [MPa]
+nu_Steel = 0.29                 # Poisson's ratio (CIRCEE model)
+Young_modul_Steel = 200e9       # Young's modulus [Pa] (CIRCEE model)
+Young_modul_Glass_Fiber = 90e9  # Young's modulus for S-glass fiber [Pa]
+# Reference: https://www.engineeringtoolbox.com/polymer-composite-fibers-d_1226.html
 
-# Current density scaling
-T_helium = 4.2           # K temeprature de l'helium considéré
-Marge_T_Helium = 0.3     # Puisque l'helium est à 10 barre, il est poussé à 0.3 K au dessus de la consigne à 1 Bar
-Marge_CS = -1            # Puisque le CS n'est pas soumis à un flux neutronique, les marges sont plus souples
-f_Cu = 0.5               # Copper fraction
-f_Cool = 0.7             # Cooling fraction
-f_In = 0.75              # Insulation fraction
-# Rebco
-Tet = 0 # Orientation pessimiste
-Marge_T_Rebco = 5 #K
-# Nb3Sn
-Eps = -0.6 / 100 # Deformation criteria
-Marge_T_Nb3Sn = 2 #K
-# NbTi
-Marge_T_NbTi = 1.7 #K
+#%% Plasma Performance Parameters
 
-# Conversion efficiencies      
-eta_T = 0.4          # Ratio between thermal and electrical power
-eta_RF = 0.8 * 0.5   # fraction of klystron power absorbed by plasma * conversion efficiency from wall power to klystron
+C_Alpha = 5             # Helium ash dilution tuning parameter
 
-# PFU
-theta_deg = 2.7      # Angle d'incidence sur les PFU pour calcul du flux de chaleur
-# Source 1: T. R. Reiter, “Basic Fusion Boundary Plasma Physics,” ITER School Lecture Notes, Jan. 21 2019
-# Source 2: “SOLPS-ITER simulations of the ITER divertor with improved plasma conditions,” Journal of Nuclear Materials (2024) )
+#%% Magnetic Flux Parameters
 
+Ce = 0.45               # Ejima constant (flux consumption)
+ITERPI = 20             # ITER plasma induction flux [Wb]
 
-#%% Numerical initialisation
+#%% Toroidal Field (TF) Coil Parameters
 
-# Hide runtime-related warnings
+coef_inboard_tension = 1/2      # Stress distribution ratio (inboard/outboard leg)
+F_CClamp = 0e6                  # C-Clamp structural limit [N]
+                                # Typical range: 30e6 N (DDD) to 60e6 N (Bachmann 2023, FED)
+n_TF = 1                        # Conductor asymmetry parameter
+c_BP = 0.07                     # Backplate thickness [m]
+
+#%% Central Solenoid (CS) Parameters
+
+Gap = 0.1               # Clearance between CS wedging/bucking and TF [m]
+n_CS = 1                # CS conductor parameter
+
+#%% Superconductor Operating Conditions
+
+# Helium cooling
+T_helium = 4.2          # Liquid helium temperature [K]
+Marge_T_Helium = 0.3    # Temperature margin at 10 bar operation [K]
+
+# Conductor fractions
+f_Cu = 0.5              # Copper stabilizer fraction
+f_Cool = 0.7            # Cooling channel fraction
+f_In = 0.75             # Insulation fraction
+
+# REBCO (Rare-Earth Barium Copper Oxide)
+Tet = 0                 # Tape orientation angle (pessimistic: perpendicular to field) [deg]
+Marge_T_Rebco = 5       # Temperature margin [K]
+
+# Nb3Sn (Niobium-Tin)
+Eps = -0.6 / 100        # Strain criterion (compressive)
+Marge_T_Nb3Sn = 2       # Temperature margin [K]
+Marge_CS = -1           # Reduced CS margin (lower neutron flux environment)
+
+# NbTi (Niobium-Titanium)
+Marge_T_NbTi = 1.7      # Temperature margin [K]
+
+#%% Power Conversion Efficiencies
+
+eta_T = 0.4             # Thermal-to-electric conversion efficiency
+eta_RF = 0.8 * 0.5      # RF heating efficiency (klystron efficiency × plasma absorption)
+
+#%% Plasma-Facing Components (PFU)
+
+theta_deg = 2.7         # Grazing angle at divertor strike point [deg]
+# References:
+# - T. R. Reiter, "Basic Fusion Boundary Plasma Physics," ITER School Lecture Notes (2019)
+# - "SOLPS-ITER simulations of the ITER divertor with improved plasma conditions," 
+#   Journal of Nuclear Materials (2024)
+
+#%% Numerical Configuration
+
+# Suppress runtime warnings for cleaner output
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 #%%
