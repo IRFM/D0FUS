@@ -115,9 +115,8 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
     σ_CS = Steel(Chosen_Steel) / fatigue
     
     # Current densities in coils
-    J_max_TF_conducteur = Jc(Supra_choice, Bmax, T_helium) * f_Cu * f_Cool * f_In
-    J_max_CS_conducteur = Jc(Supra_choice, Bmax, T_helium + Marge_CS) * f_Cu * f_Cool * f_In
-    
+    J_max_TF_conducteur = Jc(Supra_choice, Bmax, T_helium) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
+    J_max_CS_conducteur = Jc(Supra_choice, Bmax, T_helium) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
     # Fraction of vertical tension allocated to the winding pack of the TF coils
     if Choice_Buck_Wedg == "Wedging":
         omega_TF = 1/2
@@ -520,17 +519,17 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
         (c, c_WP_TF, c_Nose_TF, σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF) = f_TF_academic(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg)
         (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, I_Ohm_solution, Bmax, a, b, c, R0, κ, nbar_solution, Tbar, Ce, Temps_Plateau_input, li_solution, Choice_Buck_Wedg)
         (d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS, J_CS) = f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, Bmax, σ_CS,
-                           Supra_choice, J_max_CS_conducteur, T_helium, f_Cu, f_Cool, f_In, Choice_Buck_Wedg)
+                           Supra_choice, J_max_CS_conducteur, T_helium,f_Cu_Non_Cu , f_Cu_Strand , f_Cool , f_In, Choice_Buck_Wedg)
     elif Radial_build_model == "D0FUS":
         (c, c_WP_TF, c_Nose_TF, σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF) = f_TF_D0FUS(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg, omega_TF, n_TF)
         (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, I_Ohm_solution, Bmax, a, b, c, R0, κ, nbar_solution, Tbar, Ce, Temps_Plateau_input, li_solution, Choice_Buck_Wedg)
         (d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS, J_CS) = f_CS_D0FUS(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, Bmax, σ_CS,
-                           Supra_choice, J_max_CS_conducteur, T_helium, f_Cu, f_Cool, f_In, Choice_Buck_Wedg)
+                           Supra_choice, J_max_CS_conducteur, T_helium, f_Cu_Non_Cu , f_Cu_Strand , f_Cool , f_In, Choice_Buck_Wedg)
     elif Radial_build_model == "CIRCEE":
         (c, c_WP_TF, c_Nose_TF, σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF) = f_TF_D0FUS(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg, omega_TF, n_TF)
         (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, I_Ohm_solution, Bmax, a, b, c, R0, κ, nbar_solution, Tbar, Ce, Temps_Plateau_input, li_solution, Choice_Buck_Wedg)
         (d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS, J_CS) = f_CS_CIRCEE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, Bmax, σ_CS,
-                           Supra_choice, J_max_CS_conducteur, T_helium, f_Cu, f_Cool, f_In, Choice_Buck_Wedg)
+                           Supra_choice, J_max_CS_conducteur, T_helium, f_Cu_Non_Cu , f_Cu_Strand , f_Cool , f_In, Choice_Buck_Wedg)
     else:
         print('Choose a valid mechanical model')
     

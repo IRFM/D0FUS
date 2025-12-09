@@ -9,7 +9,20 @@ Author: Auclair Timothé
 
 #%% Imports
 
-from .D0FUS_import import *
+# When imported as a module (normal usage in production)
+if __name__ != "__main__":
+    from .D0FUS_import import *
+
+# When executed directly (for testing and development)
+else:
+    import sys
+    import os
+    
+    # Add parent directory to path to allow absolute imports
+    sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+    
+    # Import using absolute paths for standalone execution
+    from D0FUS_BIB.D0FUS_import import *
 
 #%% Physical Constants
 
@@ -73,24 +86,23 @@ n_CS = 1                # CS conductor parameter
 
 # Helium cooling
 T_helium = 4.2          # Liquid helium temperature [K]
-Marge_T_Helium = 0.3    # Temperature margin at 10 bar operation [K]
+Marge_T_Helium = 0.3    # Temperature margin linked to 10 bar operation [K]
 
-# Conductor fractions
-f_Cu = 0.5              # Copper stabilizer fraction
+# Area fractions
+f_Cu_Non_Cu = 0.5       # Copper fraction in the strand
+f_Cu_Strand = 0.7       # Copper stabilizer fraction
 f_Cool = 0.7            # Cooling channel fraction
-f_In = 0.75             # Insulation fraction
+f_In = 0.9              # Insulation fraction
 
-# REBCO (Rare-Earth Barium Copper Oxide)
-Tet = 0                 # Tape orientation angle (pessimistic: perpendicular to field) [deg]
-Marge_T_Rebco = 5       # Temperature margin [K]
+# Temperature margins [K]
+# Added to T_He to obtain T_operating (conservative design approach)
+Marge_T_Nb3Sn  = 2.0    # Safety margin for Nb3Sn
+Marge_T_NbTi   = 1.7    # Safety margin for NbTi
+Marge_T_Rebco  = 5.0    # Safety margin for REBCO
 
-# Nb3Sn (Niobium-Tin)
-Eps = -0.6 / 100        # Strain criterion (compressive)
-Marge_T_Nb3Sn = 2       # Temperature margin [K]
-Marge_CS = -1           # Reduced CS margin (lower neutron flux environment)
-
-# NbTi (Niobium-Titanium)
-Marge_T_NbTi = 1.7      # Temperature margin [K]
+# Default operating parameters
+Eps = -0.0035           # Effective strain for Nb3Sn [-] (EU-DEMO TF: -0.35%)
+Tet = 0.0               # REBCO tape angle [rad] (0 = B⊥, π/2 = B//ab)
 
 #%% Power Conversion Efficiencies
 

@@ -40,290 +40,353 @@ def Steel(Chosen_Steel):
         print('Choose a valid steel')
     return(σ)
 
-#%% Current density
+#%% Critical Current Density Scaling Laws for Superconductors
+"""
+Critical Current Density Scaling Laws for Superconductors
+==========================================================
 
-def Jc_Nb3Sn(B, T, Nb3Sn_PARAMS, Eps):
+Scaling laws for Nb3Sn, NbTi, and REBCO superconductors used in fusion magnet design.
+
+References
+----------
+[1] Corato, V. et al. (2016). "Common operating values for DEMO magnets design 
+    for 2016". EUROfusion, IDM Ref. EFDA_D_2MMDTG.
+    
+[2] Fleiter, J. & Ballarino, A. (2014). "Parameterization of the critical surface 
+    of REBCO conductors from Fujikura". CERN EDMS 1426239.
+    
+[3] Bajas, H. & Tommasini, D. (2022). "The SHiP spectrometer magnet – 
+    Superconducting options". CERN-SHiP-NOTE-2022-001, EDMS 2440157.
+    
+[4] Tsuchiya, K. et al. (2017). "Critical current measurement of commercial 
+    REBCO conductors at 4.2 K". Cryogenics 85, 1-7.
+    
+[5] Senatore, C. et al. (2024). "REBCO tapes for applications in ultra-high 
+    fields: critical current surface and scaling relations". 
+    Supercond. Sci. Technol. 37, 115013.
+
+"""
+
+def Jc_Nb3Sn(B, T, Eps):
     """
-    Compute the critical current density Jc for a given Nb3Sn TFEU4 wire
-    as a function of the magnetic field B (in T), temperature T (in K),
-    and thixotropic strain Eps.
-
-    Arguments:
-        B : scalar or array-like
-            Magnetic field in tesla.
-        T : scalar or array-like
-            Temperature in kelvin.
-        Eps : scalar or array-like
-            Thixotropic strain.
-        params : dict, optional
-            Dictionary of parameters if customization is desired.
-
-    Returns:
-        Jc : array-like
-            Critical current density in A/m^2.
-    """
-    # Convert to numpy array
-    B = np.array(B, dtype=float)
-    T = np.array(T, dtype=float)
+    Critical current density for Nb3Sn (EU-DEMO WST strand parametrization).
     
-    # Load parameters
-    p = Nb3Sn_PARAMS.copy()
-    Ca1 = p['Ca1']
-    Ca2 = p['Ca2']
-    Eps0a = p['Eps0a']
-    Bc2m = p['Bc2m']
-    Tcm = p['Tcm']
-    C1 = p['C1']
-    exponent_p = p['p']
-    exponent_q = p['q']
-    dbrin = p['dbrin']
+    Formula:
+        Jc = (C/B) · s(ε) · (1-t^1.52) · (1-t²) · b^p · (1-b)^q
     
-    # Intermediate calculations
-    Epssh = Ca2 * Eps0a / np.sqrt(Ca1**2 - Ca2**2)
-    s2Eps = 1 + (1.0 / (1 - Ca1 * Eps0a)) * (
-        Ca1 * (np.sqrt(Epssh**2 + Eps0a**2) - np.sqrt((Eps - Epssh)**2 + Eps0a**2))
-        - Ca2 * Eps
-    )
-    Tc0 = Tcm * s2Eps**(1/3)
-    t = T / Tc0
-    one_minus_t152 = (1 - t**1.52)
-    b = B / (Bc2m * s2Eps * one_minus_t152)
-    
-    # Jc formula before geometry
-    Jc_raw = (C1 / B) * s2Eps * one_minus_t152 * (1 - t**2) * b**exponent_p * (1 - b)**exponent_q
-    # Division by wire cross-sectional area (circular section)
-    section = np.pi * (dbrin**2) / 4
-    
-    Jc = Jc_raw / section
-    
-    return Jc
-
-def Jc_NbTi(B, T, params):
-    """
-    Computes the critical current density J(B, T) for NbTi,
-    using a dictionary of material parameters.
-    Taken from scaling law of the NbTi strands from JT60-SA
-    Tests conducted by A.Torre and reported in DEL08-K006-01C
-
-    Parameters:
-    - B : Magnetic field (Tesla), scalar or numpy array
-    - T : Temperature (Kelvin), scalar or numpy array
-    - params : dict containing keys:
-        - 'Tco'  : Critical temperature at zero field (K)
-        - 'Bc2o' : Upper critical magnetic field at 0 K (T)
-        - 'Co'   : Normalization constant
-        - 'gamm' : Exponent gamma
-        - 'alph' : Exponent alpha
-        - 'bet'  : Exponent beta
-
-    Returns:
-    - Jc : Critical current density [A/m²]
-    """
-
-    # Unpack parameters
-    p = params.copy()
-    Tco = p['Tco']
-    Bc2o = p['Bc2o']
-    Co = p['Co']
-    gamm = p['gamm']
-    alph = p['alph']
-    bet = p['bet']
-
-    # Reduced temperature and critical field
-    t = T / Tco
-    Bc2 = Bc2o * (1 - t**1.7)
-    b = B / Bc2
-    Tc = Tco * (1 - B / Bc2o)**(1/1.7)
-
-    # Compute Jc
-    Ic = Co / B * (1 - t**1.7)**gamm * b**alph * (1 - b)**bet * 1e6
-    Jc = Ic * 5 # cf note Alex
-    
-    if np.iscomplexobj(Jc):
-        Jc = np.full_like(Jc, np.nan)
+    Parameters
+    ----------
+    B : float or array
+        Magnetic field [T]
+    T : float or array
+        Temperature [K]
+    Eps : float
+        Applied strain [-]
         
-    return Jc
-
-def Jc_Rebco(B, T, REBCO_PARAMS, Tet):
+    Returns
+    -------
+    Jc : float or array
+        Critical current density [A/m²] on superconducting (non-Cu) area
+        
+    Reference
+    ---------
+    Corato et al. (2016), Table 2.1 - EU-DEMO WST strand parameters
     """
-    Calculate the critical current density Jc for a REBCO tape according to the CERN2014 scaling.
-    Inputs:
-        B   : Magnetic field (T)
-        T   : Temperature (K)
-        Tet : Angle (rad) (0 = poor orientation)
-        params : Optional dict to override DEFAULT_PARAMS_REBCO.
+    B = np.atleast_1d(np.array(B, dtype=float))
+    T = np.atleast_1d(np.array(T, dtype=float))
+    
+    # EU-DEMO WST strand parameters [Ref. 1]
+    Ca1, Ca2 = 50.06, 0.0
+    Eps0a = 0.00312
+    Bc2m, Tcm = 33.24, 16.34      # [T], [K]
+    C = 83075                      # [AT/mm²] on SC area
+    p, q = 0.593, 2.156
+    
+    # Strain function s(ε)
+    s_eps = 1 + (Ca1 / (1 - Ca1 * Eps0a)) * (
+        np.sqrt(Eps0a**2) - np.sqrt((Eps)**2 + Eps0a**2)
+    )
+    
+    # Critical temperature and field
+    Tc0_eps = Tcm * s_eps**(1/3)
+    t = np.clip(T / Tc0_eps, 0, 1 - 1e-10)
+    
+    Bc2_T_eps = Bc2m * s_eps * (1 - t**1.52)
+    b = np.clip(B / Bc2_T_eps, 0, 1 - 1e-10)
+    
+    # Jc formula
+    Jc = (C / B) * s_eps * (1 - t**1.52) * (1 - t**2) * b**p * (1 - b)**q
+    Jc = Jc * 1e6  # AT/mm² → A/m²
+    Jc = np.where((t >= 1) | (b >= 1) | (B <= 0), 0.0, Jc)
+    
+    return np.squeeze(Jc)
 
-    Returns:
-        Jc : Critical current density in A/m^2.
+def Jc_NbTi(B, T):
     """
-    # Tape width
-    Ruban_width = 1e-4
-    # Convert to numpy array
-    B = np.array(B, dtype=float)
-    T = np.array(T, dtype=float)
+    Critical current density for NbTi (ITER/EU-DEMO parametrization).
     
-    # Retrieve parameters
-    p = REBCO_PARAMS.copy()
-    # Extract
-    Tc0 = p['Tc0']; n = p['n']
-    Bi0c = p['Bi0c']; Alfc = p['Alfc']; pc = p['pc']; qc = p['qc']; gamc = p['gamc']
-    Bi0ab = p['Bi0ab']; Alfab = p['Alfab']; pab = p['pab']; qab = p['qab']; gamab = p['gamab']
-    n1 = p['n1']; n2 = p['n2']; a = p['a']
-    Nu = p['Nu']; g0 = p['g0']; g1 = p['g1']; g2 = p['g2']; g3 = p['g3']
-    Trebco = p['trebco']
+    Formula:
+        Jc = (C0/B) · (1 - t^1.7)^γ · b^α · (1-b)^β
     
-    # Reduced temperature scale
+    Parameters
+    ----------
+    B : float or array
+        Magnetic field [T]
+    T : float or array
+        Temperature [K]
+        
+    Returns
+    -------
+    Jc : float or array
+        Critical current density [A/m²] on NbTi (non-Cu) area
+        
+    Reference
+    ---------
+    Corato et al. (2016), Section 2.2 - ITER/EU-DEMO parameters
+    """
+    B = np.atleast_1d(np.array(B, dtype=float))
+    T = np.atleast_1d(np.array(T, dtype=float))
+    
+    # ITER/EU-DEMO parameters [Ref. 1]
+    Tc0, Bc20 = 9.03, 14.61       # [K], [T]
+    C0 = 168512                    # [A/mm²] on NbTi area
+    alpha, beta, gamma = 1.0, 1.54, 2.1
+    
+    t = np.clip(T / Tc0, 0, 1 - 1e-10)
+    Bc2_T = Bc20 * (1 - t**1.7)
+    b = np.clip(B / Bc2_T, 0, 1 - 1e-10)
+    
+    Jc = (C0 / B) * (1 - t**1.7)**gamma * b**alpha * (1 - b)**beta
+    Jc = Jc * 1e6  # A/mm² → A/m²
+    Jc = np.where((t >= 1) | (b >= 1) | (B <= 0), 0.0, Jc)
+    
+    return np.squeeze(Jc)
+
+def Jc_Rebco(B, T, Tet):
+    """
+    Critical current density for REBCO tape (Fleiter/CERN parametrization).
+    
+    Parameters
+    ----------
+    B : float or array
+        Magnetic field [T]
+    T : float or array
+        Temperature [K]
+    Tet : float
+        Field angle [rad]: 0 = B⊥tape (B//c), π/2 = B//tape (B//ab)
+        
+    Returns
+    -------
+    Jc : float or array
+        Engineering critical current density [A/m²] on tape cross-section
+        
+    Notes
+    -----
+    - Parameters calibrated on Fujikura 12mm tape (FESC series)
+    - SC layer: ~2 µm REBCO
+    - Total tape thickness: ~100 µm (including Hastelloy substrate, Cu, Ag)
+    - α parameters give Ic when multiplied by tape width
+    
+    References
+    ----------
+    [2] Fleiter & Ballarino (2014), CERN EDMS 1426239
+    [3] Bajas & Tommasini (2022), CERN-SHiP-NOTE-2022-001, Table 3
+    """
+    B = np.atleast_1d(np.array(B, dtype=float))
+    T = np.atleast_1d(np.array(T, dtype=float))
+    
+    # Geometry (Fujikura 12mm tape)
+    w_tape = 12e-3      # Tape width [m]
+    t_tape = 100e-6     # Total tape thickness [m] (~100 µm)
+    A_tape = w_tape * t_tape  # Cross-section [m²]
+    
+    # Fleiter 2014 parameters (Table 3, page 49 of Ref. [3])
+    Tc0 = 93.0          # Critical temperature [K]
+    n = 1.0
+    
+    # c-axis (B perpendicular to tape) parameters
+    # Note: α scaled to match Tsuchiya (2017) Fujikura data at 12T, 4.2K
+    Bi0c = 140.0        # Irreversibility field at T=0 [T]
+    Alfc = 3.0e6 * w_tape    # [A·T] - calibrated to give Ic (~800-1000 A/mm² @ 12T)
+    pc = 0.5
+    qc = 2.5
+    gamc = 2.44
+    
+    # ab-plane (B parallel to tape) parameters
+    Bi0ab = 250.0       # [T]
+    Alfab = 110e6 * w_tape   # [A·T] - scaled proportionally
+    pab = 1.0
+    qab = 5.0
+    gamab = 1.63
+    
+    # Temperature exponents
+    n1 = 1.4
+    n2 = 4.45
+    a = 0.1
+    
+    # Angular interpolation parameters
+    Nu = 0.857
+    g0, g1, g2, g3 = 0.03, 0.25, 0.06, 0.058
+    
+    # Reduced temperature
     tred = T / Tc0
-    # Scaling fields for C and AB
+    
+    # Irreversibility fields
     Bic = Bi0c * (1 - tred**n)
     Biab = Bi0ab * ((1 - tred**n1)**n2 + a * (1 - tred**n))
-    # Reduced fields
-    bredc = B / Bic
-    bredab = B / Biab
-    # Critical density component C
-    Jcc = (Alfc / B) * bredc**pc * (1 - bredc)**qc * (1 - tred**n)**gamc
-    # Component AB
-    Jcab = (Alfab / B) * bredab**pab * (1 - bredab)**qab * ((1 - tred**n1)**n2 + a * (1 - tred**n))**gamab
-    # Angular width g
+    
+    # Reduced fields (clipped to avoid singularities)
+    bredc = np.clip(B / Bic, 1e-10, 1 - 1e-10)
+    bredab = np.clip(B / Biab, 1e-10, 1 - 1e-10)
+    
+    # Critical currents [A] for each orientation
+    Icc = (Alfc / B) * bredc**pc * (1 - bredc)**qc * (1 - tred**n)**gamc
+    Icab = (Alfab / B) * bredab**pab * (1 - bredab)**qab * \
+           ((1 - tred**n1)**n2 + a * (1 - tred**n))**gamab
+    
+    # Angular interpolation between c-axis and ab-plane
     g = g0 + g1 * np.exp(-g2 * np.exp(g3 * T) * B)
+    Ic = Icc + (Icab - Icc) / (1 + (np.abs(Tet - np.pi/2) / g)**Nu)
     
-    # Combination of the two components according to the angle
-    Jc = Jcc + (Jcab - Jcc) / (1 + (np.abs(Tet - np.pi/2) / g)**Nu)
-    Jc = Jc * (Trebco / Ruban_width)
+    # Convert to engineering Jc on tape cross-section
+    Jc = Ic / A_tape
     
-    return Jc
-
-def Jc(Supra_choice, B_supra , T_He):
+    # Zero outside valid range
+    Jc = np.where((tred >= 1) | (B <= 0), 0.0, Jc)
     
-    # Current density
-    if Supra_choice == "Nb3Sn"  :
-        
-        Nb3Sn_option = 'TFEU4'
-        
-        if Nb3Sn_option == 'TFEU4':
+    return np.squeeze(Jc)
 
-            # Nb3Sn TFEU4
-            Nb3Sn_PARAMS = {
-                'Ca1': 44.48,
-                'Ca2': 0.0,
-                'Eps0a': 0.00256,
-                'Epsm': -0.00049,
-                'Bc2m': 32.97,
-                'Tcm': 16.06,
-                'C1': 19922.0,
-                'p': 0.63,
-                'q': 2.1,
-                'dbrin': 0.82e-3,
-            }
-        
-        elif Nb3Sn_option == 'ITERTF':
-        
-            # Nb3Sn ITER TF
-            Nb3Sn_PARAMS = {
-                'Ca1': 44,
-                'Ca2': 4,
-                'Eps0a': 0.00256,
-                'Epsm': -0.0003253075,
-                'Bc2m': 32.97,
-                'Tcm': 16.06,
-                'C1': 16500,
-                'p': 0.63,
-                'q': 2.1,
-                'dbrin': 0.82e-3,
-            }
-            
-        elif Nb3Sn_option == 'ITERCS':
-        
-            # Nb3Sn ITER CS CICC
-            Nb3Sn_PARAMS = {
-                'Ca1': 53,
-                'Ca2': 8,
-                'Eps0a': 0.0097,
-                'Epsm': -0.0003253075,
-                'Bc2m': 32.57,
-                'Tcm': 17.17,
-                'C1': 18700,
-                'p': 0.62,
-                'q': 2.125,
-                'dbrin': 0.82e-3,
-            }
-        
-        Jc = Jc_Nb3Sn(B_supra, T_He + Marge_T_Helium + Marge_T_Nb3Sn , Nb3Sn_PARAMS, Eps)
-        
-    elif Supra_choice == "Rebco"  :
-
-        # CERN 2014
-        REBCO_PARAMS = {
-            'trebco': 1.5e-6 *203/156,   # best: 203, worst: 156, default: 156
-            'w': 4e-3,
-            'Tc0': 93.0,                 
-            'n': 1.0,
-            'Bi0c': 140.0,               
-            'Alfc': 1.41e12,            
-            'pc': 0.313,
-            'qc': 0.867,
-            'gamc': 3.09,
-            'Bi0ab': 250.0,                
-            'Alfab': 83.8e12,   
-            'pab': 1.023,
-            'qab': 4.45,
-            'gamab': 4.73,
-            'n1': 1.77,
-            'n2': 4.1,
-            'a': 0.1,
-            'Nu': 0.857,
-            'g0': -0.0056,
-            'g1': 0.0944,
-            'g2': -0.0008,
-            'g3': 0.00388,
-        }
-        
-        Jc = Jc_Rebco(B_supra, T_He + Marge_T_Helium + Marge_T_Rebco , REBCO_PARAMS, Tet)
-
-    elif Supra_choice == "NbTi"  :
-
-        NbTi_PARAMS = {
-            'Tco': 8.97,
-            'Bc2o': 14.51,
-            'Co': 24049.90,
-            'gamm': 2.00,
-            'alph': 0.77,
-            'bet': 1.19,
-        }
-        
-        Jc = Jc_NbTi(B_supra, T_He + Marge_T_Helium + Marge_T_NbTi , NbTi_PARAMS)
-        
-    else :
-        print("Please choose a proper superconductor")
+def Jc(Supra_choice, B_supra, T_He):
+    """
+    Main interface: Critical current density with temperature margins.
     
-    return(Jc)
+    Parameters
+    ----------
+    Supra_choice : str
+        Superconductor type: "Nb3Sn", "NbTi", or "Rebco"
+    B_supra : float or array
+        Magnetic field [T]
+    T_He : float
+        Helium bath temperature [K]
+        
+    Returns
+    -------
+    Jc : float or array
+        Critical current density [A/m²]
+        - Nb3Sn: on superconducting (non-Cu) area
+        - NbTi: on non-Cu area  
+        - REBCO: on tape cross-section (engineering Je)
+    """
+    if Supra_choice == "Nb3Sn":
+        return Jc_Nb3Sn(B_supra, T_He + Marge_T_Helium + Marge_T_Nb3Sn, Eps)
+    elif Supra_choice == "NbTi":
+        return Jc_NbTi(B_supra, T_He + Marge_T_Helium + Marge_T_NbTi)
+    elif Supra_choice == "Rebco":
+        return Jc_Rebco(B_supra, T_He + Marge_T_Helium + Marge_T_Rebco, Tet)
+    else:
+        raise ValueError(f"Unknown superconductor: {Supra_choice}")
 
-#%% Jc test
 
+#%% Validation
 if __name__ == "__main__":
-    from mpl_toolkits.mplot3d import Axes3D
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # BASIC CROSSCHECK – EU-DEMO / ITER SUPERCONDUCTOR SCALINGS
+    # ═══════════════════════════════════════════════════════════════════════════
+    print("="*70)
+    print("SUPERCONDUCTOR CRITICAL CURRENT DENSITY – VALIDATION CROSSCHECK")
+    print("="*70)
     
-    # Test
-    B_test = 6.5
-    T_test = 4.2
-    Jc_val_NbTi = Jc("NbTi", B_test , T_test)
-    print(f"Jc NbTi (T = {T_test} K, B = {B_test} T) = {Jc_val_NbTi/1e6:.2f} MA/m²")
-    Jc_val_Nb3Sn = Jc("Nb3Sn", B_test , T_test)
-    print(f"Jc (Nb3Sn T = {T_test} K, B = {B_test} T) = {Jc_val_Nb3Sn/1e6:.2f} MA/m²")
-    Jc_val_Rebco = Jc("Rebco", B_test , T_test)
-    print(f"Jc (Rebco T = {T_test} K, B = {B_test} T) = {Jc_val_Rebco/1e6:.2f} MA/m²")
+    # NbTi – ITER PF
+    B, T = 5.0, 4.2
+    Jc_calc = Jc_NbTi(B, T) / 1e6   # → MA/m² = A/mm²
+    print(f"NbTi  (ITER PF coils) {B:.1f} T, {T:.1f} K")
+    print(f"  Calculated Jc           : {Jc_calc:7.0f} A/mm²")
+    print(f"  ITER PF reference value :    2900 A/mm²")
+    print("="*70)
+    
+    # Nb3Sn – ITER TF
+    B, T = 11.8, 4.2
+    Jc_calc = Jc_Nb3Sn(B, T, Eps=-0.0035) / 1e6
+    print(f"Nb3Sn (ITER TF coils) {B:.1f} T, {T:.1f} K")
+    print(f"  Calculated Jc            : {Jc_calc:7.0f} A/mm²")
+    print(f"  ITER TF reference value  :     900 A/mm²")
+    print("="*70)
+    
+    # REBCO
+    B, T = 18.0, 4.2
+    Jc_calc_18T = Jc_Rebco(B, T, Tet=0) / 1e6
+    print(f"REBCO tape (B//ab) {B:.1f} T, {T:.1f} K")
+    print(f"  Calculated Jc      : {Jc_calc_18T:7.0f} A/mm²")
+    print(f"  SuperPower tape    :     650 A/mm²")
+    print("="*70)
+
+    # ─────────────────────────────────────────────────────────────
+    # ITER TF coil - Current density cascade
+    # ─────────────────────────────────────────────────────────────
+    print("ITER TF COIL – Current Density Cascade\n")
+    
+    B, T = 11.8, 4.2
+    Jc_nonCu = Jc("Nb3Sn", B, T)
+    # Cascade
+    J_strand = Jc_nonCu * f_Cu_Non_Cu
+    J_cable = J_strand * f_Cu_Strand
+    J_packed = J_cable * f_Cool
+    J_wp = J_packed * f_In
+    levels = ["Non-Cu", "Su Strand", "All Strands", "Cable", "Non-Steel"]
+    Jvals = [Jc_nonCu, J_strand, J_cable, J_packed, J_wp]
+    Jvals_MA = [j/1e6 for j in Jvals]
+    
+    print("Current densities [MA/m²]:")
+    for name, val in zip(levels, Jvals_MA):
+        print(f"  {name:12s}: {val:5.1f}")
+    # Factors
+    details = [
+        "Non-Cu",
+        f"+ Cu in strand",
+        f"+ Cu strands",
+        f"+ He",
+        f"+ Insulation"
+    ]
+    plt.figure(figsize=(6,4))
+    bars = plt.bar(
+        levels,
+        Jvals_MA,
+        width=0.3,
+        color="black",
+        edgecolor="black",
+        linewidth=1.3
+    )
+    plt.ylabel("J [MA/m²]")
+    plt.ylim(0, 800)
+    plt.title(f"ITER TF Current Density Cascade\n(B = {B} T, T = {T} K)")
+    plt.grid(axis="y", alpha=0.25)
+    for bar, val, txt in zip(bars, Jvals_MA, details):
+        plt.annotate(
+            f"{val:.0f}\n({txt})",
+            xy=(bar.get_x() + bar.get_width()/2, val),
+            xytext=(0, 6),
+            textcoords="offset points",
+            ha="center",
+            va="bottom",
+            fontsize=8
+        )
+    plt.tight_layout()
+    plt.show()
+    
     # —––––––––––––––––––––––––––––––––––––
-    # 1) Ranges and calculations
-    B_vals = np.linspace(0, 45, 100)
+    # Maglab Crosscheck
+    # —––––––––––––––––––––––––––––––––––––
+    B_vals = np.linspace(0.5, 45, 100)
     T_vals = np.linspace(2, 30, 100)
     B_mesh, T_mesh = np.meshgrid(B_vals, T_vals)
     
     # —––––––––––––––––––––––––––––––––––––
     # 2D plot at 4.2 K
     T0 = 4.2
-    J_NbTi_42 = Jc("NbTi", B_vals, T0 - Marge_T_NbTi)/1e6
-    J_Nb3Sn_42 = Jc("Nb3Sn", B_vals, T0 - Marge_T_Nb3Sn)/1e6
-    J_Rebco_42 = Jc("Rebco", B_vals, T0 - Marge_T_Rebco)/1e6
+    J_NbTi_42 = Jc("NbTi", B_vals, T0 - Marge_T_NbTi - Marge_T_Helium)/1e6
+    J_Nb3Sn_42 = Jc("Nb3Sn", B_vals, T0 - Marge_T_Nb3Sn - Marge_T_Helium)/1e6
+    J_Rebco_42 = Jc("Rebco", B_vals, T0 - Marge_T_Rebco - Marge_T_Helium)/1e6
     
     plt.figure(figsize=(6,4))
     plt.plot(B_vals, J_NbTi_42, label='NbTi @ 4.2 K', lw=2)
@@ -337,43 +400,6 @@ if __name__ == "__main__":
     plt.xlim(0, 45)
     plt.ylim(10, 1e4)
     plt.yscale("log")
-    plt.tight_layout()
-    plt.show()
-    
-    # —––––––––––––––––––––––––––––––––––––
-    # 3D surfaces
-    
-    # Critical current density calculation
-    J_NbTi = Jc("NbTi", B_mesh, T_mesh)/1e6
-    J_Nb3Sn = Jc("Nb3Sn", B_mesh, T_mesh)/1e6
-    J_Rebco = Jc("Rebco", B_mesh, T_mesh)/1e6
-    def plot_surface(ax, B, T, J, title):
-        surf = ax.plot_surface(
-            B, T, J,
-            cmap='viridis',        
-            edgecolor='none',      
-            antialiased=True,      
-            rcount=100, ccount=100 # resolution
-        )
-        ax.set_xlabel('B (T)')
-        ax.set_ylabel('T (K)')
-        ax.set_zlabel('Jc (MA/m²)')
-        ax.set_title(title)
-        # integrated colorbar
-        plt.colorbar(surf, ax=ax, shrink=0.6, pad=0.1)
-    
-    fig = plt.figure(figsize=(12,5))
-    
-    ax1 = fig.add_subplot(121, projection='3d')
-    plot_surface(ax1, B_mesh, T_mesh, J_Nb3Sn, 'Jc_Nb3Sn(B, T)')
-    
-    ax2 = fig.add_subplot(122, projection='3d')
-    plot_surface(ax2, B_mesh, T_mesh, J_Rebco, 'Jc_Rebco(B, T)')
-    
-    # Adjust viewing angle
-    for ax in (ax1, ax2):
-        ax.view_init(elev=25, azim=135)
-    
     plt.tight_layout()
     plt.show()
     
@@ -1018,7 +1044,7 @@ if __name__ == "__main__":
     nu = 0.3  # Poisson's ratio (common to all tests)
     
     # --- Test 1: Simple cylinder under pressure (Lamé validation) ---
-    print("\n--- Test 1: Pressurized cylinder (Lamé solution) ---")
+    print("--- Test 1: Pressurized cylinder (Lamé solution) ---")
     
     R_lame = [1.0, 2.0]
     J_lame = [0.0]  # No current (passive)
@@ -1044,8 +1070,10 @@ if __name__ == "__main__":
     print(f"  σr(ri) = {sigma_r[0]/1e6:.2f} MPa (expected: {-Pi_lame/1e6:.2f} MPa)")
     print(f"  σr(re) = {sigma_r[-1]/1e6:.2f} MPa (expected: 0 MPa)")
     
+    print("="*70)
+    
     # --- Test 2: CS with 3 active layers ---
-    print("\n--- Test 2: Central Solenoid with 3 active layers ---")
+    print("--- Test 2: Central Solenoid with 3 active layers ---")
     
     # ITER-like CS parameters
     R_cs = [1.3, 1.5, 1.7, 2.0]  # 3 layers
@@ -1066,8 +1094,10 @@ if __name__ == "__main__":
     print(f"  Max σ_VM: {np.max(sigma_vm_cs)/1e6:.1f} MPa")
     print(f"  Max displacement: {np.max(np.abs(u_r_cs))*1000:.3f} mm")
     
+    print("="*70)
+    
     # --- Test 3: COMPOSITE STRUCTURE - Conductor + Steel jacket ---
-    print("\n--- Test 3: Composite structure (Conductor + Steel jacket) ---")
+    print("--- Test 3: Composite structure (Conductor + Steel jacket) ---")
     
     # Configuration: superconducting winding pack + external steel jacket
     # The conductor generates J×B forces, the steel jacket provides structural support
@@ -1101,9 +1131,6 @@ if __name__ == "__main__":
     print(f"    Conductor - Max σ_VM: {np.max(sigma_vm_cond)/1e6:.1f} MPa")
     print(f"    Steel jacket - Max σ_VM: {np.max(sigma_vm_steel)/1e6:.1f} MPa")
     print(f"    Radial displacement at outer surface: {u_r_comp[-1]*1000:.3f} mm")
-    
-    # --- Generate figures ---
-    print("\n--- Generating figures ---")
     
     fig, axes = plt.subplots(1, 3, figsize=(14, 4.5))
     
@@ -1219,10 +1246,13 @@ def Number_TF_coils(R0, a, b, ripple_adm, L_min):
                      f"satisfying ripple ≤ {ripple_adm} and L_access ≥ {L_min} m")
 
 
-# -------------------------
-# Example usage
-# -------------------------
 if __name__ == "__main__":
+    
+    print("="*70)
+    print("ITER prediction for the number of TF")
+    print("Considering ripple and port minimal size")
+    print("="*70)
+    
     R0 = 6.2           # [m] major radius
     a = 2.0            # [m] minor radius
     b = 1.2            # [m] base radial distance
@@ -1233,9 +1263,12 @@ if __name__ == "__main__":
     r2 = R0 + a + b + Delta
 
     print(f"Minimum number of TF coils: {N_TF}")
-    print(f"Ripple = {ripple*100:.3f}%")
+    print(f"ITER TF coils: 18")
     print(f"Additional Delta = {Delta:.3f} m")
+    print(f"Ripple = {ripple*100:.3f}%")
     print(f"L_access = {2*math.pi*r2/N_TF:.3f} m")
+    
+    print("="*70)
 
     
 #%% Academic model
@@ -1691,12 +1724,7 @@ if __name__ == "__main__":
         Supra_choice_TF = params["supra_TF"]
         config = params["config"]  # Get machine-specific configuration
         Jc_manual = params["J"]
-        
-        print(f'Machine: {machine}')
-        Jmax = Jc_manual * f_Cu * f_Cool * f_In
-        print(f'Considered current density [MA/m²] (full strain value): {Jc_manual/1e6}')
-        Jmax_D0FUS = Jc(Supra_choice_TF, B_max_TF, T_supra) * f_Cu * f_Cool * f_In
-        print(f'If calculated by D0FUS model [MA/m²] (full strain value): {np.round(Jc(Supra_choice_TF, B_max_TF, T_supra)/1e6,0)}')
+        Jmax = Jc_manual * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
         
         # === Run D0FUS model for machine-specific configuration ===
         if config == "Wedging":
@@ -1708,7 +1736,7 @@ if __name__ == "__main__":
         table.append({
             "Machine": machine,
             "Config": config,
-            "J [MA/m²]": clean_result(Jmax / 1e6/(f_Cu * f_Cool * f_In)),
+            "J [MA/m²]": clean_result(Jmax / 1e6/(f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In)),
             "σ [MPa]" : σ/1e6,
             "Thickness [m]": clean_result(thickness),
         })
@@ -1770,7 +1798,7 @@ if __name__ == "__main__":
     for B_max_TF_TF in B_max_TF_values:
         
         T_supra = 20
-        J_max_TF_tf = Jc("Rebco", B_max_TF_TF, T_supra) * f_Cu * f_Cool * f_In
+        J_max_TF_tf = Jc("Rebco", B_max_TF_TF, T_supra) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
         
         # Academic models
         res_acad_w = f_TF_academic(a_TF, b_TF, R0_TF, σ_TF_tf, J_max_TF_tf, B_max_TF_TF, "Wedging")
@@ -1997,7 +2025,7 @@ if __name__ == "__main__":
 #%% CS academic model
 
 def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, σ_CS,
-              Supra_choice_CS, Jc_manual, T_Helium, f_Cu, f_Cool, f_In, Choice_Buck_Wedg):
+              Supra_choice_CS, Jc_manual, T_Helium, f_Cu_Non_Cu , f_Cu_Strand , f_Cool , f_In, Choice_Buck_Wedg):
     """
     Calculate the Central Solenoid (CS) thickness using thin-layer approximation 
     and a 2-cylinder model (superconductor + steel structure).
@@ -2114,9 +2142,9 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     # Compute maximum current density at this field
     # J depends on B through superconductor critical current properties
     if Supra_choice_CS == 'Manual':
-        J_max_CS = Jc_manual * f_Cu * f_Cool * f_In
+        J_max_CS = Jc_manual * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
     else:
-        J_max_CS = Jc(Supra_choice_CS, B_CS_thin, T_Helium) * f_Cu * f_Cool * f_In
+        J_max_CS = Jc(Supra_choice_CS, B_CS_thin, T_Helium) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
     
     if J_max_CS < Tol_CS:
         if debug:
@@ -2334,7 +2362,7 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
 #%% CS D0FUS model
 
 def f_CS_D0FUS( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, σ_CS,
-    Supra_choice_CS, Jc_manual, T_Helium, f_Cu, f_Cool, f_In, Choice_Buck_Wedg):
+    Supra_choice_CS, Jc_manual, T_Helium, f_Cu_Non_Cu , f_Cu_Strand , f_Cool , f_In, Choice_Buck_Wedg):
     
     """
     Calculate the Central Solenoid (CS) thickness using thick-layer approximation
@@ -2450,9 +2478,9 @@ def f_CS_D0FUS( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
         # --- Compute B, J , alpha ---
         B_CS = 3 * ΨCS / (2 * np.pi * (RCS_ext**2 + RCS_ext * RCS_int + RCS_int**2))
         if Supra_choice_CS == 'Manual':
-            J_max_CS = Jc_manual * f_Cu * f_Cool * f_In
+            J_max_CS = Jc_manual * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
         else :
-            J_max_CS = Jc(Supra_choice_CS, B_CS, T_Helium) * f_Cu * f_Cool * f_In
+            J_max_CS = Jc(Supra_choice_CS, B_CS, T_Helium) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
         alpha = B_CS / (μ0 * J_max_CS * d)
         
         # --- Sanity checks ---
@@ -2691,7 +2719,7 @@ if __name__ == "__main__" and debug_CS == 1:
 #%% CS D0FUS & CIRCE
 
 def f_CS_CIRCE( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, σ_CS,
-    Supra_choice_CS, Jc_manual, T_Helium, f_Cu, f_Cool, f_In, Choice_Buck_Wedg):
+    Supra_choice_CS, Jc_manual, T_Helium, f_Cu_Non_Cu, f_Cu_Strand, f_Cool, f_In, Choice_Buck_Wedg):
     
     """
     Calculate the Central Solenoid (CS) thickness using CIRCE:
@@ -2806,9 +2834,9 @@ def f_CS_CIRCE( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
         # --- Compute B, J , alpha ---
         B_CS = 3 * ΨCS / (2 * np.pi * (RCS_ext**2 + RCS_ext * RCS_int + RCS_int**2))
         if Supra_choice_CS == 'Manual':
-            J_max_CS = Jc_manual * f_Cu * f_Cool * f_In
+            J_max_CS = Jc_manual * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
         else :
-            J_max_CS = Jc(Supra_choice_CS, B_CS, T_Helium) * f_Cu * f_Cool * f_In
+            J_max_CS = Jc(Supra_choice_CS, B_CS, T_Helium) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
         alpha = B_CS / (μ0 * J_max_CS * d)
         
         # --- Sanity checks ---
@@ -3113,11 +3141,11 @@ if __name__ == "__main__":
 
         # Call the models with machine-specific configuration
         acad = f_CS_ACAD(0, 0, Ψplateau, 0, a, b, c, R0, B_TF, B_max_CS, σ, 
-                         'Manual', J_CS, T_Helium, f_Cu, f_Cool, f_In, config)
+                         'Manual', J_CS, T_Helium, f_Cu_Non_Cu ,f_Cu_Strand ,f_Cool ,f_In, config)
         d0fus = f_CS_D0FUS(0, 0, Ψplateau, 0, a, b, c, R0, B_TF, B_max_CS, σ, 
-                           'Manual', J_CS, T_CS, f_Cu, f_Cool, f_In, config)
+                           'Manual', J_CS, T_CS, f_Cu_Non_Cu ,f_Cu_Strand ,f_Cool ,f_In, config)
         circe = f_CS_CIRCE(0, 0, Ψplateau, 0, a, b, c, R0, B_TF, B_max_CS, σ, 
-                           'Manual', J_CS, T_CS, f_Cu, f_Cool, f_In, config)
+                           'Manual', J_CS, T_CS, f_Cu_Non_Cu ,f_Cu_Strand ,f_Cool ,f_In, config)
         
         def clean_result(val):
             """Return a clean float or NaN if invalid/complex."""
@@ -3228,19 +3256,19 @@ if __name__ == "__main__":
             # --- Academic model ---
             start = time.time()
             res_acad = f_CS_ACAD(0, 0, psi, 0, a_cs, b_cs, c_cs, R0_cs,
-                      B_max_TF_cs, B_max_CS, σ_CS_cs, 'Manual', J_CS, T_Helium, f_Cu, f_Cool, f_In, config)
+                      B_max_TF_cs, B_max_CS, σ_CS_cs, 'Manual', J_CS, T_Helium, f_Cu_Non_Cu ,f_Cu_Strand ,f_Cool ,f_In, config)
             timings["Academic"] += time.time() - start
     
             # --- D0FUS model ---
             start = time.time()
             res_d0fus = f_CS_D0FUS(0, 0, psi, 0, a_cs, b_cs, c_cs, R0_cs,
-                      B_max_TF_cs, B_max_CS, σ_CS_cs, 'Manual', J_CS, T_Helium, f_Cu, f_Cool, f_In, config)
+                      B_max_TF_cs, B_max_CS, σ_CS_cs, 'Manual', J_CS, T_Helium, f_Cu_Non_Cu ,f_Cu_Strand ,f_Cool ,f_In, config)
             timings["D0FUS"] += time.time() - start
     
             # --- CIRCE model ---
             start = time.time()
             res_CIRCE = f_CS_CIRCE(0, 0, psi, 0, a_cs, b_cs, c_cs, R0_cs,
-                      B_max_TF_cs, B_max_CS, σ_CS_cs, 'Manual', J_CS, T_Helium, f_Cu, f_Cool, f_In, config)
+                      B_max_TF_cs, B_max_CS, σ_CS_cs, 'Manual', J_CS, T_Helium, f_Cu_Non_Cu ,f_Cu_Strand ,f_Cool ,f_In, config)
             timings["CIRCE"] += time.time() - start
     
             # --- Store results ---
