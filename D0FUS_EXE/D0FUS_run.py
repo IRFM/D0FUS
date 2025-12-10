@@ -115,8 +115,13 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
     σ_CS = Steel(Chosen_Steel) / fatigue
     
     # Current densities in coils
-    J_max_TF_conducteur = Jc(Supra_choice, Bmax, T_helium) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
-    J_max_CS_conducteur = Jc(Supra_choice, Bmax, T_helium) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
+    if Supra_choice == 'Rebco':
+        J_max_TF_conducteur = Jc(Supra_choice, Bmax, T_helium) * f_Cu_Strand * f_Cool * f_In
+        J_max_CS_conducteur = Jc(Supra_choice, Bmax, T_helium) * f_Cu_Strand * f_Cool * f_In
+    else:
+        J_max_TF_conducteur = Jc(Supra_choice, Bmax, T_helium) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
+        J_max_CS_conducteur = Jc(Supra_choice, Bmax, T_helium) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
+        
     # Fraction of vertical tension allocated to the winding pack of the TF coils
     if Choice_Buck_Wedg == "Wedging":
         omega_TF = 1/2

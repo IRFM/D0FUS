@@ -287,7 +287,7 @@ def Jc(Supra_choice, B_supra, T_He):
         raise ValueError(f"Unknown superconductor: {Supra_choice}")
 
 
-#%% Validation
+#%% J Validation
 if __name__ == "__main__":
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -301,24 +301,24 @@ if __name__ == "__main__":
     B, T = 5.0, 4.2
     Jc_calc = Jc_NbTi(B, T) / 1e6   # → MA/m² = A/mm²
     print(f"NbTi  (ITER PF coils) {B:.1f} T, {T:.1f} K")
-    print(f"  Calculated Jc           : {Jc_calc:7.0f} A/mm²")
-    print(f"  ITER PF reference value :    2900 A/mm²")
+    print(f"  Calculated Jc                  : {Jc_calc:7.0f} A/mm²")
+    print(f"  Tested ITER PF reference value :    2900 A/mm²")
     print("="*70)
     
     # Nb3Sn – ITER TF
     B, T = 11.8, 4.2
     Jc_calc = Jc_Nb3Sn(B, T, Eps=-0.0035) / 1e6
     print(f"Nb3Sn (ITER TF coils) {B:.1f} T, {T:.1f} K")
-    print(f"  Calculated Jc            : {Jc_calc:7.0f} A/mm²")
-    print(f"  ITER TF reference value  :     900 A/mm²")
+    print(f"  Calculated Jc                   : {Jc_calc:7.0f} A/mm²")
+    print(f"  Tested ITER TF reference value  :     900 A/mm²")
     print("="*70)
     
     # REBCO
     B, T = 18.0, 4.2
     Jc_calc_18T = Jc_Rebco(B, T, Tet=0) / 1e6
     print(f"REBCO tape (B//ab) {B:.1f} T, {T:.1f} K")
-    print(f"  Calculated Jc      : {Jc_calc_18T:7.0f} A/mm²")
-    print(f"  SuperPower tape    :     650 A/mm²")
+    print(f"  Calculated Jc             : {Jc_calc_18T:7.0f} A/mm²")
+    print(f"  Tested SuperPower tape    :     650 A/mm²")
     print("="*70)
 
     # ─────────────────────────────────────────────────────────────
@@ -330,23 +330,33 @@ if __name__ == "__main__":
     Jc_nonCu = Jc("Nb3Sn", B, T)
     # Cascade
     J_strand = Jc_nonCu * f_Cu_Non_Cu
-    J_cable = J_strand * f_Cu_Strand
-    J_packed = J_cable * f_Cool
-    J_wp = J_packed * f_In
+    J_all_strand = J_strand * f_Cu_Strand
+    J_cable = J_all_strand * f_Cool
+    J_no_steel = J_cable * f_In
     levels = ["Non-Cu", "Su Strand", "All Strands", "Cable", "Non-Steel"]
-    Jvals = [Jc_nonCu, J_strand, J_cable, J_packed, J_wp]
+    Jvals = [Jc_nonCu, J_strand, J_all_strand, J_cable, J_no_steel]
     Jvals_MA = [j/1e6 for j in Jvals]
     
     print("Current densities [MA/m²]:")
     for name, val in zip(levels, Jvals_MA):
         print(f"  {name:12s}: {val:5.1f}")
+    print("Reference value for ITER design:")
+    # Source: Alexandre Torre lecture on current density
+    # "Master on Fusion and Plasma science Superconductors for Fusion [SCF]"
+    # TD 3
+    print("Non-Cu        : 318")
+    print("Su strand     : 159")
+    print("All strands   : 106")
+    print("Cable         : 71")
+    print("Non-Steel     : 56")
+    
     # Factors
     details = [
         "Non-Cu",
         f"+ Cu in strand",
         f"+ Cu strands",
         f"+ He",
-        f"+ Insulation"
+        f"+Insulation",
     ]
     plt.figure(figsize=(6,4))
     bars = plt.bar(
@@ -358,7 +368,7 @@ if __name__ == "__main__":
         linewidth=1.3
     )
     plt.ylabel("J [MA/m²]")
-    plt.ylim(0, 800)
+    plt.ylim(0, 500)
     plt.title(f"ITER TF Current Density Cascade\n(B = {B} T, T = {T} K)")
     plt.grid(axis="y", alpha=0.25)
     for bar, val, txt in zip(bars, Jvals_MA, details):
@@ -378,23 +388,23 @@ if __name__ == "__main__":
     # Maglab Crosscheck
     # —––––––––––––––––––––––––––––––––––––
     B_vals = np.linspace(0.5, 45, 100)
-    T_vals = np.linspace(2, 30, 100)
-    B_mesh, T_mesh = np.meshgrid(B_vals, T_vals)
+    B_mesh = np.meshgrid(B_vals)
     
     # —––––––––––––––––––––––––––––––––––––
     # 2D plot at 4.2 K
     T0 = 4.2
-    J_NbTi_42 = Jc("NbTi", B_vals, T0 - Marge_T_NbTi - Marge_T_Helium)/1e6
-    J_Nb3Sn_42 = Jc("Nb3Sn", B_vals, T0 - Marge_T_Nb3Sn - Marge_T_Helium)/1e6
-    J_Rebco_42 = Jc("Rebco", B_vals, T0 - Marge_T_Rebco - Marge_T_Helium)/1e6
+    J_NbTi_42 = Jc_NbTi(B_vals, T0)/1e6
+    J_Nb3Sn_42 = Jc_Nb3Sn(B_vals, T0, Eps=-0.003)/1e6
+    J_Rebco_42 = Jc_Rebco(B_vals, T0, Tet=0)/1e6
+    Whole_wire = 0.5
     
     plt.figure(figsize=(6,4))
-    plt.plot(B_vals, J_NbTi_42, label='NbTi @ 4.2 K', lw=2)
-    plt.plot(B_vals, J_Nb3Sn_42, label='Nb3Sn @ 4.2 K', lw=2)
-    plt.plot(B_vals, J_Rebco_42, label='Rebco @ 4.2 K', lw=2)
+    plt.plot(B_vals, J_NbTi_42 * Whole_wire, label='NbTi @ 4.2 K', lw=2)
+    plt.plot(B_vals, J_Nb3Sn_42 * Whole_wire, label='Nb3Sn @ 4.2 K', lw=2)
+    plt.plot(B_vals, J_Rebco_42 , label='Rebco @ 4.2 K', lw=2)
     plt.xlabel('Magnetic field B (T)')
-    plt.ylabel('Jc (MA/m²)')
-    plt.title('Jc at 4.2 K')
+    plt.ylabel('Wire or Tape current density (MA/m²)')
+    plt.title('MAGLAB benchmark at 4.2 K')
     plt.legend()
     plt.grid(alpha=0.3)
     plt.xlim(0, 45)
@@ -412,6 +422,8 @@ if __name__ == "__main__":
 
 """
 F_CIRCE0D - Analytical stress solver for multilayer thick cylinders
+Developed by B.Boudes
+Addapted by T.Auclair
 ====================================================================
 
 This module implements the analytical solution for the elasticity problem of
@@ -448,7 +460,6 @@ References
 - Timoshenko & Goodier, "Theory of Elasticity"
 - CIRCE B.Boudes (CEA)
 
-Author: Tim (D0FUS project)
 """
 
 import numpy as np
@@ -1722,21 +1733,24 @@ if __name__ == "__main__":
         B_max_TF = params["B_max_TF_TF"]
         n = params["n_TF"]
         Supra_choice_TF = params["supra_TF"]
-        config = params["config"]  # Get machine-specific configuration
-        Jc_manual = params["J"]
-        Jmax = Jc_manual * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
+        config = params["config"]
+        Jc_strand = params["J"]
+        f_Cu_Non_Cu_benchmark = 0.5
+        f_Cu_Strand_benchmark = 0.75
+        f_Cool_benchmark = 0.7
+        Jmax = Jc_strand * f_Cu_Non_Cu_benchmark * f_Cu_Strand_benchmark * f_Cool_benchmark
         
         # === Run D0FUS model for machine-specific configuration ===
         if config == "Wedging":
-            thickness = f_TF_D0FUS(a, b, R0, σ, Jmax, B_max_TF, "Wedging", omega=0.5, n=n)
+            thickness = f_TF_D0FUS(a, b, R0, σ, Jmax, B_max_TF, "Wedging", 0.5, n)
         else:  # Bucking
-            thickness = f_TF_D0FUS(a, b, R0, σ, Jmax, B_max_TF, "Bucking", omega=1.0, n=n)
+            thickness = f_TF_D0FUS(a, b, R0, σ, Jmax, B_max_TF, "Bucking", 1.0, n)
         
         # Store results
         table.append({
             "Machine": machine,
             "Config": config,
-            "J [MA/m²]": clean_result(Jmax / 1e6/(f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In)),
+            "J [MA/m²]": clean_result(Jc_strand / 1e6),
             "σ [MPa]" : σ/1e6,
             "Thickness [m]": clean_result(thickness),
         })
@@ -1798,7 +1812,10 @@ if __name__ == "__main__":
     for B_max_TF_TF in B_max_TF_values:
         
         T_supra = 20
-        J_max_TF_tf = Jc("Rebco", B_max_TF_TF, T_supra) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
+        f_Cu_Strand_benchmark = 0.75
+        f_Cu_Non_Cu_benchmark = 0.5
+        f_Cool_benchmark = 0.7
+        J_max_TF_tf = Jc("Rebco", B_max_TF_TF, T_supra) * f_Cu_Non_Cu_benchmark * f_Cu_Strand_benchmark * f_Cool_benchmark
         
         # Academic models
         res_acad_w = f_TF_academic(a_TF, b_TF, R0_TF, σ_TF_tf, J_max_TF_tf, B_max_TF_TF, "Wedging")
@@ -2030,12 +2047,6 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     Calculate the Central Solenoid (CS) thickness using thin-layer approximation 
     and a 2-cylinder model (superconductor + steel structure).
     
-    Simplified approach:
-    1) Estimate B_CS using thin cylinder approximation from flux
-    2) Compute J_max_CS at this field (single evaluation, no iteration)
-    3) Determine d_SU directly from flux and current density
-    4) Find d_SS using brentq to satisfy mechanical stress constraint
-    
     Parameters
     ----------
     ΨPI : float
@@ -2066,12 +2077,12 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
         If needed, manual current density
     T_Helium : float
         Helium coolant temperature (K)
+    f_Cu_non_Cu : float
+        Copper fraction in the strands
     f_Cu : float
-        Copper fraction in conductor
+        Copper strands fraction in conductor
     f_Cool : float
         Cooling fraction
-    f_In : float
-        Insulation fraction
     Choice_Buck_Wedg : str
         Mechanical support configuration: 'Bucking', 'Wedging', or 'Plug'
     
@@ -2143,9 +2154,11 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     # J depends on B through superconductor critical current properties
     if Supra_choice_CS == 'Manual':
         J_max_CS = Jc_manual * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
-    else:
+    elif Supra_choice_CS == 'Rebco':
+        J_max_CS = Jc(Supra_choice_CS, B_CS_thin, T_Helium) * f_Cu_Strand * f_Cool * f_In
+    else :
         J_max_CS = Jc(Supra_choice_CS, B_CS_thin, T_Helium) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
-    
+        
     if J_max_CS < Tol_CS:
         if debug:
             print(f"[STEP 1] Non-positive J_max_CS: {J_max_CS:.2e} A/m²")
@@ -2400,12 +2413,12 @@ def f_CS_D0FUS( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
         If needed, manual current density
     T_Helium : float
         Helium coolant temperature (K)
+    f_Cu_Non_Cu : float
+        Copper fraction in the strands
     f_Cu : float
-        Copper fraction in conductor
+        Copper strand fraction vs superconductive strand
     f_Cool : float
         Cooling fraction
-    f_In : float
-        Insulation fraction
     Choice_Buck_Wedg : str
         Mechanical support configuration: 'Bucking', 'Wedging', or 'Plug'
     
@@ -2479,6 +2492,8 @@ def f_CS_D0FUS( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
         B_CS = 3 * ΨCS / (2 * np.pi * (RCS_ext**2 + RCS_ext * RCS_int + RCS_int**2))
         if Supra_choice_CS == 'Manual':
             J_max_CS = Jc_manual * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
+        elif Supra_choice_CS == 'Rebco':
+            J_max_CS = Jc(Supra_choice_CS, B_CS, T_Helium) * f_Cu_Strand * f_Cool * f_In
         else :
             J_max_CS = Jc(Supra_choice_CS, B_CS, T_Helium) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
         alpha = B_CS / (μ0 * J_max_CS * d)
@@ -2756,12 +2771,12 @@ def f_CS_CIRCE( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
         If needed, manual current density
     T_Helium : float
         Helium coolant temperature (K)
+    f_Cu_Non_Cu : float
+        Copper fraction in the Su strand
     f_Cu : float
-        Copper fraction in conductor
+        n_Cu strands / n_total strands
     f_Cool : float
         Cooling fraction
-    f_In : float
-        Insulation fraction
     Choice_Buck_Wedg : str
         Mechanical support configuration: 'Bucking', 'Wedging', or 'Plug'
     
@@ -2835,6 +2850,8 @@ def f_CS_CIRCE( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
         B_CS = 3 * ΨCS / (2 * np.pi * (RCS_ext**2 + RCS_ext * RCS_int + RCS_int**2))
         if Supra_choice_CS == 'Manual':
             J_max_CS = Jc_manual * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
+        elif Supra_choice_CS == 'Rebco':
+            J_max_CS = Jc(Supra_choice_CS, B_CS, T_Helium) * f_Cu_Strand * f_Cool * f_In
         else :
             J_max_CS = Jc(Supra_choice_CS, B_CS, T_Helium) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
         alpha = B_CS / (μ0 * J_max_CS * d)
@@ -3127,25 +3144,28 @@ if __name__ == "__main__":
     rows_D0FUS = []
     rows_CIRCE = []
     
-    for name, p in tqdm(machines.items(), desc='Scanning machines'):
+    for name, p in machines.items():
         # Unpack inputs
         Ψplateau = p["Ψplateau"]
         a, b, c, R0 = p["a_cs"], p["b_cs"], p["c_cs"], p["R0_cs"]
         B_TF, B_cs, σ = p["B_TF"], p["B_cs"], p["σ_CS"]
         Supra_Choice, T_CS = p["SupraChoice"], p["T_CS"]
-        J_CS = p["J_CS"]
-        config = p["config"]  # Get machine-specific configuration
+        J_strand_CS = p["J_CS"]
+        config = p["config"]
         T_Helium = p["T_CS"]
-        
+        f_Cu_Strand_benchmark = 0.7
+        f_Cool_benchmark = 0.75
+        f_Cu_Non_Cu_benchmark = 0.5
+        f_In_benchmark = 1
         B_max_CS = 50
 
         # Call the models with machine-specific configuration
         acad = f_CS_ACAD(0, 0, Ψplateau, 0, a, b, c, R0, B_TF, B_max_CS, σ, 
-                         'Manual', J_CS, T_Helium, f_Cu_Non_Cu ,f_Cu_Strand ,f_Cool ,f_In, config)
+                         'Manual', J_strand_CS, T_Helium, f_Cu_Non_Cu_benchmark ,f_Cu_Strand_benchmark ,f_Cool_benchmark, f_In_benchmark, config)
         d0fus = f_CS_D0FUS(0, 0, Ψplateau, 0, a, b, c, R0, B_TF, B_max_CS, σ, 
-                           'Manual', J_CS, T_CS, f_Cu_Non_Cu ,f_Cu_Strand ,f_Cool ,f_In, config)
+                           'Manual', J_strand_CS, T_CS, f_Cu_Non_Cu_benchmark ,f_Cu_Strand_benchmark ,f_Cool_benchmark,f_In_benchmark, config)
         circe = f_CS_CIRCE(0, 0, Ψplateau, 0, a, b, c, R0, B_TF, B_max_CS, σ, 
-                           'Manual', J_CS, T_CS, f_Cu_Non_Cu ,f_Cu_Strand ,f_Cool ,f_In, config)
+                           'Manual', J_strand_CS, T_CS, f_Cu_Non_Cu_benchmark ,f_Cu_Strand_benchmark ,f_Cool_benchmark,f_In_benchmark, config)
         
         def clean_result(val):
             """Return a clean float or NaN if invalid/complex."""
@@ -3226,6 +3246,10 @@ if __name__ == "__main__":
     T_He_CS = 4.75
     σ_CS_cs = 300e6 # Red curve on fig.2 of the Sarasola paper
     J_CS = 120e6 # Directly cited in Sarasola paper
+    f_Cu_Strand_benchmark = 0.7
+    f_Cool_benchmark = 0.75
+    f_Cu_Non_Cu_benchmark = 0.5
+    f_In_benchmark = 1
     
     # === Ψplateau scan range ===
     psi_values = np.linspace(0, 500, 30)
@@ -3256,19 +3280,19 @@ if __name__ == "__main__":
             # --- Academic model ---
             start = time.time()
             res_acad = f_CS_ACAD(0, 0, psi, 0, a_cs, b_cs, c_cs, R0_cs,
-                      B_max_TF_cs, B_max_CS, σ_CS_cs, 'Manual', J_CS, T_Helium, f_Cu_Non_Cu ,f_Cu_Strand ,f_Cool ,f_In, config)
+                      B_max_TF_cs, B_max_CS, σ_CS_cs, 'Manual', J_CS, T_Helium, f_Cu_Non_Cu_benchmark ,f_Cu_Strand_benchmark ,f_Cool_benchmark , f_In_benchmark, config)
             timings["Academic"] += time.time() - start
     
             # --- D0FUS model ---
             start = time.time()
             res_d0fus = f_CS_D0FUS(0, 0, psi, 0, a_cs, b_cs, c_cs, R0_cs,
-                      B_max_TF_cs, B_max_CS, σ_CS_cs, 'Manual', J_CS, T_Helium, f_Cu_Non_Cu ,f_Cu_Strand ,f_Cool ,f_In, config)
+                      B_max_TF_cs, B_max_CS, σ_CS_cs, 'Manual', J_CS, T_Helium, f_Cu_Non_Cu_benchmark ,f_Cu_Strand_benchmark ,f_Cool_benchmark ,f_In_benchmark, config)
             timings["D0FUS"] += time.time() - start
     
             # --- CIRCE model ---
             start = time.time()
             res_CIRCE = f_CS_CIRCE(0, 0, psi, 0, a_cs, b_cs, c_cs, R0_cs,
-                      B_max_TF_cs, B_max_CS, σ_CS_cs, 'Manual', J_CS, T_Helium, f_Cu_Non_Cu ,f_Cu_Strand ,f_Cool ,f_In, config)
+                      B_max_TF_cs, B_max_CS, σ_CS_cs, 'Manual', J_CS, T_Helium, f_Cu_Non_Cu_benchmark ,f_Cu_Strand_benchmark ,f_Cool_benchmark ,f_In_benchmark, config)
             timings["CIRCE"] += time.time() - start
     
             # --- Store results ---

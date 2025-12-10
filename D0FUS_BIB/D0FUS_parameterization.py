@@ -89,10 +89,10 @@ T_helium = 4.2          # Liquid helium temperature [K]
 Marge_T_Helium = 0.3    # Temperature margin linked to 10 bar operation [K]
 
 # Area fractions
-f_Cu_Non_Cu = 0.5       # Copper fraction in the strand
-f_Cu_Strand = 0.7       # Copper stabilizer fraction
-f_Cool = 0.7            # Cooling channel fraction
-f_In = 0.9              # Insulation fraction
+f_Cu_Non_Cu = 1 - 0.5       # Copper fraction in the strand
+f_Cu_Strand = 1 - 0.3       # Copper stabilizer fraction (n_Cu/(n_Cu+n_Su))
+f_Cool = 1 - 0.3            # Cooling channel fraction
+f_In = 1 - 0.2              # Insulation fraction
 
 # Temperature margins [K]
 # Added to T_He to obtain T_operating (conservative design approach)
@@ -101,7 +101,7 @@ Marge_T_NbTi   = 1.7    # Safety margin for NbTi
 Marge_T_Rebco  = 5.0    # Safety margin for REBCO
 
 # Default operating parameters
-Eps = -0.0035           # Effective strain for Nb3Sn [-] (EU-DEMO TF: -0.35%)
+Eps = -0.6/100           # Effective strain for Nb3Sn [-] (EU-DEMO TF: -0.35%)
 Tet = 0.0               # REBCO tape angle [rad] (0 = B⊥, π/2 = B//ab)
 
 #%% Power Conversion Efficiencies
