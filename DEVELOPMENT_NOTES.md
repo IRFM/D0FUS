@@ -11,6 +11,7 @@
 * Regarder utilisation lettres grecques dans python et décider si on enlève les lettres grecques -> Arthur
 * Comment from Sebastian Kay Conde Lorenzo: Document the code using Sphinx? It produces HTML documentation via formatted comments in the code (it's the most used documentation tool). If you intend to open source the project, then this would be very helpful because then end-users (physicists that don't want/like to code, for example) could use the library without having to dig in the code and all of that. I have an example in a project of mine, I'll link it here https://github.com/cbasitodx/Minitorch -> Arthur
 * It would be very nice to have an __init__.py file and more modularization. That way, one could use the code as a library and not as a script! This would be an awesome thing to do because it reduces boilerplate. -> Arthur (à la fin)
+* Perhaps we should consider a distribution, even in Princeton D, where the voltage split is different from 50/50.
 
 # General rules of conduct
 
