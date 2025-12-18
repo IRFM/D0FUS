@@ -25,7 +25,6 @@ git clone http://irfm-gitlab.intra.cea.fr/projets/pepr-suprafusion/D0FUS.git
 ```
 D0FUS/
 ├── D0FUS_BIB/                      # Core library modules
-│   ├── __init__.py
 │   ├── D0FUS_import.py                 # Common imports
 │   ├── D0FUS_parameterization.py       # Physical constants and parameters
 │   ├── D0FUS_physical_functions.py     # Plasma physics functions
