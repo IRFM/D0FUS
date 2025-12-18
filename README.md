@@ -75,45 +75,44 @@ results = D0FUS_run.main("D0FUS_INPUTS/my_config.txt")
 B0, B_CS, Q, Ip, betaN, ... = results
 ```
 
+## Execution Modes
+
+D0FUS automatically detects the execution mode based on the input file format. Three modes are available:
+
+| Mode | Purpose | Input format | Parameters |
+|------|---------|--------------|------------|
+| **RUN** | Single design point calculation | `R0 = 9` | Fixed values only |
+| **SCAN** | 2D parameter space exploration | `R0 = [3, 9, 25]` | Exactly 2 parameters with `[min, max, n_points]` |
+| **OPTIMIZATION** | Genetic algorithm cost minimization | `R0 = [3, 9]` | 2+ parameters with `[min, max]` |
+
+**RUN mode** evaluates a single tokamak configuration and outputs all plasma parameters, magnetic fields, power balance, and radial build dimensions.
+
+**SCAN mode** generates 2D maps over two parameters, visualizing feasibility regions bounded by plasma stability limits (Greenwald density, Troyon beta, kink safety factor) and engineering constraints.
+
+**OPTIMIZATION mode** uses a genetic algorithm to find the reactor configuration minimizing cost while satisfying all physics and engineering constraints. The optimizer explores the multi-dimensional parameter space defined by the bounds and evolves the population toward optimal solutions.
+
 ## Input
 
-Input files are simple text files with parameter definitions:
+Input files are simple text files with parameter definitions. The format of variable parameters determines which mode D0FUS will execute:
 
 ```ini
-# D0FUS Input Parameters
-# Lines starting with # are comments
-
-# Geometry
-P_fus = 2000                    # Fusion power [MW]
-R0 = 9                          # Major radius [m]
-a = 3                           # Minor radius [m]
-b = 1.2                         # Blanket + shield thickness [m]
-
-# Magnetic Field
-Bmax = 12                       # Max toroidal field on TF coils [T]
-
-# Technology
-Supra_choice = Nb3Sn            # Superconductor type
-Choice_Buck_Wedg = Wedging      # Mechanical configuration
-Chosen_Steel = 316L             # Structural material
-
-# Plasma Physics
-Scaling_Law = IPB98(y,2)        # Confinement scaling law
-H = 1                           # H-factor
-Tbar = 14                       # Average temperature [keV]
-
-# Operation
-Operation_mode = Steady-State   # Steady-State or Pulsed
+# Fixed parameter → RUN mode
+R0 = 9
 ```
-
-See `D0FUS_INPUTS/default_input.txt` for a complete example with all available parameters.
-If one want to scan some parameters, just put it under bracket with the precision desired:
+See `D0FUS_INPUTS/default_input.txt` for a complete run example with all available parameters.
 
 ```ini
-# Geometry
-R0 = [3,9,25]                          # Major radius [m]
-a = [1,3,25]                           # Minor radius [m]
+# Scan parameter → SCAN mode
+R0 = [3, 9, 25]                 # [min, max, n_points]
 ```
+See `D0FUS_INPUTS/scan_input_example.txt` for a complete run example with all available parameters.
+
+```ini
+# Optimization parameter → OPTIMIZATION mode
+R0 = [3, 9]                     # [min, max]
+```
+See `D0FUS_INPUTS/input_genetic_example.txt` for a complete run example with all available parameters.
+
 
 ## Output
 
