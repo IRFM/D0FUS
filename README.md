@@ -159,6 +159,35 @@ D0FUS_OUTPUTS/Scan_D0FUS_20251106_123456/
 - Radial build feasibility limits
 - Iso-contours of key parameters (Ip, Q, B0, etc.)
 
+### OPTIMIZATION Mode Output
+
+```
+D0FUS_OUTPUTS/Genetic_D0FUS_20251106_123456/
+├── optimization_config.txt     # Optimization parameters and bounds
+├── optimization_results.txt    # Best solution and convergence history
+└── convergence_plot.png        # Fitness evolution over generations
+```
+
+**Optimization results include:**
+- Best individual: optimal parameter values minimizing reactor cost
+- Fitness evolution: cost reduction across generations
+- Constraint satisfaction: plasma stability (Greenwald, Troyon, kink) and radial build feasibility
+- Convergence diagnostics: population diversity and stagnation metrics
+
+**Input file format for optimization:**
+```ini
+# Variable parameters (2+ required)
+R0 = [3, 9]                     # Major radius bounds [m]
+a = [1, 3]                      # Minor radius bounds [m]
+Bmax = [10, 16]                 # Max TF field bounds [T]
+
+# Optional genetic algorithm settings
+population_size = 50            # Number of individuals per generation
+generations = 100               # Maximum generations
+crossover_rate = 0.7            # Crossover probability
+mutation_rate = 0.2             # Mutation probability
+```
+
 ## Contributing
 
 Contributions are welcome! Please contact us:
