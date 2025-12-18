@@ -37,21 +37,21 @@ D0FUS/
 ├── D0FUS_OUTPUTS/                  # Generated outputs (auto-created)
 │   ├── Run_D0FUS_YYYYMMDD_HHMMSS/      # Single run results
 │   ├── Scan_D0FUS_YYYYMMDD_HHMMSS/     # Scan results with figures
-│   └── Genetic_D0FUS_YYYYMMDD_HHMMSS/  # Genetic research of an optimal design result
+│   └── Genetic_D0FUS_YYYYMMDD_HHMMSS/  # Genetic optimization results
 │
 ├── D0FUS_EXE/                      # Execution modules
 │   ├── D0FUS_run.py                    # Single design point calculation
 │   ├── D0FUS_scan.py                   # 2D parameter space scan
-│   └── D0FUS_genetic.py                # Genetic algorithm for optimal reasearch
+│   └── D0FUS_genetic.py                # Genetic algorithm optimization
 │
 ├── D0FUS.py                        # Main entry point
 ├── requirements.txt                # Python dependencies
 └── README.md                       # This file
 ```
 
-## D0FUS startup
+## D0FUS Startup
 
-### Recommended execution
+### Recommended Execution
 
 Launch Spyder and open D0FUS.py
 
@@ -59,9 +59,9 @@ Launch Spyder and open D0FUS.py
 python D0FUS.py
 ```
 
-Execute, you'll then be prompted to select an input file
+Execute, you'll then be prompted to select an input file.
 
-### Bash execution
+### Script Integration
 
 You can also import and use D0FUS modules in your own scripts:
 
@@ -93,26 +93,85 @@ D0FUS automatically detects the execution mode based on the input file format. T
 
 ## Input
 
-Input files are simple text files with parameter definitions. The format of variable parameters determines which mode D0FUS will execute:
+### Parameter Handling
 
+All parameters have built-in default values. When an input file is provided, only the specified parameters are overwritten while all others retain their defaults. This allows minimal input files containing only the parameters of interest.
+
+For example, an input file with just:
 ```ini
-# Fixed parameter → RUN mode
+R0 = 7
+Bmax = 14
+```
+will run D0FUS with these two values modified, using defaults for everything else.
+
+### Parameter Reference
+
+| Parameter | Description | Unit | Default | Options |
+|-----------|-------------|------|---------|---------|
+| **Geometry** |||||
+| `P_fus` | Fusion power | MW | 2000 | |
+| `R0` | Major radius | m | 9 | |
+| `a` | Minor radius | m | 3 | |
+| `Option_Kappa` | Elongation model | - | `Wenninger` | `Wenninger`, `Manual` |
+| `κ_manual` | Manual elongation (if `Option_Kappa = Manual`) | - | 1.7 | |
+| `b` | Blanket + shield thickness | m | 1.2 | |
+| **Magnetic Field** |||||
+| `Bmax` | Maximum field on TF coils | T | 12 | |
+| **Technology** |||||
+| `Supra_choice` | Superconductor material | - | `Nb3Sn` | `NbTi`, `Nb3Sn`, `REBCO` |
+| `Radial_build_model` | Radial build calculation model | - | `D0FUS` | `D0FUS`, `Freidberg` |
+| `Choice_Buck_Wedg` | TF coil mechanical configuration | - | `Wedging` | `Bucking`, `Wedging` |
+| `Chosen_Steel` | Structural steel grade | - | `316L` | `316L`, `316LN` |
+| **Plasma Physics** |||||
+| `Scaling_Law` | Energy confinement scaling law | - | `IPB98(y,2)` | `IPB98(y,2)`, `ITPA20` |
+| `H` | H-factor (confinement enhancement) | - | 1 | |
+| `Tbar` | Volume-averaged temperature | keV | 14 | |
+| `nu_T` | Temperature profile peaking factor | - | 1 | |
+| `nu_n` | Density profile peaking factor | - | 0.1 | |
+| `L_H_Scaling_choice` | L-H threshold scaling | - | `New_Ip` | `New_Ip`, `Martin` |
+| `Bootstrap_choice` | Bootstrap current model | - | `Freidberg` | `Freidberg`, `Sauter` |
+| **Operation** |||||
+| `Operation_mode` | Operating scenario | - | `Steady-State` | `Steady-State`, `Pulsed` |
+| `Temps_Plateau_input`* | Burn duration (Pulsed mode) | s | 7200 | |
+| `P_aux_input`* | Auxiliary heating power (Pulsed mode) | MW | 100 | |
+
+*Parameters marked with \* are only relevant when `Operation_mode = Pulsed`.
+
+### Input File Format
+
+The format of variable parameters determines which execution mode D0FUS will use:
+
+**RUN mode** — Fixed values only:
+```ini
 R0 = 9
 ```
-See `D0FUS_INPUTS/default_input.txt` for a complete run example with all available parameters.
+See `D0FUS_INPUTS/default_input.txt` for a complete example.
 
+**SCAN mode** — Exactly 2 parameters with `[min, max, n_points]`:
 ```ini
-# Scan parameter → SCAN mode
-R0 = [3, 9, 25]                 # [min, max, n_points]
+R0 = [3, 9, 25]
+a = [1, 3, 25]
 ```
-See `D0FUS_INPUTS/scan_input_example.txt` for a complete run example with all available parameters.
+See `D0FUS_INPUTS/scan_input_example.txt` for a complete example.
 
+**OPTIMIZATION mode** — 2+ parameters with `[min, max]`:
 ```ini
-# Optimization parameter → OPTIMIZATION mode
-R0 = [3, 9]                     # [min, max]
+R0 = [3, 9]
+a = [1, 3]
+Bmax = [10, 16]
 ```
-See `D0FUS_INPUTS/input_genetic_example.txt` for a complete run example with all available parameters.
+See `D0FUS_INPUTS/input_genetic_example.txt` for a complete example.
 
+### Genetic Algorithm Settings
+
+For OPTIMIZATION mode, optional algorithm parameters can be added to the input file:
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `population_size` | Number of individuals per generation | 50 |
+| `generations` | Maximum number of generations | 100 |
+| `crossover_rate` | Crossover probability | 0.7 |
+| `mutation_rate` | Mutation probability | 0.2 |
 
 ## Output
 
@@ -145,19 +204,6 @@ D0FUS_OUTPUTS/Scan_D0FUS_20251106_123456/
 - Radial build feasibility limits
 - Iso-contours of key parameters (Ip, Q, B0, etc.)
 
-### SCAN Mode Output
-
-```
-D0FUS_OUTPUTS/Scan_D0FUS_20251106_123456/
-├── scan_parameters.txt         # Scan configuration
-└── scan_map_[iso]_[bg].png     # High-resolution figure (300 dpi)
-```
-
-**Scan visualizations show:**
-- Plasma stability boundaries (density, beta, kink safety factor)
-- Radial build feasibility limits
-- Iso-contours of key parameters (Ip, Q, B0, etc.)
-
 ### OPTIMIZATION Mode Output
 
 ```
@@ -172,20 +218,6 @@ D0FUS_OUTPUTS/Genetic_D0FUS_20251106_123456/
 - Fitness evolution: cost reduction across generations
 - Constraint satisfaction: plasma stability (Greenwald, Troyon, kink) and radial build feasibility
 - Convergence diagnostics: population diversity and stagnation metrics
-
-**Input file format for optimization:**
-```ini
-# Variable parameters (2+ required)
-R0 = [3, 9]                     # Major radius bounds [m]
-a = [1, 3]                      # Minor radius bounds [m]
-Bmax = [10, 16]                 # Max TF field bounds [T]
-
-# Optional genetic algorithm settings
-population_size = 50            # Number of individuals per generation
-generations = 100               # Maximum generations
-crossover_rate = 0.7            # Crossover probability
-mutation_rate = 0.2             # Mutation probability
-```
 
 ## Contributing
 
