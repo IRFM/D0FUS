@@ -6,10 +6,12 @@
 
 ## Installation
 
-### Prerequisites
+### Requirements
+- Python 3.8+
+- Dependencies: `pip install -r requirements.txt`
 
-- Spyder
-https://www.spyder-ide.org/
+### Recommended
+- [Spyder IDE](https://www.spyder-ide.org/) for interactive use
 
 ### Quick Install
 
@@ -24,28 +26,32 @@ git clone http://irfm-gitlab.intra.cea.fr/projets/pepr-suprafusion/D0FUS.git
 D0FUS/
 ├── D0FUS_BIB/                      # Core library modules
 │   ├── __init__.py
-│   ├── D0FUS_import.py             # Common imports
-│   ├── D0FUS_parameterization.py   # Physical constants and parameters
-│   ├── D0FUS_physical_functions.py # Plasma physics functions
+│   ├── D0FUS_import.py                 # Common imports
+│   ├── D0FUS_parameterization.py       # Physical constants and parameters
+│   ├── D0FUS_physical_functions.py     # Plasma physics functions
 │   └── D0FUS_radial_build_functions.py # Engineering and radial build
 │
 ├── D0FUS_INPUTS/                   # Input parameter files
-│   └── default_input.txt           # Default configuration
+│   └── default_input.txt               # Default configuration
 │
 ├── D0FUS_OUTPUTS/                  # Generated outputs (auto-created)
-│   ├── Run_D0FUS_YYYYMMDD_HHMMSS/  # Single run results
-│   └── Scan_D0FUS_YYYYMMDD_HHMMSS/ # Scan results with figures
+│   ├── Run_D0FUS_YYYYMMDD_HHMMSS/      # Single run results
+│   ├── Scan_D0FUS_YYYYMMDD_HHMMSS/     # Scan results with figures
+│   └── Genetic_D0FUS_YYYYMMDD_HHMMSS/  # Genetic optimization results
 │
 ├── D0FUS_EXE/                      # Execution modules
-│   ├── D0FUS_run.py                # Single design point calculation
-│   └── D0FUS_scan.py               # 2D parameter space scan
+│   ├── D0FUS_run.py                    # Single design point calculation
+│   ├── D0FUS_scan.py                   # 2D parameter space scan
+│   └── D0FUS_genetic.py                # Genetic algorithm optimization
 │
 ├── D0FUS.py                        # Main entry point
 ├── requirements.txt                # Python dependencies
 └── README.md                       # This file
 ```
 
-## Quick Start
+## D0FUS Startup
+
+### Recommended Execution
 
 Launch Spyder and open D0FUS.py
 
@@ -53,7 +59,9 @@ Launch Spyder and open D0FUS.py
 python D0FUS.py
 ```
 
-Execute, uou'll then be prompted to select an input file
+Execute, you'll then be prompted to select an input file.
+
+### Script Integration
 
 You can also import and use D0FUS modules in your own scripts:
 
@@ -67,45 +75,103 @@ results = D0FUS_run.main("D0FUS_INPUTS/my_config.txt")
 B0, B_CS, Q, Ip, betaN, ... = results
 ```
 
-## Input File Format
+## Execution Modes
 
-Input files are simple text files with parameter definitions:
+D0FUS automatically detects the execution mode based on the input file format. Three modes are available:
 
+| Mode | Purpose | Input format | Parameters |
+|------|---------|--------------|------------|
+| **RUN** | Single design point calculation | `R0 = 9` | Fixed values only |
+| **SCAN** | 2D parameter space exploration | `R0 = [3, 9, 25]` | Exactly 2 parameters with `[min, max, n_points]` |
+| **OPTIMIZATION** | Genetic algorithm cost minimization | `R0 = [3, 9]` | 2+ parameters with `[min, max]` |
+
+**RUN mode** evaluates a single tokamak configuration and outputs all plasma parameters, magnetic fields, power balance, and radial build dimensions.
+
+**SCAN mode** generates 2D maps over two parameters, visualizing feasibility regions bounded by plasma stability limits (Greenwald density, Troyon beta, kink safety factor) and engineering constraints.
+
+**OPTIMIZATION mode** uses a genetic algorithm to find the reactor configuration minimizing cost while satisfying all physics and engineering constraints. The optimizer explores the multi-dimensional parameter space defined by the bounds and evolves the population toward optimal solutions.
+
+## Input
+
+### Parameter Handling
+
+All parameters have built-in default values. When an input file is provided, only the specified parameters are overwritten while all others retain their defaults. This allows minimal input files containing only the parameters of interest.
+
+For example, an input file with just:
 ```ini
-# D0FUS Input Parameters
-# Lines starting with # are comments
-
-# Geometry
-P_fus = 2000                    # Fusion power [MW]
-R0 = 9                          # Major radius [m]
-a = 3                           # Minor radius [m]
-b = 1.2                         # Blanket + shield thickness [m]
-
-# Magnetic Field
-Bmax = 12                       # Max toroidal field on TF coils [T]
-
-# Technology
-Supra_choice = Nb3Sn            # Superconductor type
-Choice_Buck_Wedg = Wedging      # Mechanical configuration
-Chosen_Steel = 316L             # Structural material
-
-# Plasma Physics
-Scaling_Law = IPB98(y,2)        # Confinement scaling law
-H = 1                           # H-factor
-Tbar = 14                       # Average temperature [keV]
-
-# Operation
-Operation_mode = Steady-State   # Steady-State or Pulsed
+R0 = 7
+Bmax = 14
 ```
+will run D0FUS with these two values modified, using defaults for everything else.
 
-See `D0FUS_INPUTS/default_input.txt` for a complete example with all available parameters.
-If one want to scan some parameters, just put it under bracket with the precision desired:
+### Parameter Reference
 
+| Parameter | Description | Unit | Default | Options |
+|-----------|-------------|------|---------|---------|
+| **Geometry** |||||
+| `P_fus` | Fusion power | MW | 2000 | |
+| `R0` | Major radius | m | 9 | |
+| `a` | Minor radius | m | 3 | |
+| `Option_Kappa` | Elongation model | - | `Wenninger` | `Stambaugh`, `Freidberg`, `Wenninger`, `Manual`  |
+| `κ_manual` | Manual elongation (if `Option_Kappa = Manual`) | - | 1.7 | |
+| `b` | Plasma -> TF coil | m | 1.2 | |
+| **Magnetic Field** |||||
+| `Bmax` | Maximum field on TF coils | T | 12 | |
+| **Technology** |||||
+| `Supra_choice` | Superconductor material | - | `Nb3Sn` | `NbTi`, `Nb3Sn`, `REBCO` |
+| `Radial_build_model` | Radial build calculation model | - | `D0FUS` | `D0FUS`, `Freidberg` |
+| `Choice_Buck_Wedg` | TF coil mechanical configuration | - | `Wedging` | `Plug`, `Bucking`, `Wedging` |
+| `Chosen_Steel` | Structural steel grade | - | `316L` | `316L`, `N50H`, `JK2LB`, `Manual` |
+| **Plasma Physics** |||||
+| `Scaling_Law` | Energy confinement scaling law | - | `IPB98(y,2)` | `IPB98(y,2)`, `ITPA20`, `ITPA20-IL`, `DS03`, `L-mode`, `L-mode OK`, `ITER89-P` |
+| `H` | H-factor (confinement enhancement) | - | 1 | |
+| `Tbar` | Volume-averaged temperature | keV | 14 | |
+| `nu_T` | Temperature profile peaking factor | - | 1 | |
+| `nu_n` | Density profile peaking factor | - | 0.1 | |
+| `L_H_Scaling_choice` | L-H threshold scaling | - | `New_Ip` | `New_Ip`, `Martin`, `New_S` |
+| `Bootstrap_choice` | Bootstrap current model | - | `Freidberg` | `Freidberg`, `Segal` |
+| **Operation** |||||
+| `Operation_mode` | Operating scenario | - | `Steady-State` | `Steady-State`, `Pulsed` |
+| `Temps_Plateau_input`* | Burn duration (Pulsed mode) | s | 7200 | |
+| `P_aux_input`* | Auxiliary heating power (Pulsed mode) | MW | 100 | |
+
+*Parameters marked with \* are only relevant when `Operation_mode = Pulsed`.
+
+### Input File Format
+
+The format of variable parameters determines which execution mode D0FUS will use:
+
+**RUN mode** — Fixed values only:
 ```ini
-# Geometry
-R0 = [3,9,25]                          # Major radius [m]
-a = [1,3,25]                           # Minor radius [m]
+R0 = 9
 ```
+See `D0FUS_INPUTS/default_input.txt` for a complete example.
+
+**SCAN mode** — Exactly 2 parameters with `[min, max, n_points]`:
+```ini
+R0 = [3, 9, 25]
+a = [1, 3, 25]
+```
+See `D0FUS_INPUTS/scan_input_example.txt` for a complete example.
+
+**OPTIMIZATION mode** — 2+ parameters with `[min, max]`:
+```ini
+R0 = [3, 9]
+a = [1, 3]
+Bmax = [10, 16]
+```
+See `D0FUS_INPUTS/input_genetic_example.txt` for a complete example.
+
+### Genetic Algorithm Settings
+
+For OPTIMIZATION mode, optional algorithm parameters can be added to the input file:
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `population_size` | Number of individuals per generation | 50 |
+| `generations` | Maximum number of generations | 100 |
+| `crossover_rate` | Crossover probability | 0.7 |
+| `mutation_rate` | Mutation probability | 0.2 |
 
 ## Output
 
@@ -124,7 +190,6 @@ D0FUS_OUTPUTS/Run_D0FUS_20251106_123456/
 - Magnetic fields (B0, BCS, Bpol)
 - Power balance (Pfus, PCD, Psep, Pthresh)
 - Radial build dimensions (TF thickness, CS thickness)
-- Engineering limits and safety factors
 
 ### SCAN Mode Output
 
@@ -139,11 +204,24 @@ D0FUS_OUTPUTS/Scan_D0FUS_20251106_123456/
 - Radial build feasibility limits
 - Iso-contours of key parameters (Ip, Q, B0, etc.)
 
+### OPTIMIZATION Mode Output
+
+```
+D0FUS_OUTPUTS/Genetic_D0FUS_20251106_123456/
+├── optimization_config.txt     # Optimization parameters and bounds
+├── optimization_results.txt    # Best solution and convergence history
+└── convergence_plot.png        # Fitness evolution over generations
+```
+
+**Optimization results include:**
+- Best individual: optimal parameter values minimizing reactor cost
+- Fitness evolution: cost reduction across generations
+- Constraint satisfaction: plasma stability (Greenwald, Troyon, kink) and radial build feasibility
+- Convergence diagnostics: population diversity and stagnation metrics
+
 ## Contributing
 
 Contributions are welcome! Please contact us:
-
-**Author**: Timothe Auclair
 
 - Email: timothe.auclair@cea.fr
 
