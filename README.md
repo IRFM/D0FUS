@@ -26,21 +26,23 @@ git clone http://irfm-gitlab.intra.cea.fr/projets/pepr-suprafusion/D0FUS.git
 D0FUS/
 ├── D0FUS_BIB/                      # Core library modules
 │   ├── __init__.py
-│   ├── D0FUS_import.py             # Common imports
-│   ├── D0FUS_parameterization.py   # Physical constants and parameters
-│   ├── D0FUS_physical_functions.py # Plasma physics functions
+│   ├── D0FUS_import.py                 # Common imports
+│   ├── D0FUS_parameterization.py       # Physical constants and parameters
+│   ├── D0FUS_physical_functions.py     # Plasma physics functions
 │   └── D0FUS_radial_build_functions.py # Engineering and radial build
 │
 ├── D0FUS_INPUTS/                   # Input parameter files
-│   └── default_input.txt           # Default configuration
+│   └── default_input.txt               # Default configuration
 │
 ├── D0FUS_OUTPUTS/                  # Generated outputs (auto-created)
-│   ├── Run_D0FUS_YYYYMMDD_HHMMSS/  # Single run results
-│   └── Scan_D0FUS_YYYYMMDD_HHMMSS/ # Scan results with figures
+│   ├── Run_D0FUS_YYYYMMDD_HHMMSS/      # Single run results
+│   ├── Scan_D0FUS_YYYYMMDD_HHMMSS/     # Scan results with figures
+│   └── Genetic_D0FUS_YYYYMMDD_HHMMSS/  # Genetic research of an optimal design result
 │
 ├── D0FUS_EXE/                      # Execution modules
-│   ├── D0FUS_run.py                # Single design point calculation
-│   └── D0FUS_scan.py               # 2D parameter space scan
+│   ├── D0FUS_run.py                    # Single design point calculation
+│   ├── D0FUS_scan.py                   # 2D parameter space scan
+│   └── D0FUS_genetic.py                # Genetic algorithm for optimal reasearch
 │
 ├── D0FUS.py                        # Main entry point
 ├── requirements.txt                # Python dependencies
