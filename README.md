@@ -6,10 +6,12 @@
 
 ## Installation
 
-### Prerequisites
+### Requirements
+- Python 3.8+
+- Dependencies: `pip install -r requirements.txt`
 
-- Spyder
-https://www.spyder-ide.org/
+### Recommended
+- [Spyder IDE](https://www.spyder-ide.org/) for interactive use
 
 ### Quick Install
 
