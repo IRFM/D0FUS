@@ -49,7 +49,9 @@ D0FUS/
 └── README.md                       # This file
 ```
 
-## Quick Start
+## D0FUS startup
+
+### Recommended execution
 
 Launch Spyder and open D0FUS.py
 
@@ -57,7 +59,9 @@ Launch Spyder and open D0FUS.py
 python D0FUS.py
 ```
 
-Execute, uou'll then be prompted to select an input file
+Execute, you'll then be prompted to select an input file
+
+### Bash execution
 
 You can also import and use D0FUS modules in your own scripts:
 
@@ -71,7 +75,7 @@ results = D0FUS_run.main("D0FUS_INPUTS/my_config.txt")
 B0, B_CS, Q, Ip, betaN, ... = results
 ```
 
-## Input File Format
+## Input
 
 Input files are simple text files with parameter definitions:
 
@@ -128,7 +132,19 @@ D0FUS_OUTPUTS/Run_D0FUS_20251106_123456/
 - Magnetic fields (B0, BCS, Bpol)
 - Power balance (Pfus, PCD, Psep, Pthresh)
 - Radial build dimensions (TF thickness, CS thickness)
-- Engineering limits and safety factors
+
+### SCAN Mode Output
+
+```
+D0FUS_OUTPUTS/Scan_D0FUS_20251106_123456/
+├── scan_parameters.txt         # Scan configuration
+└── scan_map_[iso]_[bg].png     # High-resolution figure (300 dpi)
+```
+
+**Scan visualizations show:**
+- Plasma stability boundaries (density, beta, kink safety factor)
+- Radial build feasibility limits
+- Iso-contours of key parameters (Ip, Q, B0, etc.)
 
 ### SCAN Mode Output
 
@@ -146,8 +162,6 @@ D0FUS_OUTPUTS/Scan_D0FUS_20251106_123456/
 ## Contributing
 
 Contributions are welcome! Please contact us:
-
-**Author**: Timothe Auclair
 
 - Email: timothe.auclair@cea.fr
 
