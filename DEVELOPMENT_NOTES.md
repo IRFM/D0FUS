@@ -1,7 +1,7 @@
 # To do
 
 * Add a detailed output of the coil comprizing post-process of sigma_z, sigma_r, sigma_theta + Conductor shape and area for TF and CS -> Timothé
-* In D0FUS_Scan_2D_generic, instead of creating many matrices "by hand", can we not create a matrix of (class) Output_parameters? This would save a lot of lines of code. -> Timothé
+* In D0FUS_Scan_2D_generic, instead of creating many matrices "by hand", can we not create a matrix of (class) Output_parameters? -> Timothé
 * In D0FUS_Scan_2D_generic, allow users to choose any couple of output parameters for iso-contours -> Timothé
 * Use classes as arguments of e.g. the run function instead of a long list of input and output variables -> Arthur
 * Check pep8 conventions -> Arthur
