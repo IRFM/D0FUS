@@ -112,7 +112,7 @@ will run D0FUS with these two values modified, using defaults for everything els
 | `P_fus` | Fusion power | MW | 2000 | |
 | `R0` | Major radius | m | 9 | |
 | `a` | Minor radius | m | 3 | |
-| `Option_Kappa` | Elongation model | - | `Wenninger` | `Wenninger`, `Manual` |
+| `Option_Kappa` | Elongation model | - | `Wenninger` | `Stambaugh`, `Freidberg`, `Wenninger`, `Manual`  |
 | `κ_manual` | Manual elongation (if `Option_Kappa = Manual`) | - | 1.7 | |
 | `b` | Blanket + shield thickness | m | 1.2 | |
 | **Magnetic Field** |||||
@@ -120,16 +120,16 @@ will run D0FUS with these two values modified, using defaults for everything els
 | **Technology** |||||
 | `Supra_choice` | Superconductor material | - | `Nb3Sn` | `NbTi`, `Nb3Sn`, `REBCO` |
 | `Radial_build_model` | Radial build calculation model | - | `D0FUS` | `D0FUS`, `Freidberg` |
-| `Choice_Buck_Wedg` | TF coil mechanical configuration | - | `Wedging` | `Bucking`, `Wedging` |
-| `Chosen_Steel` | Structural steel grade | - | `316L` | `316L`, `316LN` |
+| `Choice_Buck_Wedg` | TF coil mechanical configuration | - | `Wedging` | `Plug`, `Bucking`, `Wedging` |
+| `Chosen_Steel` | Structural steel grade | - | `316L` | `316L`, `N50H`, `JK2LB`, `Manual` |
 | **Plasma Physics** |||||
-| `Scaling_Law` | Energy confinement scaling law | - | `IPB98(y,2)` | `IPB98(y,2)`, `ITPA20` |
+| `Scaling_Law` | Energy confinement scaling law | - | `IPB98(y,2)` | `IPB98(y,2)`, `ITPA20`, `ITPA20-IL`, `DS03`, `L-mode`, `L-mode OK`, `ITER89-P` |
 | `H` | H-factor (confinement enhancement) | - | 1 | |
 | `Tbar` | Volume-averaged temperature | keV | 14 | |
 | `nu_T` | Temperature profile peaking factor | - | 1 | |
 | `nu_n` | Density profile peaking factor | - | 0.1 | |
-| `L_H_Scaling_choice` | L-H threshold scaling | - | `New_Ip` | `New_Ip`, `Martin` |
-| `Bootstrap_choice` | Bootstrap current model | - | `Freidberg` | `Freidberg`, `Sauter` |
+| `L_H_Scaling_choice` | L-H threshold scaling | - | `New_Ip` | `New_Ip`, `Martin`, `New_S` |
+| `Bootstrap_choice` | Bootstrap current model | - | `Freidberg` | `Freidberg`, `Segal` |
 | **Operation** |||||
 | `Operation_mode` | Operating scenario | - | `Steady-State` | `Steady-State`, `Pulsed` |
 | `Temps_Plateau_input`* | Burn duration (Pulsed mode) | s | 7200 | |
