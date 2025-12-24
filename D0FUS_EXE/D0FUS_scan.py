@@ -1,14 +1,11 @@
-
-
 """
-D0FUS Scan Module - Complete Generic Version
+D0FUS Scan Module
 Generates 2D parameter space maps with full visualization
 Supports scanning any 2 parameters dynamically
+Allows user to choose any two output parameters for iso-contours visualization
 
-Author: Auclair Timothe
 """
-#%% Import
-
+#%% Imports
 import sys
 import os
 
@@ -21,18 +18,687 @@ from D0FUS_BIB.D0FUS_radial_build_functions import *
 from D0FUS_BIB.D0FUS_physical_functions import *
 from D0FUS_EXE.D0FUS_run import run, Parameters
 
+#%% Output Parameter Registry
 
-#%% Code
-
-def parse_scan_parameter(line):
+@dataclass
+class OutputParameter:
     """
-    Parse a scan parameter line with bracket syntax
+    Complete metadata for a scan output parameter.
+    Centralizes all information needed for storage, plotting, and display.
+    """
+    name: str                           # Internal key name
+    label: str                          # LaTeX label for plots
+    unit: str = ""                      # Physical unit
+    levels: Optional[Tuple] = None      # (start, stop, step) for contour levels
+    fmt: str = "%.1f"                   # Format string for contour labels
+    use_radial_mask: bool = True        # Apply radial build validity mask?
+    category: str = "other"             # Category for organization
+    description: str = ""               # Human-readable description
+    
+    def get_levels(self) -> Optional[np.ndarray]:
+        """Generate contour levels array from (start, stop, step) tuple"""
+        if self.levels is None:
+            return None
+        return np.arange(*self.levels)
+    
+    def get_label_with_unit(self) -> str:
+        """Return label with unit for legend"""
+        if self.unit:
+            return f"{self.label} [{self.unit}]"
+        return self.label
+
+
+# =============================================================================
+# OUTPUT PARAMETER REGISTRY - Organized by categories
+# =============================================================================
+
+OUTPUT_REGISTRY: Dict[str, OutputParameter] = {
+    
+    # -------------------------------------------------------------------------
+    # PLASMA PERFORMANCE
+    # -------------------------------------------------------------------------
+    'Q': OutputParameter(
+        name='Q',
+        label='$Q$',
+        unit='',
+        levels=(0, 150, 10),
+        fmt='%d',
+        use_radial_mask=False,
+        category='performance',
+        description='Fusion gain factor'
+    ),
+    'P_fus': OutputParameter(
+        name='P_fus',
+        label='$P_{fus}$',
+        unit='MW',
+        levels=(0, 5000, 100),
+        fmt='%d',
+        use_radial_mask=False,
+        category='performance',
+        description='Fusion power'
+    ),
+    'P_elec': OutputParameter(
+        name='P_elec',
+        label='$P_{elec}$',
+        unit='MW',
+        levels=(0, 2000, 50),
+        fmt='%d',
+        use_radial_mask=False,
+        category='performance',
+        description='Electric power output'
+    ),
+    'Cost': OutputParameter(
+        name='Cost',
+        label='Cost',
+        unit='m$^3$',
+        levels=(0, 1000, 20),
+        fmt='%d',
+        use_radial_mask=False,
+        category='performance',
+        description='Reactor volume (cost proxy)'
+    ),
+    
+    # -------------------------------------------------------------------------
+    # PLASMA PARAMETERS
+    # -------------------------------------------------------------------------
+    'Ip': OutputParameter(
+        name='Ip',
+        label='$I_p$',
+        unit='MA',
+        levels=(1, 30, 1),
+        fmt='%d',
+        use_radial_mask=True,
+        category='plasma',
+        description='Plasma current'
+    ),
+    'n': OutputParameter(
+        name='n',
+        label='$\\bar{n}$',
+        unit='$10^{20}$ m$^{-3}$',
+        levels=(0.25, 5, 0.25),
+        fmt='%.2f',
+        use_radial_mask=True,
+        category='plasma',
+        description='Line-averaged electron density'
+    ),
+    'beta_N': OutputParameter(
+        name='beta_N',
+        label='$\\beta_N$',
+        unit='%',
+        levels=(0.5, 5, 0.25),
+        fmt='%.2f',
+        use_radial_mask=True,
+        category='plasma',
+        description='Normalized beta'
+    ),
+    'beta_T': OutputParameter(
+        name='beta_T',
+        label='$\\beta_T$',
+        unit='%',
+        levels=(0, 20, 1),
+        fmt='%d',
+        use_radial_mask=True,
+        category='plasma',
+        description='Toroidal beta'
+    ),
+    'beta_P': OutputParameter(
+        name='beta_P',
+        label='$\\beta_P$',
+        unit='',
+        levels=(0, 5, 0.25),
+        fmt='%.2f',
+        use_radial_mask=True,
+        category='plasma',
+        description='Poloidal beta'
+    ),
+    'q95': OutputParameter(
+        name='q95',
+        label='$q_{95}$',
+        unit='',
+        levels=(2, 10, 0.5),
+        fmt='%.1f',
+        use_radial_mask=True,
+        category='plasma',
+        description='Safety factor at 95% flux'
+    ),
+    'qstar': OutputParameter(
+        name='qstar',
+        label='$q_*$',
+        unit='',
+        levels=(1, 8, 0.5),
+        fmt='%.1f',
+        use_radial_mask=True,
+        category='plasma',
+        description='Cylindrical safety factor'
+    ),
+    'tauE': OutputParameter(
+        name='tauE',
+        label='$\\tau_E$',
+        unit='s',
+        levels=(0, 10, 0.5),
+        fmt='%.1f',
+        use_radial_mask=True,
+        category='plasma',
+        description='Energy confinement time'
+    ),
+    'W_th': OutputParameter(
+        name='W_th',
+        label='$W_{th}$',
+        unit='MJ',
+        levels=(0, 2000, 100),
+        fmt='%d',
+        use_radial_mask=True,
+        category='plasma',
+        description='Thermal stored energy'
+    ),
+    'f_bs': OutputParameter(
+        name='f_bs',
+        label='$f_{BS}$',
+        unit='%',
+        levels=(0, 100, 5),
+        fmt='%d',
+        use_radial_mask=True,
+        category='plasma',
+        description='Bootstrap fraction'
+    ),
+    'f_alpha': OutputParameter(
+        name='f_alpha',
+        label='$f_\\alpha$',
+        unit='%',
+        levels=(0, 100, 5),
+        fmt='%d',
+        use_radial_mask=False,
+        category='plasma',
+        description='Alpha heating fraction'
+    ),
+    
+    # -------------------------------------------------------------------------
+    # MAGNETIC FIELD
+    # -------------------------------------------------------------------------
+    'B0': OutputParameter(
+        name='B0',
+        label='$B_0$',
+        unit='T',
+        levels=(0, 20, 0.5),
+        fmt='%.1f',
+        use_radial_mask=True,
+        category='magnetic',
+        description='On-axis toroidal field'
+    ),
+    'BCS': OutputParameter(
+        name='BCS',
+        label='$B_{CS}$',
+        unit='T',
+        levels=(0, 25, 1),
+        fmt='%d',
+        use_radial_mask=True,
+        category='magnetic',
+        description='Central solenoid peak field'
+    ),
+    'B_pol': OutputParameter(
+        name='B_pol',
+        label='$B_{pol}$',
+        unit='T',
+        levels=(0, 3, 0.1),
+        fmt='%.1f',
+        use_radial_mask=True,
+        category='magnetic',
+        description='Poloidal field at edge'
+    ),
+    'J_TF': OutputParameter(
+        name='J_TF',
+        label='$J_{TF}$',
+        unit='A/mm²',
+        levels=(0, 100, 5),
+        fmt='%d',
+        use_radial_mask=True,
+        category='magnetic',
+        description='TF coil current density'
+    ),
+    'J_CS': OutputParameter(
+        name='J_CS',
+        label='$J_{CS}$',
+        unit='A/mm²',
+        levels=(0, 100, 5),
+        fmt='%d',
+        use_radial_mask=True,
+        category='magnetic',
+        description='CS coil current density'
+    ),
+    
+    # -------------------------------------------------------------------------
+    # POWER & HEAT EXHAUST
+    # -------------------------------------------------------------------------
+    'Heat': OutputParameter(
+        name='Heat',
+        label='$q_\\parallel B_T/B_P$',
+        unit='MW·T/m',
+        levels=(500, 15000, 500),
+        fmt='%d',
+        use_radial_mask=False,
+        category='power',
+        description='Parallel heat flux parameter'
+    ),
+    'Gamma_n': OutputParameter(
+        name='Gamma_n',
+        label='$\\Gamma_n$',
+        unit='MW/m²',
+        levels=(0, 5, 0.25),
+        fmt='%.2f',
+        use_radial_mask=False,
+        category='power',
+        description='Neutron wall loading'
+    ),
+    'P_CD': OutputParameter(
+        name='P_CD',
+        label='$P_{CD}$',
+        unit='MW',
+        levels=(0, 200, 10),
+        fmt='%d',
+        use_radial_mask=False,
+        category='power',
+        description='Current drive power'
+    ),
+    'P_sep': OutputParameter(
+        name='P_sep',
+        label='$P_{sep}$',
+        unit='MW',
+        levels=(0, 500, 25),
+        fmt='%d',
+        use_radial_mask=False,
+        category='power',
+        description='Power crossing separatrix'
+    ),
+    'P_Thresh': OutputParameter(
+        name='P_Thresh',
+        label='$P_{L-H}$',
+        unit='MW',
+        levels=(0, 200, 10),
+        fmt='%d',
+        use_radial_mask=False,
+        category='power',
+        description='L-H transition threshold power'
+    ),
+    'L_H': OutputParameter(
+        name='L_H',
+        label='$P_{sep}/P_{L-H}$',
+        unit='',
+        levels=(0, 10, 0.5),
+        fmt='%.1f',
+        use_radial_mask=False,
+        category='power',
+        description='L-H margin ratio'
+    ),
+    'P_Brem': OutputParameter(
+        name='P_Brem',
+        label='$P_{Brem}$',
+        unit='MW',
+        levels=(0, 200, 10),
+        fmt='%d',
+        use_radial_mask=False,
+        category='power',
+        description='Bremsstrahlung power loss'
+    ),
+    'P_syn': OutputParameter(
+        name='P_syn',
+        label='$P_{syn}$',
+        unit='MW',
+        levels=(0, 100, 5),
+        fmt='%d',
+        use_radial_mask=False,
+        category='power',
+        description='Synchrotron radiation power'
+    ),
+    'q_target': OutputParameter(
+        name='q_target',
+        label='$q_{target}$',
+        unit='MW/m²',
+        levels=(0, 50, 2),
+        fmt='%d',
+        use_radial_mask=False,
+        category='power',
+        description='Peak divertor heat flux'
+    ),
+    'lambda_q': OutputParameter(
+        name='lambda_q',
+        label='$\\lambda_q$',
+        unit='mm',
+        levels=(0, 10, 0.5),
+        fmt='%.1f',
+        use_radial_mask=False,
+        category='power',
+        description='SOL power decay length'
+    ),
+    
+    # -------------------------------------------------------------------------
+    # GEOMETRY & RADIAL BUILD
+    # -------------------------------------------------------------------------
+    'c': OutputParameter(
+        name='c',
+        label='$\\Delta_{TF}$',
+        unit='m',
+        levels=(0, 3, 0.1),
+        fmt='%.2f',
+        use_radial_mask=True,
+        category='geometry',
+        description='TF coil radial thickness'
+    ),
+    'd': OutputParameter(
+        name='d',
+        label='$\\Delta_{CS}$',
+        unit='m',
+        levels=(0, 2, 0.1),
+        fmt='%.2f',
+        use_radial_mask=True,
+        category='geometry',
+        description='CS coil radial thickness'
+    ),
+    'c_d': OutputParameter(
+        name='c_d',
+        label='$\\Delta_{TF}+\\Delta_{CS}$',
+        unit='m',
+        levels=(0, 5, 0.2),
+        fmt='%.2f',
+        use_radial_mask=True,
+        category='geometry',
+        description='Combined TF + CS thickness'
+    ),
+    'r_minor': OutputParameter(
+        name='r_minor',
+        label='$a$',
+        unit='m',
+        levels=(0, 4, 0.2),
+        fmt='%.1f',
+        use_radial_mask=True,
+        category='geometry',
+        description='Plasma minor radius'
+    ),
+    'kappa': OutputParameter(
+        name='kappa',
+        label='$\\kappa$',
+        unit='',
+        levels=(1, 3, 0.1),
+        fmt='%.2f',
+        use_radial_mask=True,
+        category='geometry',
+        description='Plasma elongation'
+    ),
+    'kappa_95': OutputParameter(
+        name='kappa_95',
+        label='$\\kappa_{95}$',
+        unit='',
+        levels=(1, 2.5, 0.1),
+        fmt='%.2f',
+        use_radial_mask=True,
+        category='geometry',
+        description='Elongation at 95% flux'
+    ),
+    'delta': OutputParameter(
+        name='delta',
+        label='$\\delta$',
+        unit='',
+        levels=(0, 1, 0.05),
+        fmt='%.2f',
+        use_radial_mask=True,
+        category='geometry',
+        description='Plasma triangularity'
+    ),
+    'Volume': OutputParameter(
+        name='Volume',
+        label='$V_p$',
+        unit='m³',
+        levels=(0, 3000, 100),
+        fmt='%d',
+        use_radial_mask=True,
+        category='geometry',
+        description='Plasma volume'
+    ),
+    'Surface': OutputParameter(
+        name='Surface',
+        label='$S_p$',
+        unit='m²',
+        levels=(0, 2000, 100),
+        fmt='%d',
+        use_radial_mask=True,
+        category='geometry',
+        description='Plasma surface area'
+    ),
+    'A': OutputParameter(
+        name='A',
+        label='$A$',
+        unit='',
+        levels=(2, 6, 0.25),
+        fmt='%.2f',
+        use_radial_mask=True,
+        category='geometry',
+        description='Aspect ratio R0/a'
+    ),
+    
+    # -------------------------------------------------------------------------
+    # STRUCTURAL / MECHANICAL
+    # -------------------------------------------------------------------------
+    'sigma_TF': OutputParameter(
+        name='sigma_TF',
+        label='$\\sigma_{VM,TF}$',
+        unit='MPa',
+        levels=(0, 1000, 50),
+        fmt='%d',
+        use_radial_mask=True,
+        category='structural',
+        description='TF coil Von Mises stress'
+    ),
+    'sigma_CS': OutputParameter(
+        name='sigma_CS',
+        label='$\\sigma_{VM,CS}$',
+        unit='MPa',
+        levels=(0, 1000, 50),
+        fmt='%d',
+        use_radial_mask=True,
+        category='structural',
+        description='CS coil Von Mises stress'
+    ),
+    'Steel_fraction_TF': OutputParameter(
+        name='Steel_fraction_TF',
+        label='$f_{steel,TF}$',
+        unit='%',
+        levels=(0, 100, 5),
+        fmt='%d',
+        use_radial_mask=True,
+        category='structural',
+        description='TF steel fraction'
+    ),
+    'Steel_fraction_CS': OutputParameter(
+        name='Steel_fraction_CS',
+        label='$f_{steel,CS}$',
+        unit='%',
+        levels=(0, 100, 5),
+        fmt='%d',
+        use_radial_mask=True,
+        category='structural',
+        description='CS steel fraction'
+    ),
+    
+    # -------------------------------------------------------------------------
+    # PLASMA LIMITS (internal use, colored background)
+    # -------------------------------------------------------------------------
+    'limits': OutputParameter(
+        name='limits',
+        label='Max limit',
+        unit='',
+        levels=(0, 2, 0.1),
+        fmt='%.1f',
+        use_radial_mask=False,
+        category='limits',
+        description='Maximum of all plasma limits'
+    ),
+    'density_limit': OutputParameter(
+        name='density_limit',
+        label='$n/n_G$',
+        unit='',
+        levels=(0.5, 2, 0.1),
+        fmt='%.2f',
+        use_radial_mask=False,
+        category='limits',
+        description='Greenwald density fraction'
+    ),
+    'beta_limit': OutputParameter(
+        name='beta_limit',
+        label='$\\beta_N/\\beta_{N,lim}$',
+        unit='',
+        levels=(0.5, 2, 0.1),
+        fmt='%.2f',
+        use_radial_mask=False,
+        category='limits',
+        description='Beta limit fraction'
+    ),
+    'q_limit': OutputParameter(
+        name='q_limit',
+        label='$q_{lim}/q_*$',
+        unit='',
+        levels=(0.5, 2, 0.1),
+        fmt='%.2f',
+        use_radial_mask=False,
+        category='limits',
+        description='Safety factor limit fraction'
+    ),
+    'radial_build': OutputParameter(
+        name='radial_build',
+        label='Radial build',
+        unit='',
+        levels=None,
+        fmt='%.1f',
+        use_radial_mask=False,
+        category='limits',
+        description='Radial build validity flag'
+    ),
+}
+
+# Category descriptions for display
+CATEGORY_INFO = {
+    'performance': ('Performance', 'Global reactor performance metrics'),
+    'plasma': ('Plasma Parameters', 'Core plasma physics quantities'),
+    'magnetic': ('Magnetic Field', 'Magnetic field and coil currents'),
+    'power': ('Power & Heat', 'Power balance and heat exhaust'),
+    'geometry': ('Geometry', 'Plasma and coil dimensions'),
+    'structural': ('Structural', 'Mechanical stress and materials'),
+    'limits': ('Limits', 'Operational limits (internal)'),
+}
+
+
+#%% ScanOutputs Class
+
+class ScanOutputs:
+    """
+    Container class for all 2D scan output matrices.
+    Provides convenient access, storage, and plotting utilities.
+    """
+    
+    def __init__(self, shape: Tuple[int, int]):
+        """
+        Initialize all output matrices with given shape.
+        
+        Args:
+            shape: (n_param1, n_param2) dimensions of the scan grid
+        """
+        self.shape = shape
+        self._matrices: Dict[str, np.ndarray] = {}
+        
+        # Initialize all registered parameters
+        for name in OUTPUT_REGISTRY:
+            self._matrices[name] = np.full(shape, np.nan)
+    
+    def __getitem__(self, key: str) -> np.ndarray:
+        """Get matrix by parameter name"""
+        if key not in self._matrices:
+            raise KeyError(f"Unknown output parameter: {key}. Available: {list(self._matrices.keys())}")
+        return self._matrices[key]
+    
+    def __setitem__(self, key: str, value: np.ndarray):
+        """Set entire matrix"""
+        self._matrices[key] = value
+    
+    def set_point(self, y: int, x: int, **kwargs):
+        """
+        Set multiple parameter values at a single grid point.
+        
+        Args:
+            y: Index along first scan parameter
+            x: Index along second scan parameter
+            **kwargs: Parameter name-value pairs
+        """
+        for key, value in kwargs.items():
+            if key in self._matrices:
+                self._matrices[key][y, x] = value
+            # Silently ignore unknown keys (flexibility for future additions)
+    
+    def fill_nan(self, y: int, x: int):
+        """Fill all matrices with NaN at given point (for error cases)"""
+        for matrix in self._matrices.values():
+            matrix[y, x] = np.nan
+    
+    def get_definition(self, key: str) -> OutputParameter:
+        """Get the OutputParameter definition for a key"""
+        return OUTPUT_REGISTRY.get(key)
+    
+    def get_masked(self, key: str, radial_build_matrix: np.ndarray = None) -> np.ndarray:
+        """
+        Get matrix with optional radial build mask applied.
+        
+        Args:
+            key: Parameter name
+            radial_build_matrix: If provided, apply NaN mask where radial build is invalid
+        """
+        matrix = self._matrices[key].copy()
+        param = OUTPUT_REGISTRY.get(key)
+        
+        if param and param.use_radial_mask and radial_build_matrix is not None:
+            mask = np.isnan(radial_build_matrix)
+            matrix[mask] = np.nan
+        
+        return matrix
+    
+    def to_dict(self) -> Dict[str, np.ndarray]:
+        """Export all matrices as dictionary (for backward compatibility)"""
+        return self._matrices.copy()
+    
+    @property
+    def available_parameters(self) -> List[str]:
+        """List all available parameter names"""
+        return list(self._matrices.keys())
+    
+    @staticmethod
+    def get_parameters_by_category(category: str) -> List[str]:
+        """Get list of parameter names for a given category"""
+        return [name for name, param in OUTPUT_REGISTRY.items() 
+                if param.category == category]
+    
+    @staticmethod
+    def list_plottable_parameters() -> Dict[str, List[str]]:
+        """
+        Return dictionary of plottable parameters organized by category.
+        Excludes internal 'limits' category.
+        """
+        result = {}
+        for cat_key, (cat_name, cat_desc) in CATEGORY_INFO.items():
+            if cat_key == 'limits':
+                continue
+            params = [name for name, p in OUTPUT_REGISTRY.items() 
+                     if p.category == cat_key and p.levels is not None]
+            if params:
+                result[cat_name] = params
+        return result
+
+
+#%% Input File Parsing
+
+def parse_scan_parameter(line: str) -> Optional[Tuple[str, float, float, int]]:
+    """
+    Parse a scan parameter line with bracket syntax.
     Example: "R0 = [3, 9, 25]" -> ("R0", 3.0, 9.0, 25)
     
     Returns:
-        tuple: (param_name, min_value, max_value, n_points)
+        tuple: (param_name, min_value, max_value, n_points) or None
     """
-    # Pattern: parameter = [min, max, n_points]
     match = re.match(r'^\s*(\w+)\s*=\s*\[([^\]]+)\]', line)
     if not match:
         return None
@@ -40,7 +706,6 @@ def parse_scan_parameter(line):
     param_name = match.group(1).strip()
     values_str = match.group(2)
     
-    # Split by comma or semicolon
     values = re.split(r'[,;]', values_str)
     if len(values) != 3:
         raise ValueError(f"Scan parameter {param_name} must have exactly 3 values: [min, max, n_points]")
@@ -52,9 +717,9 @@ def parse_scan_parameter(line):
     return (param_name, min_val, max_val, n_points)
 
 
-def load_scan_parameters(input_file):
+def load_scan_parameters(input_file: str) -> Tuple[List, Dict]:
     """
-    Load parameters from input file, identifying scan parameters
+    Load parameters from input file, identifying scan parameters.
     
     Returns:
         tuple: (scan_params, fixed_params)
@@ -66,39 +731,34 @@ def load_scan_parameters(input_file):
     
     scan_params = []
     fixed_params = {}
-    scan_param_names = []  # Keep track of scan parameter names
+    scan_param_names = []
     
     with open(input_file, 'r', encoding='utf-8') as f:
         for line in f:
-            # Remove comments and whitespace
             line = line.split('#')[0].strip()
             if not line:
                 continue
             
-            # Try to parse as scan parameter
             scan_param = parse_scan_parameter(line)
             if scan_param:
                 scan_params.append(scan_param)
-                scan_param_names.append(scan_param[0])  # Store the parameter name
+                scan_param_names.append(scan_param[0])
                 continue
             
-            # Parse as fixed parameter (only if not a scan parameter)
             if '=' in line:
                 parts = line.split('=', 1)
                 param_name = parts[0].strip()
                 param_value = parts[1].strip()
                 
-                # Skip if this is a scan parameter (already processed)
                 if param_name in scan_param_names:
                     continue
                 
-                # Try to convert to float
                 try:
                     param_value = float(param_value)
                     if param_value.is_integer():
                         param_value = int(param_value)
                 except ValueError:
-                    pass  # Keep as string
+                    pass
                 
                 fixed_params[param_name] = param_value
     
@@ -108,8 +768,8 @@ def load_scan_parameters(input_file):
     return scan_params, fixed_params
 
 
-def get_parameter_unit(param_name):
-    """Get the unit for a parameter name"""
+def get_input_parameter_unit(param_name: str) -> str:
+    """Get the unit for an input parameter name"""
     units = {
         'R0': 'm', 'a': 'm', 'b': 'm',
         'P_fus': 'MW',
@@ -121,9 +781,11 @@ def get_parameter_unit(param_name):
     return units.get(param_name, '')
 
 
-def generic_2D_scan(scan_params, fixed_params, params_obj):
+#%% Core Scan Function
+
+def generic_2D_scan(scan_params: List, fixed_params: Dict, params_obj) -> Tuple[ScanOutputs, np.ndarray, np.ndarray, str, str]:
     """
-    Perform generic 2D scan over any two parameters
+    Perform generic 2D scan over any two parameters.
     
     Args:
         scan_params: list of 2 tuples (name, min, max, n_points)
@@ -131,9 +793,11 @@ def generic_2D_scan(scan_params, fixed_params, params_obj):
         params_obj: Parameters object to update
     
     Returns:
-        matrices: dict of result matrices
+        outputs: ScanOutputs object containing all result matrices
         param1_values: array of first parameter values
         param2_values: array of second parameter values
+        param1_name: name of first scan parameter
+        param2_name: name of second scan parameter
     """
     
     # Extract scan parameters
@@ -148,29 +812,8 @@ def generic_2D_scan(scan_params, fixed_params, params_obj):
     print(f"  {param2_name}: [{param2_min}, {param2_max}] with {param2_n} points")
     print(f"  Total calculations: {param1_n * param2_n}\n")
     
-    # Initialize all matrices
-    matrices = {
-        'density': np.zeros((len(param1_values), len(param2_values))),
-        'security': np.zeros((len(param1_values), len(param2_values))),
-        'beta': np.zeros((len(param1_values), len(param2_values))),
-        'radial_build': np.zeros((len(param1_values), len(param2_values))),
-        'limits': np.zeros((len(param1_values), len(param2_values))),
-        'Heat': np.zeros((len(param1_values), len(param2_values))),
-        'Cost': np.zeros((len(param1_values), len(param2_values))),
-        'Q': np.zeros((len(param1_values), len(param2_values))),
-        'P_CD': np.zeros((len(param1_values), len(param2_values))),
-        'Gamma_n': np.zeros((len(param1_values), len(param2_values))),
-        'L_H': np.zeros((len(param1_values), len(param2_values))),
-        'f_alpha': np.zeros((len(param1_values), len(param2_values))),
-        'Ip': np.zeros((len(param1_values), len(param2_values))),
-        'n': np.zeros((len(param1_values), len(param2_values))),
-        'beta_N': np.zeros((len(param1_values), len(param2_values))),
-        'q95': np.zeros((len(param1_values), len(param2_values))),
-        'B0': np.zeros((len(param1_values), len(param2_values))),
-        'BCS': np.zeros((len(param1_values), len(param2_values))),
-        'c': np.zeros((len(param1_values), len(param2_values))),
-        'd': np.zeros((len(param1_values), len(param2_values)))
-    }
+    # Initialize outputs container
+    outputs = ScanOutputs(shape=(param1_n, param2_n))
     
     # Apply fixed parameters to params_obj
     for param_name, param_value in fixed_params.items():
@@ -213,7 +856,7 @@ def generic_2D_scan(scan_params, fixed_params, params_obj):
                  f_alpha, tau_alpha,
                  J_TF, J_CS,
                  c, c_WP_TF, c_Nose_TF, σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF,
-                 d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS, J_CS,
+                 d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS_out, J_CS_out,
                  r_minor, r_sep, r_c, r_d,
                  κ, κ_95, δ, δ_95) = results
                 
@@ -227,133 +870,289 @@ def generic_2D_scan(scan_params, fixed_params, params_obj):
                 
                 max_limit = max(n_condition, beta_condition, q_condition)
                 
-                # Store all results in matrices
-                matrices['Q'][y, x] = Q
-                matrices['Cost'][y, x] = cost
-                matrices['Heat'][y, x] = heat
-                matrices['P_CD'][y, x] = P_CD
-                matrices['Gamma_n'][y, x] = Gamma_n
-                matrices['L_H'][y, x] = P_sep / P_Thresh if P_Thresh > 0 else np.nan
-                matrices['f_alpha'][y, x] = f_alpha * 100
-                matrices['Ip'][y, x] = Ip
-                matrices['n'][y, x] = nbar
-                matrices['beta_N'][y, x] = betaN
-                matrices['q95'][y, x] = q95
-                matrices['B0'][y, x] = B0
-                matrices['BCS'][y, x] = B_CS
-                matrices['c'][y, x] = r_sep - r_c
-                matrices['d'][y, x] = r_c - r_d
+                # Store all results using set_point
+                outputs.set_point(y, x,
+                    # Performance
+                    Q=Q,
+                    P_fus=params_obj.P_fus,
+                    P_elec=P_elec,
+                    Cost=cost,
+                    
+                    # Plasma parameters
+                    Ip=Ip,
+                    n=nbar,
+                    beta_N=betaN,
+                    beta_T=betaT,
+                    beta_P=betaP,
+                    q95=q95,
+                    qstar=qstar,
+                    tauE=tauE,
+                    W_th=W_th,
+                    f_bs=Ib/Ip * 100 if Ip > 0 else 0,
+                    f_alpha=f_alpha * 100,
+                    
+                    # Magnetic field
+                    B0=B0,
+                    BCS=B_CS,
+                    B_pol=B_pol,
+                    J_TF=J_TF,
+                    J_CS=J_CS,
+                    
+                    # Power & heat
+                    Heat=heat,
+                    Gamma_n=Gamma_n,
+                    P_CD=P_CD,
+                    P_sep=P_sep,
+                    P_Thresh=P_Thresh,
+                    L_H=P_sep / P_Thresh if P_Thresh > 0 else np.nan,
+                    P_Brem=P_Brem,
+                    P_syn=P_syn,
+                    q_target=q_target,
+                    lambda_q=lambda_q * 1000 if lambda_q else np.nan,  # Convert to mm
+                    
+                    # Geometry
+                    c=r_sep - r_c if not np.isnan(r_c) else np.nan,
+                    d=r_c - r_d if not np.isnan(r_d) else np.nan,
+                    r_minor=r_minor,
+                    kappa=κ,
+                    kappa_95=κ_95,
+                    delta=δ,
+                    Volume=Volume,
+                    Surface=Surface,
+                    A=params_obj.R0 / params_obj.a if params_obj.a > 0 else np.nan,
+                    
+                    # Structural
+                    sigma_TF=max(abs(σ_z_TF), abs(σ_theta_TF), abs(σ_r_TF)) if σ_z_TF else np.nan,
+                    sigma_CS=max(abs(σ_z_CS), abs(σ_theta_CS), abs(σ_r_CS)) if σ_z_CS else np.nan,
+                    Steel_fraction_TF=Steel_fraction_TF * 100 if Steel_fraction_TF else np.nan,
+                    Steel_fraction_CS=Steel_fraction_CS * 100 if Steel_fraction_CS else np.nan,
+                    
+                    # Limits
+                    limits=max_limit,
+                    density_limit=n_condition,
+                    beta_limit=beta_condition,
+                    q_limit=q_condition,
+                )
                 
-                matrices['limits'][y, x] = max_limit
-                
-                # Initialize all limit matrices to NaN
-                matrices['density'][y, x] = np.nan
-                matrices['security'][y, x] = np.nan
-                matrices['beta'][y, x] = np.nan
+                # Combined c+d
+                c_val = r_sep - r_c if not np.isnan(r_c) else np.nan
+                d_val = r_c - r_d if not np.isnan(r_d) else np.nan
+                outputs['c_d'][y, x] = c_val + d_val if not (np.isnan(c_val) or np.isnan(d_val)) else np.nan
                 
                 # Check radial build validity
                 if not np.isnan(r_d) and max_limit < 1 and r_d > 0:
-                    matrices['radial_build'][y, x] = params_obj.R0
+                    outputs['radial_build'][y, x] = params_obj.R0
                 else:
-                    matrices['radial_build'][y, x] = np.nan
-                
-                # Identify the most limiting constraint and store ONLY that one
-                conditions = np.array([n_condition, beta_condition, q_condition])
-                idx_max = np.argmax(conditions)
-                
-                if max_limit < 2:
-                    if idx_max == 0:
-                        matrices['density'][y, x] = n_condition
-                    elif idx_max == 1:
-                        matrices['beta'][y, x] = beta_condition
-                    elif idx_max == 2:
-                        matrices['security'][y, x] = q_condition
+                    outputs['radial_build'][y, x] = np.nan
                 
             except Exception as e:
-                # Fill with NaN on error
-                for key in matrices:
-                    matrices[key][y, x] = np.nan
+                outputs.fill_nan(y, x)
                 if y < 2 and x < 2:
                     print(f"\n  Debug: Error at {param1_name}={param1_val:.2f}, {param2_name}={param2_val:.2f}: {str(e)}")
                 continue
     
     print("\n✓ Scan calculation completed!\n")
-    return matrices, param1_values, param2_values, param1_name, param2_name
+    return outputs, param1_values, param2_values, param1_name, param2_name
 
 
-def plot_scan_results(matrices, param1_values, param2_values, param1_name, param2_name,
-                      params, output_dir, iso_param=None, bg_param=None):
-    """Generate and save scan visualization plots"""
+#%% Plotting Functions
+
+def display_available_parameters():
+    """Display available parameters for iso-contours, organized by category"""
+    print("\n" + "="*70)
+    print("AVAILABLE OUTPUT PARAMETERS FOR ISO-CONTOURS")
+    print("="*70)
     
-    # Get units
-    unit_param1 = get_parameter_unit(param1_name)
-    unit_param2 = get_parameter_unit(param2_name)
+    params_by_cat = ScanOutputs.list_plottable_parameters()
     
-    # Ask user for plot preferences if not provided
-    if iso_param is None:
-        iso_param = input("Choose iso-contour parameter (Ip, n, beta, q95, B0, BCS, c, d, c&d): ").strip()
-    if bg_param is None:
-        bg_param = input("Choose background parameter (Heat, Cost, Q, Gamma_n, L_H, Alpha, B0, BCS): ").strip()
+    for cat_name, params in params_by_cat.items():
+        print(f"\n  {cat_name}:")
+        # Display in rows of 4
+        for i in range(0, len(params), 4):
+            row = params[i:i+4]
+            print("    " + ", ".join(f"{p:15}" for p in row))
+    
+    print("\n" + "="*70)
+
+
+def get_user_plot_choice(prompt: str, valid_options: List[str]) -> str:
+    """
+    Get user's choice for plotting parameter with validation.
+    
+    Args:
+        prompt: Question to display
+        valid_options: List of valid parameter names
+    
+    Returns:
+        Selected parameter name
+    """
+    while True:
+        choice = input(prompt).strip()
+        if choice in valid_options:
+            return choice
+        print(f"  Invalid choice '{choice}'. Please choose from the available parameters.")
+        print(f"  Hint: {', '.join(valid_options[:10])}...")
+
+
+def plot_generic_contours(ax, matrix: np.ndarray, param_key: str, 
+                          color: str = 'black', linestyle: str = 'dashed',
+                          linewidth: float = 2.5, fontsize: int = 22):
+    """
+    Plot contours for any registered parameter.
+    
+    Args:
+        ax: Matplotlib axes
+        matrix: 2D data matrix (already inverted if needed)
+        param_key: Parameter name from OUTPUT_REGISTRY
+        color: Contour line color
+        linestyle: Line style ('solid', 'dashed', etc.)
+        linewidth: Line width
+        fontsize: Font size for contour labels
+    
+    Returns:
+        Line2D object for legend, or None if no contours plotted
+    """
+    param = OUTPUT_REGISTRY.get(param_key)
+    if param is None:
+        print(f"  Warning: Unknown parameter '{param_key}'")
+        return None
+    
+    levels = param.get_levels()
+    if levels is None or len(levels) == 0:
+        return None
+    
+    # Filter levels to data range
+    data_min, data_max = np.nanmin(matrix), np.nanmax(matrix)
+    valid_levels = levels[(levels >= data_min) & (levels <= data_max)]
+    
+    if len(valid_levels) == 0:
+        print(f"  Note: No contour levels in data range for {param_key} [{data_min:.2f}, {data_max:.2f}]")
+        return None
+    
+    try:
+        contour = ax.contour(matrix, levels=valid_levels, colors=color,
+                            linestyles=linestyle, linewidths=linewidth)
+        ax.clabel(contour, inline=True, fmt=param.fmt, fontsize=fontsize)
+        
+        # Create legend entry
+        legend_line = mlines.Line2D([], [], color=color, linestyle=linestyle,
+                                   linewidth=linewidth, label=param.get_label_with_unit())
+        return legend_line
+    
+    except Exception as e:
+        print(f"  Warning: Could not plot contours for {param_key}: {e}")
+        return None
+
+
+def plot_scan_results(outputs: ScanOutputs, param1_values: np.ndarray, param2_values: np.ndarray,
+                      param1_name: str, param2_name: str, params, output_dir,
+                      iso_param_1: str = None, iso_param_2: str = None):
+    """
+    Generate scan visualization with two user-selectable iso-contour parameters.
+    
+    Args:
+        outputs: ScanOutputs object with all result matrices
+        param1_values: Array of first scan parameter values (Y-axis)
+        param2_values: Array of second scan parameter values (X-axis)
+        param1_name: Name of first scan parameter
+        param2_name: Name of second scan parameter
+        params: Parameters object (for reference values)
+        output_dir: Output directory (unused, kept for compatibility)
+        iso_param_1: Pre-selected first iso-contour parameter (black lines, optional)
+        iso_param_2: Pre-selected second iso-contour parameter (white lines, optional)
+    
+    Returns:
+        fig, ax, iso_param_1, iso_param_2
+    """
+    
+    # Get units for scan parameters
+    unit_param1 = get_input_parameter_unit(param1_name)
+    unit_param2 = get_input_parameter_unit(param2_name)
+    
+    # Get available plottable parameters
+    all_plottable = []
+    for params_list in ScanOutputs.list_plottable_parameters().values():
+        all_plottable.extend(params_list)
+    
+    # User selection if not provided
+    if iso_param_1 is None or iso_param_2 is None:
+        display_available_parameters()
+    
+    if iso_param_1 is None:
+        iso_param_1 = get_user_plot_choice(
+            "\nChoose ISO-CONTOUR 1 (black dashed lines): ", 
+            all_plottable
+        )
+    
+    if iso_param_2 is None:
+        iso_param_2 = get_user_plot_choice(
+            "Choose ISO-CONTOUR 2 (white dashed lines): ", 
+            all_plottable
+        )
+    
+    print(f"\n  Plotting: iso_1={iso_param_1}, iso_2={iso_param_2}")
     
     # Font sizes
-    font_topological = 22
-    font_background = 22
-    font_subtitle = 15
+    font_iso_1 = 22      # Black iso-contours
+    font_iso_2 = 22      # White iso-contours
     font_legend = 20
     font_other = 15
-    font_title = 30
     plt.rcParams.update({'font.size': font_other})
     
-    # Invert matrices for plotting
-    inv_matrices = {key: val[::-1, :] for key, val in matrices.items()}
+    # Get matrices and invert for plotting (Y-axis convention)
+    radial_build = outputs['radial_build'][::-1, :]
     
-    # Create masked versions for radial build
-    inv_Ip_mask = inv_matrices['Ip'].copy()
-    inv_n_mask = inv_matrices['n'].copy()
-    inv_beta_mask = inv_matrices['beta_N'].copy()
-    inv_q95_mask = inv_matrices['q95'].copy()
-    inv_B0_mask = inv_matrices['B0'].copy()
-    inv_BCS_mask = inv_matrices['BCS'].copy()
-    inv_c_mask = inv_matrices['c'].copy()
-    inv_d_mask = inv_matrices['d'].copy()
+    # Get iso-contour matrices with fixed masking behavior:
+    #   - iso_param_1 (black): ALWAYS masked to radial build valid region
+    #   - iso_param_2 (white): ALWAYS on full figure (no mask)
+    iso_matrix_1 = outputs.get_masked(iso_param_1, outputs['radial_build'])[::-1, :]
+    iso_matrix_2 = outputs[iso_param_2][::-1, :]
     
-    # Apply radial build mask
-    mask = np.isnan(inv_matrices['radial_build'])
-    inv_Ip_mask[mask] = np.nan
-    inv_n_mask[mask] = np.nan
-    inv_beta_mask[mask] = np.nan
-    inv_q95_mask[mask] = np.nan
-    inv_B0_mask[mask] = np.nan
-    inv_BCS_mask[mask] = np.nan
-    inv_c_mask[mask] = np.nan
-    inv_d_mask[mask] = np.nan
-    inv_c_d_mask = inv_c_mask + inv_d_mask
+    # Limit matrices for colored background
+    inv_density = outputs['density_limit'][::-1, :].copy()
+    inv_beta = outputs['beta_limit'][::-1, :].copy()
+    inv_q = outputs['q_limit'][::-1, :].copy()
+    inv_limits = outputs['limits'][::-1, :]
+    
+    # Set NaN where not the dominant limit
+    conditions = np.array([inv_density, inv_beta, inv_q])
+    idx_max = np.argmax(conditions, axis=0)
+    
+    inv_density_plot = np.where(idx_max == 0, inv_density, np.nan)
+    inv_beta_plot = np.where(idx_max == 1, inv_beta, np.nan)
+    inv_q_plot = np.where(idx_max == 2, inv_q, np.nan)
+    
+    # Only show where limits < 2
+    mask_valid = inv_limits < 2
+    inv_density_plot = np.where(mask_valid, inv_density_plot, np.nan)
+    inv_beta_plot = np.where(mask_valid, inv_beta_plot, np.nan)
+    inv_q_plot = np.where(mask_valid, inv_q_plot, np.nan)
     
     # Create figure
     fig, ax = plt.subplots(figsize=(10, 13))
     
     # Plot color maps for plasma limits
     min_val, max_val = 0.5, 2.0
-    im_density = ax.imshow(inv_matrices['density'], cmap='Blues', aspect='auto',
+    im_density = ax.imshow(inv_density_plot, cmap='Blues', aspect='auto',
                           interpolation='nearest', norm=Normalize(vmin=min_val, vmax=max_val))
-    im_security = ax.imshow(inv_matrices['security'], cmap='Greens', aspect='auto',
-                           interpolation='nearest', norm=Normalize(vmin=min_val, vmax=max_val))
-    im_beta = ax.imshow(inv_matrices['beta'], cmap='Reds', aspect='auto',
+    im_q = ax.imshow(inv_q_plot, cmap='Greens', aspect='auto',
+                     interpolation='nearest', norm=Normalize(vmin=min_val, vmax=max_val))
+    im_beta = ax.imshow(inv_beta_plot, cmap='Reds', aspect='auto',
                        interpolation='nearest', norm=Normalize(vmin=min_val, vmax=max_val))
     
-    # Contour for plasma stability boundary
+    # Plasma stability boundary (limit = 1)
     linewidth = 2.5
-    ax.contour(inv_matrices['limits'], levels=[1.0], colors='white', linewidths=linewidth)
-    white_dashed_line = mlines.Line2D([], [], color='white', linewidth=linewidth, 
-                                     label='Plasma stability boundary')
+    ax.contour(inv_limits, levels=[1.0], colors='white', linewidths=linewidth)
+    white_boundary = mlines.Line2D([], [], color='white', linewidth=linewidth,
+                                   label='Plasma stability boundary')
     
-    # Contour for radial build boundary
-    filled_matrix = np.where(np.isnan(inv_matrices['radial_build']), -1, 1)
+    # Radial build boundary
+    filled_matrix = np.where(np.isnan(radial_build), -1, 1)
     ax.contour(filled_matrix, levels=[0], linewidths=linewidth, colors='black')
-    black_line = mlines.Line2D([], [], color='black', linewidth=linewidth, 
-                               label='Radial build limit')
+    black_boundary = mlines.Line2D([], [], color='black', linewidth=linewidth,
+                                   label='Radial build limit')
     
-    # Configure axes
+    # Configure axes labels
     label_param2 = f"${param2_name}$" + (f" [{unit_param2}]" if unit_param2 else "")
     label_param1 = f"${param1_name}$" + (f" [{unit_param1}]" if unit_param1 else "")
     ax.set_xlabel(label_param2, fontsize=24)
@@ -365,11 +1164,11 @@ def plot_scan_results(matrices, param1_values, param2_values, param1_name, param
     cax2 = divider.append_axes("bottom", size="5%", pad=0.1, sharex=cax1)
     cax3 = divider.append_axes("bottom", size="5%", pad=0.1, sharex=cax1)
     
-    cax1.annotate('n/$n_{\\mathrm{G}}$', xy=(-0.01, 0.5), xycoords='axes fraction', 
+    cax1.annotate('$n/n_{G}$', xy=(-0.01, 0.5), xycoords='axes fraction',
                  ha='right', va='center', fontsize=font_other)
-    cax2.annotate(r'$\beta$/$\beta_{T}$', xy=(-0.01, 0.5), xycoords='axes fraction', 
+    cax2.annotate(r'$\beta_N/\beta_{lim}$', xy=(-0.01, 0.5), xycoords='axes fraction',
                  ha='right', va='center', fontsize=font_other)
-    cax3.annotate('$q_{\\mathrm{K}}$/$q_{*}$', xy=(-0.01, 0.5), xycoords='axes fraction', 
+    cax3.annotate('$q_{lim}/q_*$', xy=(-0.01, 0.5), xycoords='axes fraction',
                  ha='right', va='center', fontsize=font_other)
     
     cbar_density = plt.colorbar(im_density, cax=cax1, orientation='horizontal')
@@ -380,12 +1179,12 @@ def plot_scan_results(matrices, param1_values, param2_values, param1_name, param
     if cbar_beta.ax.xaxis.get_ticklabels():
         cbar_beta.ax.xaxis.get_ticklabels()[-1].set_visible(False)
     
-    cbar_security = plt.colorbar(im_security, cax=cax3, orientation='horizontal')
+    cbar_q = plt.colorbar(im_q, cax=cax3, orientation='horizontal')
     
     for cax in [cax1, cax2, cax3]:
         cax.axvline(x=1, color='white', linewidth=2.5)
     
-    # Configure y-axis (param1)
+    # Configure Y-axis ticks (param1)
     approx_step_y = (param1_values[-1] - param1_values[0]) / 10
     real_step_y = (param1_values[-1] - param1_values[0]) / (len(param1_values) - 1)
     index_step_y = max(1, int(round(approx_step_y / real_step_y)))
@@ -393,7 +1192,7 @@ def plot_scan_results(matrices, param1_values, param2_values, param1_name, param
     ax.set_yticks(y_indices)
     ax.set_yticklabels(np.round(param1_values[::-1][y_indices], 2), fontsize=font_legend)
     
-    # Configure x-axis (param2)
+    # Configure X-axis ticks (param2)
     approx_step_x = (param2_values[-1] - param2_values[0]) / 10
     real_step_x = (param2_values[-1] - param2_values[0]) / (len(param2_values) - 1)
     index_step_x = max(1, int(round(approx_step_x / real_step_x)))
@@ -402,136 +1201,45 @@ def plot_scan_results(matrices, param1_values, param2_values, param1_name, param
     x_labels = [round(param2_values[i], 2) for i in x_indices]
     ax.set_xticklabels(x_labels, rotation=45, ha='right', fontsize=font_legend)
     
-    # Add iso-contours
-    grey_line = None
-    if iso_param == 'Ip':
-        contour_lines = ax.contour(inv_Ip_mask, levels=np.arange(1, 25, 1), 
-                                   colors='black', linestyles='dashed', linewidths=linewidth)
-        ax.clabel(contour_lines, inline=True, fmt='%d', fontsize=font_topological)
-        grey_line = mlines.Line2D([], [], linewidth=linewidth, color='black', 
-                                 linestyle='dashed', label='$I_p$ [MA]')
-    elif iso_param == 'n':
-        contour_lines = ax.contour(inv_n_mask, levels=np.arange(0.25, 5, 0.25), 
-                                   colors='black', linestyles='dashed', linewidths=linewidth)
-        ax.clabel(contour_lines, inline=True, fmt='%.2f', fontsize=font_topological)
-        grey_line = mlines.Line2D([], [], linewidth=linewidth, color='black', 
-                                 linestyle='dashed', label='$n$ [10$^{20}$ m$^{-3}$]')
-    elif iso_param == 'beta':
-        contour_lines = ax.contour(inv_beta_mask, levels=np.arange(1, 10, 0.25), 
-                                   colors='black', linestyles='dashed', linewidths=linewidth)
-        ax.clabel(contour_lines, inline=True, fmt='%.2f', fontsize=font_topological)
-        grey_line = mlines.Line2D([], [], linewidth=linewidth, color='black', 
-                                 linestyle='dashed', label='$\\beta_N$ [%]')
-    elif iso_param == 'q95':
-        contour_lines = ax.contour(inv_q95_mask, levels=np.arange(1, 10, 0.5), 
-                                   colors='black', linestyles='dashed', linewidths=linewidth)
-        ax.clabel(contour_lines, inline=True, fmt='%.1f', fontsize=font_topological)
-        grey_line = mlines.Line2D([], [], linewidth=linewidth, color='black', 
-                                 linestyle='dashed', label='$q_{95}$')
-    elif iso_param == 'B0':
-        contour_lines = ax.contour(inv_B0_mask, levels=np.arange(1, 25, 0.5), 
-                                   colors='black', linestyles='dashed', linewidths=linewidth)
-        ax.clabel(contour_lines, inline=True, fmt='%.1f', fontsize=font_topological)
-        grey_line = mlines.Line2D([], [], linewidth=linewidth, color='black', 
-                                 linestyle='dashed', label='$B_0$ [T]')
-    elif iso_param == 'BCS':
-        contour_lines = ax.contour(inv_BCS_mask, levels=np.arange(1, 100, 2), 
-                                   colors='black', linestyles='dashed', linewidths=linewidth)
-        ax.clabel(contour_lines, inline=True, fmt='%.1f', fontsize=font_topological)
-        grey_line = mlines.Line2D([], [], linewidth=linewidth, color='black', 
-                                 linestyle='dashed', label='$B_{CS}$ [T]')
-    elif iso_param == 'c':
-        contour_lines = ax.contour(inv_c_mask, levels=np.arange(0, 10, 0.1), 
-                                   colors='black', linestyles='dashed', linewidths=linewidth)
-        ax.clabel(contour_lines, inline=True, fmt='%.2f', fontsize=font_topological)
-        grey_line = mlines.Line2D([], [], linewidth=linewidth, color='black', 
-                                 linestyle='dashed', label='TF width [m]')
-    elif iso_param == 'd':
-        contour_lines = ax.contour(inv_d_mask, levels=np.arange(0, 10, 0.1), 
-                                   colors='black', linestyles='dashed', linewidths=linewidth)
-        ax.clabel(contour_lines, inline=True, fmt='%.2f', fontsize=font_topological)
-        grey_line = mlines.Line2D([], [], linewidth=linewidth, color='black', 
-                                 linestyle='dashed', label='CS width [m]')
-    elif iso_param == 'c&d':
-        contour_lines = ax.contour(inv_c_d_mask, levels=np.arange(0, 10, 0.1), 
-                                   colors='black', linestyles='dashed', linewidths=linewidth)
-        ax.clabel(contour_lines, inline=True, fmt='%.2f', fontsize=font_topological)
-        grey_line = mlines.Line2D([], [], linewidth=linewidth, color='black', 
-                                 linestyle='dashed', label='CS + TF width [m]')
+    # Plot ISO-CONTOUR 1 (black dashed)
+    iso_legend_1 = plot_generic_contours(ax, iso_matrix_1, iso_param_1,
+                                         color='black', linestyle='dashed',
+                                         linewidth=linewidth, fontsize=font_iso_1)
     
-    # Add background contours
-    white_line = None
-    if bg_param == 'Heat':
-        contour_bg = ax.contour(inv_matrices['Heat'], levels=np.arange(1000, 10000, 500), 
-                               colors='white', linestyles='dashed', linewidths=linewidth)
-        ax.clabel(contour_bg, inline=True, fmt='%d', fontsize=font_background)
-        white_line = mlines.Line2D([], [], linewidth=linewidth, color='white', 
-                                   linestyle='dashed', label='Heat// [MW-T/m]')
-    elif bg_param == 'Q':
-        contour_bg = ax.contour(inv_matrices['Q'], levels=np.arange(0, 110, 10), 
-                               colors='white', linestyles='dashed', linewidths=linewidth)
-        ax.clabel(contour_bg, inline=True, fmt='%d', fontsize=font_background)
-        white_line = mlines.Line2D([], [], linewidth=linewidth, color='white', 
-                                   linestyle='dashed', label='Q')
-    elif bg_param == 'Cost':
-        contour_bg = ax.contour(inv_matrices['Cost'], levels=np.arange(0, 1000, 20), 
-                               colors='white', linestyles='dashed', linewidths=linewidth)
-        ax.clabel(contour_bg, inline=True, fmt='%d', fontsize=font_background)
-        white_line = mlines.Line2D([], [], linewidth=linewidth, color='white', 
-                                   linestyle='dashed', label='Cost [m$^3$]')
-    elif bg_param == 'Gamma_n':
-        contour_bg = ax.contour(inv_matrices['Gamma_n'], levels=np.arange(0, 20, 1), 
-                               colors='white', linestyles='dashed', linewidths=linewidth)
-        ax.clabel(contour_bg, inline=True, fmt='%d', fontsize=font_background)
-        white_line = mlines.Line2D([], [], linewidth=linewidth, color='white', 
-                                   linestyle='dashed', label='$\\Gamma_n$ [MW/m²]')
-    elif bg_param == 'L_H':
-        contour_bg = ax.contour(inv_matrices['L_H'], levels=np.arange(0, 10, 1), 
-                               colors='white', linestyles='dashed', linewidths=linewidth)
-        ax.clabel(contour_bg, inline=True, fmt='%d', fontsize=font_background)
-        white_line = mlines.Line2D([], [], linewidth=linewidth, color='white', 
-                                   linestyle='dashed', label='L-H Transition')
-    elif bg_param == 'Alpha':
-        contour_bg = ax.contour(inv_matrices['f_alpha'], levels=np.arange(0, 100, 1), 
-                               colors='white', linestyles='dashed', linewidths=linewidth)
-        ax.clabel(contour_bg, inline=True, fmt='%d', fontsize=font_background)
-        white_line = mlines.Line2D([], [], linewidth=linewidth, color='white', 
-                                   linestyle='dashed', label='Alpha fraction [%]')
-    elif bg_param == 'B0':
-        contour_bg = ax.contour(inv_B0_mask, levels=np.arange(0, 25, 0.5), 
-                               colors='white', linestyles='dashed', linewidths=linewidth)
-        ax.clabel(contour_bg, inline=True, fmt='%.1f', fontsize=font_background)
-        white_line = mlines.Line2D([], [], linewidth=linewidth, color='white', 
-                                   linestyle='dashed', label='$B_0$ [T]')
-    elif bg_param == 'BCS':
-        contour_bg = ax.contour(inv_BCS_mask, levels=np.arange(0, 100, 5), 
-                               colors='white', linestyles='dashed', linewidths=linewidth)
-        ax.clabel(contour_bg, inline=True, fmt='%.1f', fontsize=font_background)
-        white_line = mlines.Line2D([], [], linewidth=linewidth, color='white', 
-                                   linestyle='dashed', label='$B_{CS}$ [T]')
+    # Plot ISO-CONTOUR 2 (white dashed)
+    iso_legend_2 = plot_generic_contours(ax, iso_matrix_2, iso_param_2,
+                                         color='white', linestyle='dashed',
+                                         linewidth=linewidth, fontsize=font_iso_2)
     
-    # Add legend
-    legend_handles = [white_dashed_line, black_line]
-    if white_line:
-        legend_handles.append(white_line)
-    if grey_line:
-        legend_handles.append(grey_line)
+    # Build legend
+    legend_handles = [white_boundary, black_boundary]
+    if iso_legend_2:
+        legend_handles.append(iso_legend_2)
+    if iso_legend_1:
+        legend_handles.append(iso_legend_1)
     
-    ax.legend(handles=legend_handles, loc='upper left', facecolor='lightgrey', 
+    ax.legend(handles=legend_handles, loc='upper left', facecolor='lightgrey',
              fontsize=font_legend)
     
-    return fig, ax, iso_param, bg_param
+    return fig, ax, iso_param_1, iso_param_2
 
 
-def save_scan_results(fig, matrices, param1_values, param2_values, param1_name, param2_name,
-                     params, output_dir, iso_param, bg_param, input_file_path=None):
-    """Save scan results to timestamped directory"""
+#%% Save Results
+
+def save_scan_results(fig, outputs: ScanOutputs, param1_values: np.ndarray, param2_values: np.ndarray,
+                     param1_name: str, param2_name: str, params, output_dir: str,
+                     iso_param_1: str, iso_param_2: str, input_file_path: str = None) -> str:
+    """
+    Save scan results to timestamped directory.
+    
+    Returns:
+        Path to output directory
+    """
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_name = f"Scan_D0FUS_{timestamp}"
-    output_path = os.path.join(output_dir,'scan', output_name)
+    output_path = os.path.join(output_dir, 'scan', output_name)
     
-    # Create directory
     os.makedirs(output_path, exist_ok=True)
     
     # Copy original input file if provided
@@ -552,36 +1260,47 @@ def save_scan_results(fig, matrices, param1_values, param2_values, param1_name, 
                 if key not in [param1_name, param2_name]:
                     f.write(f"{key} = {value}\n")
             f.write(f"\n# Visualization:\n")
-            f.write(f"# Iso-contour: {iso_param}\n")
-            f.write(f"# Background: {bg_param}\n")
+            f.write(f"iso_param_1 = {iso_param_1}  # Black dashed lines\n")
+            f.write(f"iso_param_2 = {iso_param_2}  # White dashed lines\n")
     
     # Save figure
-    fig_filename = f"scan_map_{param1_name}_{param2_name}_{iso_param}_{bg_param}.png"
+    fig_filename = f"scan_map_{param1_name}_{param2_name}_{iso_param_1}_{iso_param_2}.png"
     fig_path = os.path.join(output_path, fig_filename)
     fig.savefig(fig_path, dpi=300, bbox_inches='tight')
+    
+    # Save matrices as NPZ for post-processing
+    matrices_path = os.path.join(output_path, "scan_matrices.npz")
+    np.savez(matrices_path, 
+             param1_values=param1_values,
+             param2_values=param2_values,
+             param1_name=param1_name,
+             param2_name=param2_name,
+             **outputs.to_dict())
+    
     print(f"✓ All results saved to: {output_path}\n")
     
-    # Reset matplotlib to defaults
     plt.rcdefaults()
     
     return output_path
 
 
-def main(input_file=None, auto_plot=False, iso_param=None, bg_param=None):
+#%% Main Function
+
+def main(input_file: str = None, auto_plot: bool = False, 
+         iso_param_1: str = None, iso_param_2: str = None):
     """
-    Main execution function for scans
+    Main execution function for scans.
     
     Args:
         input_file: Path to input file (optional)
-        auto_plot: If True, use provided iso_param and bg_param without asking
-        iso_param: Iso-contour parameter (if auto_plot=True)
-        bg_param: Background parameter (if auto_plot=True)
+        auto_plot: If True, use provided iso_param_1 and iso_param_2 without asking
+        iso_param_1: First iso-contour parameter - black lines (if auto_plot=True)
+        iso_param_2: Second iso-contour parameter - white lines (if auto_plot=True)
     """
     
     # Load parameters
     p = Parameters()
     
-    # Store input file path for copying later
     input_file_path = input_file
     
     if input_file is None:
@@ -605,33 +1324,31 @@ def main(input_file=None, auto_plot=False, iso_param=None, bg_param=None):
     print("="*73)
     print(f"\nScan parameters:")
     for param_name, min_val, max_val, n_points in scan_params:
-        unit = get_parameter_unit(param_name)
+        unit = get_input_parameter_unit(param_name)
         unit_str = f" [{unit}]" if unit else ""
         print(f"  {param_name}: [{min_val}, {max_val}]{unit_str} with {n_points} points")
     
     print(f"\nFixed parameters:")
-    for key, value in list(fixed_params.items())[:6]:  # Show first 6
+    for key, value in list(fixed_params.items())[:6]:
         print(f"  {key} = {value}")
     if len(fixed_params) > 6:
         print(f"  ... and {len(fixed_params) - 6} more")
     
     try:
         # Perform scan
-        matrices, param1_values, param2_values, param1_name, param2_name = generic_2D_scan(
+        outputs, param1_values, param2_values, param1_name, param2_name = generic_2D_scan(
             scan_params, fixed_params, p
         )
         
         # Plot results
-        if auto_plot and iso_param and bg_param:
-            # Automatic plotting with provided parameters
-            fig, ax, iso_used, bg_used = plot_scan_results(
-                matrices, param1_values, param2_values, param1_name, param2_name,
-                p, None, iso_param, bg_param
+        if auto_plot and iso_param_1 and iso_param_2:
+            fig, ax, iso_used_1, iso_used_2 = plot_scan_results(
+                outputs, param1_values, param2_values, param1_name, param2_name,
+                p, None, iso_param_1, iso_param_2
             )
         else:
-            # Interactive plotting - ask user for preferences
-            fig, ax, iso_used, bg_used = plot_scan_results(
-                matrices, param1_values, param2_values, param1_name, param2_name,
+            fig, ax, iso_used_1, iso_used_2 = plot_scan_results(
+                outputs, param1_values, param2_values, param1_name, param2_name,
                 p, None
             )
         
@@ -639,14 +1356,13 @@ def main(input_file=None, auto_plot=False, iso_param=None, bg_param=None):
         output_dir = os.path.join(os.path.dirname(__file__), '..', 'D0FUS_OUTPUTS')
         os.makedirs(output_dir, exist_ok=True)
         output_path = save_scan_results(
-            fig, matrices, param1_values, param2_values, param1_name, param2_name,
-            p, output_dir, iso_used, bg_used, input_file_path
+            fig, outputs, param1_values, param2_values, param1_name, param2_name,
+            p, output_dir, iso_used_1, iso_used_2, input_file_path
         )
         
-        # Show plot
         plt.show()
         
-        return matrices, param1_values, param2_values, output_path
+        return outputs, param1_values, param2_values, output_path
     
     except Exception as e:
         print(f"\n!!! ERROR during scan !!!")
