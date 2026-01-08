@@ -15,5 +15,5 @@
 * Go through all functions and make sure that no global variables are used -> Timothé
 * Put all comments in English -> Timothé
 * Put all variable names in English -> Timothé
-* Use more adequate variable names, e.g. q_limit instead of q 
-* Give references for the models used, e.g. for the confinement time scaling laws
+* Use more adequate variable names, e.g. q_limit instead of q -> Timothé
+* Give references for the models used, e.g. for the confinement time scaling laws -> Timothé
