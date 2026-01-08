@@ -861,8 +861,8 @@ def generic_2D_scan(scan_params: List, fixed_params: Dict, params_obj) -> Tuple[
                  κ, κ_95, δ, δ_95) = results
                 
                 # Calculate plasma limit conditions
-                betaN_limit_value = 2.8
-                q_limit_value = 2.5
+                betaN_limit_value = betaN_limit
+                q_limit_value = q_limit
                 
                 n_condition = nbar / nG
                 beta_condition = betaN / betaN_limit_value

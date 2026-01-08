@@ -7,9 +7,9 @@ R0 = [3, 9, 25]             # Major radius scan [m]
 
 P_fus = 2000                # Fusion power [MW]
 Option_Kappa = Wenninger    # Elongation modeld
-Bmax = 12                    # Maximum toroidal field on TF coils [T]
+Bmax = 12                   # Maximum toroidal field on TF coils [T]
 Supra_choice = Nb3Sn        # Superconductor: Nb3Sn, Rebco, NbTi
 Radial_build_model = D0FUS  # Radial build: academic, D0FUS, CIRCEE
-Choice_Buck_Wedg = Wedging     # Mechanical config: Wedging, Bucking, Plug
+Choice_Buck_Wedg = Wedging  # Mechanical config: Wedging, Bucking, Plug
 Chosen_Steel = 316L         # Steel type: 316L, N50H, Manual
 Operation_mode = Steady-State # Steady-State or Pulsed

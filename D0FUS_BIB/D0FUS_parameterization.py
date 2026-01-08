@@ -84,6 +84,9 @@ n_CS = 1                # CS conductor parameter
 
 #%% Superconductor Operating Conditions
 
+# If manual option: current density fixed
+Jc_Manual = 100e6        # MA/m²
+
 # Helium cooling
 T_helium = 4.2          # Liquid helium temperature [K]
 Marge_T_Helium = 0.3    # Temperature margin linked to 10 bar operation [K]

@@ -94,10 +94,27 @@ def f_Kappa(A, Option_Kappa, κ_manual, ms):
                         f"Valid options: 'Stambaugh', 'Freidberg', 'Wenninger', 'Manual'")
     
     # Physical validity check
-    if κ <= 0:
-        κ = np.nan
+    κ = np.where(np.asarray(κ) <= 0, np.nan, κ)
     
     return κ
+
+if __name__ == "__main__":
+    
+    A = np.linspace(1.5, 5.0, 200)
+    
+    fig, ax = plt.subplots(figsize=(5, 5))
+    
+    ax.plot(A, f_Kappa(A, 'Stambaugh', κ_manual=1.7, ms=0.3), label='Stambaugh')
+    ax.plot(A, f_Kappa(A, 'Freidberg', κ_manual=1.7, ms=0.3), label='Freidberg')
+    ax.plot(A, f_Kappa(A, 'Wenninger', κ_manual=1.7, ms=0.3), label='Wenninger')
+    
+    ax.set_xlabel('$A$')
+    ax.set_ylabel('$\\kappa$')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.show()
 
 def f_Kappa_95(kappa):
     """

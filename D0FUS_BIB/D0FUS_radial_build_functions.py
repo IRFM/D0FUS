@@ -256,7 +256,7 @@ def Jc_Rebco(B, T, Tet):
     
     return np.squeeze(Jc)
 
-def Jc(Supra_choice, B_supra, T_He):
+def Jc(Supra_choice, B_supra, T_He, Jc_Manual):
     """
     Main interface: Critical current density with temperature margins.
     
@@ -283,6 +283,8 @@ def Jc(Supra_choice, B_supra, T_He):
         return Jc_NbTi(B_supra, T_He + Marge_T_Helium + Marge_T_NbTi)
     elif Supra_choice == "Rebco":
         return Jc_Rebco(B_supra, T_He + Marge_T_Helium + Marge_T_Rebco, Tet)
+    elif Supra_choice == 'Manual':
+        return Jc_Manual
     else:
         raise ValueError(f"Unknown superconductor: {Supra_choice}")
 
@@ -327,7 +329,7 @@ if __name__ == "__main__":
     print("ITER TF COIL – Current Density Cascade\n")
     
     B, T = 11.8, 4.2
-    Jc_nonCu = Jc("Nb3Sn", B, T)
+    Jc_nonCu = Jc("Nb3Sn", B, T, Jc_Manual)
     # Cascade
     J_strand = Jc_nonCu * f_Cu_Non_Cu
     J_all_strand = J_strand * f_Cu_Strand
@@ -1815,7 +1817,7 @@ if __name__ == "__main__":
         f_Cu_Strand_benchmark = 0.75
         f_Cu_Non_Cu_benchmark = 0.5
         f_Cool_benchmark = 0.7
-        J_max_TF_tf = Jc("Rebco", B_max_TF_TF, T_supra) * f_Cu_Non_Cu_benchmark * f_Cu_Strand_benchmark * f_Cool_benchmark
+        J_max_TF_tf = Jc("Rebco", B_max_TF_TF, T_supra, Jc_Manual) * f_Cu_Non_Cu_benchmark * f_Cu_Strand_benchmark * f_Cool_benchmark
         
         # Academic models
         res_acad_w = f_TF_academic(a_TF, b_TF, R0_TF, σ_TF_tf, J_max_TF_tf, B_max_TF_TF, "Wedging")
@@ -2155,9 +2157,9 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     if Supra_choice_CS == 'Manual':
         J_max_CS = Jc_manual * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
     elif Supra_choice_CS == 'Rebco':
-        J_max_CS = Jc(Supra_choice_CS, B_CS_thin, T_Helium) * f_Cu_Strand * f_Cool * f_In
+        J_max_CS = Jc(Supra_choice_CS, B_CS_thin, T_Helium, Jc_Manual) * f_Cu_Strand * f_Cool * f_In
     else :
-        J_max_CS = Jc(Supra_choice_CS, B_CS_thin, T_Helium) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
+        J_max_CS = Jc(Supra_choice_CS, B_CS_thin, T_Helium, Jc_Manual) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
         
     if J_max_CS < Tol_CS:
         if debug:
@@ -2493,9 +2495,9 @@ def f_CS_D0FUS( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
         if Supra_choice_CS == 'Manual':
             J_max_CS = Jc_manual * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
         elif Supra_choice_CS == 'Rebco':
-            J_max_CS = Jc(Supra_choice_CS, B_CS, T_Helium) * f_Cu_Strand * f_Cool * f_In
+            J_max_CS = Jc(Supra_choice_CS, B_CS, T_Helium, Jc_Manual) * f_Cu_Strand * f_Cool * f_In
         else :
-            J_max_CS = Jc(Supra_choice_CS, B_CS, T_Helium) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
+            J_max_CS = Jc(Supra_choice_CS, B_CS, T_Helium, Jc_Manual) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
         alpha = B_CS / (μ0 * J_max_CS * d)
         
         # --- Sanity checks ---
@@ -2722,7 +2724,7 @@ def f_CS_D0FUS( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
 
 debug_CS = 0
 if __name__ == "__main__" and debug_CS == 1:
-    J_CS = Jc('Nb3Sn', 13, 4.2)
+    J_CS = Jc('Nb3Sn', 13, 4.2, Jc_Manual)
     print(f'Predicted current density ITER: {np.round(J_CS/1e6,2)}')
     print("ITER like")
     print(f_CS_D0FUS(0, 0, 230, 0, 2, 1.25, 0.9, 6.2, 11.8, 40, 400e6, 'Manual', J_CS, 4.2, 0.5, 0.7, 0.75, 'Wedging'))
@@ -2851,9 +2853,9 @@ def f_CS_CIRCE( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
         if Supra_choice_CS == 'Manual':
             J_max_CS = Jc_manual * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
         elif Supra_choice_CS == 'Rebco':
-            J_max_CS = Jc(Supra_choice_CS, B_CS, T_Helium) * f_Cu_Strand * f_Cool * f_In
+            J_max_CS = Jc(Supra_choice_CS, B_CS, T_Helium, Jc_Manual) * f_Cu_Strand * f_Cool * f_In
         else :
-            J_max_CS = Jc(Supra_choice_CS, B_CS, T_Helium) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
+            J_max_CS = Jc(Supra_choice_CS, B_CS, T_Helium, Jc_Manual) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
         alpha = B_CS / (μ0 * J_max_CS * d)
         
         # --- Sanity checks ---

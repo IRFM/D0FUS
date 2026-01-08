@@ -226,7 +226,6 @@ def list_input_files():
     input_files = list(input_dir.glob('*.txt'))
     return sorted(input_files)
 
-
 def select_input_file():
     """Interactive input file selection"""
     input_files = list_input_files()
@@ -273,7 +272,6 @@ def select_input_file():
         except KeyboardInterrupt:
             print("\n\nOperation cancelled by user.")
             sys.exit(0)
-
 
 def execute_with_mode_detection(input_file):
     """
@@ -370,7 +368,6 @@ def execute_with_mode_detection(input_file):
         traceback.print_exc()
         sys.exit(1)
 
-
 def interactive_mode():
     """Interactive mode: select file, auto-detect mode, execute"""
     print_banner()
@@ -380,7 +377,6 @@ def interactive_mode():
     
     # Execute with automatic mode detection
     execute_with_mode_detection(input_file)
-
 
 def command_line_mode(input_file):
     """Command line mode: auto-detect mode from input file"""

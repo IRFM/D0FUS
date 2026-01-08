@@ -65,6 +65,8 @@ from matplotlib.ticker import MultipleLocator
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from pandas.plotting import table
 from tqdm import tqdm
+from dataclasses import dataclass
+from typing import Optional, Dict, List, Tuple
 
 #%% Genetic Algorithm Libraries
 
