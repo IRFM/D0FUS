@@ -29,19 +29,19 @@ class OutputParameter:
     name: str                           # Internal key name
     label: str                          # LaTeX label for plots
     unit: str = ""                      # Physical unit
-    levels: Optional[Tuple] = None      # (start, stop, step) for contour levels
+    levels: tuple = None                # (start, stop, step) for contour levels
     fmt: str = "%.1f"                   # Format string for contour labels
     use_radial_mask: bool = True        # Apply radial build validity mask?
     category: str = "other"             # Category for organization
     description: str = ""               # Human-readable description
     
-    def get_levels(self) -> Optional[np.ndarray]:
+    def get_levels(self):
         """Generate contour levels array from (start, stop, step) tuple"""
         if self.levels is None:
             return None
         return np.arange(*self.levels)
     
-    def get_label_with_unit(self) -> str:
+    def get_label_with_unit(self):
         """Return label with unit for legend"""
         if self.unit:
             return f"{self.label} [{self.unit}]"
@@ -52,7 +52,7 @@ class OutputParameter:
 # OUTPUT PARAMETER REGISTRY - Organized by categories
 # =============================================================================
 
-OUTPUT_REGISTRY: Dict[str, OutputParameter] = {
+OUTPUT_REGISTRY = {
     
     # -------------------------------------------------------------------------
     # PLASMA PERFORMANCE
@@ -593,7 +593,7 @@ class ScanOutputs:
     Provides convenient access, storage, and plotting utilities.
     """
     
-    def __init__(self, shape: Tuple[int, int]):
+    def __init__(self, shape):
         """
         Initialize all output matrices with given shape.
         
@@ -601,23 +601,23 @@ class ScanOutputs:
             shape: (n_param1, n_param2) dimensions of the scan grid
         """
         self.shape = shape
-        self._matrices: Dict[str, np.ndarray] = {}
+        self._matrices = {}
         
         # Initialize all registered parameters
         for name in OUTPUT_REGISTRY:
             self._matrices[name] = np.full(shape, np.nan)
     
-    def __getitem__(self, key: str) -> np.ndarray:
+    def __getitem__(self, key):
         """Get matrix by parameter name"""
         if key not in self._matrices:
             raise KeyError(f"Unknown output parameter: {key}. Available: {list(self._matrices.keys())}")
         return self._matrices[key]
     
-    def __setitem__(self, key: str, value: np.ndarray):
+    def __setitem__(self, key, value):
         """Set entire matrix"""
         self._matrices[key] = value
     
-    def set_point(self, y: int, x: int, **kwargs):
+    def set_point(self, y, x, **kwargs):
         """
         Set multiple parameter values at a single grid point.
         
@@ -631,16 +631,16 @@ class ScanOutputs:
                 self._matrices[key][y, x] = value
             # Silently ignore unknown keys (flexibility for future additions)
     
-    def fill_nan(self, y: int, x: int):
+    def fill_nan(self, y, x):
         """Fill all matrices with NaN at given point (for error cases)"""
         for matrix in self._matrices.values():
             matrix[y, x] = np.nan
     
-    def get_definition(self, key: str) -> OutputParameter:
+    def get_definition(self, key):
         """Get the OutputParameter definition for a key"""
         return OUTPUT_REGISTRY.get(key)
     
-    def get_masked(self, key: str, radial_build_matrix: np.ndarray = None) -> np.ndarray:
+    def get_masked(self, key, radial_build_matrix=None):
         """
         Get matrix with optional radial build mask applied.
         
@@ -657,23 +657,23 @@ class ScanOutputs:
         
         return matrix
     
-    def to_dict(self) -> Dict[str, np.ndarray]:
+    def to_dict(self):
         """Export all matrices as dictionary (for backward compatibility)"""
         return self._matrices.copy()
     
     @property
-    def available_parameters(self) -> List[str]:
+    def available_parameters(self):
         """List all available parameter names"""
         return list(self._matrices.keys())
     
     @staticmethod
-    def get_parameters_by_category(category: str) -> List[str]:
+    def get_parameters_by_category(category):
         """Get list of parameter names for a given category"""
         return [name for name, param in OUTPUT_REGISTRY.items() 
                 if param.category == category]
     
     @staticmethod
-    def list_plottable_parameters() -> Dict[str, List[str]]:
+    def list_plottable_parameters():
         """
         Return dictionary of plottable parameters organized by category.
         Excludes internal 'limits' category.
@@ -691,7 +691,7 @@ class ScanOutputs:
 
 #%% Input File Parsing
 
-def parse_scan_parameter(line: str) -> Optional[Tuple[str, float, float, int]]:
+def parse_scan_parameter(line):
     """
     Parse a scan parameter line with bracket syntax.
     Example: "R0 = [3, 9, 25]" -> ("R0", 3.0, 9.0, 25)
@@ -717,7 +717,7 @@ def parse_scan_parameter(line: str) -> Optional[Tuple[str, float, float, int]]:
     return (param_name, min_val, max_val, n_points)
 
 
-def load_scan_parameters(input_file: str) -> Tuple[List, Dict]:
+def load_scan_parameters(input_file):
     """
     Load parameters from input file, identifying scan parameters.
     
@@ -768,7 +768,7 @@ def load_scan_parameters(input_file: str) -> Tuple[List, Dict]:
     return scan_params, fixed_params
 
 
-def get_input_parameter_unit(param_name: str) -> str:
+def get_input_parameter_unit(param_name):
     """Get the unit for an input parameter name"""
     units = {
         'R0': 'm', 'a': 'm', 'b': 'm',
@@ -783,7 +783,7 @@ def get_input_parameter_unit(param_name: str) -> str:
 
 #%% Core Scan Function
 
-def generic_2D_scan(scan_params: List, fixed_params: Dict, params_obj) -> Tuple[ScanOutputs, np.ndarray, np.ndarray, str, str]:
+def generic_2D_scan(scan_params, fixed_params, params_obj):
     """
     Perform generic 2D scan over any two parameters.
     
@@ -966,16 +966,13 @@ def display_available_parameters():
     params_by_cat = ScanOutputs.list_plottable_parameters()
     
     for cat_name, params in params_by_cat.items():
-        print(f"\n  {cat_name}:")
-        # Display in rows of 4
-        for i in range(0, len(params), 4):
-            row = params[i:i+4]
-            print("    " + ", ".join(f"{p:15}" for p in row))
+        params_str = " | ".join(params)
+        print(f"\n  {cat_name}: {params_str}")
     
     print("\n" + "="*70)
 
 
-def get_user_plot_choice(prompt: str, valid_options: List[str]) -> str:
+def get_user_plot_choice(prompt, valid_options):
     """
     Get user's choice for plotting parameter with validation.
     
@@ -994,9 +991,9 @@ def get_user_plot_choice(prompt: str, valid_options: List[str]) -> str:
         print(f"  Hint: {', '.join(valid_options[:10])}...")
 
 
-def plot_generic_contours(ax, matrix: np.ndarray, param_key: str, 
-                          color: str = 'black', linestyle: str = 'dashed',
-                          linewidth: float = 2.5, fontsize: int = 22):
+def plot_generic_contours(ax, matrix, param_key, 
+                          color='black', linestyle='dashed',
+                          linewidth=2.5, fontsize=22):
     """
     Plot contours for any registered parameter.
     
@@ -1044,9 +1041,9 @@ def plot_generic_contours(ax, matrix: np.ndarray, param_key: str,
         return None
 
 
-def plot_scan_results(outputs: ScanOutputs, param1_values: np.ndarray, param2_values: np.ndarray,
-                      param1_name: str, param2_name: str, params, output_dir,
-                      iso_param_1: str = None, iso_param_2: str = None):
+def plot_scan_results(outputs, param1_values, param2_values,
+                      param1_name, param2_name, params, output_dir,
+                      iso_param_1=None, iso_param_2=None):
     """
     Generate scan visualization with two user-selectable iso-contour parameters.
     
@@ -1226,9 +1223,9 @@ def plot_scan_results(outputs: ScanOutputs, param1_values: np.ndarray, param2_va
 
 #%% Save Results
 
-def save_scan_results(fig, outputs: ScanOutputs, param1_values: np.ndarray, param2_values: np.ndarray,
-                     param1_name: str, param2_name: str, params, output_dir: str,
-                     iso_param_1: str, iso_param_2: str, input_file_path: str = None) -> str:
+def save_scan_results(fig, outputs, param1_values, param2_values,
+                     param1_name, param2_name, params, output_dir,
+                     iso_param_1, iso_param_2, input_file_path=None):
     """
     Save scan results to timestamped directory.
     
@@ -1286,8 +1283,8 @@ def save_scan_results(fig, outputs: ScanOutputs, param1_values: np.ndarray, para
 
 #%% Main Function
 
-def main(input_file: str = None, auto_plot: bool = False, 
-         iso_param_1: str = None, iso_param_2: str = None):
+def main(input_file=None, auto_plot=False, 
+         iso_param_1=None, iso_param_2=None):
     """
     Main execution function for scans.
     

@@ -139,6 +139,23 @@ def f_Kappa_95(kappa):
     kappa_95 = kappa / 1.12
     return kappa_95
 
+if __name__ == "__main__":
+    
+    A = np.linspace(1.5, 5.0, 200)
+    
+    fig, ax = plt.subplots(figsize=(5, 5))
+    
+    ax.plot(A, f_Kappa_95(f_Kappa(A, 'Stambaugh', κ_manual=1.7, ms=0.3)), label='Stambaugh')
+    ax.plot(A, f_Kappa_95(f_Kappa(A, 'Freidberg', κ_manual=1.7, ms=0.3)), label='Freidberg')
+    ax.plot(A, f_Kappa_95(f_Kappa(A, 'Wenninger', κ_manual=1.7, ms=0.3)), label='Wenninger')
+    
+    ax.set_xlabel('$A$')
+    ax.set_ylabel('$\\kappa_{95}$')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.show()
 
 def f_Delta(kappa):
     """
@@ -1862,7 +1879,7 @@ if __name__ == "__main__":
           f"({abs(P_thresh_Delabie_Ip_WEST - P_thresh_Martin_WEST)/P_thresh_Martin_WEST*100:+.1f}%)")
 
 
-def f_q95(B0, Ip, R0, a, κ, δ):
+def f_q95(B0, Ip, R0, a, kappa_95, delta_95):
     """
     Estimate the safety factor q at 95% normalized poloidal flux (q95).
     
@@ -1882,10 +1899,10 @@ def f_q95(B0, Ip, R0, a, κ, δ):
         Major radius [m]
     a : float
         Minor radius [m]
-    κ : float
-        Elongation of the Last Closed Flux Surface (LCFS)
-    δ : float
-        Triangularity of the LCFS
+    kappa_95 : float
+        Elongation at 95% of the Last Closed Flux Surface (LCFS)
+    delta_95 : float
+        Triangularity at 95% of the LCFS
     
     Returns
     -------
@@ -1931,16 +1948,16 @@ def f_q95(B0, Ip, R0, a, κ, δ):
     # Sauter (2016) formula - preferred formulation
     # Factor 4.1 includes geometric corrections and unit conversions
     q95 = (4.1 * a**2 * B0) / (R0 * Ip) * \
-          (1 + 1.2*(κ - 1) + 0.56*(κ - 1)**2) * \
-          (1 + 0.09*δ + 0.16*δ**2) * \
-          (1 + 0.45*δ / Aspect_ratio) / \
+          (1 + 1.2*(kappa_95 - 1) + 0.56*(kappa_95 - 1)**2) * \
+          (1 + 0.09*delta_95 + 0.16*delta_95**2) * \
+          (1 + 0.45*delta_95 / Aspect_ratio) / \
           (1 - 0.74 / Aspect_ratio)
     
     # Alternative: Johner (2011) formula (HELIOS code)
     # Uncomment to use this formulation instead:
     # q95 = (2 * np.pi * a**2 * B0) / (μ0 * Ip*1e6 * R0) * \
     #       (1.17 - 0.65/Aspect_ratio) / (1 - 1/Aspect_ratio**2) * \
-    #       (1 + κ**2 * (1 + 2*δ**2 - 1.2*δ**3)) / 2
+    #       (1 + kappa_95**2 * (1 + 2*delta_95**2 - 1.2*delta_95**3)) / 2
     
     return q95
 

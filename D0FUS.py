@@ -246,8 +246,9 @@ def select_input_file():
                 param_names = [p[0] for p in params]
                 mode_str = f"SCAN ({param_names[0]} × {param_names[1]})"
             elif mode == 'optimization':
-                param_names = list(params.keys())
-                mode_str = f"OPTIMIZATION ({len(param_names)} params)"
+                opt_params, genetic_params = params
+                param_names = list(opt_params.keys())
+                mode_str = f"GENETIC ({len(param_names)} params)"
             else:
                 mode_str = "RUN"
             print(f"  {i}. {file.name:<30} [{mode_str}]")

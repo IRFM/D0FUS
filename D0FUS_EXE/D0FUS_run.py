@@ -462,7 +462,7 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
         print("Choose a valid bootstrap model")
     # Calculate derived quantities
     qstar_solution = f_qstar(a, B0_solution, R0, Ip_solution, κ)
-    q95_solution = f_q95(B0_solution, Ip_solution, R0, a, κ, δ)
+    q95_solution = f_q95(B0_solution, Ip_solution, R0, a, κ_95, δ_95)
     B_pol_solution = f_Bpol(q95_solution, B0_solution, a, R0)
     betaT_solution = f_beta_T(pbar_solution, B0_solution)
     betaP_solution = f_beta_P(a, κ, pbar_solution, Ip_solution)
