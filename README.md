@@ -20,7 +20,7 @@
 
 ```bash
 # Clone the repository
-git clone http://irfm-gitlab.intra.cea.fr/projets/pepr-suprafusion/D0FUS.git
+git clone https://github.com/IRFM/D0FUS.git
 ```
 
 ## Project Structure
