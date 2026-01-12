@@ -1,6 +1,43 @@
+Metadata-Version: 2.4
+Name: d0fus
+Version: 1.0.1
+Summary: Design 0-dimensional for Fusion Systems - Tokamak power plant design and optimization tool
+Author-email: Timothé Auclair <timothe.auclair@gmail.com>
+Maintainer-email: Timothé Auclair <timothe.auclair@gmail.com>
+License: CeCILL-C
+Project-URL: Homepage, https://github.com/IRFM/D0FUS
+Project-URL: Repository, https://github.com/IRFM/D0FUS
+Project-URL: Documentation, https://github.com/IRFM/D0FUS#readme
+Project-URL: Bug Tracker, https://github.com/IRFM/D0FUS/issues
+Keywords: fusion,tokamak,plasma,power-plant,design,nuclear,superconductor,magnetic-confinement,ITER,DEMO
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Science/Research
+Classifier: Intended Audience :: Education
+Classifier: Topic :: Scientific/Engineering :: Physics
+Classifier: License :: OSI Approved :: CEA CNRS Inria Logiciel Libre License, version 2.1 (CeCILL-2.1)
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: numpy>=1.20.0
+Requires-Dist: matplotlib>=3.4.0
+Requires-Dist: scipy>=1.7.0
+Requires-Dist: tqdm>=4.60.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0.0; extra == "dev"
+Requires-Dist: black>=23.0.0; extra == "dev"
+Requires-Dist: flake8>=6.0.0; extra == "dev"
+Dynamic: license-file
+
 
 [![License: CeCILL-C](https://img.shields.io/badge/License-CeCILL--C-blue.svg)](https://cecill.info/licences/Licence_CeCILL-C_V1-en.html)
-[![PyPI version](https://badge.fury.io/py/d0fus.svg)](https://pypi.org/project/d0fus/)
 
 <a name="readme-top"></a>
 
@@ -22,11 +59,6 @@
 ```bash
 # Clone the repository
 git clone https://github.com/IRFM/D0FUS.git
-```
-
-```bash
-# Or make use of the pip version:
-pip install d0fus
 ```
 
 ## Project Structure
