@@ -2,6 +2,8 @@
 D0FUS - Design 0-dimensional for FUsion Systems
 Author: Auclair Timothe
 
+This software is governed by the CeCILL-C license under French law.
+See LICENSE file or https://cecill.info/licences/Licence_CeCILL-C_V1-en.html
 """
 #%% Imports
 import sys

@@ -1,3 +1,6 @@
+
+[![License: CeCILL-C](https://img.shields.io/badge/License-CeCILL--C-blue.svg)](https://cecill.info/licences/Licence_CeCILL-C_V1-en.html)
+
 <a name="readme-top"></a>
 
 # D0FUS
@@ -223,5 +226,13 @@ D0FUS_OUTPUTS/Genetic_D0FUS_20251106_123456/
 Contributions are welcome! Please contact us:
 
 - Email: timothe.auclair@cea.fr
+
+## License
+
+This project is licensed under the [CeCILL-C License](https://cecill.info/licences/Licence_CeCILL-C_V1-en.html), a French free software license compatible with the GNU LGPL.
+
+See the [LICENSE](LICENSE) file for details.
+
+© 2025 CEA/IRFM
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
