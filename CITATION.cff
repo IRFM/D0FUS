@@ -1,0 +1,27 @@
+# CITATION.cff file.
+# https://bit.ly/cffinit
+
+cff-version: 1.2.0
+title: D0FUS
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - given-names: Timothé
+    family-names: Auclair
+    email: timothe.auclair@cea.fr
+    affiliation: 'CEA, IRFM, F-13108 Saint-Paul-lez-Durance, France'
+identifiers:
+  - type: doi
+    value: 10.1016/j.fusengdes.2025.115270
+repository-code: 'https://github.com/IRFM/D0FUS'
+abstract: >-
+  D0FUS (Design 0-dimensional for Fusion Systems) is a
+  comprehensive Python-based tool for tokamak fusion power
+  plant design and analysis. It enables rapid exploration of
+  design space through 0D/1D physics models.
+keywords:
+  - 'System code'
+  - 'Power plant design'
+license: CECILL-C
