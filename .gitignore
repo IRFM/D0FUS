@@ -4,3 +4,15 @@
 *.pyo
 GIT Tim.txt
 D0FUS_OUTPUTS/
+
+# Outputs (keep structure only)
+D0FUS_OUTPUTS/genetic/*
+D0FUS_OUTPUTS/run/*
+D0FUS_OUTPUTS/scan/*
+!D0FUS_OUTPUTS/genetic/.gitkeep
+!D0FUS_OUTPUTS/run/.gitkeep
+!D0FUS_OUTPUTS/scan/.gitkeep
+
+# Personal inputs
+D0FUS_INPUTS/*_perso*
+D0FUS_INPUTS/*_paper*
