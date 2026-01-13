@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "d0fus"
-version = "1.0.1"
+version = "1.0.2"
 description = "Design 0-dimensional for Fusion Systems - Tokamak power plant design and optimization tool"
 readme = "README.md"
 license = {text = "CeCILL-C"}
