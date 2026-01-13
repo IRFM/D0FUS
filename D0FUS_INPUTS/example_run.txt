@@ -33,4 +33,3 @@ Bootstrap_choice = Segal        # Bootstrap model: Freidberg, Segal
 Operation_mode = Pulsed         # Steady-State or Pulsed
 Temps_Plateau_input = 7200      # Plateau duration [s] (for Pulsed)
 P_aux_input = 40                # Auxiliary power [MW] (for Pulsed)
-fatigue = 1                     # Fatigue parameter (2 for Pulsed, 1 for Steady-State)
