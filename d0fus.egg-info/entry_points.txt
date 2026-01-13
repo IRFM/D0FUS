@@ -1,2 +1,0 @@
-[console_scripts]
-d0fus = D0FUS:main

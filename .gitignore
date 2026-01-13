@@ -16,3 +16,8 @@ D0FUS_OUTPUTS/scan/*
 # Personal inputs
 D0FUS_INPUTS/*_perso*
 D0FUS_INPUTS/*_paper*
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
