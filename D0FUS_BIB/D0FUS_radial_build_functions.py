@@ -162,7 +162,7 @@ def Jc_NbTi(B, T):
     
     return np.squeeze(Jc)
 
-def Jc_Rebco(B, T, Tet):
+def Jc_REBCO(B, T, Tet):
     """
     Critical current density for REBCO tape (Fleiter/CERN parametrization).
     
@@ -263,7 +263,7 @@ def Jc(Supra_choice, B_supra, T_He, Jc_Manual):
     Parameters
     ----------
     Supra_choice : str
-        Superconductor type: "Nb3Sn", "NbTi", or "Rebco"
+        Superconductor type: "Nb3Sn", "NbTi", or "REBCO"
     B_supra : float or array
         Magnetic field [T]
     T_He : float
@@ -281,8 +281,8 @@ def Jc(Supra_choice, B_supra, T_He, Jc_Manual):
         return Jc_Nb3Sn(B_supra, T_He + Marge_T_Helium + Marge_T_Nb3Sn, Eps)
     elif Supra_choice == "NbTi":
         return Jc_NbTi(B_supra, T_He + Marge_T_Helium + Marge_T_NbTi)
-    elif Supra_choice == "Rebco":
-        return Jc_Rebco(B_supra, T_He + Marge_T_Helium + Marge_T_Rebco, Tet)
+    elif Supra_choice == "REBCO":
+        return Jc_REBCO(B_supra, T_He + Marge_T_Helium + Marge_T_REBCO, Tet)
     elif Supra_choice == 'Manual':
         return Jc_Manual
     else:
@@ -317,7 +317,7 @@ if __name__ == "__main__":
     
     # REBCO
     B, T = 18.0, 4.2
-    Jc_calc_18T = Jc_Rebco(B, T, Tet=0) / 1e6
+    Jc_calc_18T = Jc_REBCO(B, T, Tet=0) / 1e6
     print(f"REBCO tape (B//ab) {B:.1f} T, {T:.1f} K")
     print(f"  Calculated Jc             : {Jc_calc_18T:7.0f} A/mm²")
     print(f"  Tested SuperPower tape    :     650 A/mm²")
@@ -397,13 +397,13 @@ if __name__ == "__main__":
     T0 = 4.2
     J_NbTi_42 = Jc_NbTi(B_vals, T0)/1e6
     J_Nb3Sn_42 = Jc_Nb3Sn(B_vals, T0, Eps=-0.003)/1e6
-    J_Rebco_42 = Jc_Rebco(B_vals, T0, Tet=0)/1e6
+    J_REBCO_42 = Jc_REBCO(B_vals, T0, Tet=0)/1e6
     Whole_wire = 0.5
     
     plt.figure(figsize=(6,4))
     plt.plot(B_vals, J_NbTi_42 * Whole_wire, label='NbTi @ 4.2 K', lw=2)
     plt.plot(B_vals, J_Nb3Sn_42 * Whole_wire, label='Nb3Sn @ 4.2 K', lw=2)
-    plt.plot(B_vals, J_Rebco_42 , label='Rebco @ 4.2 K', lw=2)
+    plt.plot(B_vals, J_REBCO_42 , label='REBCO @ 4.2 K', lw=2)
     plt.xlabel('Magnetic field B (T)')
     plt.ylabel('Wire or Tape current density (MA/m²)')
     plt.title('MAGLAB benchmark at 4.2 K')
@@ -414,6 +414,137 @@ if __name__ == "__main__":
     plt.yscale("log")
     plt.tight_layout()
     plt.show()
+    
+#%% Print
+        
+if __name__ == "__main__":
+    print("##################################################### Cu Model ##########################################################")
+
+#%% Cu model
+    
+def size_cable_fractions(sc_type, j_c_non_cu, B_peak, T_op, t_dump, T_hotspot=150.0, f_he=0.3, RRR=100):
+    """
+    Cable composition calculator for fusion CICC conductors for D0FUS system code.
+    
+    References:
+    1. Joule Integral (Maddock Criterion): 
+       Maddock, B. J., et al., "Quench protection of superconducting magnets," Cryogenics (1969).
+    2. Copper Properties (Resistivity & Cp): 
+       Ekin, J. W., "Experimental Techniques for Low-Temperature Measurements," Oxford Univ. Press (2006).
+    3. Magnetoresistance (Kohler's Rule): 
+       Fickett, F. R., "Magnetoresistance of very pure copper," Phys. Rev. B (1971).
+    4. Cryostability (Stekly Criterion): 
+       Stekly, Z. J. J., and Zar, J. L., "Stable superconducting coils," IEEE Trans. Nucl. Sci. (1965).
+    5. ITER Design Basis: 
+       Mitchell, N., "ITER design description document 11 (Magnets)," ITER Organization (2005).
+
+    Parameters:
+    sc_type : Superconductor technology ("NbTi", "Nb3Sn", or "REBCO")
+    j_c_non_cu : Critical current density of the SC strand at (B_peak, T_op) [A/m²]
+    B_peak : Maximum magnetic field at the conductor location [T]
+    T_op : Nominal operating temperature [K]
+    t_dump : Exponential discharge time constant for quench protection [s]
+    T_hotspot : Maximum allowable temperature during a quench [K]
+    f_he : Helium void fraction (typically 0.25 to 0.35)
+    RRR : Residual Resistivity Ratio of the copper stabilizer
+    """
+
+    def get_copper_properties(T, B, RRR):
+        # Electrical Resistivity (Matthiessen's Rule + Kohler's Magnetoresistance)
+        # Ref: Ekin (2006), Section 5.4.1
+        rho_0 = 1.7e-8 / RRR
+        rho_th = 1.55e-10 * T**3 / (1 + 0.1 * T) if T < 100 else 1.7e-8 * (T / 273.15)
+        
+        # Magnetoresistance (Kohler's Rule) - Copper resistivity increase at high field
+        # Ref: Fickett (1971), typical slope ~0.45e-10 Ohm.m/T
+        rho_B = (rho_0 + rho_th) + (0.45e-10 * B) 
+        
+        # Volumetric Heat Capacity [J/m3.K] - Debye model approximation
+        # Ref: Ekin (2006), Appendix A8.1 (Copper density ~8960 kg/m3)
+        cp_vol = (40 * T + 8 * T**3) if T < 20 else 3.45e6 
+        return rho_B, cp_vol
+
+    def compute_quench_integral(T_op, T_max, B, RRR):
+        # Calculates the Joule Integral Z(T) = ∫ (Cp/rho) dT
+        # Ref: Maddock et al. (1969)
+        steps = 200
+        temp_array = np.linspace(T_op, T_max, steps)
+        dT = (T_max - T_op) / steps
+        z_integral = 0
+        for T in temp_array:
+            rho, cp = get_copper_properties(T, B, RRR)
+            z_integral += (cp / rho) * dT
+        return z_integral
+
+    # Quench Protection (Adiabatic hot-spot)
+    z_limit = compute_quench_integral(T_op, T_hotspot, B_peak, RRR)
+    # For exponential current decay: Integral of J^2 dt = J0^2 * tau / 2
+    j_cu_max = np.sqrt(2 * z_limit / t_dump)
+    ratio_quench = j_c_non_cu / j_cu_max
+    
+    # Cryostability
+    # Empirical bounds to prevent flux jumps and ensure recovery.
+    # Ref: Stekly & Zar (1965)
+    stability_min = {"NbTi": 1.5, "Nb3Sn": 1.0, "REBCO": 0.5}
+    
+    # Final Design Ratio
+    ratio_design = max(ratio_quench , stability_min.get(sc_type))
+
+    # Volume Fractions Calculation
+    f_strand = 1 - f_he
+    f_sc = f_strand / (1 + ratio_design)
+    f_cu = f_strand - f_sc
+    j_cable = j_c_non_cu * f_sc
+
+    return {
+        "f_sc": f_sc,
+        "f_cu": f_cu,
+        "f_he": f_he,
+        "j_cable": j_cable,
+    }
+
+#%% Benchmark Cu fraction
+
+if __name__ == "__main__":
+    
+    machines = [
+        # ITER
+        # Ref: Mitchell, N., et al., "The ITER Magnet System," IEEE Trans. Appl. Supercond. (2008).
+        # TF: High copper fraction required for long discharge time (tau ~18s).
+        {"name": "ITER TF",   "sc": "Nb3Sn", "B": 11.8, "T": 4.5,  "td": 18.0, "fhe": 0.29},
+        # CS: Higher field, slightly faster discharge for plasma control requirements.
+        {"name": "ITER CS",   "sc": "Nb3Sn", "B": 13.0, "T": 4.5,  "td": 12.0, "fhe": 0.32},
+        # PF: NbTi at moderate field but very high current; Stability dominated.
+        {"name": "ITER PF",   "sc": "NbTi",  "B": 6.0,  "T": 4.2,  "td": 14.0, "fhe": 0.34},
+        
+        # EU DEMO
+        # Ref: Corato, V., et al., "The conceptual design of the EU DEMO TF coil," IEEE TAS (2016).
+        # Optimization for cost-effectiveness (lower margin, specific grading).
+        {"name": "EU DEMO TF", "sc": "Nb3Sn", "B": 12.3, "T": 4.5,  "td": 15.0, "fhe": 0.30},
+        
+        # SPARC
+        # Ref: Hartwig, Z.S., et al., "VIPER... for SPARC," Supercond. Sci. Technol. (2020).
+        # HTS (REBCO) allows high field (20T). Aggressive quench protection (tau < 2s).
+        # Operating at 20K reduces cryo-load, though 4K often considered for margin.
+        {"name": "SPARC TF",  "sc": "REBCO", "B": 20.0, "T": 20.0, "td": 2.0,  "fhe": 0.20},
+    
+        # Testing the limits of copper magnetoresistance at low fields.
+        {"name": "HTS Limit", "sc": "REBCO", "B": 14.0, "T": 4.2,  "td": 10.0,  "fhe": 0.25},
+    ]
+
+    print("=" * 102)
+    print(f"{'System / Coil':<20} | {'Type':<6} | {'B [T]':<5} | {'Jc_nonCu':<12} | {'f_He %':<8} | {'f_Cu %':<8} | {'f_SC %':<8} | {'J_cable':<10}")
+    print(f"{'':<20} | {'':<6} | {'':<5} | {'[MA/m²]':<12} | {'':<8} | {'':<8} | {'':<8} | {'[MA/m²]':<10}")
+    print("=" * 102)
+
+    for m in machines:
+        jc_material = Jc(m["sc"], m["B"], m["T"], Jc_Manual=None)
+        res = size_cable_fractions(m["sc"], jc_material, m["B"], m["T"], m["td"], f_he=m["fhe"])
+        
+        print(f"{m['name']:<20} | {m['sc']:<6} | {m['B']:<5.1f} | {jc_material/1e6:<12.0f} | "
+              f"{res['f_he']*100:<8.1f} | {res['f_cu']*100:<8.1f} | {res['f_sc']*100:<8.1f} | {res['j_cable']/1e6:<10.1f}")
+
+    print("-" * 102)
     
 #%% Print
         
@@ -1649,7 +1780,7 @@ if __name__ == "__main__":
 
         machines = {
             "SF": { "a_TF": 1.6, "b_TF": 1.2, "R0_TF": 6, "σ_TF_tf": 660e6, "T_supra": 4.2, "B_max_TF_TF": 20,
-                   "n_TF": 1, "supra_TF" : "Rebco", "config" : "Wedging", "J" : 600e6},
+                   "n_TF": 1, "supra_TF" : "REBCO", "config" : "Wedging", "J" : 600e6},
             # Source : PEPR SupraFusion
 
             "ITER": { "a_TF": 2, "b_TF": 1.23, "R0_TF": 6.2, "σ_TF_tf": 660e6, "T_supra": 4.2, "B_max_TF_TF": 11.8,
@@ -1677,7 +1808,7 @@ if __name__ == "__main__":
             # Choi, C. H., Sa, J. W., Park, H. K., Hong, K. H., Shin, H., Kim, H. T., ... & Hong, C. D. (2005, January). Fabrication of the KSTAR toroidal field coil structure. In 20th IAEA fusion energy conference 2004. Conference proceedings (No. IAEA-CSP--25/CD, pp. 6-6).
             # Oh, Y. K., Choi, C. H., Sa, J. W., Lee, D. K., You, K. I., Jhang, H. G., ... & Lee, G. S. (2002). KSTAR magnet structure design. IEEE transactions on applied superconductivity, 11(1), 2066-2069.
     
-            "ARC": { "a_TF": 1.07, "b_TF": 0.89, "R0_TF": 3.3, "σ_TF_tf": 1000e6, "T_supra": 20, "supra_TF" : "Rebco",
+            "ARC": { "a_TF": 1.07, "b_TF": 0.89, "R0_TF": 3.3, "σ_TF_tf": 1000e6, "T_supra": 20, "supra_TF" : "REBCO",
                     "B_max_TF_TF": 23, "n_TF": 1, "config" : "Plug", "J" : 600e6},
             # Source :
             # Hartwig, Z. S., Vieira, R. F., Sorbom, B. N., Badcock, R. A., Bajko, M., Beck, W. K., ... & Zhou, L. (2020). VIPER: an industrially scalable high-current high-temperature superconductor cable. Superconductor Science and Technology, 33(11), 11LT01.
@@ -1686,7 +1817,7 @@ if __name__ == "__main__":
             # Sorbom, B. N., Ball, J., Palmer, T. R., Mangiarotti, F. J., Sierchio, J. M., Bonoli, P., ... & Whyte, D. G. (2015). ARC: A compact, high-field, fusion nuclear science facility and demonstration power plant with demountable magnets. Fusion Engineering and Design, 100, 378-405.
             
             "SPARC": { "a_TF": 0.57, "b_TF": 0.18, "R0_TF": 1.85, "σ_TF_tf": 1000e6, "T_supra": 20,     "B_max_TF_TF": 20,
-                      "n_TF": 1, "supra_TF" : "Rebco", "config" : "Bucking" , "J" : 600e6},
+                      "n_TF": 1, "supra_TF" : "REBCO", "config" : "Bucking" , "J" : 600e6},
             # Source : Creely, A. J., Greenwald, M. J., Ballinger, S. B., Brunner, D., Canik, J., Doody, J., ... & Sparc Team. (2020). Overview of the SPARC tokamak. Journal of Plasma Physics, 86(5), 865860502.
             
             "JT60-SA": { "a_TF": 1.18, "b_TF": 0.27, "R0_TF": 2.96, "σ_TF_tf": 660e6, "T_supra": 4.2,
@@ -1817,7 +1948,7 @@ if __name__ == "__main__":
         f_Cu_Strand_benchmark = 0.75
         f_Cu_Non_Cu_benchmark = 0.5
         f_Cool_benchmark = 0.7
-        J_max_TF_tf = Jc("Rebco", B_max_TF_TF, T_supra, Jc_Manual) * f_Cu_Non_Cu_benchmark * f_Cu_Strand_benchmark * f_Cool_benchmark
+        J_max_TF_tf = Jc("REBCO", B_max_TF_TF, T_supra, Jc_Manual) * f_Cu_Non_Cu_benchmark * f_Cu_Strand_benchmark * f_Cool_benchmark
         
         # Academic models
         res_acad_w = f_TF_academic(a_TF, b_TF, R0_TF, σ_TF_tf, J_max_TF_tf, B_max_TF_TF, "Wedging")
@@ -2156,7 +2287,7 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     # J depends on B through superconductor critical current properties
     if Supra_choice_CS == 'Manual':
         J_max_CS = Jc_manual * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
-    elif Supra_choice_CS == 'Rebco':
+    elif Supra_choice_CS == 'REBCO':
         J_max_CS = Jc(Supra_choice_CS, B_CS_thin, T_Helium, Jc_Manual) * f_Cu_Strand * f_Cool * f_In
     else :
         J_max_CS = Jc(Supra_choice_CS, B_CS_thin, T_Helium, Jc_Manual) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
@@ -2494,7 +2625,7 @@ def f_CS_D0FUS( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
         B_CS = 3 * ΨCS / (2 * np.pi * (RCS_ext**2 + RCS_ext * RCS_int + RCS_int**2))
         if Supra_choice_CS == 'Manual':
             J_max_CS = Jc_manual * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
-        elif Supra_choice_CS == 'Rebco':
+        elif Supra_choice_CS == 'REBCO':
             J_max_CS = Jc(Supra_choice_CS, B_CS, T_Helium, Jc_Manual) * f_Cu_Strand * f_Cool * f_In
         else :
             J_max_CS = Jc(Supra_choice_CS, B_CS, T_Helium, Jc_Manual) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
@@ -2852,7 +2983,7 @@ def f_CS_CIRCE( ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS
         B_CS = 3 * ΨCS / (2 * np.pi * (RCS_ext**2 + RCS_ext * RCS_int + RCS_int**2))
         if Supra_choice_CS == 'Manual':
             J_max_CS = Jc_manual * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
-        elif Supra_choice_CS == 'Rebco':
+        elif Supra_choice_CS == 'REBCO':
             J_max_CS = Jc(Supra_choice_CS, B_CS, T_Helium, Jc_Manual) * f_Cu_Strand * f_Cool * f_In
         else :
             J_max_CS = Jc(Supra_choice_CS, B_CS, T_Helium, Jc_Manual) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
@@ -3137,8 +3268,8 @@ if __name__ == "__main__":
         "EAST":    {"J_CS":120e6*(2/3), "Ψplateau":  10, "a_cs": 0.45, "b_cs": 0.4, "c_cs": 0.25, "R0_cs": 1.85, "B_TF": 7.2, "B_cs": 4.7, "σ_CS": 330e6, "config": "Wedging", "SupraChoice": "NbTi", "T_CS": 4.2},
         # * 2/3 to account for the copper representation in EAST cables, see PF system:
         # Wu, Songtao, and EAST team. "An overview of the EAST project." Fusion Engineering and Design 82.5-14 (2007): 463-471.
-        "ARC":     {"J_CS":600e6, "Ψplateau":  32, "a_cs": 1.07, "b_cs": 0.89, "c_cs": 0.64, "R0_cs": 3.30, "B_TF": 23, "B_cs": 12.9, "σ_CS": 1000e6, "config": "Plug", "SupraChoice": "Rebco", "T_CS": 20},
-        "SPARC":   {"J_CS":600e6, "Ψplateau":  42, "a_cs": 0.57, "b_cs": 0.18, "c_cs": 0.35, "R0_cs": 1.85, "B_TF": 20, "B_cs": 25, "σ_CS": 1000e6, "config": "Bucking", "SupraChoice": "Rebco", "T_CS": 20},
+        "ARC":     {"J_CS":600e6, "Ψplateau":  32, "a_cs": 1.07, "b_cs": 0.89, "c_cs": 0.64, "R0_cs": 3.30, "B_TF": 23, "B_cs": 12.9, "σ_CS": 1000e6, "config": "Plug", "SupraChoice": "REBCO", "T_CS": 20},
+        "SPARC":   {"J_CS":600e6, "Ψplateau":  42, "a_cs": 0.57, "b_cs": 0.18, "c_cs": 0.35, "R0_cs": 1.85, "B_TF": 20, "B_cs": 25, "σ_CS": 1000e6, "config": "Bucking", "SupraChoice": "REBCO", "T_CS": 20},
     }   # No fatigue in bucking or plug
 
     # === Accumulate rows for DataFrame ===

@@ -122,7 +122,7 @@ will run D0FUS with these two values modified, using defaults for everything els
 | `a` | Minor radius | m | 3 | |
 | `Option_Kappa` | Elongation model | - | `Wenninger` | `Stambaugh`, `Freidberg`, `Wenninger`, `Manual`  |
 | `κ_manual` | Manual elongation (if `Option_Kappa = Manual`) | - | 1.7 | |
-| `b` | Plasma -> TF coil | m | 1.2 | |
+| `b` | Plasma->TF coil distance| m | 1.2 | |
 | **Magnetic Field** |||||
 | `Bmax` | Maximum field on TF coils | T | 12 | |
 | **Technology** |||||

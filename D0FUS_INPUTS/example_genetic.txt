@@ -16,7 +16,7 @@ mutation_rate = 0.15     # Mutation probability (default: 0.2)
 
 Option_Kappa = Wenninger        # Elongation model: Stambaugh, Freidberg, Wenninger, Manual
 
-Supra_choice = Rebco            # Superconductor: Nb3Sn, Rebco, NbTi, Manual
+Supra_choice = REBCO            # Superconductor: Nb3Sn, Rebco, NbTi, Manual
 Radial_build_model = D0FUS      # Radial build: academic, D0FUS, CIRCEE
 Choice_Buck_Wedg = Wedging      # Mechanical config: Wedging, Bucking
 Chosen_Steel = 316L             # Steel type: 316L, N50H, Manual

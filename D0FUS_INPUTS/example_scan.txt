@@ -17,7 +17,7 @@ Option_Kappa = Wenninger    # Elongation model
 Bmax = 20                   # Maximum toroidal field on TF coils [T]
 
 # Technology Choices
-Supra_choice = Rebco        # Superconductor: Nb3Sn, Rebco, NbTi
+Supra_choice = REBCO        # Superconductor: Nb3Sn, Rebco, NbTi
 Radial_build_model = D0FUS  # Radial build: academic, D0FUS, CIRCEE
 Choice_Buck_Wedg = Wedging  # Mechanical config: Wedging, Bucking
 Chosen_Steel = 316L         # Steel type: 316L, N50H, Manual

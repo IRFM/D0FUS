@@ -115,7 +115,7 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
     σ_CS = Steel(Chosen_Steel) / fatigue
     
     # Current densities in coils
-    if Supra_choice == 'Rebco':
+    if Supra_choice == 'REBCO':
         J_max_TF_conducteur = Jc(Supra_choice, Bmax, T_helium, Jc_Manual) * f_Cu_Strand * f_Cool * f_In
         J_max_CS_conducteur = Jc(Supra_choice, Bmax, T_helium, Jc_Manual) * f_Cu_Strand * f_Cool * f_In
     else:

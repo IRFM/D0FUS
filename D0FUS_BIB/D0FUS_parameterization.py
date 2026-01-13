@@ -101,7 +101,7 @@ f_In = 1 - 0.2              # Insulation fraction
 # Added to T_He to obtain T_operating (conservative design approach)
 Marge_T_Nb3Sn  = 2.0    # Safety margin for Nb3Sn
 Marge_T_NbTi   = 1.7    # Safety margin for NbTi
-Marge_T_Rebco  = 5.0    # Safety margin for REBCO
+Marge_T_REBCO  = 5.0    # Safety margin for REBCO
 
 # Default operating parameters
 Eps = -0.6/100           # Effective strain for Nb3Sn [-] (EU-DEMO TF: -0.35%)
