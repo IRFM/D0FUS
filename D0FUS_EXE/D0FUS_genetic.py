@@ -84,7 +84,7 @@ def to_serializable(x):
 
 #%% Constraint Handling
 
-def compute_stability_penalty(nbar, nG, betaT, betaN, qstar, q_min=2.0,
+def compute_stability_penalty(nbar, nG, betaT, betaN, qstar, q_min = q_limit,
                                penalty_strength=1000.0):
     """
     Strong exponential penalty for stability violations.
@@ -95,7 +95,7 @@ def compute_stability_penalty(nbar, nG, betaT, betaN, qstar, q_min=2.0,
         betaT: Toroidal beta (fraction, not %)
         betaN: Normalized beta limit [%]
         qstar: Kink safety factor
-        q_min: Minimum safety factor (default 2.0)
+        q_min: Minimum safety factor
         penalty_strength: Penalty multiplier
     """
     violations = {}
@@ -198,7 +198,7 @@ def evaluate_individual(individual, verbose=False):
             return (PENALTY_VALUE,)
         
         is_stable, penalty_multiplier, violations = compute_stability_penalty(
-            nbar, nG, betaT, betaN, qstar, q_min=2.0, penalty_strength=1000.0
+            nbar, nG, betaT, betaN, qstar, q_min=q_limit, penalty_strength=1000.0
         )
         
         fitness = cost * penalty_multiplier
@@ -633,7 +633,7 @@ def run_genetic_optimization(input_file,
     print(f"    P_elec: {final_output[24]:.1f} MW")
     print(f"    n/nG: {nbar/nG:.3f} ({(1-nbar/nG)*100:+.1f}% margin)")
     print(f"    betaT/betaN: {betaT_percent/betaN:.3f} ({(1-betaT_percent/betaN)*100:+.1f}% margin)")
-    print(f"    q*/2: {qstar/2:.3f} ({(qstar/2-1)*100:+.1f}% margin)")
+    print(f"    q*/q_limit: {qstar/q_limit:.3f} ({(qstar/q_limit-1)*100:+.1f}% margin)")
     
     if is_stable:
         print("\n STABLE design found!")
