@@ -2737,7 +2737,7 @@ if __name__ == "__main__":
     print(f"Lz(C, 0.5 keV) = {get_Lz('C', 0.5):.2e} W·m³")
     
     # Plot Lz(Te) curves
-    Te_plot = np.logspace(-2, 2, 200)  # 0.01 - 100 keV
+    Te_plot = np.logspace(-2, 2, 1000)  # 0.01 - 100 keV
     
     fig, ax = plt.subplots(figsize=(10, 7))
     
@@ -2836,12 +2836,6 @@ if __name__ == "__main__":
     print(f"\n" + "="*70)
     print(f"TOTAL RADIATIVE LOSSES: {P_rad_total:.2f} MW")
     print(f"="*70)
-    
-    # Comparison with typical ITER values
-    print(f"\nComparison with ITER H-mode baseline:")
-    print(f"  Fusion power:        ~500 MW")
-    print(f"  Alpha power:         ~100 MW")
-    print(f"  Radiated fraction:   ~{(P_rad_total/100)*100:.0f}% of alpha power")
 
 def f_Get_parameter_scaling_law(Scaling_Law):
     

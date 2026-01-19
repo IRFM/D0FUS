@@ -48,8 +48,8 @@ r_synch = 0.5           # Synchrotron radiation reflection coefficient
 #%% Plasma Stability Limits
 
 betaN_limit = 2.8       # Troyon beta limit [% m T/MA]
-q_limit = 2.5           # Minimum safety factor (q95 or q*)
-ms = 0.3                # Vertical stability margin parameter
+q_limit = 3.5           # Minimum safety factor (q* > 2 -> q95 > 3)
+ms = 0.3                # Vertical stability margin parameter for elongation
 
 #%% Material Properties
 
@@ -80,7 +80,7 @@ c_BP = 0.07                     # Backplate thickness [m]
 #%% Central Solenoid (CS) Parameters
 
 Gap = 0.1               # Clearance between CS wedging/bucking and TF [m]
-n_CS = 1                # CS conductor parameter
+n_CS = 1                # CS conductor shape factor parameter (1 = square, 0 = optimal)
 
 #%% Superconductor Operating Conditions
 
@@ -104,7 +104,7 @@ Marge_T_NbTi   = 1.7    # Safety margin for NbTi
 Marge_T_REBCO  = 5.0    # Safety margin for REBCO
 
 # Default operating parameters
-Eps = -0.6/100           # Effective strain for Nb3Sn [-] (EU-DEMO TF: -0.35%)
+Eps = -0.6/100          # Effective strain for Nb3Sn [Corato, V. et al. "Common operating values for DEMO..." (2016)]
 Tet = 0.0               # REBCO tape angle [rad] (0 = B⊥, π/2 = B//ab)
 
 #%% Power Conversion Efficiencies

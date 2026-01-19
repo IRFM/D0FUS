@@ -256,7 +256,7 @@ def Jc_REBCO(B, T, Tet):
     
     return np.squeeze(Jc)
 
-def Jc(Supra_choice, B_supra, T_He, Jc_Manual):
+def Jc(Supra_choice, B_supra, T_He, Jc_Manual=None):
     """
     Main interface: Critical current density with temperature margins.
     
@@ -293,7 +293,7 @@ def Jc(Supra_choice, B_supra, T_He, Jc_Manual):
 if __name__ == "__main__":
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # BASIC CROSSCHECK – EU-DEMO / ITER SUPERCONDUCTOR SCALINGS
+    # EU-DEMO / ITER SUPERCONDUCTOR SCALINGS
     # ═══════════════════════════════════════════════════════════════════════════
     print("="*70)
     print("SUPERCONDUCTOR CRITICAL CURRENT DENSITY – VALIDATION CROSSCHECK")
@@ -421,22 +421,128 @@ if __name__ == "__main__":
     print("##################################################### Cu Model ##########################################################")
 
 #%% Cu model
+
+def calculate_E_mag_TF(B_0, R_0, H_TF, r_in_TF, r_out_TF):
+    """
+    Magnetic energy stored in TF coils.
     
-def size_cable_fractions(sc_type, j_c_non_cu, B_peak, T_op, t_dump, T_hotspot=150.0, f_he=0.3, RRR=100):
+    The toroidal field varies as B(r) = B_0 × R_0 / r.
+    Integration over the toroidal volume yields:
+        E_mag = (B_0² R_0² / 2μ₀) × 2π × H_TF × ln(r_out / r_in)
+    
+    Reference: A. Torre, CEA Lecture, page 40
+    
+    Parameters
+    ----------
+    B_0 : float
+        Toroidal field on the magnetic axis (at r = R_0) [T]
+    R_0 : float
+        Tokamak major radius [m]
+    H_TF : float
+        Total height of TF coil [m]
+    r_in_TF : float
+        Inner radius of TF coil (inner edge of winding pack) [m]
+    r_out_TF : float
+        Outer radius of TF coil (outer edge of winding pack) [m]
+        
+    Returns
+    -------
+    float
+        Magnetic energy [J]
+    """
+    E_mag = (B_0**2 * R_0**2 / (2 * μ0)) * 2 * np.pi * H_TF * np.log(r_out_TF / r_in_TF)
+    return E_mag
+
+
+def calculate_E_mag_CS(B_max, r_in_CS, r_out_CS, H_CS):
+    """
+    Magnetic energy stored in Central Solenoid.
+    
+    The CS is a thick solenoid with nearly uniform axial field.
+    The magnetic energy is:
+        E_mag = (B_avg² / 2μ₀) × π × (r_out² - r_in²) × H_CS
+    
+    For a well-designed CS, the field is relatively uniform across 
+    the winding pack, so B_avg ≈ 0.95 × B_max.
+    
+    Reference: ITER Design Description Document - CS System
+    
+    Parameters
+    ----------
+    B_max : float
+        Peak magnetic field (at inner radius of CS) [T]
+    r_in_CS : float
+        Inner radius of CS winding pack [m]
+    r_out_CS : float
+        Outer radius of CS winding pack [m]
+    H_CS : float
+        Total height of CS [m]
+        
+    Returns
+    -------
+    float
+        Magnetic energy [J]
+    """
+    V_CS = np.pi * (r_out_CS**2 - r_in_CS**2) * H_CS
+    B_avg = 0.95 * B_max
+    E_mag = (B_avg**2 / (2 * μ0)) * V_CS
+    return E_mag
+
+
+def calculate_t_dump(E_mag, I_cond, V_max, N_sub, tau_h):
+    """
+    Effective discharge time for hot-spot criterion.
+    
+    The dump resistor is sized by the maximum voltage:
+        R_dis = V_max / I_cond
+    
+    The inductance is derived from magnetic energy:
+        L = 2 × E_mag / I_cond²
+    
+    The discharge time constant (per subdivision):
+        τ_dis = L / (N_sub × R_dis) = 2 × E_mag / (I_cond × V_max × N_sub)
+    
+    The effective time for Maddock criterion includes detection time:
+        t_dump = τ_h + τ_dis / 2
+    
+    Reference: A. Torre, CEA Lecture, pages 41-42
+    
+    Parameters
+    ----------
+    E_mag : float
+        Total magnetic energy of the coil system [J]
+    I_cond : float
+        Current per conductor [A]
+    V_max : float
+        Maximum voltage to ground [V]
+        Typical: 5-10 kV (LTS), 10-20 kV (HTS)
+    N_sub : int
+        Number of subdivisions in the protection circuit.
+        Each subdivision has its own dump resistor.
+        Typical: 3 (ITER)
+    tau_h : float
+        Detection/holding time before discharge starts [s]
+        Typical: 2.0 s (LTS), 0.3 s (HTS)
+        
+    Returns
+    -------
+    float
+        t_dump [s] - effective time to use in hot-spot criterion
+    """
+    tau_dis = 2 * E_mag / (I_cond * V_max * N_sub)
+    t_dump = tau_h + tau_dis / 2
+    return t_dump
+
+    
+def size_cable_fractions(sc_type, j_c_non_cu, B_peak, T_op, t_dump, T_hotspot=250, f_he=0.3, RRR=100):
     """
     Cable composition calculator for fusion CICC conductors for D0FUS system code.
     
     References:
     1. Joule Integral (Maddock Criterion): 
        Maddock, B. J., et al., "Quench protection of superconducting magnets," Cryogenics (1969).
-    2. Copper Properties (Resistivity & Cp): 
-       Ekin, J. W., "Experimental Techniques for Low-Temperature Measurements," Oxford Univ. Press (2006).
-    3. Magnetoresistance (Kohler's Rule): 
-       Fickett, F. R., "Magnetoresistance of very pure copper," Phys. Rev. B (1971).
-    4. Cryostability (Stekly Criterion): 
+    2. Cryostability (Stekly Criterion): 
        Stekly, Z. J. J., and Zar, J. L., "Stable superconducting coils," IEEE Trans. Nucl. Sci. (1965).
-    5. ITER Design Basis: 
-       Mitchell, N., "ITER design description document 11 (Magnets)," ITER Organization (2005).
 
     Parameters:
     sc_type : Superconductor technology ("NbTi", "Nb3Sn", or "REBCO")
@@ -445,23 +551,55 @@ def size_cable_fractions(sc_type, j_c_non_cu, B_peak, T_op, t_dump, T_hotspot=15
     T_op : Nominal operating temperature [K]
     t_dump : Exponential discharge time constant for quench protection [s]
     T_hotspot : Maximum allowable temperature during a quench [K]
+    We consider 250K compared to the 150K real minimal
+    to account for advantagous margin coming from extra heat capacity coming from the steel and He cooling
+    (Strandard in quench dimensionning, Source: Alexandre Torre)
     f_he : Helium void fraction (typically 0.25 to 0.35)
     RRR : Residual Resistivity Ratio of the copper stabilizer
     """
 
     def get_copper_properties(T, B, RRR):
-        # Electrical Resistivity (Matthiessen's Rule + Kohler's Magnetoresistance)
-        # Ref: Ekin (2006), Section 5.4.1
-        rho_0 = 1.7e-8 / RRR
-        rho_th = 1.55e-10 * T**3 / (1 + 0.1 * T) if T < 100 else 1.7e-8 * (T / 273.15)
+        """
+        Copper resistivity [Ω·m] and volumetric heat capacity [J/(m³·K)].
         
-        # Magnetoresistance (Kohler's Rule) - Copper resistivity increase at high field
-        # Ref: Fickett (1971), typical slope ~0.45e-10 Ohm.m/T
-        rho_B = (rho_0 + rho_th) + (0.45e-10 * B) 
+        Source: CryoSoft/THEA library (rCopper.m, MAGRCU.m, cCopper.m)
+        Valid: 0.1-1000 K, 0-30 T, RRR 1.5-3000
+        """
+        # Resistivity
+        RHO273 = 1.54e-8
+        P1, P2, P3, P4, P5, P6, P7 = 0.1171e-16, 4.49, 3.841e10, -1.14, 50.0, 6.428, 0.4531
+        TT = max(0.1, min(T, 1000.0))
+        R = max(1.5, min(RRR, 3000.0))
+        rhoZero = RHO273 / (R - 1.0)
+        arg = min((P5 / TT)**P6, 30.0)
+        rhoI = P1 * TT**P2 / (1.0 + P1 * P3 * TT**(P2 + P4) * np.exp(-arg))
+        rhoI0 = P7 * rhoI * rhoZero / (rhoI + rhoZero)
+        rho0 = rhoZero + rhoI + rhoI0
         
-        # Volumetric Heat Capacity [J/m3.K] - Debye model approximation
-        # Ref: Ekin (2006), Appendix A8.1 (Copper density ~8960 kg/m3)
-        cp_vol = (40 * T + 8 * T**3) if T < 20 else 3.45e6 
+        # Magnetoresistance
+        RHORRR = 2.37e-8
+        A1, A2, A3, A4 = 0.382806e-3, 1.32407, 0.167634e-2, 0.789953
+        rhoIce = RHO273 + RHORRR / R
+        BB = max(0.0, min(B, 30.0))
+        brr = min(BB * rhoIce / rho0, 40.0e3)
+        magR = A1 * brr**A2 / (1.0 + A3 * brr**A4) + 1.0 if brr > 1 else 1.0
+        
+        rho_B = magR * rho0
+        
+        # Heat capacity
+        DENSITY = 8900.0
+        T0, T1 = 10.4529369, 48.26583891
+        if TT <= T0:
+            Cp = 0.01188007*TT - 0.00050323*TT**2 + 0.00075762*TT**3
+        elif TT <= T1:
+            Cp = -5.03283229 + 1.27426834*TT - 0.11610718*TT**2 + 0.00522402*TT**3 - 5.2996e-5*TT**4
+        else:
+            Cp = (-65.07570094*TT/(1.833505318 + TT)**0.518553624 +
+                  624.7552517*TT**3/(16.55124429 + TT)**2.855560719 +
+                  0.529512119*TT**4/(-0.000101401 + TT)**2.983928329)
+        
+        cp_vol = max(Cp, 0) * DENSITY
+        
         return rho_B, cp_vol
 
     def compute_quench_integral(T_op, T_max, B, RRR):
@@ -485,7 +623,9 @@ def size_cable_fractions(sc_type, j_c_non_cu, B_peak, T_op, t_dump, T_hotspot=15
     # Cryostability
     # Empirical bounds to prevent flux jumps and ensure recovery.
     # Ref: Stekly & Zar (1965)
-    stability_min = {"NbTi": 1.5, "Nb3Sn": 1.0, "REBCO": 0.5}
+    # To develop, in practice, not important 
+    # since the main criteria is always the quench protection
+    stability_min = {"NbTi": 0, "Nb3Sn": 0, "REBCO": 0}
     
     # Final Design Ratio
     ratio_design = max(ratio_quench , stability_min.get(sc_type))
@@ -507,44 +647,127 @@ def size_cable_fractions(sc_type, j_c_non_cu, B_peak, T_op, t_dump, T_hotspot=15
 
 if __name__ == "__main__":
     
-    machines = [
-        # ITER
-        # Ref: Mitchell, N., et al., "The ITER Magnet System," IEEE Trans. Appl. Supercond. (2008).
-        # TF: High copper fraction required for long discharge time (tau ~18s).
-        {"name": "ITER TF",   "sc": "Nb3Sn", "B": 11.8, "T": 4.5,  "td": 18.0, "fhe": 0.29},
-        # CS: Higher field, slightly faster discharge for plasma control requirements.
-        {"name": "ITER CS",   "sc": "Nb3Sn", "B": 13.0, "T": 4.5,  "td": 12.0, "fhe": 0.32},
-        # PF: NbTi at moderate field but very high current; Stability dominated.
-        {"name": "ITER PF",   "sc": "NbTi",  "B": 6.0,  "T": 4.2,  "td": 14.0, "fhe": 0.34},
+    # Magnetic energgy test
         
-        # EU DEMO
-        # Ref: Corato, V., et al., "The conceptual design of the EU DEMO TF coil," IEEE TAS (2016).
-        # Optimization for cost-effectiveness (lower margin, specific grading).
-        {"name": "EU DEMO TF", "sc": "Nb3Sn", "B": 12.3, "T": 4.5,  "td": 15.0, "fhe": 0.30},
-        
-        # SPARC
-        # Ref: Hartwig, Z.S., et al., "VIPER... for SPARC," Supercond. Sci. Technol. (2020).
-        # HTS (REBCO) allows high field (20T). Aggressive quench protection (tau < 2s).
-        # Operating at 20K reduces cryo-load, though 4K often considered for margin.
-        {"name": "SPARC TF",  "sc": "REBCO", "B": 20.0, "T": 20.0, "td": 2.0,  "fhe": 0.20},
+    # ITER TF
+    E_TF = calculate_E_mag_TF(B_0=5.3, R_0=6.2, H_TF=14.0, r_in_TF=3.9, r_out_TF=11.4)
+    print(f"ITER TF: E_mag = {E_TF/1e9:.1f} GJ (Ref: 41 GJ)")
     
-        # Testing the limits of copper magnetoresistance at low fields.
-        {"name": "HTS Limit", "sc": "REBCO", "B": 14.0, "T": 4.2,  "td": 10.0,  "fhe": 0.25},
+    # ITER CS
+    E_CS = calculate_E_mag_CS(B_max=13.0, r_in_CS=1.3, r_out_CS=2.1, H_CS=12.0)
+    print(f"ITER CS: E_mag = {E_CS/1e9:.1f} GJ (Ref: 6.4 GJ)")
+    
+    # ITER TF
+    E_TF = 41e9  # J
+    t_dump_TF = calculate_t_dump(E_mag=E_TF, I_cond=70e3, V_max=10e3, N_sub=18/3, tau_h=2.0)
+    print(f"ITER TF: t_dump = {t_dump_TF:.1f} s (Ref: ~11 s)")
+    
+    # ITER CS
+    E_CS = 6e9  # J
+    t_dump_CS = calculate_t_dump(E_mag=E_CS, I_cond=45e3, V_max=10e3, N_sub=6/3, tau_h=2.0)
+    print(f"ITER CS: t_dump = {t_dump_CS:.1f} s (Ref: ~8 s)")
+    
+    # TABLE: Benchmark against known machines
+    # Database
+    machines = [
+        # ITER TF:
+        # Ref: Mitchell, N., et al. "The ITER Magnet System," IEEE Trans. Appl. Supercond. (2008).
+        # Zanino, R., et al. "Quench and thermal-hydraulic analysis of the ITER TF coils". (2003).
+        {"name": "ITER TF",   "sc": "Nb3Sn", "B": 11.8, "T": 4.2,  "td": 10.0, "fhe": 0.3},
+        # ITER PF:
+        # Ref: Mitchell, N., et al. "The ITER Magnet System," IEEE Trans. Appl. Supercond. (2008).
+        {"name": "ITER PF",   "sc": "NbTi",  "B": 6.0,  "T": 4.2,  "td": 14.0, "fhe": 0.3},
+        # SPARC CS:
+        # Ref: Hartwig, Z.S., et al., "VIPER... for SPARC," Supercond. Sci. Technol. (2020).
+        {"name": "SPARC CS",  "sc": "REBCO", "B": 20.0, "T": 20.0, "td": 2.0,  "fhe": 0.3},
     ]
-
     print("=" * 102)
     print(f"{'System / Coil':<20} | {'Type':<6} | {'B [T]':<5} | {'Jc_nonCu':<12} | {'f_He %':<8} | {'f_Cu %':<8} | {'f_SC %':<8} | {'J_cable':<10}")
     print(f"{'':<20} | {'':<6} | {'':<5} | {'[MA/m²]':<12} | {'':<8} | {'':<8} | {'':<8} | {'[MA/m²]':<10}")
     print("=" * 102)
-
     for m in machines:
         jc_material = Jc(m["sc"], m["B"], m["T"], Jc_Manual=None)
         res = size_cable_fractions(m["sc"], jc_material, m["B"], m["T"], m["td"], f_he=m["fhe"])
-        
         print(f"{m['name']:<20} | {m['sc']:<6} | {m['B']:<5.1f} | {jc_material/1e6:<12.0f} | "
               f"{res['f_he']*100:<8.1f} | {res['f_cu']*100:<8.1f} | {res['f_sc']*100:<8.1f} | {res['j_cable']/1e6:<10.1f}")
-
     print("-" * 102)
+
+    # FIGURE: B-field scan for each superconductor type
+    # Common coil geometry for all technologies (ITER TF-like)
+    coil_geom = {
+        "R_0": 6.2, "H_TF": 14.0, "r_in_TF": 3.9, "r_out_TF": 11.4,
+        "I_cond": 70e3, "V_max": 10e3, "N_sub": 18/3, "tau_h": 2.0,
+    }
+    
+    sc_configs = {
+        "NbTi":  {"B_range": (5, 25),   "T": 4.2,  "color": "#1f77b4"},
+        "Nb3Sn": {"B_range": (5, 25),   "T": 4.2,  "color": "#2ca02c"},
+        "REBCO": {"B_range": (5, 25),   "T": 4.2,  "color": "#d62728"},
+    }
+    
+    f_he = 0.3
+    n_points = 200
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    
+    for sc_type, cfg in sc_configs.items():
+        B_max_arr = np.linspace(cfg["B_range"][0], cfg["B_range"][1], n_points)
+        
+        f_sc_arr, f_cu_arr, j_cable_arr = [], [], []
+        
+        for B_max in B_max_arr:
+            # Convert B_max (at inner leg) to B_0 (at magnetic axis)
+            # B(r) = B_0 * R_0 / r, so B_max = B_0 * R_0 / r_in_TF
+            B_0 = B_max * coil_geom["r_in_TF"] / coil_geom["R_0"]
+            
+            # Calculate E_mag and t_dump
+            E_mag = calculate_E_mag_TF(B_0, coil_geom["R_0"], coil_geom["H_TF"], 
+                                       coil_geom["r_in_TF"], coil_geom["r_out_TF"])
+            t_dump = calculate_t_dump(E_mag, coil_geom["I_cond"], coil_geom["V_max"], 
+                                      coil_geom["N_sub"], coil_geom["tau_h"])
+            
+            # Get Jc at B_max (conductor sees B_max, not B_0)
+            jc = Jc(sc_type, B_max, cfg["T"], Jc_Manual=None)
+            if jc <= 0:
+                f_sc_arr.append(np.nan)
+                f_cu_arr.append(np.nan)
+                j_cable_arr.append(np.nan)
+                continue
+            
+            # Calculate cable fractions
+            res = size_cable_fractions(sc_type, jc, B_max, cfg["T"], t_dump, f_he=f_he)
+            f_sc_arr.append(res["f_sc"] * 100)
+            f_cu_arr.append(res["f_cu"] * 100)
+            j_cable_arr.append(res["j_cable"] / 1e6)
+        
+        # Left: Cable composition
+        axes[0].plot(B_max_arr, f_sc_arr, color=cfg["color"], linewidth=2, linestyle='-', 
+                     label=f'{sc_type} - SC')
+        axes[0].plot(B_max_arr, f_cu_arr, color=cfg["color"], linewidth=2, linestyle='--',
+                     label=f'{sc_type} - Cu')
+        # Right: Cable current density
+        axes[1].plot(B_max_arr, j_cable_arr, color=cfg["color"], linewidth=2, label=sc_type)
+    
+    # Left plot formatting
+    axes[0].axhline(y=f_he*100, color='gray', linestyle=':', linewidth=1, label='He void')
+    axes[0].set_xlabel('Peak Magnetic Field $B_{max}$ [T]', fontsize=11)
+    axes[0].set_ylabel('Volume Fraction [%]', fontsize=11)
+    axes[0].set_title('Cable Composition vs. Magnetic Field', fontsize=12)
+    axes[0].set_xlim(5, 25)
+    axes[0].set_ylim(0, 70)
+    axes[0].legend(loc='upper right', fontsize=8, ncol=2)
+    axes[0].grid(True, alpha=0.3)
+    
+    # Right plot formatting
+    axes[1].set_xlabel('Peak Magnetic Field $B_{max}$ [T]', fontsize=11)
+    axes[1].set_ylabel('Cable Current Density $J_{cable}$ [MA/m²]', fontsize=11)
+    axes[1].set_title('Cable Current Density vs. Magnetic Field', fontsize=12)
+    axes[1].set_xlim(5, 25)
+    axes[1].legend(loc='upper right', fontsize=10)
+    axes[1].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.show()
+    
     
 #%% Print
         
@@ -1539,7 +1762,7 @@ def Winding_Pack_D0FUS(R_0, a, b, sigma_max, J_max, B_max, omega, n):
         a, b: Geometric dimensions [m]
         sigma_max: Maximum allowable stress [Pa]
         J_max: Maximum engineering current density [A/m²]
-        mu_0: Vacuum permeability [H/m]
+        μ0: Vacuum permeability [H/m]
         B_max: Peak magnetic field [T]
         omega: Scaling factor for axial load [dimensionless]
         n: Geometric factor [dimensionless]
@@ -1682,7 +1905,7 @@ def Nose_D0FUS(R_ext_Nose, sigma_max, omega, B_max, R_0, a, b):
     - sigma_max  : float, maximum admissible stress
     - beta       : float, dimensionless coefficient (0 ≤ beta ≤ 1)
     - B_max      : float, maximum magnetic field
-    - mu_0       : float, magnetic permeability of vacuum
+    - μ0       : float, magnetic permeability of vacuum
     - R_0, a, b  : floats, geometric parameters
 
     Returns:
