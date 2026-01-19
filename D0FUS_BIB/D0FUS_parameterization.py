@@ -48,7 +48,7 @@ r_synch = 0.5           # Synchrotron radiation reflection coefficient
 #%% Plasma Stability Limits
 
 betaN_limit = 2.8       # Troyon beta limit [% m T/MA]
-q_limit = 3.5           # Minimum safety factor (q* > 2 -> q95 > 3)
+q_limit = 2.5           # Minimum safety factor (q* > 2 -> q95 > 3)
 ms = 0.3                # Vertical stability margin parameter for elongation
 
 #%% Material Properties
