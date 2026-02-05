@@ -1,0 +1,36 @@
+# D0FUS Input Parameters
+# Generated on 2026-02-03 15:57:14
+
+cost_model = Sheffield
+
+P_fus = 2000
+R0 = 5.938295188259145
+a = 1.4795589381953422
+Bmax = 18.0000028497521
+b = 1.2
+Option_Kappa = Wenninger
+kappa_manual = 1.7
+Supra_choice = Rebco
+Radial_build_model = D0FUS
+Choice_Buck_Wedg = Wedging
+Chosen_Steel = 316L
+Scaling_Law = IPB98(y,2)
+L_H_Scaling_choice = New_Ip
+Bootstrap_choice = Freidberg
+H = 1
+Tbar = 14
+nu_T = 1
+nu_n = 0.1
+Operation_mode = Steady-State
+Temps_Plateau_input = 0
+P_aux_input = 0
+fatigue = 1
+
+# Cost Parameters
+Util_factor = 0.42096840173984357
+Dwell_factor = 0.95
+dt_rep = 0.1
+discount_rate = 0.05
+T_life = 30
+contingency = 0.15
+T_build = 2.938846877257197

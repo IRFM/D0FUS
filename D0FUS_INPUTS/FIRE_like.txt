@@ -1,0 +1,12 @@
+R0 = 2.14
+a = 0.60
+Pfus = 55
+Bmax = 14.9
+b = 0.1 
+Operation_mode = Pulsed	
+P_aux_input = 20
+Choice_Buck_Wedg = Bucking
+H = 1.0
+Tbar = 4.51
+nu_n  = 0.43
+nu_T  = 0.6
