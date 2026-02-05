@@ -182,7 +182,8 @@ def evaluate_individual(individual, verbose=False):
             all_params["Option_Kappa"], all_params["κ_manual"],
             all_params["L_H_Scaling_choice"], all_params["Scaling_Law"],
             all_params["Bootstrap_choice"], all_params["Operation_mode"],
-            all_params["fatigue"], all_params["P_aux_input"]
+            all_params["fatigue"], all_params["P_aux_input"],
+            None  # J_wost_Manual (None = use automatic calculation)
         )
         
         cost = output[25]

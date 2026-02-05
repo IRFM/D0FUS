@@ -30,6 +30,7 @@ class Parameters:
         self.κ_manual = 1.7
         self.Bmax = 12
         self.Supra_choice = 'Nb3Sn'
+        self.J_wost_Manual = None  # Manual current density [A/m²], required when Supra_choice='Manual'
         self.Radial_build_model = 'D0FUS'
         self.b = 1.2
         self.Choice_Buck_Wedg = 'Wedging'
@@ -104,23 +105,24 @@ class Parameters:
 def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
         Supra_choice, Chosen_Steel, Radial_build_model, Choice_Buck_Wedg, 
         Option_Kappa, κ_manual, L_H_Scaling_choice, Scaling_Law, Bootstrap_choice, 
-        Operation_mode, fatigue, P_aux_input):
+        Operation_mode, fatigue, P_aux_input, J_wost_Manual=None):
     """
     Main calculation function
     Returns all output parameters
     """
     
+    # Validate manual current density if Manual mode is selected
+    if Supra_choice == 'Manual':
+        if J_wost_Manual is None or J_wost_Manual <= 0:
+            raise ValueError(
+                "When Supra_choice='Manual', you must specify a valid J_wost_Manual > 0 "
+                f"(current value: {J_wost_Manual}). "
+                "Example: J_wost_Manual = 25e6  # 25 MA/m²"
+            )
+    
     # Stress limits in steel
     σ_TF = Steel(Chosen_Steel)
     σ_CS = Steel(Chosen_Steel) / fatigue
-    
-    # Current densities in coils
-    if Supra_choice == 'REBCO':
-        J_max_TF_conducteur = Jc(Supra_choice, Bmax, T_helium, Jc_Manual) * f_Cu_Strand * f_Cool * f_In
-        J_max_CS_conducteur = Jc(Supra_choice, Bmax, T_helium, Jc_Manual) * f_Cu_Strand * f_Cool * f_In
-    else:
-        J_max_TF_conducteur = Jc(Supra_choice, Bmax, T_helium, Jc_Manual) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
-        J_max_CS_conducteur = Jc(Supra_choice, Bmax, T_helium, Jc_Manual) * f_Cu_Non_Cu * f_Cu_Strand * f_Cool * f_In
         
     # Fraction of vertical tension allocated to the winding pack of the TF coils
     if Choice_Buck_Wedg == "Wedging":
@@ -141,6 +143,36 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
     δ_95 = f_Delta_95(δ)
     Volume_solution = f_plasma_volume(R0, a, κ, δ)
     Surface_solution = f_surface_premiere_paroi(κ, R0, a)
+    
+    # Current densities in coils using new cable sizing
+    # Estimate E_mag for TF
+    H_TF = 2 * (κ * a + b + 1)
+    r_in_TF = R0 - a - b
+    r_out_TF = R0 + a + b
+    E_mag_TF = calculate_E_mag_TF(Bmax, R0, r_in_TF, r_out_TF, H_TF)
+    
+    result_J_TF = calculate_cable_current_density(
+        sc_type=Supra_choice, B_peak=Bmax, T_op=T_helium, E_mag=E_mag_TF,
+        I_cond=I_cond, V_max=V_max, N_sub=N_sub, tau_h=tau_h, f_He=f_He, f_In=f_In,
+        T_hotspot=T_hotspot, RRR=RRR, Marge_T_He=Marge_T_He, Marge_T_Nb3Sn=Marge_T_Nb3Sn,
+        Marge_T_NbTi=Marge_T_NbTi, Marge_T_REBCO=Marge_T_REBCO, Eps=Eps, Tet=Tet,
+        J_wost_Manual=J_wost_Manual if Supra_choice == 'Manual' else None)
+    J_max_TF_conducteur = result_J_TF['J_wost']
+    
+    # Estimate E_mag for CS (initial geometry estimate)
+    H_CS = 2 * (κ * a + b + 1)
+    r_out_CS = R0 - a - b
+    r_in_CS = 0.5 * r_out_CS
+    B_CS_est = 13  # Typical CS field estimate
+    E_mag_CS = calculate_E_mag_CS(B_CS_est, r_in_CS, r_out_CS, H_CS)
+    
+    result_J_CS = calculate_cable_current_density(
+        sc_type=Supra_choice, B_peak=B_CS_est, T_op=T_helium, E_mag=E_mag_CS,
+        I_cond=I_cond, V_max=V_max, N_sub=N_sub, tau_h=tau_h, f_He=f_He, f_In=f_In,
+        T_hotspot=T_hotspot, RRR=RRR, Marge_T_He=Marge_T_He, Marge_T_Nb3Sn=Marge_T_Nb3Sn,
+        Marge_T_NbTi=Marge_T_NbTi, Marge_T_REBCO=Marge_T_REBCO, Eps=Eps, Tet=Tet,
+        J_wost_Manual=J_wost_Manual if Supra_choice == 'Manual' else None)
+    J_max_CS_conducteur = result_J_CS['J_wost']
     
     # Central magnetic field
     B0_solution = f_B0(Bmax, a, b, R0)
@@ -468,7 +500,7 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
     betaP_solution = f_beta_P(a, κ, pbar_solution, Ip_solution)
     beta_solution = f_beta(betaP_solution, betaT_solution)
     betaN_solution = f_beta_N(betaT_solution, B0_solution, a, Ip_solution)
-    nG_solution = f_nG(Ip_solution, a)
+    nG_solution = f_nG(Ip_solution, a) * Greenwald_limit
     
     # Recalculate currents and powers using same logic as convergence loop
     if Operation_mode == 'Steady-State':
@@ -519,26 +551,59 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
     else:
         print('Choose a valid Scaling for L-H transition')
     
-    # Calculate the radial build
+    # ==============================================================================
+    #    TOROIDAL FIELD (TF) COIL RADIAL BUILD
+    #    Determines the thickness 'c' based on mechanical and magnetic constraints.
+    # ==============================================================================
     if Radial_build_model == "academic":
-        (c, c_WP_TF, c_Nose_TF, σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF) = f_TF_academic(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg)
-        (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, I_Ohm_solution, Bmax, a, b, c, R0, κ, nbar_solution, Tbar, Ce, Temps_Plateau_input, li_solution, Choice_Buck_Wedg)
-        (d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS, J_CS) = f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, Bmax, σ_CS,
-                           Supra_choice, J_max_CS_conducteur, T_helium,f_Cu_Non_Cu , f_Cu_Strand , f_Cool , f_In, Choice_Buck_Wedg)
-    elif Radial_build_model == "D0FUS":
-        (c, c_WP_TF, c_Nose_TF, σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF) = f_TF_D0FUS(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg, omega_TF, n_TF)
-        (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, I_Ohm_solution, Bmax, a, b, c, R0, κ, nbar_solution, Tbar, Ce, Temps_Plateau_input, li_solution, Choice_Buck_Wedg)
-        (d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS, J_CS) = f_CS_D0FUS(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, Bmax, σ_CS,
-                           Supra_choice, J_max_CS_conducteur, T_helium, f_Cu_Non_Cu , f_Cu_Strand , f_Cool , f_In, Choice_Buck_Wedg)
-    elif Radial_build_model == "CIRCEE":
-        (c, c_WP_TF, c_Nose_TF, σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF) = f_TF_D0FUS(a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg, omega_TF, n_TF)
-        (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(Ip_solution, I_Ohm_solution, Bmax, a, b, c, R0, κ, nbar_solution, Tbar, Ce, Temps_Plateau_input, li_solution, Choice_Buck_Wedg)
-        (d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS, J_CS) = f_CS_CIRCEE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, Bmax, σ_CS,
-                           Supra_choice, J_max_CS_conducteur, T_helium, f_Cu_Non_Cu , f_Cu_Strand , f_Cool , f_In, Choice_Buck_Wedg)
+        # Standard analytical model for TF stress and current density
+        (c, c_WP_TF, c_Nose_TF, σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF) = f_TF_academic(
+            a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg
+        )
+    elif Radial_build_model in ["D0FUS", "CIRCE"]:
+        # Advanced numerical/empirical TF models
+        (c, c_WP_TF, c_Nose_TF, σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF) = f_TF_D0FUS(
+            a, b, R0, σ_TF, J_max_TF_conducteur, Bmax, Choice_Buck_Wedg, omega_TF, n_TF
+        )
     else:
-        print('Choose a valid mechanical model')
+        # Error handling for invalid configuration
+        raise ValueError(f"Unknown mechanical model: '{Radial_build_model}'. Options: 'academic', 'D0FUS', 'CIRCE'.")
+
+    # ==============================================================================
+    #    MAGNETIC FLUX REQUIREMENTS (Inductive Scenario)
+    #    Calculates the Volt-seconds required for the plasma discharge.
+    # ==============================================================================
+    # This calculation depends on the plasma parameters and the TF inner radius (c).
+    (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(
+        Ip_solution, I_Ohm_solution, Bmax, a, b, c, R0, κ, 
+        nbar_solution, Tbar, Ce, Temps_Plateau_input, li_solution, Choice_Buck_Wedg
+    )
+
+    # ==============================================================================
+    #    CENTRAL SOLENOID (CS) DESIGN
+    #    Determines thickness 'd' to provide the required Volt-seconds (Flux).
+    # ==============================================================================
+    if Radial_build_model == "academic":
+        (d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS, J_CS) = f_CS_ACAD(
+            ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, Bmax, σ_CS,
+            Supra_choice, J_max_CS_conducteur, T_helium, Choice_Buck_Wedg, κ
+        )
+    elif Radial_build_model == "D0FUS":
+        (d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS, J_CS) = f_CS_D0FUS(
+            ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, Bmax, σ_CS,
+            Supra_choice, J_max_CS_conducteur, T_helium, Choice_Buck_Wedg, κ
+        )
+    elif Radial_build_model == "CIRCE":
+        (d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS, J_CS) = f_CS_CIRCE(
+            ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax, Bmax, σ_CS,
+            Supra_choice, J_max_CS_conducteur, T_helium, Choice_Buck_Wedg, κ
+        )
     
-    # Calculate a proxy for the machine cost
+    # Total Inductive Flux Swing provided by the CS:
+    # Flux_Total = Breakdown + Ramp-up + Flat-top - External PF contribution
+    ΨCS = ΨPI + ΨRampUp + Ψplateau - ΨPF
+    
+    # Estimate global machine cost (volume-based proxy)
     cost_solution = f_cost(a, b, c, d, R0, κ, P_fus)
 
     return (B0_solution, B_CS, B_pol_solution,
@@ -558,8 +623,8 @@ def run(a, R0, Bmax, P_fus, Tbar, H, Temps_Plateau_input, b, nu_n, nu_T,
             c, c_WP_TF, c_Nose_TF, σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF,
             d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS, J_CS,
             R0-a, R0-a-b, R0-a-b-c, R0-a-b-c-d,
-            κ, κ_95, δ, δ_95)
-
+            κ, κ_95, δ, δ_95,
+            ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS)
 
 def save_run_output(params, results, output_dir, input_file_path=None):
     """Save run results to timestamped directory with complete output"""
@@ -583,7 +648,6 @@ def save_run_output(params, results, output_dir, input_file_path=None):
             for key, value in vars(params).items():
                 f.write(f"{key} = {value}\n")
     
-    # Unpack ALL results
     (B0, B_CS, B_pol,
      tauE, W_th,
      Q, Volume, Surface,
@@ -601,7 +665,8 @@ def save_run_output(params, results, output_dir, input_file_path=None):
      c, c_WP_TF, c_Nose_TF, σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF,
      d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS, J_CS,
      r_minor, r_sep, r_c, r_d,
-     κ, κ_95, δ, δ_95) = results
+     κ, κ_95, δ, δ_95,
+     ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS_Total) = results
     
     # Save complete output
     output_file = os.path.join(output_path, "output_results.txt")
@@ -619,7 +684,7 @@ def save_run_output(params, results, output_dir, input_file_path=None):
 
         dual_output = DualWriter(sys.stdout, f)
         
-        # Complete results display (matching original format)
+        # Complete results display
         print("=========================================================================", file=dual_output)
         print("=== Calculation Results ===", file=dual_output)
         print("-------------------------------------------------------------------------", file=dual_output)
@@ -646,6 +711,12 @@ def save_run_output(params, results, output_dir, input_file_path=None):
         print(f"[O] J_E-CS (Engineering current density CS)         : {J_CS/1e6:.3f} [MA/m²]", file=dual_output)
         print(f"[O] Steel ratio TF                                  : {Steel_fraction_TF*100:.3f} [%]", file=dual_output)
         print(f"[O] Steel ratio CS                                  : {Steel_fraction_CS*100:.3f} [%]", file=dual_output)
+        print("-------------------------------------------------------------------------", file=dual_output)
+        print(f"[O] Psi_PI (Breakdown)                              : {ΨPI:.3f} [Wb]", file=dual_output)
+        print(f"[O] Psi_RampUp (Ramp-up)                            : {ΨRampUp:.3f} [Wb]", file=dual_output)
+        print(f"[O] Psi_Plateau (Flat-top)                          : {Ψplateau:.3f} [Wb]", file=dual_output)
+        print(f"[O] Psi_PF (PF contribution)                        : {ΨPF:.3f} [Wb]", file=dual_output)
+        print(f"[O] Psi_CS (CS Requirement)                         : {ΨCS_Total:.3f} [Wb]", file=dual_output)
         print("-------------------------------------------------------------------------", file=dual_output)
         print(f"[I] P_fus (Fusion Power)                            : {params.P_fus:.3f} [MW]", file=dual_output)
         print(f"[O] P_CD (CD Power)                                 : {P_CD:.3f} [MW]", file=dual_output)
@@ -727,7 +798,7 @@ def main(input_file=None):
             p.Supra_choice, p.Chosen_Steel, p.Radial_build_model,
             p.Choice_Buck_Wedg, p.Option_Kappa, p.κ_manual,
             p.L_H_Scaling_choice, p.Scaling_Law, p.Bootstrap_choice,
-            p.Operation_mode, p.fatigue, p.P_aux_input
+            p.Operation_mode, p.fatigue, p.P_aux_input, p.J_wost_Manual
         )
         
         # Save results

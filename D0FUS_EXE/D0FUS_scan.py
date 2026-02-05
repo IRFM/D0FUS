@@ -837,7 +837,8 @@ def generic_2D_scan(scan_params, fixed_params, params_obj):
                     params_obj.Supra_choice, params_obj.Chosen_Steel, params_obj.Radial_build_model,
                     params_obj.Choice_Buck_Wedg, params_obj.Option_Kappa, params_obj.κ_manual,
                     params_obj.L_H_Scaling_choice, params_obj.Scaling_Law, params_obj.Bootstrap_choice,
-                    params_obj.Operation_mode, params_obj.fatigue, params_obj.P_aux_input
+                    params_obj.Operation_mode, params_obj.fatigue, params_obj.P_aux_input,
+                    None  # J_wost_Manual (None = use automatic calculation)
                 )
                 
                 # Unpack results
@@ -858,7 +859,8 @@ def generic_2D_scan(scan_params, fixed_params, params_obj):
                  c, c_WP_TF, c_Nose_TF, σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF,
                  d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS_out, J_CS_out,
                  r_minor, r_sep, r_c, r_d,
-                 κ, κ_95, δ, δ_95) = results
+                 κ, κ_95, δ, δ_95,
+                 ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS) = results
                 
                 # Calculate plasma limit conditions
                 betaN_limit_value = betaN_limit

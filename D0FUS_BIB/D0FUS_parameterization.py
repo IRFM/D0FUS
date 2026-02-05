@@ -42,19 +42,20 @@ E_F = 22.4 * 1.0e6 * E_ELEM      # Total fusion energy (assuming all neutrons re
 
 # Plasma composition
 Atomic_mass = 2.5       # Average atomic mass [AMU]
-Zeff = 1                # Effective charge (default: 1)
+Zeff = 1.5                # Effective charge (default: 1.5)
 r_synch = 0.5           # Synchrotron radiation reflection coefficient
 
 #%% Plasma Stability Limits
 
 betaN_limit = 2.8       # Troyon beta limit [% m T/MA]
-q_limit = 2.5           # Minimum safety factor (q* > 2 -> q95 > 3)
+q_limit = 2.5           # Minimum safety factor (q* > 2.5 -> q95 > 3)
+Greenwald_limit = 1     # Greenwald fraction limit
 ms = 0.3                # Vertical stability margin parameter for elongation
 
 #%% Material Properties
 
 # Structural steel
-σ_manual = 1500                 # Manual stress limit [MPa]
+σ_manual = 1500                 # Manual stress limit [MPa] if used
 nu_Steel = 0.29                 # Poisson's ratio (CIRCEE model)
 Young_modul_Steel = 200e9       # Young's modulus [Pa] (CIRCEE model)
 Young_modul_Glass_Fiber = 90e9  # Young's modulus for S-glass fiber [Pa]
@@ -66,8 +67,9 @@ C_Alpha = 5             # Helium ash dilution tuning parameter
 
 #%% Magnetic Flux Parameters
 
-Ce = 0.45               # Ejima constant (flux consumption)
-ITERPI = 20             # ITER plasma induction flux [Wb]
+Ce = 0.45               # Ejima constant (flux consumption) [Default value following Johner]
+ITERPI = 10             # ITER plasma induction flux [Wb]
+eta_model = 'redl'      # Resistivity model: 'old', 'spitzer', 'sauter', 'redl'
 
 #%% Toroidal Field (TF) Coil Parameters
 
@@ -84,18 +86,24 @@ n_CS = 1                # CS conductor shape factor parameter (1 = square, 0 = o
 
 #%% Superconductor Operating Conditions
 
+# Conductor current
+I_cond = 50e3           # Conductor current [A]
+N_sub = 6               # Number of subdivision for quench protection
+tau_h = 2               # Reaction time before Quench protection [s]
+T_hotspot = 250         # Hotspot criteria (accounting for margin) [K]
+RRR = 100               # Default in copper
+V_max = 10e3             # Maximal tension allowed to avoir electrical arc (needed for quench time)
+
 # If manual option: current density fixed
-Jc_Manual = 100e6        # MA/m²
+J_wost_Manual = 100e6        # MA/m² manual current density if used
 
 # Helium cooling
 T_helium = 4.2          # Liquid helium temperature [K]
-Marge_T_Helium = 0.3    # Temperature margin linked to 10 bar operation [K]
+Marge_T_He = 0.3        # Temperature margin linked to 10 bar operation [K]
 
 # Area fractions
-f_Cu_Non_Cu = 1 - 0.5       # Copper fraction in the strand
-f_Cu_Strand = 1 - 0.3       # Copper stabilizer fraction (n_Cu/(n_Cu+n_Su))
-f_Cool = 1 - 0.3            # Cooling channel fraction
-f_In = 1 - 0.2              # Insulation fraction
+f_He = 0.3            # Cooling channel fraction
+f_In = 0.1              # Insulation fraction
 
 # Temperature margins [K]
 # Added to T_He to obtain T_operating (conservative design approach)

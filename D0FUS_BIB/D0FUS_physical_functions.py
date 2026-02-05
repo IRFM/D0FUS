@@ -2236,7 +2236,6 @@ def f_P_elec(P_fus, P_LH, eta_T, eta_RF):
     P_fus : Fusion power [MW]
     P_LH : LHCD power [MW]
     eta_T : Conversion efficienty from fusion power to electrical power
-    eta_RF : Conversion efficienty from wall to klystron
 
     Returns
     -------
@@ -2244,7 +2243,7 @@ def f_P_elec(P_fus, P_LH, eta_T, eta_RF):
     
     """
     P_th = P_fus * E_F / (E_ALPHA + E_N)
-    P_elec = eta_T * P_th - P_LH / eta_RF
+    P_elec = eta_T * P_th - P_LH
     return P_elec
 
 def f_W_th(n_avg, T_avg, volume):
