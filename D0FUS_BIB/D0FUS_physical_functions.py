@@ -894,13 +894,14 @@ def f_qstar(a, B0, R0, Ip, κ):
     
     return qstar
 
-def f_cost(a,b,c,d,R0,kappa,P_fus):
+def f_volume(a, b, c, d, R0, kappa):
     """
+    Under development by Matteo Fletcher
     
-    Calculation of the 'cost' parameter
-    For now it is just the sum of the volume of the Breeding Blanket, TF coil and CS coil divided by the gain factor Q
-    To see as an indicator to compare designs, the value in itself does not mean so much
+    Estimates volumes of First Wall+ the Breeding Blanket+ The Neutron shield+ 
+    The Vacuum Vessel + Gaps, Toroidal Field Coil and Central Solenoid
     
+
     Parameters
     ----------
     a : Minor radius [m]
@@ -909,16 +910,41 @@ def f_cost(a,b,c,d,R0,kappa,P_fus):
     d : Thickness of the CS coil
     R0 : Major radius [m]
     κ : Elongation
+
+    Returns
+    -------
+    V_BB : Volume of First Wall+ the Breeding Blanket+ The Neutron shield+ The Vacuum Vessel + Gaps [m^3]
+    V_TF : Volume of Toroidal Field Coil [m^3]
+    V_CS : Volume of Central Solenoid [m^3]
+    V_FI : Volume of "Fusion Island" [m^3]
+
+    """
+    V_BB = 8*np.pi*b*R0*(a*(1+kappa)+b) # rectangular cross section assumption
+    V_TF = 8*np.pi*c*R0*(a*(1+kappa)+2*b+c) # rectangular cross section assumption
+    V_CS = 2*np.pi*(kappa*a+b+c)*(2*d*(R0-a-b-c)-d**2) # cylinder
+    V_FI = 2*np.pi*(kappa*a+b+c)*(R0+a+b+c)**2 # cylinder
+    return (V_BB, V_TF, V_CS, V_FI)
+
+def f_size_per_power(V_BB, V_TF, V_CS, P_fus):
+    """
+    (used to be f_cost) Update by Matteo Fletcher
+    
+    Calculation of a 'cost' parameter
+    It is just the sum of the volume of the Breeding Blanket, TF coil and CS coil divided by Fusion Power P_fus
+    To see as an indicator to compare designs, the value in itself does not mean so much
+    
+    Parameters
+    ----------
+    V_BB : Volume of First Wall+ the Breeding Blanket+ The Neutron shield+ The Vacuum Vessel + Gaps [m^3]
+    V_TF : Volume of Toroidal Field Coil [m^3]
+    V_CS : Volume of Central Solenoid [m^3]
     P_fus : Fusion Power [MW]
         
     Returns
     -------
-    cost : Cost parameter [m^3]
+    cost : Cost parameter [m^3 / MW]
     
     """
-    V_BB = 8*np.pi*b*R0*(a*(1+kappa)+b)
-    V_TF = 8*np.pi*c*R0*(a*(1+kappa)+2*b+c)
-    V_CS = 2*np.pi*(kappa*a+b+c)*(2*d*(R0-a-b-c)-d**2)
     
     cost = (V_BB + V_TF + V_CS) / P_fus
     return cost

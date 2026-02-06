@@ -15,4 +15,4 @@ Bootstrap_choice = Segal
 
 cost_model = Sheffield
 
-dt_rep = 0.1
+dt_rep = 0.4

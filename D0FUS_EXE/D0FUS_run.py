@@ -609,9 +609,12 @@ def run(p: Parameters):
                            Supra_choice, J_max_CS_conducteur, T_helium, f_Cu_Non_Cu , f_Cu_Strand , f_Cool , f_In, Choice_Buck_Wedg)
     else:
         print('Choose a valid mechanical model')
+        
+    # Estimate volume of blanket, TF coil and CS
+    (V_BB, V_TF, V_CS, V_FI) = f_volume(a, b, c, d, R0, kappa)
     
     # Calculate a proxy for the machine cost
-    cost_solution = f_cost(a, b, c, d, R0, kappa, P_fus)
+    cost_solution = f_size_per_power(V_BB, V_TF, V_CS, P_fus)
     
     #%% Cost-related computations (under development by Matteo Fletcher)
     
@@ -622,11 +625,12 @@ def run(p: Parameters):
     else:
         print("Choose a valid operation mode")
         
+    if Supra_choice == 'Rebco':
+        Supra_cost_factor = 2
+    else:
+        Supra_cost_factor = 1
+        
     P_th_solution = P_fus * E_F / (E_ALPHA + E_N)
-    
-    V_BB = 8*np.pi*b*R0*(a*(1+kappa)+b)
-    V_TF = 8*np.pi*c*R0*(a*(1+kappa)+2*b+c)
-    V_CS = 2*np.pi*(kappa*a+b+c)*(2*d*(R0-a-b-c)-d**2) 
     
     if cost_model == 'Whyte':
         (T_op_limit, CF, C_overnight, COE) = f_costs_Whyte(p.cost.F_dpa, p.cost.L_dpa,
@@ -638,8 +642,8 @@ def run(p: Parameters):
                             p.cost.contingency, p.cost.T_life, p.cost.T_build,
                             P_th_solution, P_elec_solution, P_CD_solution,
                             Gamma_n_solution, p.cost.Util_factor, Dwell_factor,
-                            p.cost.dt_rep, R0+b, a+b+c, c, kappa, V_TF + V_CS,
-                            1/6 * V_BB, 5/6 * V_BB, 0.1 * Surface_solution)
+                            p.cost.dt_rep, V_FI, V_TF + V_CS, 1/6 * V_BB, 
+                            5/6 * V_BB, 0.1 * Surface_solution, Supra_cost_factor)
     else:
         print("Choose a valid cost model")
         
@@ -778,7 +782,7 @@ def save_run_output(params, results, output_dir, input_file_path=None):
         print(f"[O] eta_CD (CD Efficiency)                          : {eta_CD:.3f} [MA/MW-m²]", file=dual_output)
         print(f"[O] Q (Energy Gain Factor)                          : {Q:.3f}", file=dual_output)
         print(f"[O] P_elec-net (Net Electrical Power)               : {P_elec:.3f} [MW]", file=dual_output)
-        print(f"[O] Cost ((V_BB+V_TF+V_CS)/P_fus)                   : {cost:.3f} [m^3]", file=dual_output)
+        print(f"[O] Cost ((V_BB+V_TF+V_CS)/P_fus)                   : {cost:.3f} [m^3/MW]", file=dual_output)
         print("-------------------------------------------------------------------------", file=dual_output)
         print(f"[I] H (Scaling Law factor)                          : {params.H:.3f} ", file=dual_output)
         print(f"[I] Operation (Pulsed / Steady)                     : {params.Operation_mode} ", file=dual_output)

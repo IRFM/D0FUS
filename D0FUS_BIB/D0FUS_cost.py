@@ -299,8 +299,8 @@ def f_COE_computation_Whyte(C_fixed, C_elements_rep, CF, P_elec):
 def f_costs_Sheffield(discount_rate, contingency, T_life, T_build, 
                       P_t, P_e, P_aux, Gamma_n,
                       Util_factor, Dwell_factor, dt_rep,
-                      R_c, a_c, delta_c, kappa,
-                      V_pc, V_sg, V_bl, S_tt):
+                      V_FI, V_pc, V_sg, V_bl, S_tt,
+                      Supra_cost_factor):
     """
     Under development by Matteo Fletcher
     
@@ -320,10 +320,7 @@ def f_costs_Sheffield(discount_rate, contingency, T_life, T_build,
     Util_factor : expected fraction, not %
     Dwell_factor : expected fraction, not %
     dt_rep : replacement/maintenance time [yr]
-    R_c : axisymmetry center to blanket outer edge distance [m]
-    a_c : plasma core to coil outer edge distance [m]
-    delta_c : coil width [m]
-    kappa : plasma elongation
+    V_FI : fusion island volume [m^3]
     V_pc : primary coil volume [m^3]
     V_sg : shield & gaps volume [m^3]
     V_bl : blanket volume [m^3]
@@ -343,7 +340,7 @@ def f_costs_Sheffield(discount_rate, contingency, T_life, T_build,
     cur_conv = c_2025EUR_2010USD
     
     # total component costs from unit costs
-    C_pc = f_unit_cost_scaling(V_pc, c_pc_sfd)
+    C_pc = Supra_cost_factor * f_unit_cost_scaling(V_pc, c_pc_sfd)
     C_sg = f_unit_cost_scaling(V_sg, c_sg_sfd)
     C_aux = f_unit_cost_scaling(P_aux, c_aux_sfd)
     C_bl = f_unit_cost_scaling(V_bl, c_bl_sfd)
@@ -353,7 +350,6 @@ def f_costs_Sheffield(discount_rate, contingency, T_life, T_build,
     C_FI = f_fusion_island_cost_Sheffield(C_heat_sfd, P_t, P_heat_sfd, 
                                           x_heat_sfd, 0.5, C_pc, 0.25,
                                           C_sg, 0.1, C_aux)
-    V_FI = f_volume_fusion_island_Sheffield(R_c, a_c, delta_c, kappa)
     C_D = f_direct_cost_Sheffield(C_BoP_sfd, C_tur_sfd, P_tur_sfd, P_e, P_t, 
                                   P_BoP_sfd, x_BoP_sfd, C_bld_sfd, 
                                   V_FI, V_bld_sfd, x_bld_sfd, C_FI)
@@ -454,26 +450,6 @@ def f_fusion_island_cost_Sheffield(c_scale_heat, P_t, P_scale_heat, x_scale_heat
     C_shield = (1 + ducts) * C_sg
     C_FI = C_heat + C_coils + C_shield + (1 + spare_aux) * C_aux
     return C_FI
-
-def f_volume_fusion_island_Sheffield(R_c, a_c, delta_c, kappa):
-    """
-    Under development by Matteo Fletcher
-    
-
-    Parameters
-    ----------
-    R_c : axisymmetry center to blanket outer edge distance [m]
-    a_c : plasma core to coil outer edge distance [m]
-    delta_c : coil width [m]
-    kappa : plasma elongation
-
-    Returns
-    -------
-    V_FI : fusion island volume rough estimate [m^3]
-
-    """
-    V_FI = 2 * np.pi * (R_c + a_c + 0.5 * delta_c)**2 * (kappa * a_c + 0.5 * delta_c)
-    return V_FI
 
 def f_annual_OandM_costs_Sheffield(c_scale_OM, P_e, P_scale_OM, x_scale_OM):
     """
