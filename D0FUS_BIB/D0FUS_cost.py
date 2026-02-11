@@ -192,7 +192,7 @@ def f_costs_Whyte(F_dpa, L_dpa, S, Util_factor, Dwell_factor, dt_rep,
     -------
     BB_crit_load : critical neutron load of blanket [MW . yr]
     CF : capacity factor of power plant
-    C_overnight : total power plant overnight cost (M€)
+    C_invest : total power plant invest cost (M€)
     COE : annual averaged cost of electricity for breakeven (€ / MWh)
 
     """
@@ -210,12 +210,12 @@ def f_costs_Whyte(F_dpa, L_dpa, S, Util_factor, Dwell_factor, dt_rep,
     Av = f_pp_availability(T_op_limit, dt_rep)
     CF = f_pp_capacity_factor(Av, Util_factor, Dwell_factor)
         
-    # Power plant total overnight cost and blanket cost (D. Whyte)
-    C_overnight = f_unit_cost_scaling(S, C_overnight_S_wht) * cur_conv
+    # Power plant total invest cost and blanket cost (D. Whyte)
+    C_invest = f_unit_cost_scaling(S, C_invest_S_wht) * cur_conv
     C_blanket = f_unit_cost_scaling(S, C_blanket_S_wht) * cur_conv
 
     # Annual-amortized fixed cost (D. Whyte)
-    C_fixed = f_annual_fixed_cost_Whyte(C_overnight, discount_rate, T_life)
+    C_fixed = f_annual_fixed_cost_Whyte(C_invest, discount_rate, T_life)
     
     # Annual-averaged blanket replacement cost (adapted from D. Whyte)
     C_blanket_rep = f_annual_element_cost_Whyte(C_blanket, CF, Gamma_n, F_dpa, L_dpa)
@@ -223,19 +223,19 @@ def f_costs_Whyte(F_dpa, L_dpa, S, Util_factor, Dwell_factor, dt_rep,
     # Annual-averaged cost of electricity (COE) (adapted from D. Whyte)
     COE = f_COE_computation_Whyte(C_fixed, C_blanket_rep, CF, P_elec)
     
-    return (T_op_limit, CF, C_overnight, COE)
+    return (T_op_limit, CF, C_invest, COE)
 
-def f_annual_fixed_cost_Whyte(C_overnight, d, T_life):
+def f_annual_fixed_cost_Whyte(C_invest, d, T_life):
     """
     Under development by M. Fletcher
     
     Computes amortized annual fixed cost of the fusion power plant from total
-    overnight cost (adapted from D. Whyte 2024)
+    invest cost (adapted from D. Whyte 2024)
     
 
     Parameters
     ----------
-    C_overnight : total power plant overnight cost (M€)
+    C_invest : total power plant invest cost (M€)
     d : discount rate
     T_life : power plant lifetime (years)
 
@@ -244,7 +244,7 @@ def f_annual_fixed_cost_Whyte(C_overnight, d, T_life):
     C_fixed : amortized annual fixed cost (M€ / yr)
 
     """
-    C_fixed = C_overnight * f_capital_recovery_factor(d, T_life)
+    C_fixed = C_invest * f_capital_recovery_factor(d, T_life)
     return C_fixed
 
 def f_annual_element_cost_Whyte(C_element, CF, Flux_n, F_dpa, L_dpa):
@@ -330,7 +330,7 @@ def f_costs_Sheffield(discount_rate, contingency, T_life, T_build,
     -------
     T_op_limit : maximum operation time before requirred replacement [yr]
     CF : power plant capacity factor
-    C_C0 : total capital (or overnight, or investment) cost [M chosen currency]
+    C_C0 : total capital (or invest, or investment) cost [M chosen currency]
     COE : cost of electricity [chosen currency / MWh]
 
     """
@@ -523,7 +523,7 @@ def f_total_capital_cost_Sheffield(C_D, T_build, contingency):
 
     Returns
     -------
-    C_CO : power plant total overnight cost [2010 M$]
+    C_CO : power plant total invest cost [2010 M$]
 
     """
     f_IND = f_indirect_charge_capital_Sheffield(T_build)
@@ -590,6 +590,3 @@ def f_annual_rep_cost_Sheffield(spare, failure, C_init, F_CRO, CF, T_life, Load_
     C_others = (CF * T_life * Load_nom / T_load - 1) * C_init / T_life
     C_a = (1 + failure) * (C_first + C_others)
     return C_a
-    
-
-#%% Cost functions - Fletcher 2026 model
