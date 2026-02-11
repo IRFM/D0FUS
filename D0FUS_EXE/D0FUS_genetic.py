@@ -45,6 +45,9 @@ current_run_directory = None
 
 PENALTY_VALUE = 1e6
 
+# Cost function for genetic optimization (tunable via input file)
+cost_function_choice = 'COE'  # Default: Cost of Electricity
+
 #%% DEAP Setup
 if not hasattr(creator, "FitnessMin"):
     creator.create("FitnessMin", base.Fitness, weights=(-1.0,))
@@ -202,7 +205,7 @@ def evaluate_individual(individual, verbose=False):
          cost, P_Brem, P_syn,
          heat, heat_par, heat_pol, lambda_q, q_target,
          P_wall_H, P_wall_L,
-         T_op_limit, C_overnight,
+         T_op_limit, C_invest,
          CF, COE,
          Gamma_n,
          f_alpha, tau_alpha,
@@ -223,13 +226,75 @@ def evaluate_individual(individual, verbose=False):
             nbar, nG, betaT, betaN, qstar, q_min=2.0, penalty_strength=1000.0
         )
         
-        fitness = COE * penalty_multiplier
+        # Extract cost function value based on user's choice
+        try:
+            cost_value = get_cost_value(
+                cost_function_choice,
+                COE=COE,
+                C_invest=C_invest,
+                Cost=cost
+            )
+        except ValueError as e:
+            if verbose:
+                print(f"Error getting cost value: {e}")
+            return (PENALTY_VALUE,)
+        
+        fitness = cost_value * penalty_multiplier
         return (fitness,)
     
     except Exception as e:
         if verbose:
             print(f"Error in evaluate_individual: {e}")
         return (PENALTY_VALUE,)
+
+#%% Cost Function Selection
+
+# Available cost functions with their properties
+COST_FUNCTIONS = {
+    'COE': {
+        'name': 'Cost of Electricity',
+        'unit': '€/MWh',
+        'minimize': True,
+        'description': 'Optimize for lowest cost of electricity'
+    },
+    'C_invest': {
+        'name': 'Invested Capital Cost',
+        'unit': 'B€',
+        'minimize': True,
+        'description': 'Optimize for lowest capital investment'
+    },
+    'Cost': {
+        'name': 'Volume Cost Proxy',
+        'unit': 'm³',
+        'minimize': True,
+        'description': 'Optimize for smallest reactor volume (cost proxy)'
+    }
+}
+
+def get_cost_value(cost_func_name, **outputs):
+    """
+    Extract the appropriate cost function value from outputs.
+    
+    Args:
+        cost_func_name: Name of cost function ('COE', 'C_invest', etc.)
+        **outputs: Named output values from run()
+    
+    Returns:
+        float: Cost function value (adjusted for minimization)
+        
+    Raises:
+        ValueError: If cost function name is invalid
+    """
+    if cost_func_name not in COST_FUNCTIONS:
+        valid = ', '.join(COST_FUNCTIONS.keys())
+        raise ValueError(f"Invalid cost function '{cost_func_name}'. Valid options: {valid}")
+    
+    # Get the value
+    value = outputs.get(cost_func_name)
+    if value is None:
+        raise ValueError(f"Cost function '{cost_func_name}' not found in outputs")
+    
+    return value
 
 #%% I/O Management
 
@@ -246,7 +311,7 @@ def initialize_run_directory(base_directory="D0FUS_OUTPUTS/genetic"):
 
 def load_input_file(input_file):
     """Load and parse input file"""
-    global opt_ranges, static_inputs, param_keys
+    global opt_ranges, static_inputs, param_keys, cost_function_choice
     
     opt_ranges = {}
     static_inputs = {}
@@ -300,6 +365,26 @@ def load_input_file(input_file):
             static_inputs[attr] = list(default_val)
     
     param_keys = list(opt_ranges.keys())
+    
+    # Handle cost_function choice
+    if 'cost_function' in static_inputs:
+        cost_func = static_inputs['cost_function']
+        if isinstance(cost_func, str):
+            if cost_func in COST_FUNCTIONS:
+                cost_function_choice = cost_func
+                print(f"\n Cost function: {cost_func} ({COST_FUNCTIONS[cost_func]['name']})")
+            else:
+                valid = ', '.join(COST_FUNCTIONS.keys())
+                print(f"\n WARNING: Invalid cost_function '{cost_func}'")
+                print(f"   Valid options: {valid}")
+                print(f"   Using default: COE")
+                cost_function_choice = 'COE'
+        # Remove from static_inputs since it's not a run() parameter
+        del static_inputs['cost_function']
+    else:
+        # Use default
+        cost_function_choice = 'COE'
+        print(f"\n Cost function: COE (default)")
     
     print(f"\n Optimization parameters: {len(param_keys)}")
     for key, (lo, hi) in opt_ranges.items():
@@ -654,7 +739,7 @@ def run_genetic_optimization(input_file,
      cost, P_Brem, P_syn,
      heat, heat_par, heat_pol, lambda_q, q_target,
      P_wall_H, P_wall_L,
-     T_op_limit, C_overnight,
+     T_op_limit, C_invest,
      CF, COE,
      Gamma_n,
      f_alpha, tau_alpha,
@@ -670,8 +755,17 @@ def run_genetic_optimization(input_file,
     # betaT is fraction, convert to % for display
     betaT_percent = betaT * 100
     
+    # Get cost function value for display
+    cost_func_value = get_cost_value(
+        cost_function_choice,
+        COE=COE,
+        C_invest=C_invest,
+        Cost=cost
+    )
+    
     print(f"\n Best design metrics:")
-    print(f"    Cost: {cost:.4f}")
+    print(f"    Cost function ({cost_function_choice}): {cost_func_value:.4f} {COST_FUNCTIONS[cost_function_choice]['unit']}")
+    print(f"    Cost (volume proxy): {cost:.4f} m³")
     print(f"    Q factor: {Q:.2f}")
     print(f"    P_elec: {P_elec:.1f} MW")
     print(f"    n/nG: {nbar/nG:.3f} ({(1-nbar/nG)*100:+.1f}% margin)")
@@ -694,16 +788,8 @@ def run_genetic_optimization(input_file,
     # 2. Use D0FUS save_run_output for complete design documentation
     # Create a Parameters object with the best values
     p = Parameters()
-    # for key, value in all_params.items():
-    #     if hasattr(p, key):
-    #         setattr(p, key, value)
     for key, value in all_params.items():
-        if key == 'cost_model':
-            p.cost_model = value
-            p.cost = CostParameters(value)  # ← Rebuilds cost!
-        elif hasattr(p.cost, key):          # ← Checks cost!
-            setattr(p.cost, key, value)     # ← Sets Sheffield params!
-        elif hasattr(p, key):
+        if hasattr(p, key):
             setattr(p, key, value)
             
     # Explicitly propagate optimized cost parameters
@@ -716,9 +802,17 @@ def run_genetic_optimization(input_file,
     save_run_output(p, final_output, current_run_directory, None)
     
     # 3. Save optimization summary JSON
+    
     summary = {
         "timestamp": datetime.now().isoformat(),
         "seed": seed,
+        "cost_function": {
+            "name": cost_function_choice,
+            "description": COST_FUNCTIONS[cost_function_choice]['name'],
+            "unit": COST_FUNCTIONS[cost_function_choice]['unit'],
+            "value": to_serializable(cost_func_value),
+            "minimize": COST_FUNCTIONS[cost_function_choice]['minimize']
+        },
         "settings": {
             "population_size": population_size,
             "generations": generations,

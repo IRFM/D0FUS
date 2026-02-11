@@ -32,8 +32,8 @@ c_2025EUR_2010USD = c_2025EUR_2025USD * c_2025USD_2010USD
     
 #%% Denis Whyte model inputs (modified to ITER 2025 data)
 
-C_overnight_S_wht = 35.7 # 2025 ITER cost (~ 25 B$) and first wall surface (~ 700 m²)
-C_blanket_S_wht = 0.07 * C_overnight_S_wht # blanlet cost assumed 7% of total cost
+C_invest_S_wht = 35.7 # 2025 ITER cost (~ 25 B$) / first wall surface (~ 700 m²)
+C_blanket_S_wht = 0.07 * C_invest_S_wht # blanlet cost assumed 7% of total cost
 
 #%% John Sheffield 2016 model inputs (2010 USD)
 

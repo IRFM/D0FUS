@@ -104,7 +104,7 @@ OUTPUT_REGISTRY: Dict[str, OutputParameter] = {
     ),
     'T_op_limit': OutputParameter(
         name='T_op_limit',
-        label='$T_{op,limit}$',
+        label='$\\Delta t_{av}$',
         unit='yr',
         levels=(0, 10, 0.2),
         fmt='%.1f',
@@ -112,15 +112,15 @@ OUTPUT_REGISTRY: Dict[str, OutputParameter] = {
         category='performance',
         description='Maximum operational time'
     ),
-    'C_overnight': OutputParameter(
-        name='C_overnight',
-        label='$C_{overnight}$',
+    'C_invest': OutputParameter(
+        name='C_invest',
+        label='$C_{invest}$',
         unit='B€',
         levels=(0, 50, 2),
         fmt='%d',
         use_radial_mask=True,
         category='performance',
-        description='Overnight capital cost'
+        description='investement / capital cost'
     ),
     'CF': OutputParameter(
         name='CF',
@@ -328,7 +328,7 @@ OUTPUT_REGISTRY: Dict[str, OutputParameter] = {
         name='Gamma_n',
         label='$\\Gamma_n$',
         unit='MW/m²',
-        levels=(0, 5, 0.25),
+        levels=(0, 6, 0.5),
         fmt='%.2f',
         use_radial_mask=False,
         category='power',
@@ -917,7 +917,7 @@ def generic_2D_scan(scan_params: List, fixed_params: Dict, params_obj) -> Tuple[
                  cost, P_Brem, P_syn,
                  heat, heat_par, heat_pol, lambda_q, q_target,
                  P_wall_H, P_wall_L,
-                 T_op_limit, C_overnight,
+                 T_op_limit, C_invest,
                  CF, COE,
                  Gamma_n,
                  f_alpha, tau_alpha,
@@ -946,7 +946,7 @@ def generic_2D_scan(scan_params: List, fixed_params: Dict, params_obj) -> Tuple[
                     P_elec=P_elec,
                     Cost=cost,
                     T_op_limit=T_op_limit,
-                    C_overnight=C_overnight,
+                    C_invest=C_invest,
                     CF=CF,
                     COE=COE,
                     

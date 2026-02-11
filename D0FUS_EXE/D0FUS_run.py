@@ -490,7 +490,7 @@ def run(p: Parameters):
                 np.nan, np.nan, np.nan,                  # cost, P_Brem, P_syn
                 np.nan, np.nan, np.nan, np.nan, np.nan,  # heat, heat_par, heat_pol, lambda_q, q_target
                 np.nan, np.nan,                          # P_wall_H, P_wall_L
-                np.nan, np.nan,                          # T_op_limit, C_overnight
+                np.nan, np.nan,                          # T_op_limit, C_invest
                 np.nan, np.nan,                          # CF, COE
                 np.nan,                                  # Gamma_n
                 np.nan, np.nan,                          # f_alpha, tau_alpha
@@ -633,12 +633,12 @@ def run(p: Parameters):
     P_th_solution = P_fus * E_F / (E_ALPHA + E_N)
     
     if cost_model == 'Whyte':
-        (T_op_limit, CF, C_overnight, COE) = f_costs_Whyte(p.cost.F_dpa, p.cost.L_dpa,
+        (T_op_limit, CF, C_invest, COE) = f_costs_Whyte(p.cost.F_dpa, p.cost.L_dpa,
                             Surface_solution, p.cost.Util_factor, Dwell_factor,
                             p.cost.dt_rep, p.cost.discount_rate, p.cost.T_life, 
                             Gamma_n_solution, P_elec_solution)
     elif cost_model == 'Sheffield':
-        (T_op_limit, CF, C_overnight, COE) = f_costs_Sheffield(p.cost.discount_rate,
+        (T_op_limit, CF, C_invest, COE) = f_costs_Sheffield(p.cost.discount_rate,
                             p.cost.contingency, p.cost.T_life, p.cost.T_build,
                             P_th_solution, P_elec_solution, P_CD_solution,
                             Gamma_n_solution, p.cost.Util_factor, Dwell_factor,
@@ -647,7 +647,7 @@ def run(p: Parameters):
     else:
         print("Choose a valid cost model")
         
-    C_overnight = C_overnight / 1000 # M€ -> B€
+    C_invest = C_invest / 1000 # M€ -> B€
         
     #%% End of cost-related computations
 
@@ -662,7 +662,7 @@ def run(p: Parameters):
             cost_solution, P_Brem_solution, P_syn_solution,
             heat_D0FUS_solution, heat_par_solution, heat_pol_solution, lambda_q_Eich_m, q_target_Eich,
             P_1rst_wall_Hmod, P_1rst_wall_Lmod,
-            T_op_limit, C_overnight,
+            T_op_limit, C_invest,
             CF, COE,
             Gamma_n_solution,
             f_alpha_solution, tau_alpha,
@@ -721,7 +721,7 @@ def save_run_output(params, results, output_dir, input_file_path=None):
      cost, P_Brem, P_syn,
      heat, heat_par, heat_pol, lambda_q, q_target,
      P_wall_H, P_wall_L,
-     T_op_limit, C_overnight,
+     T_op_limit, C_invest,
      CF, COE,
      Gamma_n,
      f_alpha, tau_alpha,
@@ -822,7 +822,7 @@ def save_run_output(params, results, output_dir, input_file_path=None):
         print(f"[I] Util_factor (utilization factor)                : {params.cost.Util_factor:.3f}", file=dual_output)
         print(f"[I] dt_rep (replacement time)                       : {params.cost.dt_rep:.3f} [yr]", file=dual_output)
         print(f"[O] T_op_limit (time before replacement)            : {T_op_limit:.3f} [yr]", file=dual_output)
-        print(f"[O] C_overnight (total overnight cost)              : {C_overnight:.3f} [B€]", file=dual_output)
+        print(f"[O] C_invest (total invest cost)                    : {C_invest:.3f} [B€]", file=dual_output)
         print(f"[O] CF (power plant capacity factor)                : {CF:.3f}", file=dual_output)
         print(f"[O] COE (cost of electricity)                       : {COE:.3f} [€/MWh]", file=dual_output)
         print("=========================================================================", file=dual_output)
