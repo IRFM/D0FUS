@@ -1,6 +1,17 @@
-# Python cache files
-**/__pycache__/
-*.pyc
-*.pyo
-GIT Tim.txt
-D0FUS_OUTPUTS/
+# Exclure tous les fichiers sauf ceux spécifiés
+*
+
+# Inclure explicitement les fichiers/dossiers voulus
+!.gitignore
+!D0FUS.py
+!D0FUS_EXE/
+!D0FUS_EXE/**
+!D0FUS_BIB/
+!D0FUS_BIB/**
+
+# Mais exclure les fichiers Python compilés et caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
