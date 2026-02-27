@@ -12,10 +12,10 @@ b = 1.2                         # First wall + blanket thickness [m]
 Option_Kappa = Wenninger        # Elongation model: Stambaugh, Freidberg, Wenninger, Manual
 
 # Magnetic Field
-Bmax = 20                       # Maximum toroidal field on TF coils [T]
+Bmax_TF = 12                    # Maximum toroidal field on TF coils [T]
 
 # Technology Choices
-Supra_choice = REBCO            # Superconductor: Nb3Sn, Rebco, NbTi, Manual
+Supra_choice = REBCO            # Superconductor: Nb3Sn, REBCO, NbTi, Manual
 Radial_build_model = D0FUS      # Radial build: academic, D0FUS, CIRCEE
 Choice_Buck_Wedg = Wedging      # Mechanical config: Wedging, Bucking
 Chosen_Steel = 316L             # Steel type: 316L, N50H, Manual
@@ -27,7 +27,7 @@ Tbar = 14                       # Volume-averaged temperature [keV]
 nu_T = 1                        # Temperature profile peaking
 nu_n = 0.1                      # Density profile peaking
 L_H_Scaling_choice = New_Ip     # L-H threshold: Martin, New_S, New_Ip
-Bootstrap_choice = Freidberg    # Bootstrap model: Freidberg, Segal
+Bootstrap_choice = Redl         # Bootstrap model: Freidberg, Segal
 
 # Operation Mode
 Operation_mode = Steady-State   # Steady-State or Pulsed

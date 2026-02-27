@@ -72,6 +72,10 @@ from typing import Optional, Dict, List, Tuple
 
 from deap import algorithms, base, creator, tools
 
+#%% Cache management
+
+from functools import lru_cache
+
 #%%
 
 # print("D0FUS_import loaded")

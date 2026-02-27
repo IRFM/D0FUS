@@ -31,7 +31,8 @@ except ImportError:
 
 # Import D0FUS modules
 from D0FUS_BIB.D0FUS_parameterization import *
-from D0FUS_EXE.D0FUS_run import run, Parameters, save_run_output
+from D0FUS_EXE.D0FUS_run import run, save_run_output
+from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG
 
 #%% Global Variables
 opt_ranges = {}
@@ -84,7 +85,7 @@ def to_serializable(x):
 
 #%% Constraint Handling
 
-def compute_stability_penalty(nbar, nG, betaT, betaN, qstar, q_min = q_limit,
+def compute_stability_penalty(nbar, nG, betaT, betaN, qstar, q_min=DEFAULT_CONFIG.q_limit,
                                penalty_strength=1000.0):
     """
     Strong exponential penalty for stability violations.
@@ -172,19 +173,9 @@ def evaluate_individual(individual, verbose=False):
         param_dict = {k: individual[i] for i, k in enumerate(param_keys)}
         all_params = {**param_dict, **static_inputs}
         
-        output = run(
-            all_params["a"], all_params["R0"], all_params["Bmax"],
-            all_params["P_fus"], all_params["Tbar"],
-            all_params["H"], all_params["Temps_Plateau_input"],
-            all_params["b"], all_params["nu_n"], all_params["nu_T"],
-            all_params["Supra_choice"], all_params["Chosen_Steel"],
-            all_params["Radial_build_model"], all_params["Choice_Buck_Wedg"],
-            all_params["Option_Kappa"], all_params["κ_manual"],
-            all_params["L_H_Scaling_choice"], all_params["Scaling_Law"],
-            all_params["Bootstrap_choice"], all_params["Operation_mode"],
-            all_params["fatigue"], all_params["P_aux_input"],
-            None  # J_wost_Manual (None = use automatic calculation)
-        )
+        config = GlobalConfig(**{k: v for k, v in all_params.items()
+                         if k in GlobalConfig.__dataclass_fields__})
+        output = run(config)
         
         cost = output[25]
         nbar = output[12]
@@ -227,7 +218,7 @@ def load_input_file(input_file):
     
     opt_ranges = {}
     static_inputs = {}
-    defaults = Parameters()
+    defaults = DEFAULT_CONFIG
     
     with open(input_file, "r", encoding='utf-8') as f:
         for line_num, line in enumerate(f, 1):
@@ -604,18 +595,9 @@ def run_genetic_optimization(input_file,
     # Get full output for best design
     all_params = {**best_params, **static_inputs}
     
-    final_output = run(
-        all_params["a"], all_params["R0"], all_params["Bmax"],
-        all_params["P_fus"], all_params["Tbar"],
-        all_params["H"], all_params["Temps_Plateau_input"],
-        all_params["b"], all_params["nu_n"], all_params["nu_T"],
-        all_params["Supra_choice"], all_params["Chosen_Steel"],
-        all_params["Radial_build_model"], all_params["Choice_Buck_Wedg"],
-        all_params["Option_Kappa"], all_params["κ_manual"],
-        all_params["L_H_Scaling_choice"], all_params["Scaling_Law"],
-        all_params["Bootstrap_choice"], all_params["Operation_mode"],
-        all_params["fatigue"], all_params["P_aux_input"]
-    )
+    config = GlobalConfig(**{k: v for k, v in all_params.items()
+                         if k in GlobalConfig.__dataclass_fields__})
+    final_output = run(config)
     
     # Check stability
     nbar, nG = final_output[12], final_output[13]
@@ -651,10 +633,7 @@ def run_genetic_optimization(input_file,
     
     # 2. Use D0FUS save_run_output for complete design documentation
     # Create a Parameters object with the best values
-    p = Parameters()
-    for key, value in all_params.items():
-        if hasattr(p, key):
-            setattr(p, key, value)
+    save_run_output(config, final_output, current_run_directory, None)
     
     # Save using D0FUS format (creates output_results.txt)
     save_run_output(p, final_output, current_run_directory, None)

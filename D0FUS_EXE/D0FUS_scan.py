@@ -16,7 +16,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from D0FUS_BIB.D0FUS_parameterization import *
 from D0FUS_BIB.D0FUS_radial_build_functions import *
 from D0FUS_BIB.D0FUS_physical_functions import *
-from D0FUS_EXE.D0FUS_run import run, Parameters
+from D0FUS_EXE.D0FUS_run import run
+from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG
 
 #%% Output Parameter Registry
 
@@ -830,16 +831,7 @@ def generic_2D_scan(scan_params, fixed_params, params_obj):
             
             try:
                 # Run calculation
-                results = run(
-                    params_obj.a, params_obj.R0, params_obj.Bmax, params_obj.P_fus, 
-                    params_obj.Tbar, params_obj.H,
-                    params_obj.Temps_Plateau_input, params_obj.b, params_obj.nu_n, params_obj.nu_T,
-                    params_obj.Supra_choice, params_obj.Chosen_Steel, params_obj.Radial_build_model,
-                    params_obj.Choice_Buck_Wedg, params_obj.Option_Kappa, params_obj.κ_manual,
-                    params_obj.L_H_Scaling_choice, params_obj.Scaling_Law, params_obj.Bootstrap_choice,
-                    params_obj.Operation_mode, params_obj.fatigue, params_obj.P_aux_input,
-                    None  # J_wost_Manual (None = use automatic calculation)
-                )
+                results = run(params_obj)
                 
                 # Unpack results
                 (B0, B_CS, B_pol,
@@ -863,8 +855,8 @@ def generic_2D_scan(scan_params, fixed_params, params_obj):
                  ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS) = results
                 
                 # Calculate plasma limit conditions
-                betaN_limit_value = betaN_limit
-                q_limit_value = q_limit
+                betaN_limit_value = params_obj.betaN_limit
+                q_limit_value     = params_obj.q_limit
                 
                 n_condition = nbar / nG
                 beta_condition = betaN / betaN_limit_value
@@ -1298,7 +1290,7 @@ def main(input_file=None, auto_plot=False,
     """
     
     # Load parameters
-    p = Parameters()
+    p = GlobalConfig()
     
     input_file_path = input_file
     
