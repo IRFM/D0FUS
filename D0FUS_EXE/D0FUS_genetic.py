@@ -34,7 +34,7 @@ from D0FUS_BIB.D0FUS_parameterization import *
 from D0FUS_EXE.D0FUS_run import run, save_run_output
 from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG
 
-#%% Global Variables
+#%% Global Variables (default values)
 opt_ranges = {}
 static_inputs = {}
 param_keys = []
@@ -168,35 +168,58 @@ def check_radial_build(cost, R0_abcd, qstar, beta, nbar):
 #%% Fitness Evaluation
 
 def evaluate_individual(individual, verbose=False):
-    """Evaluate fitness of an individual"""
+    """
+    Evaluate the fitness of a single individual.
+
+    Output tuple indices (current run() return signature):
+        [0]  B0_solution        [5]  Q_solution
+        [6]  Volume_solution    [12] nbar_solution
+        [13] nG_solution        [15] betaN_solution  (Troyon limit, %*m*T/MA)
+        [16] betaT_solution     [18] qstar_solution
+        [19] q95_solution       [25] cost_solution
+        [57] R0-a-b-c-d         (innermost radial build radius, must be > 0)
+        
+    """
     try:
         param_dict = {k: individual[i] for i, k in enumerate(param_keys)}
-        all_params = {**param_dict, **static_inputs}
-        
+        all_params  = {**param_dict, **static_inputs}
+
         config = GlobalConfig(**{k: v for k, v in all_params.items()
-                         if k in GlobalConfig.__dataclass_fields__})
+                                  if k in GlobalConfig.__dataclass_fields__})
         output = run(config)
-        
-        cost = output[25]
-        nbar = output[12]
-        nG = output[13]
-        betaN = output[15]
-        betaT = output[16]  # This is a fraction, not %
-        qstar = output[18]
-        R0_abcd = output[38]
-        
+
+        # --- Extract outputs (indices verified against run() return tuple) ---
+        cost    = output[25]   # cost_solution          (machine volume proxy)
+        nbar    = output[12]   # nbar_solution          [10^20 m^-3]
+        nG      = output[13]   # nG_solution            [10^20 m^-3]
+        betaN   = output[15]   # betaN_solution         [% m T / MA] Troyon limit
+        betaT   = output[16]   # betaT_solution         (fraction, multiply by 100 for %)
+        qstar   = output[18]   # qstar_solution         (Shafranov cylindrical safety factor)
+        # BUGFIX: was output[38] = J_max_TF_conducteur; correct index is 57
+        R0_abcd = output[57]   # R0 - a - b - c - d    [m] (must be > 0 for valid build)
+
+        # --- Radial build validity check -------------------------------------
         is_valid, reason = check_radial_build(cost, R0_abcd, qstar, betaT, nbar)
         if not is_valid:
+            if verbose:
+                print(f"    [INVALID] {reason} | params={param_dict}")
             return (PENALTY_VALUE,)
-        
+
+        # --- Stability penalty -----------------------------------------------
+        q_lim = static_inputs.get('q_limit', DEFAULT_CONFIG.q_limit)
         is_stable, penalty_multiplier, violations = compute_stability_penalty(
-            nbar, nG, betaT, betaN, qstar, q_min=q_limit, penalty_strength=1000.0
+            nbar, nG, betaT, betaN, qstar, q_min=q_lim, penalty_strength=1000.0
         )
-        
+
         fitness = cost * penalty_multiplier
         return (fitness,)
-    
+
     except Exception as e:
+        # Print exception details to help diagnose convergence failures
+        if verbose:
+            import traceback
+            print(f"    [EXCEPTION in evaluate_individual] {type(e).__name__}: {e}")
+            traceback.print_exc()
         return (PENALTY_VALUE,)
 
 #%% I/O Management
@@ -569,7 +592,23 @@ def run_genetic_optimization(input_file,
     # Initialize
     initialize_run_directory()
     opt_ranges, static_inputs, param_keys = load_input_file(input_file)
-    
+
+    # Override GA hyperparameters with values parsed from the input file.
+    # These keys are removed from static_inputs so they are not passed to
+    # GlobalConfig as physics parameters.
+    if 'population_size' in static_inputs:
+        population_size = int(static_inputs.pop('population_size'))
+        print(f"  [input file] population_size = {population_size}")
+    if 'generations' in static_inputs:
+        generations = int(static_inputs.pop('generations'))
+        print(f"  [input file] generations     = {generations}")
+    if 'crossover_rate' in static_inputs:
+        crossover_rate = float(static_inputs.pop('crossover_rate'))
+        print(f"  [input file] crossover_rate  = {crossover_rate}")
+    if 'mutation_rate' in static_inputs:
+        mutation_rate = float(static_inputs.pop('mutation_rate'))
+        print(f"  [input file] mutation_rate   = {mutation_rate}")
+
     if len(param_keys) < 1:
         print("\n ERROR: Need at least 1 optimization parameter")
         sys.exit(1)
@@ -616,7 +655,8 @@ def run_genetic_optimization(input_file,
     print(f"    P_elec: {final_output[24]:.1f} MW")
     print(f"    n/nG: {nbar/nG:.3f} ({(1-nbar/nG)*100:+.1f}% margin)")
     print(f"    betaT/betaN: {betaT_percent/betaN:.3f} ({(1-betaT_percent/betaN)*100:+.1f}% margin)")
-    print(f"    q*/q_limit: {qstar/q_limit:.3f} ({(qstar/q_limit-1)*100:+.1f}% margin)")
+    q_lim = static_inputs.get('q_limit', DEFAULT_CONFIG.q_limit)
+    print(f"    q*/q_limit: {qstar/q_lim:.3f} ({(qstar/q_lim-1)*100:+.1f}% margin)")
     
     if is_stable:
         print("\n STABLE design found!")
@@ -635,8 +675,7 @@ def run_genetic_optimization(input_file,
     # Create a Parameters object with the best values
     save_run_output(config, final_output, current_run_directory, None)
     
-    # Save using D0FUS format (creates output_results.txt)
-    save_run_output(p, final_output, current_run_directory, None)
+    # NOTE: duplicate save_run_output(p, ...) removed — 'p' was undefined (bug)
     
     # 3. Save optimization summary JSON
     summary = {
@@ -673,6 +712,41 @@ def run_genetic_optimization(input_file,
     print(f"\n All outputs saved to: {current_run_directory}/")
     
     return best, final_output, hof
+
+
+
+#%% Debug Helper
+
+def debug_single_run(a=2.0, R0=6.0, Bmax_TF=12.0, Tbar=15.0):
+    """
+    Run a single D0FUS evaluation with verbose output to diagnose
+    why evaluate_individual returns PENALTY_VALUE for all individuals.
+
+    Call this from a Python shell BEFORE launching the GA:
+
+        from D0FUS_genetic import debug_single_run, load_input_file
+        load_input_file("my_input.txt")
+        debug_single_run(a=1.5, R0=5.0, Bmax_TF=14.0, Tbar=12.0)
+    """
+    import traceback
+    test_params = {"a": a, "R0": R0, "Bmax_TF": Bmax_TF, "Tbar": Tbar}
+    print(f"\n=== debug_single_run ===")
+    print(f"Parameters: {test_params}")
+    try:
+        all_params = {**test_params, **static_inputs}
+        config = GlobalConfig(**{k: v for k, v in all_params.items()
+                                  if k in GlobalConfig.__dataclass_fields__})
+        print("GlobalConfig created successfully.")
+        output = run(config)
+        print(f"run() returned {len(output)} values.")
+        idx_map = [(0,'B0'),(5,'Q'),(6,'Volume'),(12,'nbar'),(13,'nG'),
+                   (15,'betaN'),(16,'betaT'),(18,'qstar'),(19,'q95'),
+                   (25,'cost'),(38,'J_TF'),(57,'R0-a-b-c-d')]
+        for idx, name in idx_map:
+            print(f"  output[{idx:2d}] {name:15s} = {output[idx]}")
+    except Exception as e:
+        print(f"EXCEPTION: {type(e).__name__}: {e}")
+        traceback.print_exc()
 
 #%% Command Line Interface
 

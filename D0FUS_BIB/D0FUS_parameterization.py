@@ -131,10 +131,10 @@ class GlobalConfig:
     C_Alpha     : float = 5.0   # Helium ash dilution tuning parameter [-]
 
     # ── 5. Magnetic flux model ─────────────────────────────────────────────────
-    Ce        : float = 0.45    # Ejima constant (resistive ramp-up flux) [-]
+    Ce        : float = 0.30     # Ejima constant (resistive ramp-up flux) [-]
                                  # Ψ_res = Ce * μ0 * R0 * Ip
                                  # Typical: ITER 0.45, EU-DEMO 0.30, CFETR 0.30
-    eta_model : str   = 'redl'  # Plasma resistivity model for R_eff and li
+    eta_model : str   = 'sauter'  # Plasma resistivity model for R_eff and li
                                  # 'old' | 'spitzer' | 'sauter' | 'redl' (recommended)
     # Plasma initiation flux: Ψ_PI = 2π * R0 * E_phi_BD * t_BD
     E_phi_BD  : float = 0.5     # Toroidal electric field at breakdown [V/m]
@@ -191,11 +191,11 @@ class GlobalConfig:
 
     # Quench protection
     I_cond                   : float = 50e3   # Nominal conductor current [A]
-    V_max                    : float = 5e3    # Maximum voltage to ground [V] debatable for HTS ?
+    V_max                    : float = 10e3   # Maximum terminal voltage (= I × R_dump) [V]
     tau_h_LTS                : float = 3.0    # Detection + hold time, LTS magnets [s]
     tau_h_HTS                : float = 10.0   # Detection + hold time, HTS magnets [s]
     T_hotspot                : float = 250.0  # Maximum hot-spot temperature [K]
-    RRR                      : float = 100.0  # Copper residual resistivity ratio [-]
+    RRR                      : float = 100.0  # Copper residual resistivity ratio [-] (pessimistic)
     Dump_resistor_subdivision: int   = 2      # TF coils per dump resistor [-]
 
     # ── 10. Power conversion ───────────────────────────────────────────────────

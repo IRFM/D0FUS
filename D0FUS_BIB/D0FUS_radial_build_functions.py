@@ -753,6 +753,18 @@ def calculate_t_dump(E_mag, I_cond, V_max, N_sub, tau_h):
     Reference
     ---------
     Torre, A. CEA Lecture Notes
+    
+    Note
+    ---------
+    Voltage convention :
+    V_max here refers to the terminal voltage across the dump resistor
+    (i.e. V_terminal = I_cond × R_dump), NOT the voltage to ground.
+    For a symmetrically grounded circuit, the voltage to ground is:
+        V_to_ground = V_terminal / 2
+    ITER TF:  V_terminal ≈ 10–12 kV  →  V_to_ground ≈ 5–6 kV  [Fink 2005]
+    ITER CS:  V_terminal ≈  6.3 kV   →  V_to_ground ≈ 3.2 kV  [Duchateau 2009]
+    EU DEMO:  V_terminal ≈ 10 kV     →  V_to_ground ≈ 5 kV    [Novello 2019]
+    A conservative default of 10 kV (terminal) is chosen
     """
     tau_dis = 2 * E_mag / (I_cond * V_max * N_sub)
     t_dump = tau_h + tau_dis / 2
