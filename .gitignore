@@ -21,3 +21,4 @@ D0FUS_INPUTS/*_paper*
 dist/
 build/
 *.egg-info/input/
+*.egg-info/
