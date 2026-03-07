@@ -184,6 +184,22 @@ def run(config: GlobalConfig = None) -> tuple:
     theta_deg                 = config.theta_deg
     ripple_adm                = config.ripple_adm
     L_min                     = config.L_min
+    # ── Multi-source current drive / heating ──────────────────────────────────
+    CD_source                 = config.CD_source
+    P_LH                      = config.P_LH
+    P_ECRH                    = config.P_ECRH
+    P_NBI                     = config.P_NBI
+    P_ICRH                    = config.P_ICRH
+    f_heat_LH                 = config.f_heat_LH
+    f_heat_EC                 = config.f_heat_EC
+    f_heat_NBI                = config.f_heat_NBI
+    f_heat_ICR                = config.f_heat_ICR
+    rho_EC                    = config.rho_EC
+    rho_NBI                   = config.rho_NBI
+    A_beam                    = config.A_beam
+    E_beam_keV                = config.E_beam_keV
+    C_EC                      = config.C_EC
+    C_NBI                     = config.C_NBI
 
     # ── Profile peaking factors ───────────────────────────────────────────────
     # L-mode  : purely parabolic (no pedestal)
@@ -354,8 +370,9 @@ def run(config: GlobalConfig = None) -> tuple:
                              "Valid options: 'Freidberg', 'Segal', 'Sauter', 'Redl'.")
 
         # Current drive and Q evaluation
-        eta_CD_alpha = f_etaCD(a, R0, B0_solution, nbar_alpha, Tbar, nu_n, nu_T,
-                                 rho_ped=rho_ped, n_ped_frac=n_ped_frac)
+        eta_CD_alpha = f_etaCD_effective(
+            config, a, R0, B0_solution, nbar_alpha, Tbar, nu_n, nu_T, Zeff,
+            rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac)
 
         if Operation_mode == 'Steady-State':
             I_Ohm_alpha = 0
@@ -365,7 +382,10 @@ def run(config: GlobalConfig = None) -> tuple:
             Q_alpha     = f_Q(P_fus, P_CD_alpha, P_Ohm_alpha)
 
         elif Operation_mode == 'Pulsed':
-            P_CD_alpha  = P_aux_input
+            if CD_source == 'Multi':
+                P_CD_alpha = P_LH + P_ECRH + P_NBI + P_ICRH
+            else:
+                P_CD_alpha = P_aux_input
             I_CD_alpha  = f_I_CD(R0, nbar_alpha, eta_CD_alpha, P_CD_alpha)
             I_Ohm_alpha = f_I_Ohm(Ip_alpha, Ib_alpha, I_CD_alpha)
             P_Ohm_alpha = f_P_Ohm(I_Ohm_alpha, Tbar, R0, a, κ)
@@ -436,7 +456,8 @@ def run(config: GlobalConfig = None) -> tuple:
             for guess in initial_guesses:
                 try:
                     result = root(to_solve_f_alpha_and_Q, guess,
-                                  method=method_name, tol=1e-8)
+                              method=method_name, tol=1e-6,
+                              options=({'maxfev': 50} if method_name == 'df-sane' else {}))
                     if result.success:
                         f_alpha, Q  = result.x
                         residuals   = to_solve_f_alpha_and_Q([f_alpha, Q])
@@ -518,6 +539,9 @@ def run(config: GlobalConfig = None) -> tuple:
             _nan, _nan, _nan, _nan,            # r_minor, r_sep, r_c, r_d
             _nan, _nan, _nan, _nan,            # κ, κ_95, δ, δ_95
             _nan, _nan, _nan, _nan, _nan,      # ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS
+            _nan, _nan, _nan,                  # eta_LH, eta_EC, eta_NBI
+            _nan, _nan, _nan, _nan,            # P_LH, P_EC, P_NBI, P_ICR
+            _nan, _nan, _nan,                  # I_LH, I_EC, I_NBI
         )
 
     # =========================================================================
@@ -598,8 +622,22 @@ def run(config: GlobalConfig = None) -> tuple:
     nG_solution     = f_nG(Ip_solution, a) * Greenwald_limit
 
     # Current drive and power balance
-    eta_CD_solution = f_etaCD(a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T,
-                              rho_ped=rho_ped, n_ped_frac=n_ped_frac)
+    # ── Individual CD efficiencies (computed once, reused in breakdown) ────────
+    eta_LH_solution  = f_etaCD_LH(a, R0, B0_solution, nbar_solution, Tbar,
+                                   nu_n, nu_T,
+                                   rho_ped=rho_ped, n_ped_frac=n_ped_frac)
+    eta_EC_solution  = f_etaCD_EC(a, R0, Tbar, nbar_solution, Zeff, nu_T, nu_n,
+                                   rho_EC, C_EC,
+                                   rho_ped, n_ped_frac, T_ped_frac)
+    eta_NBI_solution = f_etaCD_NBI(A_beam, E_beam_keV,
+                                    a, R0, Tbar, nbar_solution, Zeff, nu_T, nu_n,
+                                    rho_NBI, C_NBI,
+                                    rho_ped, n_ped_frac, T_ped_frac)
+
+    # Effective γ used for the power/current balance
+    eta_CD_solution = f_etaCD_effective(
+        config, a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T, Zeff,
+        rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac)
 
     if Operation_mode == 'Steady-State':
         I_Ohm_solution  = 0
@@ -608,13 +646,27 @@ def run(config: GlobalConfig = None) -> tuple:
         P_CD_solution   = f_PCD(R0, nbar_solution, I_CD_solution, eta_CD_solution)
 
     elif Operation_mode == 'Pulsed':
-        P_CD_solution   = P_aux_input
-        I_CD_solution   = f_I_CD(R0, nbar_solution, eta_CD_solution, P_CD_solution)
+        if CD_source == 'Multi':
+            P_CD_solution  = P_LH + P_ECRH + P_NBI + P_ICRH
+        else:
+            P_CD_solution  = P_aux_input
+        I_CD_solution  = f_I_CD(R0, nbar_solution, eta_CD_solution, P_CD_solution)
         I_Ohm_solution  = f_I_Ohm(Ip_solution, Ib_solution, I_CD_solution)
         P_Ohm_solution  = f_P_Ohm(I_Ohm_solution, Tbar, R0, a, κ)
 
     else:
         print("Choose a valid operation mode")
+
+    # ── Per-source breakdown (post-convergence) ────────────────────────────────
+    cd_bd = f_CD_breakdown(config, P_CD_solution, R0, nbar_solution,
+                           eta_LH_solution, eta_EC_solution, eta_NBI_solution)
+    P_LH_solution  = cd_bd['P_LH']
+    P_EC_solution  = cd_bd['P_EC']
+    P_NBI_solution = cd_bd['P_NBI']
+    P_ICR_solution = cd_bd['P_ICR']
+    I_LH_solution  = cd_bd['I_LH']
+    I_EC_solution  = cd_bd['I_EC']
+    I_NBI_solution = cd_bd['I_NBI']
 
     # Separatrix and wall power loads
     P_sep_solution      = f_P_sep(P_fus, P_CD_solution)
@@ -724,7 +776,10 @@ def run(config: GlobalConfig = None) -> tuple:
             d,  σ_z_CS,  σ_theta_CS,  σ_r_CS,  Steel_fraction_CS,  B_CS,  J_CS,
             R0 - a,  R0 - a - b,  R0 - a - b - c,  R0 - a - b - c - d,
             κ,  κ_95,  δ,  δ_95,
-            ΨPI,  ΨRampUp,  Ψplateau,  ΨPF,  ΨCS)
+            ΨPI,  ΨRampUp,  Ψplateau,  ΨPF,  ΨCS,
+            eta_LH_solution,  eta_EC_solution,  eta_NBI_solution,
+            P_LH_solution,  P_EC_solution,  P_NBI_solution,  P_ICR_solution,
+            I_LH_solution,  I_EC_solution,  I_NBI_solution)
 
 
 #%% Output writer
@@ -785,7 +840,10 @@ def save_run_output(config: GlobalConfig,
      d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS, J_CS,
      r_minor, r_sep, r_c, r_d,
      κ, κ_95, δ, δ_95,
-     ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS_Total) = results
+     ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS_Total,
+     eta_LH, eta_EC, eta_NBI,
+     P_LH_out, P_EC_out, P_NBI_out, P_ICR_out,
+     I_LH_out, I_EC_out, I_NBI_out) = results
 
     # ── Write results report (console + file) ─────────────────────────────────
     output_file = os.path.join(output_path, "output_results.txt")
@@ -839,6 +897,13 @@ def save_run_output(config: GlobalConfig,
         print("-------------------------------------------------------------------------", file=out)
         print(f"[I] P_fus  (Fusion power)                           : {config.P_fus:.3f} [MW]",  file=out)
         print(f"[O] P_CD   (Current drive power)                    : {P_CD:.3f} [MW]",           file=out)
+        print(f"[O]  \u251c gamma_LH  (LHCD efficiency)                 : {eta_LH:.4f} [MA/MW\u00b7m\u00b2]",  file=out)
+        print(f"[O]  \u251c gamma_EC  (ECCD efficiency)                 : {eta_EC:.4f} [MA/MW\u00b7m\u00b2]",  file=out)
+        print(f"[O]  \u2514 gamma_NBI (NBCD efficiency)                 : {eta_NBI:.4f} [MA/MW\u00b7m\u00b2]", file=out)
+        print(f"[O]  \u251c P_LH  / I_LH  (LHCD)                       : {P_LH_out:.2f} MW / {I_LH_out:.3f} MA",  file=out)
+        print(f"[O]  \u251c P_EC  / I_EC  (ECCD)                        : {P_EC_out:.2f} MW / {I_EC_out:.3f} MA",  file=out)
+        print(f"[O]  \u251c P_NBI / I_NBI (NBCD)                        : {P_NBI_out:.2f} MW / {I_NBI_out:.3f} MA", file=out)
+        print(f"[O]  \u2514 P_ICR        (ICRH, heating only)           : {P_ICR_out:.2f} MW",       file=out)
         print(f"[O] P_syn  (Synchrotron radiation power)            : {P_syn:.3f} [MW]",          file=out)
         print(f"[O] P_Brem (Bremsstrahlung power)                   : {P_Brem:.3f} [MW]",         file=out)
         print(f"[O] eta_CD (Current drive efficiency)               : {eta_CD:.3f} [MA/MW·m²]",   file=out)

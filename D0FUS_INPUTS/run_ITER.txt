@@ -1,0 +1,47 @@
+# D0FUS Input Parameters — ITER Baseline (Scenario 2, Q=10)
+# Reference: ITER Physics Basis, Nucl. Fusion 39 (1999) 2137;
+#            Aymar et al., Plasma Phys. Control. Fusion 44 (2002) 519;
+#            Campbell et al., EPN 47/5-6 (2016) 28 (Table 1 & 2).
+# Lines starting with # are comments.
+# Format: parameter_name = value
+# Parameters not listed here are left at GlobalConfig defaults.
+
+# ── Fusion Power and Geometry ─────────────────────────────────────────────────
+P_fus = 500                     # Fusion power [MW]  (Q=10 baseline, Table 1)
+R0    = 6.2                     # Major radius [m]   (Table 1)
+a     = 2.0                     # Minor radius [m]   (A = R0/a = 3.1, Table 1)
+b     = 1.4                    # Outboard blanket + shield radial thickness [m]
+
+# ── Plasma Shape ──────────────────────────────────────────────────────────────
+Option_Kappa = Wenninger        # Wenninger scaling consistent with kappa ≈ 1.85 at A=3.1
+
+# ── Magnetic Field ────────────────────────────────────────────────────────────
+Bmax_TF = 11.80
+
+# ── Technology Choices ────────────────────────────────────────────────────────
+Supra_choice     = Nb3Sn        # TF and CS use Nb3Sn; PF use NbTi (ITER design)
+Choice_Buck_Wedg = Wedging      # ITER TF coils are wedged inboard
+Chosen_Steel     = 316L         # ITER structural steel: 316L(N) ≈ 316L in D0FUS
+
+# ── Plasma Physics ────────────────────────────────────────────────────────────
+Scaling_Law          = IPB98(y,2)   # Reference confinement scaling (ITER design basis)
+H                    = 1.0          # H-factor for Q=10 baseline  (Table 2, Scenario 2)
+Tbar                 = 8.9          # Volume-averaged electron temperature [keV]
+q_limit              = 3.0          # Safety factor limit q95 ≥ 3.0  (Table 2)
+r_synch              = 0.6          # Synchrotron wall reflectivity (same as EU-DEMO)
+
+# ── Operation Mode ────────────────────────────────────────────────────────────
+Operation_mode        = Pulsed
+Temps_Plateau_input   = 492         # Flat-top duration [s]  (Q=10 reference scenario)
+P_aux_input           = 50          # Auxiliary heating power [MW]  (Q=10: P_fus/P_aux=10)
+fatigue_CS            = 2.0         # CS fatigue knockdown (Pulsed + Wedging)
+
+# ── Plasma Profiles — ITER ELMy H-mode ──────────────────────────────────────
+Plasma_profiles = Manual
+# D0FUS Profile Parameters — ITER 15MA Q=10 baseline
+# Source: Kim et al., EPS 2018, P1.1077 (CORSICA)
+nu_n_manual  = 0.04   # near-flat density    (n_e0/<ne> = 1.04, text)
+nu_T_manual  = 2.80   # from T0=23 keV, T_ped=5 keV → <T>=8.9 keV (solved)
+rho_ped      = 0.95   # rho_tor ~ 0.94       (text)
+n_ped_frac   = 1.00   # n_ped = <ne>         (text: tous deux = 9.4×10¹⁹ m⁻³)
+T_ped_frac   = 0.60   # T_ped/Tbar = 5/8.9   (figure)

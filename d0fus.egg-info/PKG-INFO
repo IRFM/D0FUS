@@ -1,0 +1,285 @@
+Metadata-Version: 2.4
+Name: d0fus
+Version: 1.0.4
+Summary: Design 0-dimensional for Fusion Systems - Tokamak power plant design and optimization tool
+Author-email: Timothé Auclair <timothe.auclair@gmail.com>
+Maintainer-email: Timothé Auclair <timothe.auclair@gmail.com>
+License: CeCILL-C
+Project-URL: Homepage, https://github.com/IRFM/D0FUS
+Project-URL: Repository, https://github.com/IRFM/D0FUS
+Project-URL: Documentation, https://github.com/IRFM/D0FUS#readme
+Project-URL: Bug Tracker, https://github.com/IRFM/D0FUS/issues
+Keywords: fusion,tokamak,plasma,power-plant,design,nuclear,superconductor,magnetic-confinement,ITER,DEMO
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Science/Research
+Classifier: Intended Audience :: Education
+Classifier: Topic :: Scientific/Engineering :: Physics
+Classifier: License :: OSI Approved :: CEA CNRS Inria Logiciel Libre License, version 2.1 (CeCILL-2.1)
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: numpy>=1.20.0
+Requires-Dist: matplotlib>=3.4.0
+Requires-Dist: scipy>=1.7.0
+Requires-Dist: tqdm>=4.60.0
+Requires-Dist: pandas>=1.3.0
+Requires-Dist: sympy>=1.9
+Requires-Dist: deap>=1.3.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0.0; extra == "dev"
+Requires-Dist: black>=23.0.0; extra == "dev"
+Requires-Dist: flake8>=6.0.0; extra == "dev"
+Dynamic: license-file
+
+
+[![License: CeCILL-C](https://img.shields.io/badge/License-CeCILL--C-blue.svg)](https://cecill.info/licences/Licence_CeCILL-C_V1-en.html)
+[![PyPI version](https://badge.fury.io/py/d0fus.svg)](https://pypi.org/project/d0fus/)
+
+<a name="readme-top"></a>
+
+# D0FUS
+
+**D0FUS** (Design 0-dimensional for Fusion Systems) is a comprehensive Python-based tool for tokamak fusion power plant design and analysis. It enables rapid exploration of design space through 0D/1D physics models.
+
+## Installation
+
+### Requirements
+- Python 3.8+
+- Dependencies: `pip install -r requirements.txt`
+
+### Recommended
+- [Spyder IDE](https://www.spyder-ide.org/) for interactive use
+
+### Quick Install
+
+```bash
+# Clone the repository
+git clone https://github.com/IRFM/D0FUS.git
+```
+
+```bash
+# Or make use of the pip version:
+pip install d0fus
+```
+
+## Project Structure
+
+```
+D0FUS/
+├── D0FUS_BIB/                      # Core library modules
+│   ├── D0FUS_import.py                 # Common imports
+│   ├── D0FUS_parameterization.py       # Physical constants and parameters
+│   ├── D0FUS_physical_functions.py     # Plasma physics functions
+│   └── D0FUS_radial_build_functions.py # Engineering and radial build
+│
+├── D0FUS_INPUTS/                   # Input parameter files
+│   └── default_input.txt               # Default configuration
+│
+├── D0FUS_OUTPUTS/                  # Generated outputs (auto-created)
+│   ├── Run_D0FUS_YYYYMMDD_HHMMSS/      # Single run results
+│   ├── Scan_D0FUS_YYYYMMDD_HHMMSS/     # Scan results with figures
+│   └── Genetic_D0FUS_YYYYMMDD_HHMMSS/  # Genetic optimization results
+│
+├── D0FUS_EXE/                      # Execution modules
+│   ├── D0FUS_run.py                    # Single design point calculation
+│   ├── D0FUS_scan.py                   # 2D parameter space scan
+│   └── D0FUS_genetic.py                # Genetic algorithm optimization
+│
+├── D0FUS.py                        # Main entry point
+├── requirements.txt                # Python dependencies
+└── README.md                       # This file
+```
+
+## D0FUS Startup
+
+### Recommended Execution
+
+Launch Spyder and open D0FUS.py
+
+```bash
+python D0FUS.py
+```
+
+Execute, you'll then be prompted to select an input file.
+
+### Script Integration
+
+You can also import and use D0FUS modules in your own scripts:
+
+```python
+from D0FUS_EXE import D0FUS_run
+
+# Run a calculation
+results = D0FUS_run.main("D0FUS_INPUTS/my_config.txt")
+
+# Access results
+B0, B_CS, Q, Ip, betaN, ... = results
+```
+
+## Execution Modes
+
+D0FUS automatically detects the execution mode based on the input file format. Three modes are available:
+
+| Mode | Purpose | Input format | Parameters |
+|------|---------|--------------|------------|
+| **RUN** | Single design point calculation | `R0 = 9` | Fixed values only |
+| **SCAN** | 2D parameter space exploration | `R0 = [3, 9, 25]` | Exactly 2 parameters with `[min, max, n_points]` |
+| **OPTIMIZATION** | Genetic algorithm cost minimization | `R0 = [3, 9]` | 2+ parameters with `[min, max]` |
+
+**RUN mode** evaluates a single tokamak configuration and outputs all plasma parameters, magnetic fields, power balance, and radial build dimensions.
+
+**SCAN mode** generates 2D maps over two parameters, visualizing feasibility regions bounded by plasma stability limits (Greenwald density, Troyon beta, kink safety factor) and engineering constraints.
+
+**OPTIMIZATION mode** uses a genetic algorithm to find the reactor configuration minimizing cost while satisfying all physics and engineering constraints. The optimizer explores the multi-dimensional parameter space defined by the bounds and evolves the population toward optimal solutions.
+
+## Input
+
+### Parameter Handling
+
+All parameters have built-in default values. When an input file is provided, only the specified parameters are overwritten while all others retain their defaults. This allows minimal input files containing only the parameters of interest.
+
+For example, an input file with just:
+```ini
+R0 = 7
+Bmax = 14
+```
+will run D0FUS with these two values modified, using defaults for everything else.
+
+### Parameter Reference
+
+| Parameter | Description | Unit | Default | Options |
+|-----------|-------------|------|---------|---------|
+| **Geometry** |||||
+| `P_fus` | Fusion power | MW | 2000 | |
+| `R0` | Major radius | m | 9 | |
+| `a` | Minor radius | m | 3 | |
+| `Option_Kappa` | Elongation model | - | `Wenninger` | `Stambaugh`, `Freidberg`, `Wenninger`, `Manual`  |
+| `κ_manual` | Manual elongation (if `Option_Kappa = Manual`) | - | 1.7 | |
+| `b` | Plasma->TF coil distance| m | 1.2 | |
+| **Magnetic Field** |||||
+| `Bmax` | Maximum field on TF coils | T | 12 | |
+| **Technology** |||||
+| `Supra_choice` | Superconductor material | - | `Nb3Sn` | `NbTi`, `Nb3Sn`, `REBCO` |
+| `Radial_build_model` | Radial build calculation model | - | `D0FUS` | `D0FUS`, `Freidberg` |
+| `Choice_Buck_Wedg` | TF coil mechanical configuration | - | `Wedging` | `Plug`, `Bucking`, `Wedging` |
+| `Chosen_Steel` | Structural steel grade | - | `316L` | `316L`, `N50H`, `JK2LB`, `Manual` |
+| **Plasma Physics** |||||
+| `Scaling_Law` | Energy confinement scaling law | - | `IPB98(y,2)` | `IPB98(y,2)`, `ITPA20`, `ITPA20-IL`, `DS03`, `L-mode`, `L-mode OK`, `ITER89-P` |
+| `H` | H-factor (confinement enhancement) | - | 1 | |
+| `Tbar` | Volume-averaged temperature | keV | 14 | |
+| `nu_T` | Temperature profile peaking factor | - | 1 | |
+| `nu_n` | Density profile peaking factor | - | 0.1 | |
+| `L_H_Scaling_choice` | L-H threshold scaling | - | `New_Ip` | `New_Ip`, `Martin`, `New_S` |
+| `Bootstrap_choice` | Bootstrap current model | - | `Freidberg` | `Freidberg`, `Segal` |
+| **Operation** |||||
+| `Operation_mode` | Operating scenario | - | `Steady-State` | `Steady-State`, `Pulsed` |
+| `Temps_Plateau_input`* | Burn duration (Pulsed mode) | s | 7200 | |
+| `P_aux_input`* | Auxiliary heating power (Pulsed mode) | MW | 100 | |
+
+*Parameters marked with \* are only relevant when `Operation_mode = Pulsed`.
+
+### Input File Format
+
+The format of variable parameters determines which execution mode D0FUS will use:
+
+**RUN mode** — Fixed values only:
+```ini
+R0 = 9
+```
+See `D0FUS_INPUTS/default_input.txt` for a complete example.
+
+**SCAN mode** — Exactly 2 parameters with `[min, max, n_points]`:
+```ini
+R0 = [3, 9, 25]
+a = [1, 3, 25]
+```
+See `D0FUS_INPUTS/scan_input_example.txt` for a complete example.
+
+**OPTIMIZATION mode** — 2+ parameters with `[min, max]`:
+```ini
+R0 = [3, 9]
+a = [1, 3]
+Bmax = [10, 16]
+```
+See `D0FUS_INPUTS/input_genetic_example.txt` for a complete example.
+
+### Genetic Algorithm Settings
+
+For OPTIMIZATION mode, optional algorithm parameters can be added to the input file:
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `population_size` | Number of individuals per generation | 50 |
+| `generations` | Maximum number of generations | 100 |
+| `crossover_rate` | Crossover probability | 0.7 |
+| `mutation_rate` | Mutation probability | 0.2 |
+
+## Output
+
+### RUN Mode Output
+
+Results are saved in timestamped directories:
+
+```
+D0FUS_OUTPUTS/Run_D0FUS_20251106_123456/
+├── input_parameters.txt        # Copy of input configuration
+└── output_results.txt          # Complete calculation results
+```
+
+**Output includes:**
+- Plasma parameters (Ip, ne, Te, βN, Q, τE)
+- Magnetic fields (B0, BCS, Bpol)
+- Power balance (Pfus, PCD, Psep, Pthresh)
+- Radial build dimensions (TF thickness, CS thickness)
+
+### SCAN Mode Output
+
+```
+D0FUS_OUTPUTS/Scan_D0FUS_20251106_123456/
+├── scan_parameters.txt         # Scan configuration
+└── scan_map_[iso]_[bg].png     # High-resolution figure (300 dpi)
+```
+
+**Scan visualizations show:**
+- Plasma stability boundaries (density, beta, kink safety factor)
+- Radial build feasibility limits
+- Iso-contours of key parameters (Ip, Q, B0, etc.)
+
+### OPTIMIZATION Mode Output
+
+```
+D0FUS_OUTPUTS/Genetic_D0FUS_20251106_123456/
+├── optimization_config.txt     # Optimization parameters and bounds
+├── optimization_results.txt    # Best solution and convergence history
+└── convergence_plot.png        # Fitness evolution over generations
+```
+
+**Optimization results include:**
+- Best individual: optimal parameter values minimizing reactor cost
+- Fitness evolution: cost reduction across generations
+- Constraint satisfaction: plasma stability (Greenwald, Troyon, kink) and radial build feasibility
+- Convergence diagnostics: population diversity and stagnation metrics
+
+## Contributing
+
+Contributions are welcome! Please contact us:
+
+- Email: timothe.auclair@cea.fr
+
+## License
+
+This project is licensed under the [CeCILL-C License](https://cecill.info/licences/Licence_CeCILL-C_V1-en.html), a French free software license compatible with the GNU LGPL.
+
+See the [LICENSE](LICENSE) file for details.
+
+© 2025 CEA/IRFM
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>

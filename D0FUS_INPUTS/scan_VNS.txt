@@ -1,0 +1,34 @@
+# D0FUS Scan Input - R0 and a Parameter Space
+# Scan syntax: parameter_name = [min, max, n_points]
+# Lines starting with # are comments
+
+# SCAN PARAMETERS (exactly 2 required)
+a = [1, 2, 15]               # Minor radius scan [m]
+R0 = [3, 6, 15]              # Major radius scan [m]
+
+# FIXED PARAMETERS
+P_fus = 75                  # Fusion power [MW]
+b = 0.78                     # First wall + blanket thickness [m]
+
+# Plasma Shape
+Option_Kappa = Wenninger    # Elongation model
+
+# Magnetic Field
+Bmax_TF = 12                   # Maximum toroidal field on TF coils [T]
+
+# Technology Choices
+Supra_choice = Nb3Sn        # Superconductor: Nb3Sn, REBCO, NbTi
+Radial_build_model = D0FUS  # Radial build: academic, D0FUS, CIRCEE
+Choice_Buck_Wedg = Wedging  # Mechanical config: Wedging, Bucking
+Chosen_Steel = 316L         # Steel type: 316L, N50H, Manual
+
+# Plasma Physics
+Tbar = 8                   # Volume-averaged temperature [keV]
+
+# Operation Mode
+Operation_mode = Pulsed     # Steady-State or Pulsed
+Temps_Plateau_input = 900   # Plateau duration [s] (for Pulsed)
+P_aux_input = 50            # Auxiliary power [MW] (for Pulsed)
+
+Zeff = 1.3
+Ce = 0.30

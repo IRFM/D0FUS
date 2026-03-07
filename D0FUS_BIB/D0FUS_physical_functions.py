@@ -1151,6 +1151,520 @@ def f_cost(a,b,c,d,R0,κ,P_fus):
     cost = (V_BB + V_TF + V_CS) / P_fus
     return cost
 
+
+# ==============================================================================
+# Heating, Radiation and Current Drive
+# ==============================================================================
+
+# ------------------------------------------------------------
+# Radiation and alpha power
+# ------------------------------------------------------------
+
+def f_P_alpha(P_fus, E_ALPHA, E_N):
+    """
+    
+    Calculation of the alpha power
+    
+    Parameters
+    ----------
+    P_fus : The Fusion power [MW]
+    E_ALPHA : Alpha energy [J]
+    E_N : Neutron energy [J]
+        
+    Returns
+    -------
+    P_Alpha : The Alpha power [MW]
+    
+    """
+    
+    P_Alpha = P_fus * E_ALPHA / (E_ALPHA + E_N)
+    
+    return P_Alpha
+
+
+def f_P_synchrotron(Tbar, R, a, Bt, nbar, kappa, nu_n, nu_T, r,
+                    rho_ped=1.0, n_ped_frac=0.0, T_ped_frac=0.0):
+    """
+    Calculate the total synchrotron radiation power (in MW) using the
+    improved formulation from Albajar et al. (2001).
+
+    The Albajar formula is expressed in terms of central (on-axis) values
+    T0 and ne0, not volume averages. This function computes T0 and ne0
+    internally from the volume-averaged inputs and the profile model
+    (parabolic or parabola-with-pedestal) via f_Tprof / f_nprof at rho = 0.
+
+    Parameters
+    ----------
+    Tbar : float
+        Volume-averaged electron temperature [keV].
+    R : float
+        Major radius [m].
+    a : float
+        Minor radius [m].
+    Bt : float
+        On-axis toroidal magnetic field [T].
+    nbar : float
+        Volume-averaged electron density [10^20 m⁻³].
+    kappa : float
+        Plasma vertical elongation.
+    nu_n : float
+        Density profile peaking exponent (core region).
+        Parabolic: n(rho) = n0 * (1 - rho^2)^nu_n.
+    nu_T : float
+        Temperature profile peaking exponent (core region).
+        Parabolic: T(rho) = T0 * (1 - rho^2)^nu_T.
+    r : float
+        Wall reflection coefficient (typically 0.5–0.9).
+    rho_ped : float, optional
+        Normalised pedestal radius (1.0 = purely parabolic).
+    n_ped_frac : float, optional
+        n_ped / nbar.  Ignored when rho_ped = 1.0.
+    T_ped_frac : float, optional
+        T_ped / Tbar.  Ignored when rho_ped = 1.0.
+
+    Returns
+    -------
+    P_syn : float
+        Total synchrotron radiation power [MW].
+
+    Notes
+    -----
+    The K-factor (Eq. 13) was derived by Albajar et al. for purely parabolic
+    profiles parameterised by (nu_n, nu_T).  For the pedestal model these
+    exponents describe the core region only; the K-factor approximation
+    remains reasonable as long as the core dominates the synchrotron emission
+    (which is driven by the hot, dense centre).
+
+    References
+    ----------
+    Albajar, F., Johner, J., & Granata, G. (2001).
+    Nuclear Fusion, 41(6), 665.
+    """
+    # ── Central (on-axis) values from profile model ──────────────────────────
+    T0_keV = float(f_Tprof(Tbar, nu_T, 0.0, rho_ped, T_ped_frac))
+    ne0    = float(f_nprof(nbar, nu_n,  0.0, rho_ped, n_ped_frac))
+
+    A = R / a
+
+    # Opacity parameter (Eq. 7)
+    pa0 = 6.04e3 * a * ne0 / Bt
+
+    # Profile factor K (Eq. 13)
+    K_numer = (nu_n + 3.87*nu_T + 1.46)**(-0.79) * (1.98 + nu_T)**1.36 * nu_T**2.14
+    K_denom = (nu_T**1.53 + 1.87*nu_T - 0.16)**1.33
+    K = K_numer / K_denom
+
+    # Aspect ratio correction G (Eq. 15)
+    G = 0.93 * (1 + 0.85 * math.exp(-0.82 * A))
+
+    # Main expression (Eq. 16)
+    term1 = 3.84e-8 * (1 - r)**0.5
+    term2 = R * a**1.38 * kappa**0.79 * Bt**2.62 * ne0**0.38
+    term3 = T0_keV * (16 + T0_keV)**2.61
+    term4 = (1 + 0.12 * T0_keV / pa0**0.41)**(-1.51)
+
+    return term1 * term2 * term3 * term4 * K * G
+
+
+def f_P_bremsstrahlung(V, n_e, T_e, Z_eff, R, a):
+    """
+    Note : Under developement
+    
+    Calculate the total Bremsstrahlung power (in MW)
+
+    Parameters
+    -------
+    n_e : Electron density [10^20 m⁻³]
+    T_e : Electron temperature [keV]
+    Z_eff : Effective charge
+    V : Plasma volume [m³]
+    
+    Returns
+    -------
+    P_Brem : Bremsstrahlung power [MW]
+
+    Assumptions:
+        - Fully ionized plasma
+        - Radial shape factor g_r ≈ 1 (flat profiles)
+
+    Sources
+    -------
+    NRL Plasma Formulary, 2022 edition, section on bremsstrahlung radiation.
+    Wesson, J., "Tokamaks", 3rd ed., Oxford University Press, p.228
+    
+    """
+    
+    P_Brem = 5.35e3 * Z_eff**2 * n_e**2 * T_e**(1/2) * V
+    
+    return P_Brem / 1e6
+
+
+def f_P_line_radiation(V, n_e, T_e, f_imp, L_z, R, a):
+    """
+    
+    Note : Under developement
+    
+    Calculate the line radiation power (in MW) due to a given impurity in a plasma
+
+    Parameters
+    -------
+    n_e: Electron density [1e20 m⁻³]
+    f_imp: Impurity fraction (n_imp / n_e)
+    L_z: Radiative loss coefficient [W·m³] for the given impurity
+    V : Plasma volume [m³]
+    
+    Returns
+    -------
+    P_line : Line radiation power [MW]
+
+    Assumptions:
+        - Uniform impurity concentration
+        - Homogeneous plasma
+        - Line radiation + radiative recombination included in L_z(T_e)
+
+    Sources
+    -------
+    - H. Pütterich et al., "Radiative cooling rates of heavy elements for fusion plasmas", Nucl. Fusion 50 (2010) 025012.
+    - Summers et al., Atomic Data and Analysis Structure (ADAS): http://adas.ac.uk
+    - IAEA-INDC report on radiative losses, INDC(NDS)-457.
+
+    Note
+    ----
+    This function can be adapted to any impurity by changing L_z 
+    according to the species (W, C, N, etc.).
+    
+    """
+    
+    P_line = (n_e * 1e20)**2 * f_imp * L_z * V
+
+    return P_line / 1e6
+
+
+def get_Lz(impurity, Te_keV):
+    """
+    Return the line radiative loss coefficient Lz (W·m³) for a given 
+    impurity and electron temperature.
+    
+    Parameters
+    ----------
+    impurity : str
+        Impurity name or symbol ("W", "Ar", "Ne", "C", 
+        or long forms "tungsten", "argon", "neon", "carbon").
+    Te_keV : float or array-like
+        Electron temperature in keV.
+    
+    Returns
+    -------
+    Lz : float or ndarray
+        Line radiative cooling coefficient (W·m³).
+    
+    Notes
+    -----
+    - Values based on Mavrin (2018) polynomial fits and Pütterich (2010) for W
+    - Log-log interpolation for numerical stability
+    - Linear extrapolation outside bounds (with warning)
+    
+    References
+    ----------
+    [1] Mavrin A.A. (2018), Rad. Eff. Def. Solids 173:5-6, 388-398
+    [2] Pütterich et al. (2010), Nucl. Fusion 50, 025012
+    [3] Pütterich et al. (2019), Nucl. Fusion 59, 056013
+    
+    Examples
+    --------
+    >>> get_Lz("W", 10.0)   # Tungsten at 10 keV
+    ~4e-32 W·m³
+    """
+    # Normalize impurity name
+    imp_map = {
+        "w": "W", "tungsten": "W",
+        "ar": "Ar", "argon": "Ar",
+        "ne": "Ne", "neon": "Ne",
+        "c": "C", "carbon": "C",
+        "n": "N", "nitrogen": "N",
+        "kr": "Kr", "krypton": "Kr",
+    }
+    
+    imp = impurity.strip().lower()
+    if imp in imp_map:
+        imp = imp_map[imp]
+    else:
+        imp = impurity.strip().upper()
+    
+    # =========================================================================
+    # Lz data tables (W·m³) vs Te (keV)
+    # CORRECTED values based on Pütterich and Mavrin
+    # =========================================================================
+    
+    # Temperature grid (keV) - extended range
+    Te_grid = np.array([
+        0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 
+        10.0, 20.0, 50.0, 100.0
+    ])
+    
+    # -------------------------------------------------------------------------
+    # Tungsten (W, Z=74)
+    # Source: Pütterich et al. (2010), Nucl. Fusion 50, 025012
+    # W has a radiation peak at ~0.1-1 keV, then DECREASES sharply
+    # At high Te (>5 keV), W is highly ionized → strongly reduced line radiation
+    # Values calibrated to give ~5-10 MW for 0.01% W in ITER
+    # -------------------------------------------------------------------------
+    Lz_W = np.array([
+        1.0e-32,   # 0.01 keV - W weakly ionized, complex spectrum
+        5.0e-32,   # 0.02 keV
+        2.0e-31,   # 0.05 keV - rising toward peak
+        4.0e-31,   # 0.1 keV  - near peak (W27+-W35+)
+        5.0e-31,   # 0.2 keV  - PEAK region (strongest radiation)
+        4.0e-31,   # 0.5 keV  - main peak (W35+-W45+)
+        3.0e-31,   # 1.0 keV  - still high (W40+-W46+)
+        1.0e-31,   # 2.0 keV  - W44+-W50+ dominant
+        2.0e-32,   # 5.0 keV  - decreasing rapidly (W50+-W56+)
+        8.0e-33,   # 10.0 keV - W56+-W64+ highly ionized
+        4.0e-33,   # 20.0 keV - approaching fully ionized
+        2.0e-33,   # 50.0 keV - very few bound electrons
+        1.0e-33,   # 100.0 keV - near fully ionized
+    ])
+    
+    # -------------------------------------------------------------------------
+    # Argon (Ar, Z=18)
+    # Ar is FULLY IONIZED above ~2-3 keV
+    # At high Te, only recombination radiation (very small)
+    # -------------------------------------------------------------------------
+    Lz_Ar = np.array([
+        2.0e-31,   # 0.01 keV - strong radiation (Li-like, Be-like)
+        5.0e-31,   # 0.02 keV - near peak
+        3.0e-31,   # 0.05 keV - He-like Ar dominant
+        1.0e-31,   # 0.1 keV
+        3.0e-32,   # 0.2 keV  - becoming H-like
+        3.0e-33,   # 0.5 keV  - mostly H-like/bare
+        5.0e-34,   # 1.0 keV  - fully ionized
+        1.5e-34,   # 2.0 keV
+        5.0e-35,   # 5.0 keV  - only recombination
+        3.0e-35,   # 10.0 keV
+        2.0e-35,   # 20.0 keV
+        1.0e-35,   # 50.0 keV
+        8.0e-36,   # 100.0 keV
+    ])
+    
+    # -------------------------------------------------------------------------
+    # Neon (Ne, Z=10)
+    # Ne is FULLY IONIZED above ~0.5-1 keV
+    # -------------------------------------------------------------------------
+    Lz_Ne = np.array([
+        8.0e-32,   # 0.01 keV
+        2.0e-31,   # 0.02 keV - peak (Li-like, He-like)
+        1.5e-31,   # 0.05 keV
+        5.0e-32,   # 0.1 keV
+        1.0e-32,   # 0.2 keV
+        1.0e-33,   # 0.5 keV  - mostly ionized
+        2.0e-34,   # 1.0 keV  - fully ionized
+        8.0e-35,   # 2.0 keV
+        3.0e-35,   # 5.0 keV
+        1.5e-35,   # 10.0 keV
+        1.0e-35,   # 20.0 keV
+        5.0e-36,   # 50.0 keV
+        3.0e-36,   # 100.0 keV
+    ])
+    
+    # -------------------------------------------------------------------------
+    # Carbon (C, Z=6)
+    # C is FULLY IONIZED above ~0.2-0.3 keV
+    # -------------------------------------------------------------------------
+    Lz_C = np.array([
+        3.0e-32,   # 0.01 keV
+        1.0e-31,   # 0.02 keV - peak
+        6.0e-32,   # 0.05 keV
+        1.5e-32,   # 0.1 keV
+        2.0e-33,   # 0.2 keV  - becoming fully ionized
+        2.0e-34,   # 0.5 keV  - fully ionized
+        5.0e-35,   # 1.0 keV
+        2.0e-35,   # 2.0 keV
+        8.0e-36,   # 5.0 keV
+        5.0e-36,   # 10.0 keV
+        3.0e-36,   # 20.0 keV
+        1.5e-36,   # 50.0 keV
+        1.0e-36,   # 100.0 keV
+    ])
+    
+    # -------------------------------------------------------------------------
+    # Nitrogen (N, Z=7)
+    # -------------------------------------------------------------------------
+    Lz_N = np.array([
+        5.0e-32,   # 0.01 keV
+        1.5e-31,   # 0.02 keV - peak
+        1.0e-31,   # 0.05 keV
+        3.0e-32,   # 0.1 keV
+        5.0e-33,   # 0.2 keV
+        4.0e-34,   # 0.5 keV
+        1.0e-34,   # 1.0 keV
+        4.0e-35,   # 2.0 keV
+        1.5e-35,   # 5.0 keV
+        1.0e-35,   # 10.0 keV
+        6.0e-36,   # 20.0 keV
+        3.0e-36,   # 50.0 keV
+        2.0e-36,   # 100.0 keV
+    ])
+    
+    # -------------------------------------------------------------------------
+    # Krypton (Kr, Z=36)
+    # Intermediate-Z, used for DEMO seeding
+    # -------------------------------------------------------------------------
+    Lz_Kr = np.array([
+        5.0e-32,   # 0.01 keV
+        2.0e-31,   # 0.02 keV
+        5.0e-31,   # 0.05 keV - peak
+        4.0e-31,   # 0.1 keV
+        2.0e-31,   # 0.2 keV
+        5.0e-32,   # 0.5 keV
+        1.5e-32,   # 1.0 keV
+        5.0e-33,   # 2.0 keV
+        1.5e-33,   # 5.0 keV
+        8.0e-34,   # 10.0 keV
+        4.0e-34,   # 20.0 keV
+        2.0e-34,   # 50.0 keV
+        1.0e-34,   # 100.0 keV
+    ])
+    
+    # Data dictionary
+    tables = {
+        "W": Lz_W,
+        "Ar": Lz_Ar,
+        "Ne": Lz_Ne,
+        "C": Lz_C,
+        "N": Lz_N,
+        "Kr": Lz_Kr,
+    }
+    
+    if imp not in tables:
+        available = list(tables.keys())
+        raise ValueError(
+            f"Impurity '{impurity}' not supported. "
+            f"Choose from: {available}"
+        )
+    
+    Lz_table = tables[imp]
+    
+    # Log-log interpolation
+    log_Te_grid = np.log10(Te_grid)
+    log_Lz_table = np.log10(Lz_table)
+    
+    f_interp = interp1d(
+        log_Te_grid, 
+        log_Lz_table,
+        kind="linear",
+        bounds_error=False,
+        fill_value="extrapolate"
+    )
+    
+    # Compute Lz
+    Te_keV = np.atleast_1d(Te_keV)
+    log_Lz = f_interp(np.log10(Te_keV))
+    Lz = 10.0 ** log_Lz
+    
+    # Warning if outside bounds
+    if np.any(Te_keV < Te_grid[0]) or np.any(Te_keV > Te_grid[-1]):
+        import warnings
+        warnings.warn(
+            f"Te outside validated range [{Te_grid[0]:.3f}, {Te_grid[-1]:.1f}] keV. "
+            f"Extrapolation used.",
+            UserWarning
+        )
+    
+    if Lz.size == 1:
+        return float(Lz[0])
+    return Lz
+
+
+def get_averagE_ELEM(impurity, Te_keV):
+    """
+    Return the average charge state of the impurity in coronal equilibrium.
+    
+    Parameters
+    ----------
+    impurity : str
+        Impurity symbol ("W", "Ar", "Ne", "C").
+    Te_keV : float
+        Electron temperature in keV.
+    
+    Returns
+    -------
+    Z_avg : float
+        Average ion charge state.
+    """
+    imp_map = {
+        "w": "W", "tungsten": "W",
+        "ar": "Ar", "argon": "Ar", 
+        "ne": "Ne", "neon": "Ne",
+        "c": "C", "carbon": "C",
+        "n": "N", "nitrogen": "N",
+        "kr": "Kr", "krypton": "Kr",
+    }
+    
+    imp = impurity.strip().lower()
+    imp = imp_map.get(imp, impurity.strip().upper())
+    
+    Z_max = {"W": 74, "Ar": 18, "Ne": 10, "C": 6, "N": 7, "Kr": 36}
+    
+    if imp not in Z_max:
+        raise ValueError(f"Impurity '{impurity}' not supported.")
+    
+    # Temperature scale for full ionization (approximate)
+    Te_ionization = {
+        "W": 5.0,    # W approaches full ionization ~50 keV
+        "Ar": 0.3,   # Ar fully ionized ~3 keV
+        "Ne": 0.15,  # Ne fully ionized ~1.5 keV
+        "C": 0.05,   # C fully ionized ~0.5 keV
+        "N": 0.07,   # N fully ionized ~0.7 keV
+        "Kr": 1.0,   # Kr fully ionized ~10 keV
+    }
+    
+    Z = Z_max[imp]
+    Te_ion = Te_ionization[imp]
+    
+    Z_avg = Z * (1.0 - np.exp(-Te_keV / Te_ion))
+    
+    return float(max(1.0, min(Z_avg, Z)))
+
+
+# ------------------------------------------------------------
+# Power balance and wall loads
+# ------------------------------------------------------------
+
+def f_tauE(pbar, V, P_Alpha, P_Aux, P_Ohm, P_Rad):
+    """
+    
+    Calculation of the confinement time from the power balance
+    
+    Parameters
+    ----------
+    pbar : The mean pressure [MPa]
+    R0 : Major radius [m]
+    a : Minor radius [m]
+    κ : Elongation
+    P_Alpha : The Alpha power [MW]
+    P_Aux : The Auxilary power [MW]
+    P_Ohm : The Ohmic power [MW]
+        
+    Returns
+    -------
+    tauE : Confinement time [s]
+    
+    """
+    
+    # conversion en SI
+    p_Pa = pbar * 1e6
+    P_total_W = (P_Alpha + P_Aux + P_Ohm - P_Rad) * 1e6
+
+    if P_total_W <= 0:
+        return np.nan
+
+    W_th_J = 3/2 * p_Pa * V
+
+    tauE_s = W_th_J / P_total_W
+    
+    return tauE_s
+
+
 def f_P_sep(P_fus, P_CD):
     """
     Calculate the separatrix power (P_sep) based on the given fusion power (P_fus),
@@ -1169,6 +1683,849 @@ def f_P_sep(P_fus, P_CD):
     P_sep = P_CD + (P_fus * E_ALPHA / (E_ALPHA + E_N))
     
     return P_sep
+
+
+def f_P_Ohm(I_Ohm, Tbar, R0, a, kappa):
+    """
+    Estimate the Ohmic heating power in a tokamak plasma.
+    
+    Ohmic heating results from the resistive dissipation of the plasma current.
+    At high temperatures, the resistivity decreases as T^(-3/2) (Spitzer scaling),
+    making Ohmic heating ineffective for reactor-grade plasmas.
+    
+    Parameters
+    ----------
+    I_Ohm : float
+        Ohmic plasma current [MA]
+    Tbar : float
+        Volume-averaged electron temperature [keV]
+    R0 : float
+        Major radius [m]
+    a : float
+        Minor radius [m]
+    kappa : float
+        Plasma elongation
+        
+    Returns
+    -------
+    P_Ohm : float
+        Ohmic heating power [MW]
+    
+    Notes
+    -----
+    The calculation follows three steps:
+    
+    1. Spitzer resistivity (classical collisional transport):
+       η [Ω·m] = 2.8×10⁻⁸ / T^(3/2)  [with T in keV]
+    
+    2. Effective plasma resistance (approximate):
+       R_eff [Ω] = η * (2πR₀) / (πa²κ) = η * (2R₀) / (a²κ)
+       
+       This approximation assumes:
+       - Toroidal current path length ≈ 2πR₀
+       - Effective cross-sectional area ≈ πa²κ
+    
+    3. Ohmic power dissipation:
+       P_Ohm = R_eff * I²
+    
+    **Important**: This is a simplified 0D estimate. Actual Ohmic power depends on:
+    - Current density profile j(r)
+    - Temperature profile T(r)
+    - Neoclassical corrections (trapped particles)
+    - Impurity content (Z_eff)
+    
+    References
+    ----------
+    Spitzer, L., & Härm, R. (1953). "Transport phenomena in a completely 
+    ionized gas." Physical Review, 89(5), 977-981.
+    """
+    
+    # Spitzer resistivity [Ω·m]
+    # Classical collisional resistivity for a fully ionized plasma
+    eta = 2.8e-8 / (Tbar**1.5)
+    
+    # Effective plasma resistance [Ω]
+    # Approximates the plasma as a toroidal conductor with:
+    #   - Current path length: 2πR₀
+    #   - Cross-sectional area: πa²κ
+    R_eff = eta * (2 * R0) / (a**2 * kappa)
+    
+    # Ohmic heating power [MW]
+    # Convert current from MA to A, then power from W to MW
+    I_Ohm_A = I_Ohm * 1e6           # [MA] → [A]
+    P_Ohm_W = R_eff * I_Ohm_A**2    # [W]
+    P_Ohm = P_Ohm_W * 1e-6          # [W] → [MW]
+    
+    return P_Ohm
+
+
+def f_P_elec(P_fus, P_LH, eta_T, eta_RF):
+    """
+    
+    Calculate the net electrical power P_elec
+    
+    Parameters
+    ----------
+    P_fus : Fusion power [MW]
+    P_LH : LHCD power [MW]
+    eta_T : Conversion efficienty from fusion power to electrical power
+
+    Returns
+    -------
+    P_elec : Net electrical power [MW]
+    
+    """
+    P_th = P_fus * E_F / (E_ALPHA + E_N)
+    P_elec = eta_T * P_th - P_LH
+    return P_elec
+
+
+def f_P_1rst_wall_Hmod(P_sep_solution, P_CD_solution, Surface_solution):
+    """
+    
+    Calculate the power deposited on the first wall in H-mode
+
+    Parameters
+    ----------
+    P_sep_solution : Power leaving the plasma [MW]
+    P_CD_solution : Power injected for current drive [MW]
+    Surface_solution : Surface area of the first wall [m²]
+
+    Returns
+    -------
+    P_1rst_wall_Hmod : Surface power density on the first wall in H-mode [MW/m²]
+    
+    """
+    
+    P_1rst_wall_Hmod = (P_sep_solution - P_CD_solution) / Surface_solution
+    
+    return P_1rst_wall_Hmod
+
+
+def f_P_1rst_wall_Lmod(P_sep_solution, Surface_solution):
+    """
+    
+    Calculate the power deposited on the first wall in L-mode
+
+    Parameters
+    ----------
+    P_sep_solution : Power leaving the plasma [MW]
+    Surface_solution : Surface area of the first wall [m²]
+
+    Returns
+    -------
+    P_1rst_wall_Lmod : Surface power density on the first wall in L-mode [MW/m²]
+        
+    """
+    
+    P_1rst_wall_Lmod = P_sep_solution / Surface_solution
+    
+    return P_1rst_wall_Lmod
+
+
+def f_Q(P_fus,P_CD,P_Ohm):
+    """
+    
+    Calculate the plasma amplification factor Q
+    
+    Parameters
+    ----------
+    P_fus = Fusion power [MW]
+    P_CD = Current drive power [MW]
+    P_Ohm = Ohmic power [MW]
+        
+    Returns
+    -------
+    Q : Plasma amplification factor
+    
+    """
+    Q = P_fus/(P_CD + P_Ohm)
+    return Q
+
+
+# ------------------------------------------------------------
+# Current drive — LHCD
+# ------------------------------------------------------------
+
+def f_etaCD_LH(a, R0, B0, nbar, Tbar, nu_n, nu_T,
+               rho_ped=1.0, n_ped_frac=0.0):
+    """
+    LHCD figure of merit — Fisch (1987) n_parallel scaling.
+
+    The parallel refractive index n_∥ is determined by the lower-hybrid
+    resonance condition evaluated at rho = 0.8, where wave accessibility
+    typically limits the absorption layer in reactor-grade plasmas.
+    The Fisch (1987) efficiency formula gives:
+
+        gamma_LH = 1.2 / n_∥²  × f_pass(rho = 0.8)
+
+    The trapped-particle correction f_pass = 1 − f_trap (Kim et al. 1991)
+    is applied consistently with f_etaCD_EC and f_etaCD_NBI.
+
+    Parameters
+    ----------
+    a : float
+        Minor radius [m].
+    R0 : float
+        Major radius [m].
+    B0 : float
+        On-axis magnetic field [T].
+    nbar : float
+        Volume-averaged electron density [1e20 m^-3].
+    Tbar : float
+        Volume-averaged electron temperature [keV] (unused; kept for API symmetry).
+    nu_n : float
+        Density profile peaking exponent.
+    nu_T : float
+        Temperature profile peaking exponent (unused; kept for API symmetry).
+    rho_ped : float
+        Normalised pedestal radius (1.0 = no pedestal).
+    n_ped_frac : float
+        n_ped / nbar.
+
+    Returns
+    -------
+    float
+        gamma_CD^LH  [MA / (MW m^-2)].
+    """
+    rho_m = 0.8  # characteristic deposition / accessibility radius for LH waves
+
+    # Local electron density at the wave deposition radius
+    n_loc  = f_nprof(nbar, nu_n, rho_m, rho_ped, n_ped_frac)
+
+    # Local toroidal magnetic field (1/R scaling)
+    eps   = a / R0
+    B_loc = B0 / (1.0 + eps * rho_m)
+
+    # Angular plasma and electron-cyclotron frequencies
+    omega_ce = E_ELEM * B_loc / M_E
+    omega_pe = E_ELEM * np.sqrt(n_loc * 1e20 / (EPS_0 * M_E))
+
+    # Parallel refractive index from lower-hybrid resonance condition
+    n_parall = (omega_pe / omega_ce
+                + np.sqrt(1.0 + (omega_pe / omega_ce)**2) * np.sqrt(3.0 / 4.0))
+
+    # Trapped-particle correction — Kim et al. (1991), consistent with ECCD/NBCD
+    f_pass = 1.0 - _f_trap_Kim(rho_m, a, R0)
+
+    return 1.2 / n_parall**2 * f_pass
+
+
+# Backward-compatibility alias — deprecated, will be removed in a future release
+f_etaCD = f_etaCD_LH
+
+
+
+def f_PCD(R0, nbar, I_CD, eta_CD):
+    """
+    
+    Estimate the Currend Drive (CD) power needed
+    
+    Parameters
+    ----------
+    a : Minor radius [m]
+    R0 : Major radius [m]
+    n_bar : The mean electronic density [1e20p/m^3]
+    I_CD : Current drive current [MA]
+        
+    Returns
+    -------
+    P_CD : Current drive power to inject [MW]
+    
+    """
+    P_CD = R0 * nbar * I_CD / eta_CD
+    return P_CD
+
+
+def f_I_CD(R0, nbar, eta_CD, P_CD):
+    """
+    
+    Estimate the Currend Drive (CD) current from the CD power
+    
+    Parameters
+    ----------
+    a : Minor radius [m]
+    R0 : Major radius [m]
+    n_bar : The mean electronic density [1e20p/m^3]
+    P_CD : Current drive power injected [MW]
+        
+    Returns
+    -------
+    I_CD : Current drive current [MA]
+    
+    """
+    I_CD = P_CD*eta_CD / (R0*nbar)
+    return I_CD
+
+
+def f_I_Ohm(Ip, Ib, I_CD):
+    """
+    
+    Estimate the Ohmic current
+    
+    Parameters
+    ----------
+    Ip : Plasma current [MA]
+    Ib : Bootstrap current [MA]
+    I_CD : Current drive current [MA]
+        
+    Returns
+    -------
+    I_Ohm : Current drive power injected [MW]
+    
+    """
+    I_Ohm = abs(Ip - Ib - I_CD)
+    return I_Ohm
+
+
+def f_ICD(Ip, Ib, I_Ohm):
+    """
+    
+    Estimate the Current drive
+    
+    Parameters
+    ----------
+    Ip : Plasma current [MA]
+    Ib : Bootstrap current [MA]
+    I_Ohm : Ohmic current [MA]
+        
+    Returns
+    -------
+    I_CD : Current drive power injected [MW]
+    
+    """
+    I_CD = abs(Ip - Ib - I_Ohm)
+    return I_CD
+
+
+def f_PLH(eta_RF, f_RP, P_CD):
+    """
+    
+    Estimate the Lower Hybrid Electrical Power
+    
+    Parameters
+    ----------
+    eta_RF : conversion efficiency from wall power to klystron
+    f_RP : fraction of klystron power absorbed by plasma
+    P_CD : Current drive power injected [MW]
+        
+    Returns
+    -------
+    P_LH : Electrical Power estimated to drive such a current [MW]
+    
+    """
+    P_LH = (1/eta_RF)*(1/f_RP)*P_CD
+    return P_LH
+
+
+# ------------------------------------------------------------
+# Current drive — ECCD and NBCD
+# References: Fisch & Boozer (1980), Cordey (1982),
+#             Ehst & Karney (1991), Stix (1972)
+# ------------------------------------------------------------
+
+def _ln_Lambda_CD(Te_keV, ne_20):
+    """
+    Coulomb logarithm for electron-electron collisions (NRL Formulary 2019).
+
+    Uses the piecewise NRL formula, rewritten in D0FUS units
+    (Te in keV, ne in 1e20 m^-3).  The T < 10 eV branch is kept for
+    completeness but is never reached in reactor-grade plasmas.
+
+    Parameters
+    ----------
+    Te_keV : float
+        Local electron temperature [keV].
+    ne_20 : float
+        Local electron density [1e20 m^-3].
+
+    Returns
+    -------
+    float
+        Coulomb logarithm (dimensionless, floored at 5).
+    """
+    Te_eV   = Te_keV * 1e3
+    ne_cm3  = ne_20 * 1e14          # 1e20 m^-3  -> cm^-3
+
+    if Te_eV < 10.0:
+        lnL = 23.0 - np.log(ne_cm3**0.5 * Te_eV**(-1.5))
+    else:
+        lnL = 24.15 - np.log(ne_cm3**0.5 * Te_eV**(-1.0))
+
+    return max(lnL, 5.0)
+
+
+if __name__ == "__main__":
+    # Validation against NRL Plasma Formulary (2019).
+    # At T_e=12 keV, n_e=1e20 m^-3: ln_Lambda ~ 17.4
+    import numpy as np
+    lnL = _ln_Lambda_CD(12.0, 1.0)
+    print(f"ln_Lambda(12 keV, 1e20): {lnL:.3f}  (ref ~17.4)")
+    lnL2 = _ln_Lambda_CD(20.0, 0.5)
+    print(f"ln_Lambda(20 keV, 5e19): {lnL2:.3f}")
+
+
+def _f_trap_Kim(rho, a, R0):
+    """
+    Geometric trapped particle fraction — Kim et al. (1991) formula.
+
+    Consistent with the expression used in eta_sauter / eta_redl
+    (D0FUS_radial_build_functions.py).
+
+    Parameters
+    ----------
+    rho : float
+        Normalised minor radius (0 = axis, 1 = edge).
+    a : float
+        Minor radius [m].
+    R0 : float
+        Major radius [m].
+
+    Returns
+    -------
+    float
+        Trapped fraction f_trap in [0, 1).
+    """
+    eps_loc   = rho * a / R0          # local inverse aspect ratio
+    sqrt_eps  = np.sqrt(max(eps_loc, 0.0))
+    return 1.46 * sqrt_eps * (1.0 - 0.54 * sqrt_eps)
+
+
+if __name__ == "__main__":
+    # Kim et al. (1991): f_trap(rho=0.3) for ITER (a=2, R0=6.2) ~ 0.42
+    import numpy as np
+    for rho in [0.0, 0.3, 0.5, 0.8]:
+        ft = _f_trap_Kim(rho, a=2.0, R0=6.2)
+        print(f"  f_trap(rho={rho:.1f}) = {ft:.3f}")
+
+
+def f_etaCD_EC(a, R0, Tbar, nbar, Z_eff, nu_T, nu_n, rho_EC,
+               C_EC=0.32,
+               rho_ped=1.0, n_ped_frac=0.0, T_ped_frac=0.0):
+    """
+    ECCD figure of merit — Fisch-Boozer scaling (1980).
+
+    The CD efficiency scales as v_res^2 / nu_ee ~ T_e / (n_e * ln Lambda).
+    Including the passing-particle fraction and an approximate Z_eff correction
+    to the Spitzer conductivity (Ehst & Karney 1991, valid for Z_eff <= 3):
+
+        gamma_EC = C_EC * T_e_loc[keV] * f_pass(rho_EC)
+                   / ( ln_Lambda * (1 + Z_eff/2) )
+
+    Local temperature and density at the deposition radius are obtained from
+    the profile functions f_Tprof / f_nprof.
+
+    Parameters
+    ----------
+    a : float
+        Minor radius [m].
+    R0 : float
+        Major radius [m].
+    Tbar : float
+        Volume-averaged electron temperature [keV].
+    nbar : float
+        Volume-averaged electron density [1e20 m^-3].
+    Z_eff : float
+        Effective ion charge.
+    nu_T : float
+        Temperature profile peaking exponent.
+    nu_n : float
+        Density profile peaking exponent.
+    rho_EC : float
+        Normalised deposition radius of the EC beam.
+    C_EC : float
+        Pre-factor (default 0.32 for O-mode, tangential injection).
+        Must be calibrated against ray-tracing (TRAVIS, TORBEAM, GRAY).
+    rho_ped, n_ped_frac, T_ped_frac : float
+        Pedestal parameters forwarded to profile functions.
+
+    Returns
+    -------
+    float
+        gamma_CD^EC  [MA / (MW m^-2)] — same convention as f_etaCD_LH (LHCD).
+    """
+    Te_loc = float(f_Tprof(Tbar, nu_T,  rho_EC, rho_ped, T_ped_frac))
+    ne_loc = float(f_nprof(nbar,  nu_n,  rho_EC, rho_ped, n_ped_frac))
+    Te_loc = max(Te_loc, 0.1)          # guard against cold edge
+
+    lnL    = _ln_Lambda_CD(Te_loc, ne_loc)
+    f_pass = 1.0 - _f_trap_Kim(rho_EC, a, R0)
+
+    return C_EC * Te_loc * f_pass / (lnL * (1.0 + Z_eff / 2.0))
+
+
+if __name__ == "__main__":
+    # Fisch & Boozer (1980) scaling: gamma_EC ~ T_e / (ln_Lambda * (1 + Z/2))
+    # ITER-like: T=12 keV, n=1e20, Z=1.65, O-mode, rho_EC=0.3
+    # Expected range: 0.15–0.40 MA/(MW m^-2)
+    import numpy as np
+    g_on  = f_etaCD_EC(a=2.0, R0=6.2, Tbar=12.0, nbar=1.0, Z_eff=1.65,
+                        nu_T=1.45, nu_n=0.5, rho_EC=0.0)
+    g_off = f_etaCD_EC(a=2.0, R0=6.2, Tbar=12.0, nbar=1.0, Z_eff=1.65,
+                        nu_T=1.45, nu_n=0.5, rho_EC=0.3)
+    print(f"ECCD gamma on-axis  (rho=0.0): {g_on:.3f} MA/(MW m^2)")
+    print(f"ECCD gamma off-axis (rho=0.3): {g_off:.3f} MA/(MW m^2)")
+    print(f"Trapping penalty: {(1 - g_off/g_on)*100:.1f} %")
+    # Driven current for 20 MW injection
+    P_EC = 20.0
+    I_on  = f_I_CD(R0=6.2, nbar=1.0, eta_CD=g_on,  P_CD=P_EC)
+    I_off = f_I_CD(R0=6.2, nbar=1.0, eta_CD=g_off, P_CD=P_EC)
+    print(f"I_EC on-axis  = {I_on:.2f} MA  (20 MW)")
+    print(f"I_EC off-axis = {I_off:.2f} MA  (20 MW)")
+
+
+def f_etaCD_NBI(A_beam, E_beam_keV, a, R0, Tbar, nbar, Z_eff,
+                nu_T, nu_n, rho_NBI,
+                C_NBI=0.19,
+                rho_ped=1.0, n_ped_frac=0.0, T_ped_frac=0.0):
+    """
+    NBCD figure of merit — Cordey (1982), high-energy limit.
+
+    In the limit E_b >> E_c, the beam slowing-down-averaged CD efficiency
+    scales as v_b / nu_ee ~ sqrt(E_b / A_b) / (ln_Lambda * (1 + Z_eff/2)).
+    The critical energy is E_c ~ 14.8 * A_b^{1/3} * T_e [keV] (Stix 1972).
+
+        gamma_NBI = C_NBI * sqrt(E_b[keV] / A_b) * f_pass(rho_NBI)
+                    / ( ln_Lambda * (1 + Z_eff/2) )
+
+    Note: the pre-factor scales as sqrt(E_b / A_b), NOT sqrt(A_b * E_b).
+    The latter (momentum) does not determine the current drive efficiency.
+
+    Parameters
+    ----------
+    A_beam : int
+        Beam ion mass number (1 = H, 2 = D, 3 = T).
+    E_beam_keV : float
+        Beam injection energy [keV].
+    a, R0, Tbar, nbar, Z_eff : float
+        Plasma parameters (see f_etaCD_EC).
+    nu_T, nu_n : float
+        Profile peaking exponents.
+    rho_NBI : float
+        Normalised deposition radius of the NBI beam.
+    C_NBI : float
+        Pre-factor (default 0.19 for tangential co-injection, Cordey 1982).
+    rho_ped, n_ped_frac, T_ped_frac : float
+        Pedestal parameters.
+
+    Returns
+    -------
+    float
+        gamma_CD^NBI  [MA / (MW m^-2)].
+    """
+    Te_loc = float(f_Tprof(Tbar, nu_T,  rho_NBI, rho_ped, T_ped_frac))
+    ne_loc = float(f_nprof(nbar,  nu_n,  rho_NBI, rho_ped, n_ped_frac))
+    Te_loc = max(Te_loc, 0.1)
+
+    lnL    = _ln_Lambda_CD(Te_loc, ne_loc)
+    f_pass = 1.0 - _f_trap_Kim(rho_NBI, a, R0)
+
+    # Validity check: high-energy limit requires E_b >> E_c (Stix 1972).
+    # Below E_b / E_c ~ 3 the beam current drive efficiency is overestimated
+    # by up to 20-30% because the slowing-down integral is not yet dominated
+    # by the high-velocity tail.
+    E_c = 14.8 * A_beam**(1.0 / 3.0) * Te_loc   # critical energy [keV]
+    return C_NBI * np.sqrt(E_beam_keV / A_beam) * f_pass / (lnL * (1.0 + Z_eff / 2.0))
+
+
+if __name__ == "__main__":
+    # Cordey (1982): gamma_NBI ~ sqrt(E_b/A_b) / (ln_Lambda * (1 + Z/2))
+    # Key check: D beam must be LESS efficient than H at equal energy (v_D < v_H).
+    # ITER NBI: D at 1 MeV, rho_dep=0.3 -> I_NBI ~ 0.7-1.0 MA for ~33 MW thermalized
+    import numpy as np
+    print("Species/energy scan (rho=0.3, ITER-like):")
+    for A, name in [(1,'H'), (2,'D'), (3,'T')]:
+        for E in [500, 1000]:
+            g = f_etaCD_NBI(A_beam=A, E_beam_keV=E, a=2.0, R0=6.2,
+                             Tbar=12.0, nbar=1.0, Z_eff=1.65,
+                             nu_T=1.45, nu_n=0.5, rho_NBI=0.3)
+            I = f_I_CD(R0=6.2, nbar=1.0, eta_CD=g, P_CD=33.0 * 0.95)
+            print(f"  {name} {E:5d} keV: gamma={g:.4f}  I={I:.3f} MA")
+    # Sanity: H should give higher gamma than D at same energy
+    gH = f_etaCD_NBI(1, 500, 2.0, 6.2, 12.0, 1.0, 1.65, 1.45, 0.5, 0.3)
+    gD = f_etaCD_NBI(2, 500, 2.0, 6.2, 12.0, 1.0, 1.65, 1.45, 0.5, 0.3)
+    assert gH > gD, "H beam must be more efficient than D at equal energy"
+    print(f"  gamma_H / gamma_D = {gH/gD:.3f}  (expected sqrt(2) ~ 1.41)")
+
+
+def f_etaCD_effective(config, a, R0, B0, nbar, Tbar, nu_n, nu_T, Z_eff,
+                      rho_ped=1.0, n_ped_frac=0.0, T_ped_frac=0.0):
+    """
+    Dispatch function returning the effective current drive figure of merit.
+
+    Routes to the appropriate physics model based on config.CD_source:
+
+    - 'LHCD' : Fisch (1987) with trapped-particle correction (f_etaCD_LH).
+    - 'ECCD' : Fisch-Boozer scaling (f_etaCD_EC).
+    - 'NBCD' : Cordey (1982) high-energy limit (f_etaCD_NBI).
+    - 'Multi': Power-weighted effective gamma — two sub-modes depending on
+               Operation_mode:
+
+        Steady-State: the solver determines P_CD_total from the current-drive
+          requirement; individual powers P_i = f_heat_i / Σf × P_CD_total.
+          Effective gamma is a fraction-weighted sum:
+            γ_eff = f_LH·γ_LH + f_EC·γ_EC + 0.95·f_NBI·γ_NBI
+          (NBI 5% loss already folded in; ICRH contributes 0 to current drive.)
+
+        Pulsed: individual powers P_i are fixed inputs.  Effective gamma is
+          a power-weighted average:
+            γ_eff = (P_LH·γ_LH + P_EC·γ_EC + 0.95·P_NBI·γ_NBI)
+                    / (P_LH + P_ECRH + P_NBI + P_ICRH)
+
+    In all cases the returned scalar is dimensionally consistent with the
+    D0FUS convention used by f_PCD, f_I_CD, f_ICD, f_I_Ohm.
+
+    Parameters
+    ----------
+    config : GlobalConfig
+        Active D0FUS configuration.
+    a, R0, B0, nbar, Tbar, nu_n, nu_T, Z_eff : float
+        Plasma parameters.
+    rho_ped, n_ped_frac, T_ped_frac : float
+        Pedestal parameters forwarded to profile functions.
+
+    Returns
+    -------
+    float
+        Effective gamma_CD  [MA / (MW m^-2)].
+    """
+    cd = config.CD_source
+
+    if cd == 'LHCD':
+        return f_etaCD_LH(a, R0, B0, nbar, Tbar, nu_n, nu_T,
+                          rho_ped=rho_ped, n_ped_frac=n_ped_frac)
+
+    elif cd == 'ECCD':
+        return f_etaCD_EC(a, R0, Tbar, nbar, Z_eff, nu_T, nu_n,
+                          config.rho_EC, config.C_EC,
+                          rho_ped, n_ped_frac, T_ped_frac)
+
+    elif cd == 'NBCD':
+        return f_etaCD_NBI(config.A_beam, config.E_beam_keV,
+                           a, R0, Tbar, nbar, Z_eff, nu_T, nu_n,
+                           config.rho_NBI, config.C_NBI,
+                           rho_ped, n_ped_frac, T_ped_frac)
+
+    elif cd == 'Multi':
+        # Compute individual efficiencies for all CD-capable sources
+        gamma_LH  = f_etaCD_LH(a, R0, B0, nbar, Tbar, nu_n, nu_T,
+                                rho_ped=rho_ped, n_ped_frac=n_ped_frac)
+        gamma_EC  = f_etaCD_EC(a, R0, Tbar, nbar, Z_eff, nu_T, nu_n,
+                               config.rho_EC, config.C_EC,
+                               rho_ped, n_ped_frac, T_ped_frac)
+        gamma_NBI = f_etaCD_NBI(config.A_beam, config.E_beam_keV,
+                                a, R0, Tbar, nbar, Z_eff, nu_T, nu_n,
+                                config.rho_NBI, config.C_NBI,
+                                rho_ped, n_ped_frac, T_ped_frac)
+
+        if config.Operation_mode == 'Steady-State':
+            # Fraction-based: solver owns P_CD_total, user owns the split.
+            # Normalise fractions to sum to 1.
+            f_sum = (config.f_heat_LH + config.f_heat_EC
+                     + config.f_heat_NBI + config.f_heat_ICR)
+            if f_sum <= 0.0:
+                return gamma_LH   # graceful fallback
+            f_LH  = config.f_heat_LH  / f_sum
+            f_EC  = config.f_heat_EC  / f_sum
+            f_NBI = config.f_heat_NBI / f_sum
+            # ICRH (f_heat_ICR) contributes 0 to CD; reduces γ_eff proportionally.
+            # NBI: 5% shine-through + orbit loss applied to thermalized fraction.
+            return f_LH * gamma_LH + f_EC * gamma_EC + 0.95 * f_NBI * gamma_NBI
+
+        else:   # Pulsed: individual powers are fixed inputs
+            P_NBI_th = config.P_NBI * 0.95
+            I_LH  = config.P_LH   * gamma_LH  / (R0 * nbar)
+            I_EC  = config.P_ECRH * gamma_EC  / (R0 * nbar)
+            I_NBI = P_NBI_th      * gamma_NBI / (R0 * nbar)
+            I_tot = I_LH + I_EC + I_NBI
+            P_tot = config.P_LH + config.P_ECRH + config.P_NBI + config.P_ICRH
+            if P_tot <= 0.0 or I_tot <= 0.0:
+                return gamma_LH   # graceful fallback
+            return I_tot * R0 * nbar / P_tot   # power-weighted γ_eff
+
+    else:
+        raise ValueError(
+            f"Unknown CD_source: '{cd}'. "
+            "Valid options: 'LHCD', 'ECCD', 'NBCD', 'Multi'."
+        )
+
+
+def f_CD_breakdown(config, P_CD_total, R0, nbar,
+                   gamma_LH, gamma_EC, gamma_NBI):
+    """
+    Post-convergence per-source power and current decomposition.
+
+    Called after the solver has converged to compute the individual
+    contributions of each heating/CD source.  Consistent with the
+    γ_eff used by f_etaCD_effective.
+
+    Parameters
+    ----------
+    config : GlobalConfig
+        Active D0FUS configuration (determines CD_source and Operation_mode).
+    P_CD_total : float
+        Total auxiliary power injected into the plasma [MW].
+    R0 : float
+        Major radius [m].
+    nbar : float
+        Volume-averaged electron density [1e20 m^-3].
+    gamma_LH, gamma_EC, gamma_NBI : float
+        Individual CD figures of merit [MA/(MW m^-2)], pre-computed by
+        f_etaCD_effective (or individually via f_etaCD_LH / EC / NBI).
+
+    Returns
+    -------
+    dict with keys:
+        P_LH, P_EC, P_NBI, P_ICR  — per-source plasma power [MW]
+        I_LH, I_EC, I_NBI         — per-source driven current [MA]
+    """
+    cd = config.CD_source
+
+    if cd == 'LHCD':
+        P_LH = P_CD_total
+        P_EC = P_NBI = P_ICR = 0.0
+        I_LH  = f_I_CD(R0, nbar, gamma_LH, P_LH)
+        I_EC  = I_NBI = 0.0
+
+    elif cd == 'ECCD':
+        P_EC = P_CD_total
+        P_LH = P_NBI = P_ICR = 0.0
+        I_EC  = f_I_CD(R0, nbar, gamma_EC, P_EC)
+        I_LH  = I_NBI = 0.0
+
+    elif cd == 'NBCD':
+        P_NBI = P_CD_total
+        P_LH = P_EC = P_ICR = 0.0
+        # 5% NBI losses applied to thermalized power
+        I_NBI = f_I_CD(R0, nbar, gamma_NBI, P_NBI * 0.95)
+        I_LH  = I_EC = 0.0
+
+    elif cd == 'Multi':
+        if config.Operation_mode == 'Steady-State':
+            # Recover individual powers from normalised fractions
+            f_sum = (config.f_heat_LH + config.f_heat_EC
+                     + config.f_heat_NBI + config.f_heat_ICR)
+            if f_sum <= 0.0:
+                f_sum = 1.0
+            P_LH  = config.f_heat_LH  / f_sum * P_CD_total
+            P_EC  = config.f_heat_EC  / f_sum * P_CD_total
+            P_NBI = config.f_heat_NBI / f_sum * P_CD_total
+            P_ICR = config.f_heat_ICR / f_sum * P_CD_total
+        else:  # Pulsed: fixed input powers
+            P_LH  = config.P_LH
+            P_EC  = config.P_ECRH
+            P_NBI = config.P_NBI
+            P_ICR = config.P_ICRH
+
+        I_LH  = f_I_CD(R0, nbar, gamma_LH, P_LH)
+        I_EC  = f_I_CD(R0, nbar, gamma_EC, P_EC)
+        I_NBI = f_I_CD(R0, nbar, gamma_NBI, P_NBI * 0.95)
+
+    else:
+        raise ValueError(f"Unknown CD_source: '{cd}'.")
+
+    return dict(P_LH=P_LH, P_EC=P_EC, P_NBI=P_NBI, P_ICR=P_ICR,
+                I_LH=I_LH, I_EC=I_EC, I_NBI=I_NBI)
+
+
+if __name__ == "__main__":
+    # Verify both functions give consistent individual + total current.
+    import numpy as np
+    from dataclasses import dataclass
+
+    @dataclass
+    class _Cfg:
+        CD_source     : str   = 'Multi'
+        Operation_mode: str   = 'Steady-State'
+        # Steady-State: equal four-way split
+        f_heat_LH  : float = 0.25
+        f_heat_EC  : float = 0.25
+        f_heat_NBI : float = 0.25
+        f_heat_ICR : float = 0.25
+        # Pulsed fixed powers (not used in SS mode)
+        P_LH   : float = 0.0
+        P_ECRH : float = 0.0
+        P_NBI  : float = 0.0
+        P_ICRH : float = 0.0
+        rho_EC : float = 0.3
+        C_EC   : float = 0.32
+        rho_NBI    : float = 0.3
+        A_beam     : int   = 2
+        E_beam_keV : float = 1000.0
+        C_NBI      : float = 0.19
+
+    cfg = _Cfg()
+    kw = dict(a=2.0, R0=6.2, B0=5.3, nbar=1.0, Tbar=12.0,
+              nu_n=0.5, nu_T=1.45, Z_eff=1.65)
+
+    g_eff = f_etaCD_effective(cfg, **kw)
+    print(f"gamma_eff (SS Multi, equal split): {g_eff:.4f} MA/(MW m^2)")
+
+    # Post-convergence breakdown for P_CD_total = 80 MW
+    g_LH  = f_etaCD_LH(kw['a'], kw['R0'], kw['B0'], kw['nbar'], kw['Tbar'],
+                        kw['nu_n'], kw['nu_T'])
+    g_EC  = f_etaCD_EC(kw['a'], kw['R0'], kw['Tbar'], kw['nbar'], kw['Z_eff'],
+                       kw['nu_T'], kw['nu_n'], cfg.rho_EC, cfg.C_EC)
+    g_NBI = f_etaCD_NBI(cfg.A_beam, cfg.E_beam_keV,
+                        kw['a'], kw['R0'], kw['Tbar'], kw['nbar'], kw['Z_eff'],
+                        kw['nu_T'], kw['nu_n'], cfg.rho_NBI, cfg.C_NBI)
+
+    bd = f_CD_breakdown(cfg, P_CD_total=80.0, R0=kw['R0'], nbar=kw['nbar'],
+                        gamma_LH=g_LH, gamma_EC=g_EC, gamma_NBI=g_NBI)
+
+    I_total = bd['I_LH'] + bd['I_EC'] + bd['I_NBI']
+    I_from_eff = f_I_CD(kw['R0'], kw['nbar'], g_eff, 80.0 * (1 - cfg.f_heat_ICR))
+    print(f"P split: LH={bd['P_LH']:.1f} EC={bd['P_EC']:.1f} "
+          f"NBI={bd['P_NBI']:.1f} ICR={bd['P_ICR']:.1f} MW")
+    print(f"I split: LH={bd['I_LH']:.3f} EC={bd['I_EC']:.3f} "
+          f"NBI={bd['I_NBI']:.3f} MA  total={I_total:.3f} MA")
+
+
+def f_Q_multiaux(P_fus, P_LH, P_ECRH, P_NBI, P_ICRH, P_Ohm):
+    """
+    Fusion gain factor with multiple auxiliary heating sources.
+
+    Q = P_fus / (P_aux_total + P_Ohm)
+
+    where P_aux_total = P_LH + P_ECRH + P_NBI + P_ICRH.
+    Alpha power (P_fus / 5) is an internal source and is excluded.
+    Ohmic power is an external inductive source and is included.
+
+    Parameters
+    ----------
+    P_fus : float
+        Total fusion power [MW].
+    P_LH, P_ECRH, P_NBI, P_ICRH : float
+        Plasma power from each auxiliary source [MW].
+    P_Ohm : float
+        Ohmic heating power [MW].
+
+    Returns
+    -------
+    float
+        Fusion gain Q (dimensionless).
+    """
+    P_aux = P_LH + P_ECRH + P_NBI + P_ICRH
+    denom = P_aux + P_Ohm
+    if denom <= 0.0:
+        return np.inf
+    return P_fus / denom
+
+
+if __name__ == "__main__":
+    # Q = P_fus / (P_LH + P_ECRH + P_NBI + P_ICRH + P_Ohm)
+    # ITER target: P_fus=500 MW, P_aux~50 MW, Q~10
+    import numpy as np
+    Q = f_Q_multiaux(P_fus=500.0, P_LH=20.0, P_ECRH=20.0,
+                     P_NBI=13.0, P_ICRH=0.0, P_Ohm=1.5)
+    print(f"Q_multi (500 MW, 54.5 MW ext) = {Q:.2f}  (ref ~9-10)")
+    # Limiting cases
+    Q_ss = f_Q_multiaux(500.0, 50.0, 0.0, 0.0, 0.0, 0.0)
+    print(f"Q (LHCD only, 50 MW)          = {Q_ss:.1f}")
+    Q_inf = f_Q_multiaux(500.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    print(f"Q (no external power)         = {Q_inf}")
+
+
 
 def f_heat_D0FUS(R0, P_sep):
     """
@@ -1329,60 +2686,6 @@ def f_heat_PFU_Eich(P_sol, B_pol, R, eps, theta_deg):
     
     return lambda_q_m, q_parallel0, q_target
 
-def f_tauE(pbar, V, P_Alpha, P_Aux, P_Ohm, P_Rad):
-    """
-    
-    Calculation of the confinement time from the power balance
-    
-    Parameters
-    ----------
-    pbar : The mean pressure [MPa]
-    R0 : Major radius [m]
-    a : Minor radius [m]
-    κ : Elongation
-    P_Alpha : The Alpha power [MW]
-    P_Aux : The Auxilary power [MW]
-    P_Ohm : The Ohmic power [MW]
-        
-    Returns
-    -------
-    tauE : Confinement time [s]
-    
-    """
-    
-    # conversion en SI
-    p_Pa = pbar * 1e6
-    P_total_W = (P_Alpha + P_Aux + P_Ohm - P_Rad) * 1e6
-
-    if P_total_W <= 0:
-        return np.nan
-
-    W_th_J = 3/2 * p_Pa * V
-
-    tauE_s = W_th_J / P_total_W
-    
-    return tauE_s
-
-def f_P_alpha(P_fus, E_ALPHA, E_N):
-    """
-    
-    Calculation of the alpha power
-    
-    Parameters
-    ----------
-    P_fus : The Fusion power [MW]
-    E_ALPHA : Alpha energy [J]
-    E_N : Neutron energy [J]
-        
-    Returns
-    -------
-    P_Alpha : The Alpha power [MW]
-    
-    """
-    
-    P_Alpha = P_fus * E_ALPHA / (E_ALPHA + E_N)
-    
-    return P_Alpha
         
 def f_Ip(tauE, R0, a, κ, δ, nbar, B0, Atomic_mass, P_Alpha, P_Ohm, P_Aux, P_rad, H, C_SL,
          alpha_delta,alpha_M,alpha_kappa,alpha_epsilon, alpha_R,alpha_B,alpha_n,alpha_I,alpha_P):
@@ -1421,232 +2724,8 @@ def f_Ip(tauE, R0, a, κ, δ, nbar, B0, Atomic_mass, P_Alpha, P_Ohm, P_Aux, P_ra
 
 
 
-def f_etaCD(a, R0, B0, nbar, Tbar, nu_n, nu_T,
-            rho_ped=1.0, n_ped_frac=0.0):
-    """
-    
-    Compute the efficienty of LHCD
-    
-    Parameters
-    ----------
-    a : Minor radius [m]
-    R0 : Major radius [m]
-    B0 : The central magnetic field [T]
-    n_bar : The mean electronic density [1e20p/m^3]
-    T_bar : The mean temperature [keV]
-    nu_n : Density profile parameter 
-    nu_T : Temperature profile parameter
-    rho_ped    : Normalised pedestal radius (1.0 = no pedestal).
-    n_ped_frac : n_ped / nbar.
-        
-    Returns
-    -------
-    eta_CD : Current drive efficienty [MA/MW-m²]
-    
-    """
-    rho_m = 0.8
-    # Local density at rho=0.8 (evaluation point for LHCD efficiency)
-    n_loc = f_nprof(nbar, nu_n, rho_m, rho_ped, n_ped_frac)
-    eps = a / R0
-    B_loc = B0 / (1 + eps * rho_m)
-    omega_ce = E_ELEM * B_loc / M_E # Cyclotron frequency
-    omega_pe = E_ELEM * np.sqrt(n_loc*1e20 / (EPS_0 * M_E)) # Plasma frequency
-    # Calcul de n_parallel
-    n_parall = omega_pe / omega_ce + np.sqrt(1 + (omega_pe / omega_ce)**2) * np.sqrt(3. / 4.)
-
-    # Calcul de eta_CD
-    eta_CD = 1.2 / (n_parall**2)
-    return eta_CD
-
-def f_PCD(R0, nbar, I_CD, eta_CD):
-    """
-    
-    Estimate the Currend Drive (CD) power needed
-    
-    Parameters
-    ----------
-    a : Minor radius [m]
-    R0 : Major radius [m]
-    n_bar : The mean electronic density [1e20p/m^3]
-    I_CD : Current drive current [MA]
-        
-    Returns
-    -------
-    P_CD : Current drive power to inject [MW]
-    
-    """
-    P_CD = R0 * nbar * I_CD / eta_CD
-    return P_CD
-
-def f_I_Ohm(Ip, Ib, I_CD):
-    """
-    
-    Estimate the Ohmic current
-    
-    Parameters
-    ----------
-    Ip : Plasma current [MA]
-    Ib : Bootstrap current [MA]
-    I_CD : Current drive current [MA]
-        
-    Returns
-    -------
-    I_Ohm : Current drive power injected [MW]
-    
-    """
-    I_Ohm = abs(Ip - Ib - I_CD)
-    return I_Ohm
-
-def f_ICD(Ip, Ib, I_Ohm):
-    """
-    
-    Estimate the Current drive
-    
-    Parameters
-    ----------
-    Ip : Plasma current [MA]
-    Ib : Bootstrap current [MA]
-    I_Ohm : Ohmic current [MA]
-        
-    Returns
-    -------
-    I_CD : Current drive power injected [MW]
-    
-    """
-    I_CD = abs(Ip - Ib - I_Ohm)
-    return I_CD
-
-def f_I_CD(R0, nbar, eta_CD, P_CD):
-    """
-    
-    Estimate the Currend Drive (CD) current from the CD power
-    
-    Parameters
-    ----------
-    a : Minor radius [m]
-    R0 : Major radius [m]
-    n_bar : The mean electronic density [1e20p/m^3]
-    P_CD : Current drive power injected [MW]
-        
-    Returns
-    -------
-    I_CD : Current drive current [MA]
-    
-    """
-    I_CD = P_CD*eta_CD / (R0*nbar)
-    return I_CD
 
 
-def f_PLH(eta_RF, f_RP, P_CD):
-    """
-    
-    Estimate the Lower Hybrid Electrical Power
-    
-    Parameters
-    ----------
-    eta_RF : conversion efficiency from wall power to klystron
-    f_RP : fraction of klystron power absorbed by plasma
-    P_CD : Current drive power injected [MW]
-        
-    Returns
-    -------
-    P_LH : Electrical Power estimated to drive such a current [MW]
-    
-    """
-    P_LH = (1/eta_RF)*(1/f_RP)*P_CD
-    return P_LH
-
-def f_P_Ohm(I_Ohm, Tbar, R0, a, kappa):
-    """
-    Estimate the Ohmic heating power in a tokamak plasma.
-    
-    Ohmic heating results from the resistive dissipation of the plasma current.
-    At high temperatures, the resistivity decreases as T^(-3/2) (Spitzer scaling),
-    making Ohmic heating ineffective for reactor-grade plasmas.
-    
-    Parameters
-    ----------
-    I_Ohm : float
-        Ohmic plasma current [MA]
-    Tbar : float
-        Volume-averaged electron temperature [keV]
-    R0 : float
-        Major radius [m]
-    a : float
-        Minor radius [m]
-    kappa : float
-        Plasma elongation
-        
-    Returns
-    -------
-    P_Ohm : float
-        Ohmic heating power [MW]
-    
-    Notes
-    -----
-    The calculation follows three steps:
-    
-    1. Spitzer resistivity (classical collisional transport):
-       η [Ω·m] = 2.8×10⁻⁸ / T^(3/2)  [with T in keV]
-    
-    2. Effective plasma resistance (approximate):
-       R_eff [Ω] = η * (2πR₀) / (πa²κ) = η * (2R₀) / (a²κ)
-       
-       This approximation assumes:
-       - Toroidal current path length ≈ 2πR₀
-       - Effective cross-sectional area ≈ πa²κ
-    
-    3. Ohmic power dissipation:
-       P_Ohm = R_eff * I²
-    
-    **Important**: This is a simplified 0D estimate. Actual Ohmic power depends on:
-    - Current density profile j(r)
-    - Temperature profile T(r)
-    - Neoclassical corrections (trapped particles)
-    - Impurity content (Z_eff)
-    
-    References
-    ----------
-    Spitzer, L., & Härm, R. (1953). "Transport phenomena in a completely 
-    ionized gas." Physical Review, 89(5), 977-981.
-    """
-    
-    # Spitzer resistivity [Ω·m]
-    # Classical collisional resistivity for a fully ionized plasma
-    eta = 2.8e-8 / (Tbar**1.5)
-    
-    # Effective plasma resistance [Ω]
-    # Approximates the plasma as a toroidal conductor with:
-    #   - Current path length: 2πR₀
-    #   - Cross-sectional area: πa²κ
-    R_eff = eta * (2 * R0) / (a**2 * kappa)
-    
-    # Ohmic heating power [MW]
-    # Convert current from MA to A, then power from W to MW
-    I_Ohm_A = I_Ohm * 1e6           # [MA] → [A]
-    P_Ohm_W = R_eff * I_Ohm_A**2    # [W]
-    P_Ohm = P_Ohm_W * 1e-6          # [W] → [MW]
-    
-    return P_Ohm
-
-def f_Q(P_fus,P_CD,P_Ohm):
-    """
-    
-    Calculate the plasma amplification factor Q
-    
-    Parameters
-    ----------
-    P_fus = Fusion power [MW]
-    P_CD = Current drive power [MW]
-    P_Ohm = Ohmic power [MW]
-        
-    Returns
-    -------
-    Q : Plasma amplification factor
-    
-    """
-    Q = P_fus/(P_CD + P_Ohm)
-    return Q
 
 def P_Thresh_Martin(n_bar, B0, a, R0, κ, Atomic_mass):
     """
@@ -2211,25 +3290,6 @@ def f_surface_premiere_paroi(kappa, R0, a):
     S = 2 * math.pi * R0 * Pe
     return S
 
-def f_P_elec(P_fus, P_LH, eta_T, eta_RF):
-    """
-    
-    Calculate the net electrical power P_elec
-    
-    Parameters
-    ----------
-    P_fus : Fusion power [MW]
-    P_LH : LHCD power [MW]
-    eta_T : Conversion efficienty from fusion power to electrical power
-
-    Returns
-    -------
-    P_elec : Net electrical power [MW]
-    
-    """
-    P_th = P_fus * E_F / (E_ALPHA + E_N)
-    P_elec = eta_T * P_th - P_LH
-    return P_elec
 
 def f_W_th(n_avg, T_avg, volume):
     """
@@ -2255,597 +3315,8 @@ def f_W_th(n_avg, T_avg, volume):
     
     return W_th
 
-def f_P_1rst_wall_Hmod(P_sep_solution, P_CD_solution, Surface_solution):
-    """
-    
-    Calculate the power deposited on the first wall in H-mode
-
-    Parameters
-    ----------
-    P_sep_solution : Power leaving the plasma [MW]
-    P_CD_solution : Power injected for current drive [MW]
-    Surface_solution : Surface area of the first wall [m²]
-
-    Returns
-    -------
-    P_1rst_wall_Hmod : Surface power density on the first wall in H-mode [MW/m²]
-    
-    """
-    
-    P_1rst_wall_Hmod = (P_sep_solution - P_CD_solution) / Surface_solution
-    
-    return P_1rst_wall_Hmod
-
-def f_P_1rst_wall_Lmod(P_sep_solution, Surface_solution):
-    """
-    
-    Calculate the power deposited on the first wall in L-mode
-
-    Parameters
-    ----------
-    P_sep_solution : Power leaving the plasma [MW]
-    Surface_solution : Surface area of the first wall [m²]
-
-    Returns
-    -------
-    P_1rst_wall_Lmod : Surface power density on the first wall in L-mode [MW/m²]
-        
-    """
-    
-    P_1rst_wall_Lmod = P_sep_solution / Surface_solution
-    
-    return P_1rst_wall_Lmod
-
-def f_P_synchrotron(Tbar, R, a, Bt, nbar, kappa, nu_n, nu_T, r,
-                    rho_ped=1.0, n_ped_frac=0.0, T_ped_frac=0.0):
-    """
-    Calculate the total synchrotron radiation power (in MW) using the
-    improved formulation from Albajar et al. (2001).
-
-    The Albajar formula is expressed in terms of central (on-axis) values
-    T0 and ne0, not volume averages. This function computes T0 and ne0
-    internally from the volume-averaged inputs and the profile model
-    (parabolic or parabola-with-pedestal) via f_Tprof / f_nprof at rho = 0.
-
-    Parameters
-    ----------
-    Tbar : float
-        Volume-averaged electron temperature [keV].
-    R : float
-        Major radius [m].
-    a : float
-        Minor radius [m].
-    Bt : float
-        On-axis toroidal magnetic field [T].
-    nbar : float
-        Volume-averaged electron density [10^20 m⁻³].
-    kappa : float
-        Plasma vertical elongation.
-    nu_n : float
-        Density profile peaking exponent (core region).
-        Parabolic: n(rho) = n0 * (1 - rho^2)^nu_n.
-    nu_T : float
-        Temperature profile peaking exponent (core region).
-        Parabolic: T(rho) = T0 * (1 - rho^2)^nu_T.
-    r : float
-        Wall reflection coefficient (typically 0.5–0.9).
-    rho_ped : float, optional
-        Normalised pedestal radius (1.0 = purely parabolic).
-    n_ped_frac : float, optional
-        n_ped / nbar.  Ignored when rho_ped = 1.0.
-    T_ped_frac : float, optional
-        T_ped / Tbar.  Ignored when rho_ped = 1.0.
-
-    Returns
-    -------
-    P_syn : float
-        Total synchrotron radiation power [MW].
-
-    Notes
-    -----
-    The K-factor (Eq. 13) was derived by Albajar et al. for purely parabolic
-    profiles parameterised by (nu_n, nu_T).  For the pedestal model these
-    exponents describe the core region only; the K-factor approximation
-    remains reasonable as long as the core dominates the synchrotron emission
-    (which is driven by the hot, dense centre).
-
-    References
-    ----------
-    Albajar, F., Johner, J., & Granata, G. (2001).
-    Nuclear Fusion, 41(6), 665.
-    """
-    # ── Central (on-axis) values from profile model ──────────────────────────
-    T0_keV = float(f_Tprof(Tbar, nu_T, 0.0, rho_ped, T_ped_frac))
-    ne0    = float(f_nprof(nbar, nu_n,  0.0, rho_ped, n_ped_frac))
-
-    A = R / a
-
-    # Opacity parameter (Eq. 7)
-    pa0 = 6.04e3 * a * ne0 / Bt
-
-    # Profile factor K (Eq. 13)
-    K_numer = (nu_n + 3.87*nu_T + 1.46)**(-0.79) * (1.98 + nu_T)**1.36 * nu_T**2.14
-    K_denom = (nu_T**1.53 + 1.87*nu_T - 0.16)**1.33
-    K = K_numer / K_denom
-
-    # Aspect ratio correction G (Eq. 15)
-    G = 0.93 * (1 + 0.85 * math.exp(-0.82 * A))
-
-    # Main expression (Eq. 16)
-    term1 = 3.84e-8 * (1 - r)**0.5
-    term2 = R * a**1.38 * kappa**0.79 * Bt**2.62 * ne0**0.38
-    term3 = T0_keV * (16 + T0_keV)**2.61
-    term4 = (1 + 0.12 * T0_keV / pa0**0.41)**(-1.51)
-
-    return term1 * term2 * term3 * term4 * K * G
-
-def f_P_bremsstrahlung(V, n_e, T_e, Z_eff, R, a):
-    """
-    Note : Under developement
-    
-    Calculate the total Bremsstrahlung power (in MW)
-
-    Parameters
-    -------
-    n_e : Electron density [10^20 m⁻³]
-    T_e : Electron temperature [keV]
-    Z_eff : Effective charge
-    V : Plasma volume [m³]
-    
-    Returns
-    -------
-    P_Brem : Bremsstrahlung power [MW]
-
-    Assumptions:
-        - Fully ionized plasma
-        - Radial shape factor g_r ≈ 1 (flat profiles)
-
-    Sources
-    -------
-    NRL Plasma Formulary, 2022 edition, section on bremsstrahlung radiation.
-    Wesson, J., "Tokamaks", 3rd ed., Oxford University Press, p.228
-    
-    """
-    
-    P_Brem = 5.35e3 * Z_eff**2 * n_e**2 * T_e**(1/2) * V
-    
-    return P_Brem / 1e6
-
-def f_P_line_radiation(V, n_e, T_e, f_imp, L_z, R, a):
-    """
-    
-    Note : Under developement
-    
-    Calculate the line radiation power (in MW) due to a given impurity in a plasma
-
-    Parameters
-    -------
-    n_e: Electron density [1e20 m⁻³]
-    f_imp: Impurity fraction (n_imp / n_e)
-    L_z: Radiative loss coefficient [W·m³] for the given impurity
-    V : Plasma volume [m³]
-    
-    Returns
-    -------
-    P_line : Line radiation power [MW]
-
-    Assumptions:
-        - Uniform impurity concentration
-        - Homogeneous plasma
-        - Line radiation + radiative recombination included in L_z(T_e)
-
-    Sources
-    -------
-    - H. Pütterich et al., "Radiative cooling rates of heavy elements for fusion plasmas", Nucl. Fusion 50 (2010) 025012.
-    - Summers et al., Atomic Data and Analysis Structure (ADAS): http://adas.ac.uk
-    - IAEA-INDC report on radiative losses, INDC(NDS)-457.
-
-    Note
-    ----
-    This function can be adapted to any impurity by changing L_z 
-    according to the species (W, C, N, etc.).
-    
-    """
-    
-    P_line = (n_e * 1e20)**2 * f_imp * L_z * V
-
-    return P_line / 1e6
-
-def get_Lz(impurity, Te_keV):
-    """
-    Return the line radiative loss coefficient Lz (W·m³) for a given 
-    impurity and electron temperature.
-    
-    Parameters
-    ----------
-    impurity : str
-        Impurity name or symbol ("W", "Ar", "Ne", "C", 
-        or long forms "tungsten", "argon", "neon", "carbon").
-    Te_keV : float or array-like
-        Electron temperature in keV.
-    
-    Returns
-    -------
-    Lz : float or ndarray
-        Line radiative cooling coefficient (W·m³).
-    
-    Notes
-    -----
-    - Values based on Mavrin (2018) polynomial fits and Pütterich (2010) for W
-    - Log-log interpolation for numerical stability
-    - Linear extrapolation outside bounds (with warning)
-    
-    References
-    ----------
-    [1] Mavrin A.A. (2018), Rad. Eff. Def. Solids 173:5-6, 388-398
-    [2] Pütterich et al. (2010), Nucl. Fusion 50, 025012
-    [3] Pütterich et al. (2019), Nucl. Fusion 59, 056013
-    
-    Examples
-    --------
-    >>> get_Lz("W", 10.0)   # Tungsten at 10 keV
-    ~4e-32 W·m³
-    """
-    # Normalize impurity name
-    imp_map = {
-        "w": "W", "tungsten": "W",
-        "ar": "Ar", "argon": "Ar",
-        "ne": "Ne", "neon": "Ne",
-        "c": "C", "carbon": "C",
-        "n": "N", "nitrogen": "N",
-        "kr": "Kr", "krypton": "Kr",
-    }
-    
-    imp = impurity.strip().lower()
-    if imp in imp_map:
-        imp = imp_map[imp]
-    else:
-        imp = impurity.strip().upper()
-    
-    # =========================================================================
-    # Lz data tables (W·m³) vs Te (keV)
-    # CORRECTED values based on Pütterich and Mavrin
-    # =========================================================================
-    
-    # Temperature grid (keV) - extended range
-    Te_grid = np.array([
-        0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 
-        10.0, 20.0, 50.0, 100.0
-    ])
-    
-    # -------------------------------------------------------------------------
-    # Tungsten (W, Z=74)
-    # Source: Pütterich et al. (2010), Nucl. Fusion 50, 025012
-    # W has a radiation peak at ~0.1-1 keV, then DECREASES sharply
-    # At high Te (>5 keV), W is highly ionized → strongly reduced line radiation
-    # Values calibrated to give ~5-10 MW for 0.01% W in ITER
-    # -------------------------------------------------------------------------
-    Lz_W = np.array([
-        1.0e-32,   # 0.01 keV - W weakly ionized, complex spectrum
-        5.0e-32,   # 0.02 keV
-        2.0e-31,   # 0.05 keV - rising toward peak
-        4.0e-31,   # 0.1 keV  - near peak (W27+-W35+)
-        5.0e-31,   # 0.2 keV  - PEAK region (strongest radiation)
-        4.0e-31,   # 0.5 keV  - main peak (W35+-W45+)
-        3.0e-31,   # 1.0 keV  - still high (W40+-W46+)
-        1.0e-31,   # 2.0 keV  - W44+-W50+ dominant
-        2.0e-32,   # 5.0 keV  - decreasing rapidly (W50+-W56+)
-        8.0e-33,   # 10.0 keV - W56+-W64+ highly ionized
-        4.0e-33,   # 20.0 keV - approaching fully ionized
-        2.0e-33,   # 50.0 keV - very few bound electrons
-        1.0e-33,   # 100.0 keV - near fully ionized
-    ])
-    
-    # -------------------------------------------------------------------------
-    # Argon (Ar, Z=18)
-    # Ar is FULLY IONIZED above ~2-3 keV
-    # At high Te, only recombination radiation (very small)
-    # -------------------------------------------------------------------------
-    Lz_Ar = np.array([
-        2.0e-31,   # 0.01 keV - strong radiation (Li-like, Be-like)
-        5.0e-31,   # 0.02 keV - near peak
-        3.0e-31,   # 0.05 keV - He-like Ar dominant
-        1.0e-31,   # 0.1 keV
-        3.0e-32,   # 0.2 keV  - becoming H-like
-        3.0e-33,   # 0.5 keV  - mostly H-like/bare
-        5.0e-34,   # 1.0 keV  - fully ionized
-        1.5e-34,   # 2.0 keV
-        5.0e-35,   # 5.0 keV  - only recombination
-        3.0e-35,   # 10.0 keV
-        2.0e-35,   # 20.0 keV
-        1.0e-35,   # 50.0 keV
-        8.0e-36,   # 100.0 keV
-    ])
-    
-    # -------------------------------------------------------------------------
-    # Neon (Ne, Z=10)
-    # Ne is FULLY IONIZED above ~0.5-1 keV
-    # -------------------------------------------------------------------------
-    Lz_Ne = np.array([
-        8.0e-32,   # 0.01 keV
-        2.0e-31,   # 0.02 keV - peak (Li-like, He-like)
-        1.5e-31,   # 0.05 keV
-        5.0e-32,   # 0.1 keV
-        1.0e-32,   # 0.2 keV
-        1.0e-33,   # 0.5 keV  - mostly ionized
-        2.0e-34,   # 1.0 keV  - fully ionized
-        8.0e-35,   # 2.0 keV
-        3.0e-35,   # 5.0 keV
-        1.5e-35,   # 10.0 keV
-        1.0e-35,   # 20.0 keV
-        5.0e-36,   # 50.0 keV
-        3.0e-36,   # 100.0 keV
-    ])
-    
-    # -------------------------------------------------------------------------
-    # Carbon (C, Z=6)
-    # C is FULLY IONIZED above ~0.2-0.3 keV
-    # -------------------------------------------------------------------------
-    Lz_C = np.array([
-        3.0e-32,   # 0.01 keV
-        1.0e-31,   # 0.02 keV - peak
-        6.0e-32,   # 0.05 keV
-        1.5e-32,   # 0.1 keV
-        2.0e-33,   # 0.2 keV  - becoming fully ionized
-        2.0e-34,   # 0.5 keV  - fully ionized
-        5.0e-35,   # 1.0 keV
-        2.0e-35,   # 2.0 keV
-        8.0e-36,   # 5.0 keV
-        5.0e-36,   # 10.0 keV
-        3.0e-36,   # 20.0 keV
-        1.5e-36,   # 50.0 keV
-        1.0e-36,   # 100.0 keV
-    ])
-    
-    # -------------------------------------------------------------------------
-    # Nitrogen (N, Z=7)
-    # -------------------------------------------------------------------------
-    Lz_N = np.array([
-        5.0e-32,   # 0.01 keV
-        1.5e-31,   # 0.02 keV - peak
-        1.0e-31,   # 0.05 keV
-        3.0e-32,   # 0.1 keV
-        5.0e-33,   # 0.2 keV
-        4.0e-34,   # 0.5 keV
-        1.0e-34,   # 1.0 keV
-        4.0e-35,   # 2.0 keV
-        1.5e-35,   # 5.0 keV
-        1.0e-35,   # 10.0 keV
-        6.0e-36,   # 20.0 keV
-        3.0e-36,   # 50.0 keV
-        2.0e-36,   # 100.0 keV
-    ])
-    
-    # -------------------------------------------------------------------------
-    # Krypton (Kr, Z=36)
-    # Intermediate-Z, used for DEMO seeding
-    # -------------------------------------------------------------------------
-    Lz_Kr = np.array([
-        5.0e-32,   # 0.01 keV
-        2.0e-31,   # 0.02 keV
-        5.0e-31,   # 0.05 keV - peak
-        4.0e-31,   # 0.1 keV
-        2.0e-31,   # 0.2 keV
-        5.0e-32,   # 0.5 keV
-        1.5e-32,   # 1.0 keV
-        5.0e-33,   # 2.0 keV
-        1.5e-33,   # 5.0 keV
-        8.0e-34,   # 10.0 keV
-        4.0e-34,   # 20.0 keV
-        2.0e-34,   # 50.0 keV
-        1.0e-34,   # 100.0 keV
-    ])
-    
-    # Data dictionary
-    tables = {
-        "W": Lz_W,
-        "Ar": Lz_Ar,
-        "Ne": Lz_Ne,
-        "C": Lz_C,
-        "N": Lz_N,
-        "Kr": Lz_Kr,
-    }
-    
-    if imp not in tables:
-        available = list(tables.keys())
-        raise ValueError(
-            f"Impurity '{impurity}' not supported. "
-            f"Choose from: {available}"
-        )
-    
-    Lz_table = tables[imp]
-    
-    # Log-log interpolation
-    log_Te_grid = np.log10(Te_grid)
-    log_Lz_table = np.log10(Lz_table)
-    
-    f_interp = interp1d(
-        log_Te_grid, 
-        log_Lz_table,
-        kind="linear",
-        bounds_error=False,
-        fill_value="extrapolate"
-    )
-    
-    # Compute Lz
-    Te_keV = np.atleast_1d(Te_keV)
-    log_Lz = f_interp(np.log10(Te_keV))
-    Lz = 10.0 ** log_Lz
-    
-    # Warning if outside bounds
-    if np.any(Te_keV < Te_grid[0]) or np.any(Te_keV > Te_grid[-1]):
-        import warnings
-        warnings.warn(
-            f"Te outside validated range [{Te_grid[0]:.3f}, {Te_grid[-1]:.1f}] keV. "
-            f"Extrapolation used.",
-            UserWarning
-        )
-    
-    if Lz.size == 1:
-        return float(Lz[0])
-    return Lz
 
 
-def get_averagE_ELEM(impurity, Te_keV):
-    """
-    Return the average charge state of the impurity in coronal equilibrium.
-    
-    Parameters
-    ----------
-    impurity : str
-        Impurity symbol ("W", "Ar", "Ne", "C").
-    Te_keV : float
-        Electron temperature in keV.
-    
-    Returns
-    -------
-    Z_avg : float
-        Average ion charge state.
-    """
-    imp_map = {
-        "w": "W", "tungsten": "W",
-        "ar": "Ar", "argon": "Ar", 
-        "ne": "Ne", "neon": "Ne",
-        "c": "C", "carbon": "C",
-        "n": "N", "nitrogen": "N",
-        "kr": "Kr", "krypton": "Kr",
-    }
-    
-    imp = impurity.strip().lower()
-    imp = imp_map.get(imp, impurity.strip().upper())
-    
-    Z_max = {"W": 74, "Ar": 18, "Ne": 10, "C": 6, "N": 7, "Kr": 36}
-    
-    if imp not in Z_max:
-        raise ValueError(f"Impurity '{impurity}' not supported.")
-    
-    # Temperature scale for full ionization (approximate)
-    Te_ionization = {
-        "W": 5.0,    # W approaches full ionization ~50 keV
-        "Ar": 0.3,   # Ar fully ionized ~3 keV
-        "Ne": 0.15,  # Ne fully ionized ~1.5 keV
-        "C": 0.05,   # C fully ionized ~0.5 keV
-        "N": 0.07,   # N fully ionized ~0.7 keV
-        "Kr": 1.0,   # Kr fully ionized ~10 keV
-    }
-    
-    Z = Z_max[imp]
-    Te_ion = Te_ionization[imp]
-    
-    Z_avg = Z * (1.0 - np.exp(-Te_keV / Te_ion))
-    
-    return float(max(1.0, min(Z_avg, Z)))
-
-
-if __name__ == "__main__":
-    
-    # Test the function
-    print("=== Testing get_Lz ===")
-    print(f"Lz(W, 10 keV)  = {get_Lz('W', 10.0):.2e} W·m³")
-    print(f"Lz(Ar, 5 keV)  = {get_Lz('Ar', 5.0):.2e} W·m³")
-    print(f"Lz(Ne, 1 keV)  = {get_Lz('Ne', 1.0):.2e} W·m³")
-    print(f"Lz(C, 0.5 keV) = {get_Lz('C', 0.5):.2e} W·m³")
-    
-    # Plot Lz(Te) curves
-    Te_plot = np.logspace(-2, 2, 1000)  # 0.01 - 100 keV
-    
-    fig, ax = plt.subplots(figsize=(10, 7))
-    
-    colors = {
-        "W": "red", "Ar": "blue", "Ne": "green", 
-        "C": "orange", "N": "purple", "Kr": "cyan"
-    }
-    labels = {
-        "W": "Tungsten (Z=74)", "Ar": "Argon (Z=18)", 
-        "Ne": "Neon (Z=10)", "C": "Carbon (Z=6)",
-        "N": "Nitrogen (Z=7)", "Kr": "Krypton (Z=36)"
-    }
-    
-    for imp in ["W", "Ar", "Ne", "C", "N", "Kr"]:
-        Lz = get_Lz(imp, Te_plot)
-        ax.loglog(Te_plot, Lz, label=labels[imp], color=colors[imp], linewidth=2)
-    
-    ax.set_xlabel("Electron temperature Te (keV)", fontsize=12)
-    ax.set_ylabel("Radiative cooling coefficient Lz (W·m³)", fontsize=12)
-    ax.set_title("Coronal equilibrium radiative cooling coefficients\n"
-                 "(Based on Mavrin 2018 / ADAS)", fontsize=14)
-    ax.legend(loc="best", fontsize=10)
-    ax.grid(True, which="both", alpha=0.3)
-    ax.set_xlim(0.01, 100)
-    ax.set_ylim(1e-36, 1e-30)
-    
-    # Annotate plasma regions
-    ax.axvspan(0.01, 0.1, alpha=0.1, color='blue')
-    ax.axvspan(1, 30, alpha=0.1, color='red')
-    ax.text(0.03, 5e-31, "Edge/\nDivertor", fontsize=9, ha='center')
-    ax.text(5, 5e-31, "Core", fontsize=9, ha='center')
-    
-    plt.tight_layout()
-    plt.show()
-
-    """
-    Test radiative power losses for ITER-like plasma parameters.
-    Validates bremsstrahlung, synchrotron, and line radiation calculations.
-    """
-    
-    # ITER-like plasma parameters
-    Te_keV = 7.0      # Electron temperature [keV]
-    ne = 1.0          # Electron density [10^20 m^-3]
-    V = 830.0         # Plasma volume [m³]
-    R, a = 6.2, 2.0   # Major and minor radius [m]
-    Bt = 5.3          # Toroidal magnetic field [T]
-    kappa = 1.7       # Plasma elongation
-    Z_eff = 1.5       # Effective charge (more realistic than 1.0)
-    
-    # Synchrotron reflection coefficient
-    r = 0.5       # Wall reflection coefficient (from parameterization)
-    
-    # Profile parameters (typical parabolic profiles)
-    nu_n = 0.1     # Density profile exponent
-    nu_T = 1.0     # Temperature profile exponent
-    
-    # Impurities
-    impurities = ['W', 'Ar']
-    fractions = [0.0001, 0.02]   # 0.01% W, 2% Ar
-    
-    print("="*70)
-    print("Radiative Power Loss Analysis - ITER-like Parameters")
-    print("="*70)
-    print(f"Electron temperature: Te = {Te_keV} keV")
-    print(f"Electron density:     ne = {ne} × 10²⁰ m⁻³")
-    print(f"Plasma volume:        V  = {V} m³")
-    print(f"Magnetic field:       Bt = {Bt} T")
-    print(f"Effective charge:     Zeff = {Z_eff}")
-    print("="*70)
-    
-    # Calculate bremsstrahlung
-    P_brem = f_P_bremsstrahlung(V, ne, Te_keV, Z_eff, R, a)
-    print(f"\n1. Bremsstrahlung power: {P_brem:.2f} MW")
-    print(f"   (Expected ~10-15 MW for ITER)")
-    
-    # Calculate synchrotron using Albajar formula
-    # NOTE: Removed beta_T from the call - it's not a parameter!
-    P_syn = f_P_synchrotron(Te_keV, R, a, Bt, ne, kappa, nu_n, nu_T, r)
-    print(f"\n2. Synchrotron power (Albajar): {P_syn:.2f} MW")
-    print(f"   (Expected ~1-2 MW for ITER)")
-    print(f"   Reflection coefficient r = {r}")
-    
-    # Line radiation from impurities
-    print(f"\n3. Line radiation:")
-    P_line_total = 0
-    for imp, f_imp in zip(impurities, fractions):
-        Lz = get_Lz(imp, Te_keV)
-        P_line = f_P_line_radiation(V, ne, Te_keV, f_imp, Lz, R, a)
-        P_line_total += P_line
-        print(f"   {imp:2s} ({f_imp*100:.2f}%): {P_line:.2e} MW")
-    
-    print(f"   Total line radiation: {P_line_total:.2f} MW")
-    
-    # Total radiative losses
-    P_rad_total = P_brem + P_syn + P_line_total
-    print(f"\n" + "="*70)
-    print(f"TOTAL RADIATIVE LOSSES: {P_rad_total:.2f} MW")
-    print(f"="*70)
 
 def f_Get_parameter_scaling_law(Scaling_Law):
     

@@ -20,4 +20,4 @@ D0FUS_INPUTS/*_paper*
 # Build artifacts
 dist/
 build/
-*.egg-info/
+*.egg-info/input/

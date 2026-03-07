@@ -6,7 +6,7 @@
 # Optimization parameters (genetic algorithm will vary these)
 a: [1, 5]       # Minor radius
 R0: [4, 15]      # Major radius [m]
-Bmax_TF: [18, 24]  # Maximum magnetic field [T]
+Bmax_TF: [15, 24]  # Maximum magnetic field [T]
 
 # Genetic algorithm parameters (optional - if not specified, defaults are used)
 population_size = 20     # Number of individuals in each generation (default: 50)

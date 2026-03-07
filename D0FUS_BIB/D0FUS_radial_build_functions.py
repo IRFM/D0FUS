@@ -3668,7 +3668,6 @@ def f_li(nu_T, nu_n, Tbar, nbar, Z_eff, a, R0, q,
     Sauter et al., Phys. Plasmas 6, 2834 (1999).
     Redl et al., Phys. Plasmas 28, 022502 (2021).
     """
-    import numpy as np
     from scipy.integrate import quad
 
     epsilon = a / R0
@@ -4477,38 +4476,66 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
             return np.nan
         return Sigma_CS - σ_CS
     
-    # Search for sign changes
+    # ------------------------------------------------------------------
+    # STEP 2 — Direct two-point brentq (no linear scan required)
+    # ------------------------------------------------------------------
+    # For all three mechanical configurations (Wedging, Bucking, Plug),
+    # stress_residual(d_SS) = K / d_SS - σ_CS, where K is a positive
+    # constant (K = P_CS * RCS_sep or similar). This function is strictly
+    # monotone decreasing on the valid domain (Tol_CS, d_SS_max), so:
+    #   • At most one root exists.
+    #   • Evaluating at both endpoints is sufficient to determine whether
+    #     a root is present; no scan is needed.
+    #   • If residual(d_SS_min) > 0 and residual(d_SS_max) < 0 → root
+    #     exists; direct brentq.
+    #   • Otherwise → design is geometrically infeasible (steel thickness
+    #     required to meet stress limit exceeds available radial space).
+    # Total cost: ~2 (bound checks) + ~15 (brentq) = ~17 evaluations,
+    # compared to 200 for the previous linear scan.
+    # ------------------------------------------------------------------
+
     d_SS_min = Tol_CS
     d_SS_max = RCS_ext - d_SU - Tol_CS
-    d_SS_vals = np.linspace(d_SS_min, d_SS_max, 200)
-    sign_changes = []
-    
-    for i in range(1, len(d_SS_vals)):
-        y1 = stress_residual(d_SS_vals[i-1])
-        y2 = stress_residual(d_SS_vals[i])
-        if np.isfinite(y1) and np.isfinite(y2) and y1 * y2 < 0:
-            sign_changes.append((d_SS_vals[i-1], d_SS_vals[i]))
-    
-    if len(sign_changes) == 0:
+
+    if d_SS_max <= d_SS_min:
         if debug:
-            print("[STEP 2] No sign changes found")
+            print("[STEP 2] No space left for steel: d_SS_max <= d_SS_min.")
         return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
-    
-    # Refine with brentq
-    valid_solutions = []
-    for interval in sign_changes:
-        try:
-            d_SS_sol = brentq(stress_residual, interval[0], interval[1], xtol=1e-9)
-            Sigma_check = stress_residual(d_SS_sol) + σ_CS
-            if Sigma_check > 0:
-                valid_solutions.append(d_SS_sol)
-        except ValueError:
-            continue
-    
-    if len(valid_solutions) == 0:
+
+    # stress_residual returns nan when d_SS <= Tol_CS (guard) or when
+    # d_SS + d_SU >= RCS_ext - Tol_CS (guard). Evaluating at the exact
+    # bound values would therefore return nan on both sides, incorrectly
+    # indicating an infeasible design. A small inward offset eps_SS avoids
+    # both guards while keeping the bracket physically valid.
+    eps_SS   = Tol_CS * 1e-3   # 1 μm for Tol_CS = 1 mm; negligible vs solution
+    d_lo_ss  = d_SS_min + eps_SS
+    d_hi_ss  = d_SS_max - eps_SS
+
+    if d_lo_ss >= d_hi_ss:
+        if debug:
+            print("[STEP 2] Effective bracket collapsed after eps offset.")
         return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
-    
-    d_SS = min(valid_solutions)
+
+    y_lo = stress_residual(d_lo_ss)
+    y_hi = stress_residual(d_hi_ss)
+
+    if debug:
+        print(f"[STEP 2] stress_residual: "
+              f"f({d_lo_ss:.6f}) = {y_lo:.3e},  "
+              f"f({d_hi_ss:.4f}) = {y_hi:.3e}")
+
+    if not (np.isfinite(y_lo) and np.isfinite(y_hi) and y_lo * y_hi < 0):
+        # No sign change: stress constraint cannot be met in available space.
+        if debug:
+            print("[STEP 2] No root in valid domain — design infeasible.")
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+
+    try:
+        d_SS = brentq(stress_residual, d_lo_ss, d_hi_ss, xtol=1e-9)
+    except ValueError:
+        if debug:
+            print("[STEP 2] brentq failed on [d_lo_ss, d_hi_ss].")
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
     
     # ------------------------------------------------------------------
     # STEP 3: Compute final outputs
@@ -4686,35 +4713,7 @@ def f_CS_D0FUS(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
         return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
     ΨCS = ΨPI + ΨRampUp + Ψplateau - ΨPF
-    
-    # ------------------------------------------------------------------
-    # Get initial guess from academic model
-    # ------------------------------------------------------------------
-    
-    d_init_acad, _, _, _, _, B_CS_init, J_init = f_CS_ACAD(
-    ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, σ_CS,
-    Supra_choice_CS, Jc_manual, T_Helium, Choice_Buck_Wedg, κ, N_sub_CS, tau_h,
-    config)
-    
-    # Determine search bounds based on initial guess
-    if np.isfinite(d_init_acad) and d_init_acad > Tol_CS:
-        # Use ±50% around academic estimate
-        d_min_search = max(Tol_CS, d_init_acad * 0.5)
-        d_max_search = min(RCS_ext - Tol_CS, d_init_acad * 1.5)
-        n_scan_points = 100  # Reduced from 1500!
-        
-        if debug:
-            print(f"[INIT] Academic model d = {d_init_acad:.4f} m")
-            print(f"[INIT] Search range: [{d_min_search:.4f}, {d_max_search:.4f}] m")
-    else:
-        # Fallback to full range
-        d_min_search = Tol_CS
-        d_max_search = RCS_ext - Tol_CS
-        n_scan_points = 500
-        
-        if debug:
-            print("[INIT] Academic model failed, using full search")
-    
+
     # ------------------------------------------------------------------
     # Main solving function (uses CACHED cable current density)
     # ------------------------------------------------------------------
@@ -4858,72 +4857,198 @@ def f_CS_D0FUS(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
             return np.nan
         return Sigma_CS - σ_CS
     
-    def find_sign_changes(f, a_bound, b_bound, n):
-        x_vals = np.linspace(a_bound, b_bound, n)
-        y_vals = np.array([f(x) for x in x_vals])
-        sign_changes = []
-        for i in range(1, len(x_vals)):
-            if np.isfinite(y_vals[i-1]) and np.isfinite(y_vals[i]):
-                if y_vals[i-1] * y_vals[i] < 0:
-                    sign_changes.append((x_vals[i-1], x_vals[i]))
-        return sign_changes
-
-    def refine_zeros(f, intervals):
-        roots = []
-        for a_int, b_int in intervals:
-            try:
-                root = brentq(f, a_int, b_int)
-                roots.append(root)
-            except ValueError:
-                continue
-        return roots
-
     # ------------------------------------------------------------------
-    # Root-finding (OPTIMIZED: narrower search range)
+    # Root-finding — monotone-aware adaptive solver
     # ------------------------------------------------------------------
-    
+    # f_sigma_diff(d) is strictly monotone decreasing on its valid domain
+    # [d_min_valid, RCS_ext - Tol_CS], so at most one root exists.
+    #
+    # Physical basis: increasing d → lower B_CS → higher J_max (SC at
+    # lower field) → lower alpha → lower Sigma_CS (see analysis notes).
+    #
+    # Two-pass adaptive strategy:
+    #
+    #   Pass 1 — coarse log-spaced probe (N_PROBE_1 = 15 pts, full range):
+    #     Detects the nan→finite transition and/or a sign-change bracket.
+    #     Log spacing gives simultaneous resolution near d→0 (compact HTS,
+    #     d* ~ mm) and near d→RCS_ext (large LTS, d* ~ metres).
+    #
+    #   Pass 2 — adaptive refinement (triggered only if Pass 1 fails):
+    #     a. Binary search on nan/finite boundary → pins d_min_valid (~20).
+    #     b. Second log-spaced probe on [d_min_valid, RCS_ext - Tol_CS]
+    #        with N_PROBE_2 = 20 pts → catches extreme cases where the root
+    #        sits in a very narrow window just above d_min_valid (ultra-thin
+    #        HTS CS) or just below d_hi (very large LTS CS, far from a
+    #        solid cylinder). Direct bracket on the whole range gives brentq
+    #        too wide an interval in these cases; the finer probe narrows it.
+    #
+    #   Pass 3 — brentq on the bracketed interval (~15 calls).
+    #
+    # Worst-case call budget: 15 + 20 + 20 + 15 = ~70 evaluations.
+    # Typical (Pass 1 succeeds): ~30 evaluations.
+    # ------------------------------------------------------------------
+
+    N_PROBE_1 = 15   # Coarse probe: full domain [Tol_CS, RCS_ext - Tol_CS]
+    N_PROBE_2 = 20   # Fine probe:   adaptive sub-domain [d_min_valid, d_hi]
+
+    def _find_bracket(d_lo, d_hi, n_pts):
+        """
+        Log-spaced probe returning the first nan→finite and sign-change
+        brackets found in [d_lo, d_hi].
+
+        Parameters
+        ----------
+        d_lo, d_hi : float
+            Search bounds (both > 0 required for log spacing).
+        n_pts : int
+            Number of probe points.
+
+        Returns
+        -------
+        nan_to_finite : tuple or None
+            (d_left, d_right) straddling the first nan→finite transition.
+        sign_change : tuple or None
+            (d_left, d_right) straddling the root (first sign change).
+        """
+        d_vals = np.logspace(np.log10(d_lo), np.log10(d_hi), n_pts)
+        y_vals = np.array([f_sigma_diff(d) for d in d_vals])
+
+        nan_to_finite = None
+        sign_change   = None
+
+        for i in range(1, n_pts):
+            fp = y_vals[i - 1]
+            fc = y_vals[i]
+            finite_p = np.isfinite(fp)
+            finite_c = np.isfinite(fc)
+
+            if not finite_p and finite_c and nan_to_finite is None:
+                nan_to_finite = (d_vals[i - 1], d_vals[i])
+
+            if finite_p and finite_c and fp * fc < 0:
+                sign_change = (d_vals[i - 1], d_vals[i])
+                break   # Monotone: first change is unique
+
+        return nan_to_finite, sign_change
+
+    def _binary_search_valid_boundary(lo, hi, n_iter=25, tol=1e-6):
+        """
+        Bisection on the nan/finite boundary of f_sigma_diff.
+
+        Converges to d_min_valid: the smallest d where f_sigma_diff is
+        finite (valid domain onset). Requires f_sigma_diff(lo) = nan and
+        f_sigma_diff(hi) = finite at entry.
+
+        Parameters
+        ----------
+        lo, hi : float   Initial bracket straddling the nan/finite edge.
+        n_iter  : int    Maximum bisection iterations.
+        tol     : float  Convergence tolerance on d [m].
+
+        Returns
+        -------
+        float   d_min_valid (hi side of converged bracket).
+        """
+        for _ in range(n_iter):
+            mid = 0.5 * (lo + hi)
+            if np.isfinite(f_sigma_diff(mid)):
+                hi = mid
+            else:
+                lo = mid
+            if hi - lo < tol:
+                break
+        return hi   # Conservative: first definitely-finite point
+
     def find_d_solution():
-        d_min = d_min_search
-        d_max = d_max_search
-        
-        # Search with reduced points
-        sign_intervals = find_sign_changes(f_sigma_diff, d_min, d_max, n=n_scan_points)
-        roots = refine_zeros(f_sigma_diff, sign_intervals)
-        
-        if debug:
-            print(f'[SEARCH] Range: [{d_min:.4f}, {d_max:.4f}] m, {n_scan_points} pts')
-            print(f'[SEARCH] Found {len(roots)} candidates')
-        
-        # Fallback to full range if needed
-        if len(roots) == 0 and np.isfinite(d_init_acad):
-            if debug:
-                print("[SEARCH] Trying full range...")
-            d_min_full = Tol_CS
-            d_max_full = RCS_ext - Tol_CS
-            sign_intervals = find_sign_changes(f_sigma_diff, d_min_full, d_max_full, n=500)
-            roots = refine_zeros(f_sigma_diff, sign_intervals)
-    
-        # Filter valid solutions
-        valid_solutions = []
-        for d_sol in roots:
-            if np.isnan(d_sol):
-                continue
-            try:
-                Sigma_CS, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = d_to_solve(d_sol)
-                if np.isfinite(Sigma_CS):
-                    valid_solutions.append((d_sol, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS))
-            except Exception:
-                continue
-    
-        if len(valid_solutions) == 0:
-            if debug:
-                print("[f_CS_D0FUS] No valid solution found.")
+
+        d_lo = Tol_CS + 1e-6   # Strict lower bound (never a valid solenoid at d→0)
+        d_hi = RCS_ext - Tol_CS
+
+        if d_lo >= d_hi:
             return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
-    
-        # Select smallest thickness
-        valid_solutions.sort(key=lambda x: x[0])
-        return valid_solutions[0]
-    
+
+        # ── Pass 1: coarse log-spaced probe ──────────────────────────────
+        nan_to_finite, sign_change = _find_bracket(d_lo, d_hi, N_PROBE_1)
+
+        if debug:
+            print(f'[SEARCH P1] d in [{d_lo:.5f}, {d_hi:.4f}] m, '
+                  f'{N_PROBE_1} pts')
+            print(f'[SEARCH P1] nan→finite: {nan_to_finite}, '
+                  f'sign-change: {sign_change}')
+
+        # ── Pass 2: adaptive refinement (only if Pass 1 insufficient) ────
+        if sign_change is None:
+
+            if nan_to_finite is None:
+                # f_sigma_diff is nan everywhere: domain is entirely infeasible
+                # (B_CS > B_max_CS for all d, or no SC operating point).
+                if debug:
+                    print("[SEARCH P2] No finite region found — design infeasible.")
+                return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+
+            # Pin d_min_valid via bisection on the nan/finite boundary.
+            d_min_valid = _binary_search_valid_boundary(
+                nan_to_finite[0], nan_to_finite[1])
+
+            if debug:
+                print(f'[SEARCH P2] d_min_valid = {d_min_valid:.6f} m  '
+                      f'(bisection from {nan_to_finite})')
+
+            # Finer log-spaced probe on the valid sub-domain.
+            # This handles the two extreme failure modes of Pass 1:
+            #   (a) Root is in a very narrow window just above d_min_valid
+            #       (ultra-thin HTS CS): log spacing from d_min_valid is
+            #       much denser than from d_lo = Tol_CS.
+            #   (b) Root is very close to d_hi (large LTS CS, nearly a
+            #       solid cylinder is excluded geometrically): the valid
+            #       domain's upper extent is well-sampled by log spacing
+            #       anchored at d_min_valid.
+            d_lo2 = d_min_valid
+            d_hi2 = d_hi
+            if d_lo2 >= d_hi2:
+                if debug:
+                    print("[SEARCH P2] d_min_valid >= d_hi: design infeasible.")
+                return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+
+            _, sign_change = _find_bracket(d_lo2, d_hi2, N_PROBE_2)
+
+            if debug:
+                print(f'[SEARCH P2] fine probe [{d_lo2:.6f}, {d_hi2:.4f}] m, '
+                      f'{N_PROBE_2} pts → sign-change: {sign_change}')
+
+            if sign_change is None:
+                # No sign change after fine probe: stress constraint cannot
+                # be satisfied within the geometrically valid domain.
+                if debug:
+                    print("[SEARCH P2] No root found — stress limit "
+                          "not reachable in valid domain.")
+                return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+
+        # ── Pass 3: brentq on the tight bracket ──────────────────────────
+        try:
+            d_sol = brentq(f_sigma_diff,
+                           sign_change[0], sign_change[1],
+                           xtol=1e-4, full_output=False)
+        except ValueError:
+            if debug:
+                print(f"[SEARCH P3] brentq failed on bracket {sign_change}.")
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+
+        # ── Recover full output at solution ───────────────────────────────
+        Sigma_CS, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = \
+            d_to_solve(d_sol)
+
+        if not np.isfinite(Sigma_CS):
+            if debug:
+                print(f"[SEARCH P3] d_to_solve nan at d_sol={d_sol:.5f} m.")
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+
+        if debug:
+            print(f"[SEARCH P3] Solution: d={d_sol:.5f} m, "
+                  f"B_CS={B_CS:.2f} T, Sigma_CS={Sigma_CS/1e6:.1f} MPa")
+
+        return d_sol, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS
+
     # Execute search
     d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = find_d_solution()
 
@@ -5028,34 +5153,6 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
         return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
     ΨCS = ΨPI + ΨRampUp + Ψplateau - ΨPF
-    
-    # ------------------------------------------------------------------
-    # Get initial guess from academic model
-    # ------------------------------------------------------------------
-    
-    d_init_acad, _, _, _, _, B_CS_init, J_init = f_CS_ACAD(
-    ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, σ_CS,
-    Supra_choice_CS, Jc_manual, T_Helium, Choice_Buck_Wedg, κ, N_sub_CS, tau_h,
-    config)
-    
-    # Determine search bounds based on initial guess
-    if np.isfinite(d_init_acad) and d_init_acad > Tol_CS:
-        # Use ±50% around academic estimate
-        d_min_search = max(Tol_CS, d_init_acad * 0.5)
-        d_max_search = min(RCS_ext - Tol_CS, d_init_acad * 1.5)
-        n_scan_points = 100  # Reduced from 1500!
-        
-        if debug:
-            print(f"[INIT] Academic model d = {d_init_acad:.4f} m")
-            print(f"[INIT] Search range: [{d_min_search:.4f}, {d_max_search:.4f}] m")
-    else:
-        # Fallback to full range
-        d_min_search = Tol_CS
-        d_max_search = RCS_ext - Tol_CS
-        n_scan_points = 500
-        
-        if debug:
-            print("[INIT] Academic model failed, using full search")
     
     # ------------------------------------------------------------------
     # Main solving function (uses CACHED cable current density)
@@ -5255,71 +5352,112 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
             return np.nan
         return Sigma_CS - σ_CS
     
-    def find_sign_changes(f, a_bound, b_bound, n):
-        x_vals = np.linspace(a_bound, b_bound, n)
-        y_vals = np.array([f(x) for x in x_vals])
-        sign_changes = []
-        for i in range(1, len(x_vals)):
-            if np.isfinite(y_vals[i-1]) and np.isfinite(y_vals[i]):
-                if y_vals[i-1] * y_vals[i] < 0:
-                    sign_changes.append((x_vals[i-1], x_vals[i]))
-        return sign_changes
-
-    def refine_zeros(f, intervals):
-        roots = []
-        for a_int, b_int in intervals:
-            try:
-                root = brentq(f, a_int, b_int)
-                roots.append(root)
-            except ValueError:
-                continue
-        return roots
-
     # ------------------------------------------------------------------
-    # Root-finding (OPTIMIZED: narrower search range)
+    # Root-finding — monotone-aware adaptive solver (see f_CS_D0FUS for
+    # full rationale and algorithm description).
     # ------------------------------------------------------------------
-    
+
+    N_PROBE_1 = 15   # Coarse probe: full domain [Tol_CS, RCS_ext - Tol_CS]
+    N_PROBE_2 = 20   # Fine probe:   adaptive sub-domain [d_min_valid, d_hi]
+
+    def _find_bracket(d_lo, d_hi, n_pts):
+        """Log-spaced probe → (nan_to_finite, sign_change) brackets."""
+        d_vals = np.logspace(np.log10(d_lo), np.log10(d_hi), n_pts)
+        y_vals = np.array([f_sigma_diff(d) for d in d_vals])
+        nan_to_finite = None
+        sign_change   = None
+        for i in range(1, n_pts):
+            fp, fc = y_vals[i - 1], y_vals[i]
+            finite_p, finite_c = np.isfinite(fp), np.isfinite(fc)
+            if not finite_p and finite_c and nan_to_finite is None:
+                nan_to_finite = (d_vals[i - 1], d_vals[i])
+            if finite_p and finite_c and fp * fc < 0:
+                sign_change = (d_vals[i - 1], d_vals[i])
+                break
+        return nan_to_finite, sign_change
+
+    def _binary_search_valid_boundary(lo, hi, n_iter=25, tol=1e-6):
+        """Bisection on the nan/finite boundary → d_min_valid."""
+        for _ in range(n_iter):
+            mid = 0.5 * (lo + hi)
+            if np.isfinite(f_sigma_diff(mid)):
+                hi = mid
+            else:
+                lo = mid
+            if hi - lo < tol:
+                break
+        return hi
+
     def find_d_solution():
-        d_min = d_min_search
-        d_max = d_max_search
-        
-        # Search with reduced points
-        sign_intervals = find_sign_changes(f_sigma_diff, d_min, d_max, n=n_scan_points)
-        roots = refine_zeros(f_sigma_diff, sign_intervals)
-        
-        if debug:
-            print(f'[SEARCH] Range: [{d_min:.4f}, {d_max:.4f}] m, {n_scan_points} pts')
-            print(f'[SEARCH] Found {len(roots)} candidates')
-        
-        # Fallback to full range if needed
-        if len(roots) == 0 and np.isfinite(d_init_acad):
-            if debug:
-                print("[SEARCH] Trying full range...")
-            d_min_full = Tol_CS
-            d_max_full = RCS_ext - Tol_CS
-            sign_intervals = find_sign_changes(f_sigma_diff, d_min_full, d_max_full, n=500)
-            roots = refine_zeros(f_sigma_diff, sign_intervals)
-    
-        # Filter valid solutions
-        valid_solutions = []
-        for d_sol in roots:
-            if np.isnan(d_sol):
-                continue
-            try:
-                Sigma_CS, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = d_to_solve(d_sol)
-                if np.isfinite(Sigma_CS):
-                    valid_solutions.append((d_sol, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS))
-            except Exception:
-                continue
-    
-        if len(valid_solutions) == 0:
-            if debug:
-                print("[f_CS_CIRCE] No valid solution found.")
+
+        d_lo = Tol_CS + 1e-6
+        d_hi = RCS_ext - Tol_CS
+
+        if d_lo >= d_hi:
             return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
-    
-        # Select smallest thickness
-        valid_solutions.sort(key=lambda x: x[0])
-        return valid_solutions[0]
+
+        # Pass 1: coarse log-spaced probe over full domain.
+        nan_to_finite, sign_change = _find_bracket(d_lo, d_hi, N_PROBE_1)
+
+        if debug:
+            print(f'[SEARCH P1] d in [{d_lo:.5f}, {d_hi:.4f}] m, '
+                  f'{N_PROBE_1} pts')
+            print(f'[SEARCH P1] nan→finite: {nan_to_finite}, '
+                  f'sign-change: {sign_change}')
+
+        # Pass 2: adaptive refinement if Pass 1 did not bracket root.
+        if sign_change is None:
+
+            if nan_to_finite is None:
+                if debug:
+                    print("[SEARCH P2] No finite region — design infeasible.")
+                return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+
+            # Pin d_min_valid and re-probe on [d_min_valid, d_hi].
+            d_min_valid = _binary_search_valid_boundary(
+                nan_to_finite[0], nan_to_finite[1])
+
+            if debug:
+                print(f'[SEARCH P2] d_min_valid = {d_min_valid:.6f} m')
+
+            d_lo2, d_hi2 = d_min_valid, d_hi
+            if d_lo2 >= d_hi2:
+                return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+
+            _, sign_change = _find_bracket(d_lo2, d_hi2, N_PROBE_2)
+
+            if debug:
+                print(f'[SEARCH P2] fine probe → sign-change: {sign_change}')
+
+            if sign_change is None:
+                if debug:
+                    print("[SEARCH P2] No root — stress limit not reachable.")
+                return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+
+        # Pass 3: brentq on the tight bracket.
+        try:
+            d_sol = brentq(f_sigma_diff,
+                           sign_change[0], sign_change[1],
+                           xtol=1e-4, full_output=False)
+        except ValueError:
+            if debug:
+                print(f"[SEARCH P3] brentq failed on bracket {sign_change}.")
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+
+        # Recover full output at solution.
+        Sigma_CS, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = \
+            d_to_solve(d_sol)
+
+        if not np.isfinite(Sigma_CS):
+            if debug:
+                print(f"[SEARCH P3] d_to_solve nan at d_sol={d_sol:.5f} m.")
+            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+
+        if debug:
+            print(f"[SEARCH P3] Solution: d={d_sol:.5f} m, "
+                  f"B_CS={B_CS:.2f} T, Sigma_CS={Sigma_CS/1e6:.1f} MPa")
+
+        return d_sol, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS
     
     # Execute search
     d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = find_d_solution()

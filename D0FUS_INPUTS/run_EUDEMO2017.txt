@@ -1,0 +1,55 @@
+# D0FUS Input Parameters — EU-DEMO 2017 Baseline
+# Reference: Coleman et al. 2025, Nucl. Fusion 65, 036039, Table 6
+# Lines starting with # are comments
+# Format: parameter_name = value
+# Parameters not listed here are left at GlobalConfig defaults.
+
+# ── Fusion Power and Geometry ─────────────────────────────────────────────────
+P_fus = 1998                    # Fusion power [MW]  (Table 6)
+R0 = 8.94                       # Major radius [m]   (Table 6)
+a = 2.884                       # Minor radius [m]   (A = 3.1 → a = R0/A = 8.94/3.1)
+b = 1.88                         # Outboard blanket + shield thickness [m]  (tBB,outboard, Table 4)
+
+# ── Plasma Shape ──────────────────────────────────────────────────────────────
+Option_Kappa = Wenninger        # Elongation model used in 2017 baseline
+
+# ── Magnetic Field ────────────────────────────────────────────────────────────
+Bmax_TF = 10.61                    # Peak field on TF conductor BT,TF [T]  (Table 6)
+
+# ── Technology Choices ────────────────────────────────────────────────────────
+Supra_choice = Nb3Sn            # Superconductor (assumed in 2017 PROCESS run)
+Radial_build_model = D0FUS
+Choice_Buck_Wedg = Wedging
+Chosen_Steel = 316L
+
+# ── Plasma Physics ────────────────────────────────────────────────────────────
+Scaling_Law = IPB98(y,2)        # Confinement scaling law  (Table 6)
+H = 1.1                         # H-factor  (Table 6)
+Tbar = 12.80                    # Volume-averaged temperature [keV]  (⟨Te⟩, Table 6)
+Greenwald_limit = 1.2           # Greenwald fraction fGW  (Table 6)
+q_limit = 3.0                   # Safety factor limit q95  (Table 6)
+L_H_Scaling_choice = Martin     # Martin scaling used in 2017 PROCESS studies
+Bootstrap_choice = Sauter       # Sauter formulae used in Coleman 2025 (section 4.1.4)
+betaN_limit = 3.0                 # From PROCESS detailed output
+r_synch = 0.6                     # From PROCESS detailed output
+
+# ── Operation Mode ────────────────────────────────────────────────────────────
+Operation_mode = Pulsed
+Temps_Plateau_input = 7200      # Flat-top duration [s]  (τ_pulse = 2.0 h, Table 6)
+P_aux_input = 50                # Auxiliary heating power [MW]  (NBI assumed in 2017)
+fatigue_CS = 2.0                # CS fatigue knockdown factor (Pulsed + Wedging)
+
+# ── Magnetic Flux Model ───────────────────────────────────────────────────────
+Ce = 0.3                        # Ejima constant  (CEjima = 0.3, Table 6)
+
+# ── Power Conversion (HCPB G1 blanket assumptions, Table E.8) ─────────────────
+eta_T = 0.375                   # Thermal-to-electric efficiency  (ηthermal HCPB G1)
+
+# ── Plasma profiles (H-mode pedestal) ────────────────────────────────────────
+Plasma_profiles = Manual        # Profile peaking: 'L', 'H', 'Advanced', 'Manual'
+# Directly taken from the PROCESS file
+nu_n_manual = 1.0
+nu_T_manual = 1.45
+rho_ped = 0.94
+n_ped_frac = 0.80
+T_ped_frac = 0.40

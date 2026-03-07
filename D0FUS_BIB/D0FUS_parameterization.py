@@ -202,13 +202,45 @@ class GlobalConfig:
     eta_T  : float = 0.40        # Thermal-to-electric conversion efficiency [-]
     eta_RF : float = 0.8 * 0.5   # RF wall-plug efficiency (klystron × plasma coupling) [-]
 
-    # ── 11. Plasma-facing components ───────────────────────────────────────────
+    # ── 11. Multi-source current drive ────────────────────────────────────────
+    CD_source   : str   = 'LHCD'   # Active CD model: 'LHCD' | 'ECCD' | 'NBCD' | 'Multi'
+
+    # --- Pulsed mode: fixed plasma power per source [MW] ---
+    # Used when Operation_mode = 'Pulsed' and CD_source = 'Multi'.
+    # P_CD_total = P_LH + P_ECRH + P_NBI + P_ICRH  (P_aux_input ignored).
+    P_LH   : float = 0.0      # LHCD plasma power [MW]
+    P_ECRH : float = 0.0      # ECRH plasma power [MW]
+    P_NBI  : float = 0.0      # NBI injected power [MW]  (5 % losses applied internally)
+    P_ICRH : float = 0.0      # ICRH plasma power [MW]   (heating only, no current drive)
+
+    # --- Steady-State mode: power fractions per source [-] ---
+    # Used when Operation_mode = 'Steady-State' and CD_source = 'Multi'.
+    # The solver determines P_CD_total from the current-drive requirement;
+    # individual powers are then P_i = (f_heat_i / Σf) * P_CD_total.
+    # Normalisation is applied internally — fractions need not sum to exactly 1.
+    # ICRH fraction contributes to heating but not to current drive (γ_ICR = 0).
+    f_heat_LH  : float = 0.25   # Heating fraction allocated to LHCD [-]
+    f_heat_EC  : float = 0.25   # Heating fraction allocated to ECCD [-]
+    f_heat_NBI : float = 0.25   # Heating fraction allocated to NBCD [-]
+    f_heat_ICR : float = 0.25   # Heating fraction allocated to ICRH [-]
+
+    # ECCD deposition and injection parameters
+    rho_EC : float = 0.3      # Normalised deposition radius [-]
+    C_EC   : float = 0.32     # Pre-factor (O-mode, tangential; calibrate vs TRAVIS/TORBEAM)
+
+    # NBCD deposition and beam parameters
+    rho_NBI    : float = 0.3      # Normalised deposition radius [-]
+    A_beam     : int   = 2        # Beam ion mass number: 1 = H, 2 = D, 3 = T
+    E_beam_keV : float = 500.0    # Beam injection energy [keV]
+    C_NBI      : float = 0.19     # Pre-factor (tangential co-injection; Cordey 1982)
+
+    # ── 12. Plasma-facing components ───────────────────────────────────────────
     theta_deg : float = 2.7      # Divertor strike-point grazing angle [deg]
     # Refs:
     #   Reiter, "Basic Fusion Boundary Plasma Physics," ITER School (2019)
     #   SOLPS-ITER simulations, J. Nucl. Mater. (2024)
 
-    # ── 12. Maintenance constraints ────────────────────────────────────────────
+    # ── 13. Maintenance constraints ────────────────────────────────────────────
     ripple_adm : float = 0.01    # Admissible toroidal field ripple [-]  (1%)
     L_min      : float = 3.6     # Minimum toroidal maintenance access width [m]
 
