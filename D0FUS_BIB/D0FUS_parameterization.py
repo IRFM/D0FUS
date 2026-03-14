@@ -77,16 +77,18 @@ class GlobalConfig:
     Parameters are grouped into:
       1. Primary scan variables     – geometry, field, power, confinement
       2. Physics & operation mode   – profiles, bootstrap, scaling laws
+      2b. Plasma geometry model     – Academic vs Miller (D0FUS) volume integrals
       3. Plasma stability limits    – beta, q, Greenwald
-      4. Plasma composition         – Zeff, mass, radiation
+      4. Plasma composition         – Zeff, mass, radiation, impurities
       5. Magnetic flux model        – Ejima constant, resistivity
       6. Structural materials       – steel properties, fatigue
       7. TF coil engineering        – stress partition, backplate
       8. Central Solenoid           – clearance, sub-modules
       9. Superconductor conditions  – temperatures, fractions, quench
-     10. Power conversion           – thermal and RF efficiencies
-     11. Plasma-facing components   – divertor geometry
-     12. Maintenance constraints    – ripple, port access
+     10. Power conversion           – thermal efficiency, blanket multiplication
+     11. Multi-source current drive – source powers, fractions, deposition radii
+     12. Plasma-facing components   – divertor geometry
+     13. Maintenance constraints    – ripple, port access
     """
 
     # ── 1. Primary scan variables ──────────────────────────────────────────────
@@ -118,6 +120,40 @@ class GlobalConfig:
     Option_Kappa       : str   = 'Wenninger'   # Elongation model: 'Wenninger', 'Stambaugh', 'Freidberg', 'Manual'
     κ_manual           : float = 1.9           # Elongation (Manual mode only) [-]
 
+    # ── 2b. Plasma geometry model ──────────────────────────────────────────────
+    # Controls how volume integrals and cross-section area elements are computed.
+    # Affects: P_fus, <nT>, W_th, I_bs, P_rad, first-wall surface area.
+    # Does NOT affect scaling-law inputs (nbar, Tbar remain volume/line averages).
+    #
+    # 'Academic' : Cylindrical-torus approximation, uniform kappa_edge.
+    #              V'(rho) = 4π²R₀a²κ_edge·ρ   →   V = 2π²R₀κa²  (Wesson)
+    #              Fast, analytical.  Consistent with PROCESS (Kovari 2014).
+    #              Valid to ~10%: elongation penetrates efficiently to the core
+    #              (κ_core ≈ κ₉₅ ≈ κ_edge/1.12) and δ enters only at 2nd order.
+    #
+    # 'D0FUS'    : Full Miller flux-surface parameterisation (Miller et al. 1998).
+    #              Radial shape profiles built with PCHIP (C¹, monotone):
+    #                κ(ρ): flat-core → κ₉₅ for ρ ≤ ρ₉₅, rising to κ_edge
+    #                δ(ρ): zero on-axis (Grad-Shafranov constraint) → δ₉₅ → δ_edge
+    #              V'(ρ) computed numerically from the Jacobian |∂(R,Z)/∂(ρ,θ)|.
+    #              Physically: core flux surfaces are more circular than the LCFS
+    #              (κ(0) ≈ 1, δ(0) = 0 exactly — Ball & Parra 2015).
+    #
+    # References:
+    #   Miller et al., Phys. Plasmas 5, 973 (1998)  — parameterisation
+    #   Ball & Parra, PPCF 57, 035006 (2015)        — κ/δ radial penetration
+    #   Fritsch & Carlson, SIAM J. Numer. Anal. 17, 238 (1980) — PCHIP
+    #   Kovari et al., Fusion Eng. Des. 89, 3054 (2014) — PROCESS reference
+    Plasma_geometry : str = 'Academic'  # 'Academic' or 'D0FUS'
+    # Note: 'D0FUS' mode requires a call to precompute_Vprime() before every
+    # volume integral.  This adds ~O(N_rho × N_theta) overhead per design point.
+    # Use 'Academic' for large parameter scans; 'D0FUS' for single-point analysis
+    # or when triangularity effects on volume (δ > 0.3) are physically relevant.
+
+    # Grid resolution for Miller numerical integration (D0FUS mode only)
+    N_rho_miller   : int = 200    # Radial grid points for V'(ρ) [-]
+    N_theta_miller : int = 200    # Poloidal grid points for V'(ρ) [-]
+
     # ── 3. Plasma stability limits ─────────────────────────────────────────────
     betaN_limit     : float = 2.8  # Troyon normalised beta limit [% m T/MA]
     q_limit         : float = 2.5  # Kink safety factor limit (q* > 2.5 → ~q95 > 3) [-]
@@ -129,6 +165,23 @@ class GlobalConfig:
     Zeff        : float = 2.0   # Effective plasma charge [-]
     r_synch     : float = 0.5   # Synchrotron radiation wall reflectivity [-]
     C_Alpha     : float = 5.0   # Helium ash dilution tuning parameter [-]
+
+    # Impurity line radiation (0D bulk-plasma estimate)
+    # impurity_species : None → line radiation disabled (pure D-T, no seeding).
+    #                    Otherwise, one of: 'W', 'Ar', 'Ne', 'C', 'N', 'Kr'.
+    # f_imp_core       : impurity concentration n_imp / n_e in the bulk plasma [-].
+    #                    Typical ranges (reactor-grade):
+    #                      W  : 1e-5 – 5e-4  (metals, erosion from PFCs)
+    #                      Ar : 1e-3 – 5e-3  (noble gas seeding, divertor radiator)
+    #                      Ne : 1e-3 – 5e-3  (noble gas seeding)
+    # Caution: for high-Z impurities (W, Kr), the bulk of line radiation
+    # originates in the cold SOL/divertor.  The 0D estimate should be
+    # interpreted as an upper bound on the core contribution only.
+    # References:
+    #   Pütterich et al., Nucl. Fusion 50 (2010) 025012
+    #   Mavrin, Rad. Eff. Def. Solids 173 (2018) 388
+    impurity_species : str = ''     # Comma-separated species: 'W', 'W, Ne', '' = none
+    f_imp_core       : str = ''     # Matching concentrations: '5e-5', '1e-5, 3e-3'
 
     # ── 5. Magnetic flux model ─────────────────────────────────────────────────
     Ce        : float = 0.30     # Ejima constant (resistive ramp-up flux) [-]
@@ -199,8 +252,25 @@ class GlobalConfig:
     Dump_resistor_subdivision: int   = 2      # TF coils per dump resistor [-]
 
     # ── 10. Power conversion ───────────────────────────────────────────────────
-    eta_T  : float = 0.40        # Thermal-to-electric conversion efficiency [-]
-    eta_RF : float = 0.8 * 0.5   # RF wall-plug efficiency (klystron × plasma coupling) [-]
+    eta_T     : float = 0.40   # Thermal-to-electric conversion efficiency [-]
+                               # (steam turbine + generator, typical 0.35–0.45)
+    M_blanket : float = 1.0    # Blanket energy multiplication factor [-]
+                               # Net thermal power: P_th = M_blanket × P_fus
+                               # Arises from exothermic ⁶Li + n reactions in the TBM.
+                               # Typical: 1.0 (conservative/no credit) to 1.3 (HCPB blanket)
+                               # Hernandez et al., Nucl. Fusion 57 (2017) 016011
+    eta_RF    : float = 0.4    # Wall-plug efficiency of heating/CD systems [-]
+                               # P_wallplug = P_CD / eta_RF
+                               # Used in f_P_elec:
+                               #   P_elec = η_T × M_blanket × P_fus − P_CD / η_RF
+                               # Typical values by source:
+                               #   LH  klystron  : 0.50–0.60
+                               #   EC  gyrotron  : 0.40–0.55
+                               #   NBI injector  : 0.25–0.40
+                               #   ICR amplifier : 0.70–0.85
+                               # Use the power-weighted average for a mixed heating scenario.
+                               # Default 0.40: conservative estimate for an EC-dominated system.
+                               # Gormezano et al. (ITER PIPB Ch. 6), NF 47 (2007) S285
 
     # ── 11. Multi-source current drive ────────────────────────────────────────
     CD_source   : str   = 'LHCD'   # Active CD model: 'LHCD' | 'ECCD' | 'NBCD' | 'Multi'

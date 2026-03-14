@@ -59,6 +59,8 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import matplotlib.lines as mlines
 import matplotlib.patches as mpatches
+import matplotlib.cm as cm
+from scipy.interpolate import PchipInterpolator
 from matplotlib.colors import Normalize
 from matplotlib.gridspec import GridSpec
 from matplotlib.ticker import MultipleLocator

@@ -1,5 +1,7 @@
 """
 D0FUS Genetic Algorithm Optimization Module
+============================================
+Adapted to the GlobalConfig / dc_replace architecture of D0FUS_run (v2).
 
 """
 
@@ -9,6 +11,7 @@ import os
 import numpy as np
 import json
 from datetime import datetime
+from dataclasses import replace as dc_replace, asdict
 
 # Plotting
 try:
@@ -30,9 +33,100 @@ except ImportError:
     sys.exit(1)
 
 # Import D0FUS modules
-from D0FUS_BIB.D0FUS_parameterization import *
-from D0FUS_EXE.D0FUS_run import run, save_run_output
 from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG
+from D0FUS_EXE.D0FUS_run import run, save_run_output
+
+# =============================================================================
+# run() return-tuple index map  (v2 — 81 outputs)
+#
+# This dictionary is the SINGLE SOURCE OF TRUTH for mapping symbolic names
+# to positional indices in the tuple returned by run().  Both
+# evaluate_individual() and debug_single_run() reference it so that a
+# change in run()'s return ordering only requires an update here.
+# =============================================================================
+_IDX = {
+    'B0':        0,
+    'B_CS':      1,
+    'B_pol':     2,
+    'tauE':      3,
+    'W_th':      4,
+    'Q':         5,
+    'Volume':    6,
+    'Surface':   7,
+    'Ip':        8,
+    'Ib':        9,
+    'I_CD':     10,
+    'I_Ohm':    11,
+    'nbar':     12,   # Volume-averaged density [10²⁰ m⁻³]
+    'nbar_line':13,   # Line-averaged density [10²⁰ m⁻³]
+    'nG':       14,   # Greenwald density limit [10²⁰ m⁻³]
+    'pbar':     15,
+    'betaN':    16,   # Normalized beta [% m T / MA]
+    'betaT':    17,   # Toroidal beta (fraction, ×100 for %)
+    'betaP':    18,
+    'qstar':    19,   # Kink safety factor
+    'q95':      20,
+    'P_CD':     21,
+    'P_sep':    22,
+    'P_Thresh': 23,
+    'eta_CD':   24,
+    'P_elec':   25,
+    'P_wallplug': 26,
+    'cost':     27,   # Machine volume proxy [m³]
+    'P_Brem':   28,
+    'P_syn':    29,
+    'P_line':   30,
+    'P_line_core': 31,
+    'heat':     32,
+    'heat_par': 33,
+    'heat_pol': 34,
+    'lambda_q': 35,
+    'q_target': 36,
+    'P_wall_H': 37,
+    'P_wall_L': 38,
+    'Gamma_n':  39,
+    'f_alpha':  40,
+    'tau_alpha': 41,
+    'J_TF':     42,
+    'J_CS':     43,
+    'c':        44,
+    'c_WP_TF':  45,
+    'c_Nose_TF':46,
+    'sigma_z_TF':   47,
+    'sigma_th_TF':  48,
+    'sigma_r_TF':   49,
+    'Steel_frac_TF':50,
+    'd':        51,
+    'sigma_z_CS':   52,
+    'sigma_th_CS':  53,
+    'sigma_r_CS':   54,
+    'Steel_frac_CS':55,
+    'B_CS_dup': 56,
+    'J_CS_dup': 57,
+    'r_minor':  58,   # R0 - a
+    'r_sep':    59,   # R0 - a - b
+    'r_c':      60,   # R0 - a - b - c
+    'r_d':      61,   # R0 - a - b - c - d  (must be > 0)
+    'kappa':    62,
+    'kappa_95': 63,
+    'delta':    64,
+    'delta_95': 65,
+    'PsiPI':    66,
+    'PsiRU':    67,
+    'PsiPlat':  68,
+    'PsiPF':    69,
+    'PsiCS':    70,
+    'eta_LH':   71,
+    'eta_EC':   72,
+    'eta_NBI':  73,
+    'P_LH':     74,
+    'P_EC':     75,
+    'P_NBI':    76,
+    'P_ICR':    77,
+    'I_LH':     78,
+    'I_EC':     79,
+    'I_NBI':    80,
+}
 
 #%% Global Variables (default values)
 opt_ranges = {}
@@ -85,32 +179,42 @@ def to_serializable(x):
 
 #%% Constraint Handling
 
-def compute_stability_penalty(nbar, nG, betaT, betaN, qstar, q_min=DEFAULT_CONFIG.q_limit,
+def compute_stability_penalty(nbar_line, nG, betaT, betaN, qstar,
+                               q_min=DEFAULT_CONFIG.q_limit,
                                penalty_strength=1000.0):
     """
     Strong exponential penalty for stability violations.
-    
-    Args:
-        nbar: Average density [10^20 m^-3]
-        nG: Greenwald density limit [10^20 m^-3]
-        betaT: Toroidal beta (fraction, not %)
-        betaN: Normalized beta limit [%]
-        qstar: Kink safety factor
-        q_min: Minimum safety factor
-        penalty_strength: Penalty multiplier
+
+    Parameters
+    ----------
+    nbar_line : float
+        Line-averaged density [10²⁰ m⁻³].  The Greenwald limit is defined
+        in line-averaged density, so nbar_line (not nbar_vol) must be used.
+    nG : float
+        Greenwald density limit [10²⁰ m⁻³].
+    betaT : float
+        Toroidal beta (fraction; multiply by 100 for %).
+    betaN : float
+        Normalized beta limit [% m T / MA].
+    qstar : float
+        Kink safety factor.
+    q_min : float
+        Minimum safety factor.
+    penalty_strength : float
+        Penalty multiplier.
     """
     violations = {}
     penalty_terms = []
     
-    # Density limit: nbar < nG
+    # Density limit: nbar_line < nG
     if nG > 0:
-        density_ratio = nbar / nG
+        density_ratio = nbar_line / nG
         if density_ratio > 1.0:
             excess = density_ratio - 1.0
             penalty = penalty_strength * (np.exp(10 * excess) - 1)
             penalty_terms.append(penalty)
             violations['density'] = {
-                'value': float(nbar), 'limit': float(nG),
+                'value': float(nbar_line), 'limit': float(nG),
                 'ratio': float(density_ratio)
             }
         elif density_ratio > 0.90:
@@ -153,73 +257,117 @@ def compute_stability_penalty(nbar, nG, betaT, betaN, qstar, q_min=DEFAULT_CONFI
     return is_stable, total_penalty, violations
 
 
-def check_radial_build(cost, R0_abcd, qstar, beta, nbar):
-    """Check radial build validity"""
-    for val in [cost, R0_abcd, qstar, beta, nbar]:
+def check_radial_build(cost, r_d, c_TF, d_CS, qstar, betaT, nbar_line):
+    """
+    Check radial build validity for a candidate design.
+
+    Parameters
+    ----------
+    cost      : float  Machine cost proxy [m³].
+    r_d       : float  Innermost radial build radius R0 - a - b - c - d [m].
+    c_TF      : float  TF inboard radial thickness [m].
+    d_CS      : float  CS radial thickness [m].
+    qstar     : float  Kink safety factor.
+    betaT     : float  Toroidal beta (fraction).
+    nbar_line : float  Line-averaged density [10²⁰ m⁻³].
+
+    Returns
+    -------
+    (bool, str or None)
+        (True, None) if the design is geometrically valid,
+        (False, reason) otherwise.
+    """
+    # All key scalars must be finite and non-negative
+    for name, val in [('cost', cost), ('r_d', r_d), ('c_TF', c_TF),
+                      ('d_CS', d_CS), ('qstar', qstar), ('betaT', betaT),
+                      ('nbar_line', nbar_line)]:
         if val is None:
-            return False, "None value"
+            return False, f"{name} is None"
         if isinstance(val, (int, float)):
             if np.isnan(val) or np.isinf(val):
-                return False, "NaN or Inf"
+                return False, f"{name} is NaN/Inf"
             if val < 0:
-                return False, f"Negative value: {val}"
+                return False, f"{name} = {val:.4g} < 0"
+
+    # TF and CS thicknesses must be physically meaningful (> 1 mm)
+    if c_TF < 1e-3:
+        return False, f"c_TF = {c_TF:.4g} m (too thin)"
+    if d_CS < 1e-3:
+        return False, f"d_CS = {d_CS:.4g} m (too thin / no CS)"
+
     return True, None
 
 #%% Fitness Evaluation
+
+def _safe_real(value):
+    """
+    Coerce a scalar to a real float, returning NaN for complex / non-finite.
+
+    Some physics functions produce complex128 when a square root receives a
+    negative argument (unphysical parameter combination).  Rather than
+    letting the TypeError propagate, we silently map these to NaN so the
+    radial-build validity check rejects the design cleanly.
+    """
+    if isinstance(value, (complex, np.complexfloating)):
+        return np.nan
+    try:
+        v = float(np.real(value))
+        return v if np.isfinite(v) else np.nan
+    except (TypeError, ValueError):
+        return np.nan
+
 
 def evaluate_individual(individual, verbose=False):
     """
     Evaluate the fitness of a single individual.
 
-    Output tuple indices (current run() return signature):
-        [0]  B0_solution        [5]  Q_solution
-        [6]  Volume_solution    [12] nbar_solution
-        [13] nG_solution        [15] betaN_solution  (Troyon limit, %*m*T/MA)
-        [16] betaT_solution     [18] qstar_solution
-        [19] q95_solution       [25] cost_solution
-        [57] R0-a-b-c-d         (innermost radial build radius, must be > 0)
-        
+    Uses the centralised ``_IDX`` map for all tuple indexing so that any
+    change in run()'s return ordering is automatically propagated.
     """
+    import warnings
+
     try:
         param_dict = {k: individual[i] for i, k in enumerate(param_keys)}
         all_params  = {**param_dict, **static_inputs}
 
+        # Build an immutable GlobalConfig, filtering out non-field keys
         config = GlobalConfig(**{k: v for k, v in all_params.items()
                                   if k in GlobalConfig.__dataclass_fields__})
-        output = run(config)
 
-        # --- Extract outputs (indices verified against run() return tuple) ---
-        cost    = output[25]   # cost_solution          (machine volume proxy)
-        nbar    = output[12]   # nbar_solution          [10^20 m^-3]
-        nG      = output[13]   # nG_solution            [10^20 m^-3]
-        betaN   = output[15]   # betaN_solution         [% m T / MA] Troyon limit
-        betaT   = output[16]   # betaT_solution         (fraction, multiply by 100 for %)
-        qstar   = output[18]   # qstar_solution         (Shafranov cylindrical safety factor)
-        # BUGFIX: was output[38] = J_max_TF_conducteur; correct index is 57
-        R0_abcd = output[57]   # R0 - a - b - c - d    [m] (must be > 0 for valid build)
+        # Suppress numpy warnings: unphysical parameter combinations
+        # routinely produce sqrt(negative), 0/0, overflow — all expected.
+        with np.errstate(all='ignore'), warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            output = run(config, verbose=0)
 
-        # --- Radial build validity check -------------------------------------
-        is_valid, reason = check_radial_build(cost, R0_abcd, qstar, betaT, nbar)
+        # ── Guard against any residual non-finite output ─────────────────
+        cost      = _safe_real(output[_IDX['cost']])
+        nbar_line = _safe_real(output[_IDX['nbar_line']])
+        nG        = _safe_real(output[_IDX['nG']])
+        betaN     = _safe_real(output[_IDX['betaN']])
+        betaT     = _safe_real(output[_IDX['betaT']])
+        qstar     = _safe_real(output[_IDX['qstar']])
+        R0_abcd   = _safe_real(output[_IDX['r_d']])
+        c_TF      = _safe_real(output[_IDX['c']])
+        d_CS      = _safe_real(output[_IDX['d']])
+
+        # ── Radial build validity check ──────────────────────────────────
+        is_valid, reason = check_radial_build(
+            cost, R0_abcd, c_TF, d_CS, qstar, betaT, nbar_line)
         if not is_valid:
-            if verbose:
-                print(f"    [INVALID] {reason} | params={param_dict}")
             return (PENALTY_VALUE,)
 
-        # --- Stability penalty -----------------------------------------------
+        # ── Stability penalty ────────────────────────────────────────────
         q_lim = static_inputs.get('q_limit', DEFAULT_CONFIG.q_limit)
         is_stable, penalty_multiplier, violations = compute_stability_penalty(
-            nbar, nG, betaT, betaN, qstar, q_min=q_lim, penalty_strength=1000.0
+            nbar_line, nG, betaT, betaN, qstar,
+            q_min=q_lim, penalty_strength=1000.0
         )
 
         fitness = cost * penalty_multiplier
         return (fitness,)
 
-    except Exception as e:
-        # Print exception details to help diagnose convergence failures
-        if verbose:
-            import traceback
-            print(f"    [EXCEPTION in evaluate_individual] {type(e).__name__}: {e}")
-            traceback.print_exc()
+    except Exception:
         return (PENALTY_VALUE,)
 
 #%% I/O Management
@@ -241,7 +389,9 @@ def load_input_file(input_file):
     
     opt_ranges = {}
     static_inputs = {}
-    defaults = DEFAULT_CONFIG
+
+    # Use asdict to iterate over DEFAULT_CONFIG fields cleanly
+    default_dict = asdict(DEFAULT_CONFIG)
     
     with open(input_file, "r", encoding='utf-8') as f:
         for line_num, line in enumerate(f, 1):
@@ -275,20 +425,18 @@ def load_input_file(input_file):
                     static_inputs[key] = float(value)
                 except ValueError:
                     static_inputs[key] = value
-    
-    # Fill defaults (filter out methods)
-    for attr in dir(defaults):
-        if attr.startswith('_') or attr in opt_ranges or attr in static_inputs:
-            continue
-        default_val = getattr(defaults, attr)
-        if callable(default_val):
+
+    # Fill defaults from GlobalConfig dataclass fields
+    for field_name, default_val in default_dict.items():
+        if field_name in opt_ranges or field_name in static_inputs:
             continue
         if isinstance(default_val, (int, float, str, bool)):
-            static_inputs[attr] = default_val
+            static_inputs[field_name] = default_val
         elif isinstance(default_val, np.ndarray):
-            static_inputs[attr] = default_val.tolist()
+            static_inputs[field_name] = default_val.tolist()
         elif isinstance(default_val, (list, tuple)):
-            static_inputs[attr] = list(default_val)
+            static_inputs[field_name] = list(default_val)
+        # Skip None and other non-serializable types
     
     param_keys = list(opt_ranges.keys())
     
@@ -437,6 +585,20 @@ def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
     fitnesses = list(map(toolbox.evaluate, pop))
     for ind, fit in zip(pop, fitnesses):
         ind.fitness.values = fit
+
+    # ── Diagnostic: abort early if entire initial population is invalid ───
+    n_init_valid = sum(1 for f in fitnesses if f[0] < PENALTY_VALUE / 2)
+    if n_init_valid == 0:
+        print(f"\n  *** WARNING: 0 / {pop_size} initial designs are valid! ***")
+        print(f"  The parameter ranges likely produce unphysical configurations")
+        print(f"  (complex-valued sqrt, negative radial build, etc.).")
+        print(f"  Suggestions:")
+        print(f"    1. Narrow the optimisation ranges (especially R0, a, Bmax_TF)")
+        print(f"    2. Run debug_single_run() with a known-good parameter set")
+        print(f"    3. Check that static_inputs in the input file are consistent")
+        print(f"  Attempting to continue with diversity injection...\n")
+    elif verbose:
+        print(f"  Initial population: {n_init_valid}/{pop_size} valid designs")
     
     hof.update(pop)
     record = stats.compile(pop)
@@ -631,35 +793,54 @@ def run_genetic_optimization(input_file,
     for key, value in best_params.items():
         print(f"    {key}: {value:.6f}")
     
-    # Get full output for best design
+    # ── Full output for best design ──────────────────────────────────────
     all_params = {**best_params, **static_inputs}
     
     config = GlobalConfig(**{k: v for k, v in all_params.items()
                          if k in GlobalConfig.__dataclass_fields__})
-    final_output = run(config)
+    final_output = run(config, verbose=0)
     
-    # Check stability
-    nbar, nG = final_output[12], final_output[13]
-    betaN, betaT = final_output[15], final_output[16]
-    qstar = final_output[18]
-    cost = final_output[25]
-    
-    is_stable, _, violations = compute_stability_penalty(nbar, nG, betaT, betaN, qstar)
+    # Extract key metrics via centralised index map
+    nbar_line = final_output[_IDX['nbar_line']]
+    nG        = final_output[_IDX['nG']]
+    betaN     = final_output[_IDX['betaN']]
+    betaT     = final_output[_IDX['betaT']]
+    qstar     = final_output[_IDX['qstar']]
+    cost      = final_output[_IDX['cost']]
+    Q         = final_output[_IDX['Q']]
+    P_elec    = final_output[_IDX['P_elec']]
+    c_TF      = final_output[_IDX['c']]
+    d_CS      = final_output[_IDX['d']]
+    r_d       = final_output[_IDX['r_d']]
+    Ip        = final_output[_IDX['Ip']]
+
+    # Check stability (using line-averaged density for Greenwald comparison)
+    is_stable, _, violations = compute_stability_penalty(nbar_line, nG, betaT, betaN, qstar)
     
     # betaT is fraction, convert to % for display
     betaT_percent = betaT * 100
     
     print(f"\n Best design metrics:")
     print(f"    Cost: {cost:.4f}")
-    print(f"    Q factor: {final_output[5]:.2f}")
-    print(f"    P_elec: {final_output[24]:.1f} MW")
-    print(f"    n/nG: {nbar/nG:.3f} ({(1-nbar/nG)*100:+.1f}% margin)")
+    print(f"    Q factor: {Q:.2f}")
+    print(f"    Ip: {Ip:.2f} MA")
+    print(f"    P_elec: {P_elec:.1f} MW")
+    print(f"    n_line/nG: {nbar_line/nG:.3f} ({(1-nbar_line/nG)*100:+.1f}% margin)")
     print(f"    betaT/betaN: {betaT_percent/betaN:.3f} ({(1-betaT_percent/betaN)*100:+.1f}% margin)")
     q_lim = static_inputs.get('q_limit', DEFAULT_CONFIG.q_limit)
     print(f"    q*/q_limit: {qstar/q_lim:.3f} ({(qstar/q_lim-1)*100:+.1f}% margin)")
+    print(f"    c_TF: {c_TF:.3f} m   d_CS: {d_CS:.3f} m   r_d: {r_d:.3f} m")
+
+    # Radial build sanity check on final design
+    _rb_ok, _rb_reason = check_radial_build(
+        cost, r_d, c_TF, d_CS, qstar, betaT, nbar_line)
+    if not _rb_ok:
+        print(f"\n  WARNING: Best design fails radial build check: {_rb_reason}")
     
-    if is_stable:
-        print("\n STABLE design found!")
+    if is_stable and _rb_ok:
+        print("\n STABLE + BUILDABLE design found!")
+    elif is_stable:
+        print("\n STABLE but NOT BUILDABLE design")
     else:
         print("\n WARNING: Design violates constraints:")
         for name, details in violations.items():
@@ -672,10 +853,7 @@ def run_genetic_optimization(input_file,
     plot_convergence(logbook, plot_path)
     
     # 2. Use D0FUS save_run_output for complete design documentation
-    # Create a Parameters object with the best values
     save_run_output(config, final_output, current_run_directory, None)
-    
-    # NOTE: duplicate save_run_output(p, ...) removed — 'p' was undefined (bug)
     
     # 3. Save optimization summary JSON
     summary = {
@@ -690,10 +868,16 @@ def run_genetic_optimization(input_file,
         "optimized_parameters": {k: to_serializable(v) for k, v in best_params.items()},
         "best_fitness": to_serializable(best.fitness.values[0]),
         "is_stable": is_stable,
+        "is_buildable": _rb_ok,
         "stability_margins": {
-            "n_over_nG": to_serializable(nbar/nG),
-            "qstar_over_2": to_serializable(qstar/2),
+            "n_line_over_nG": to_serializable(nbar_line/nG),
+            "qstar_over_qlim": to_serializable(qstar/q_lim),
             "betaT_over_betaN": to_serializable(betaT_percent/betaN) if betaN > 0 else None
+        },
+        "radial_build": {
+            "c_TF_m": to_serializable(c_TF),
+            "d_CS_m": to_serializable(d_CS),
+            "r_d_m":  to_serializable(r_d),
         },
         "hall_of_fame": [
             {
@@ -737,13 +921,15 @@ def debug_single_run(a=2.0, R0=6.0, Bmax_TF=12.0, Tbar=15.0):
         config = GlobalConfig(**{k: v for k, v in all_params.items()
                                   if k in GlobalConfig.__dataclass_fields__})
         print("GlobalConfig created successfully.")
-        output = run(config)
+        output = run(config, verbose=0)
         print(f"run() returned {len(output)} values.")
-        idx_map = [(0,'B0'),(5,'Q'),(6,'Volume'),(12,'nbar'),(13,'nG'),
-                   (15,'betaN'),(16,'betaT'),(18,'qstar'),(19,'q95'),
-                   (25,'cost'),(38,'J_TF'),(57,'R0-a-b-c-d')]
-        for idx, name in idx_map:
-            print(f"  output[{idx:2d}] {name:15s} = {output[idx]}")
+
+        # Use the centralised index map for diagnostic output
+        diag_keys = ['B0', 'Q', 'Volume', 'nbar', 'nbar_line', 'nG',
+                     'betaN', 'betaT', 'qstar', 'q95', 'cost', 'J_TF', 'r_d']
+        for key in diag_keys:
+            idx = _IDX[key]
+            print(f"  output[{idx:2d}] {key:15s} = {output[idx]}")
     except Exception as e:
         print(f"EXCEPTION: {type(e).__name__}: {e}")
         traceback.print_exc()

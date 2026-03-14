@@ -1,13 +1,16 @@
 """
 D0FUS Scan Module
-Generates 2D parameter space maps with full visualization
-Supports scanning any 2 parameters dynamically
-Allows user to choose any two output parameters for iso-contours visualization
+=================
+Generates 2D parameter space maps with full visualization.
+Supports scanning any 2 parameters dynamically.
+Allows user to choose any two output parameters for iso-contours visualization.
 
+Adapted to the GlobalConfig / dc_replace architecture of D0FUS_run (v2).
 """
 #%% Imports
 import sys
 import os
+from dataclasses import replace as dc_replace, asdict
 
 # Add parent directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -16,7 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from D0FUS_BIB.D0FUS_parameterization import *
 from D0FUS_BIB.D0FUS_radial_build_functions import *
 from D0FUS_BIB.D0FUS_physical_functions import *
-from D0FUS_EXE.D0FUS_run import run
+from D0FUS_EXE.D0FUS_run import run, load_config_from_file
 from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG
 
 #%% Output Parameter Registry
@@ -784,21 +787,31 @@ def get_input_parameter_unit(param_name):
 
 #%% Core Scan Function
 
-def generic_2D_scan(scan_params, fixed_params, params_obj):
+def generic_2D_scan(scan_params, fixed_params, base_config):
     """
     Perform generic 2D scan over any two parameters.
-    
-    Args:
-        scan_params: list of 2 tuples (name, min, max, n_points)
-        fixed_params: dict of fixed parameter values
-        params_obj: Parameters object to update
-    
-    Returns:
-        outputs: ScanOutputs object containing all result matrices
-        param1_values: array of first parameter values
-        param2_values: array of second parameter values
-        param1_name: name of first scan parameter
-        param2_name: name of second scan parameter
+
+    Uses ``dataclasses.replace`` to build an immutable GlobalConfig for each
+    grid point, consistent with the new D0FUS_run architecture.
+
+    Parameters
+    ----------
+    scan_params : list of tuple
+        Two entries of (name, min, max, n_points).
+    fixed_params : dict
+        Non-scanned parameter overrides parsed from the input file.
+    base_config : GlobalConfig
+        Base configuration from which each grid point is derived via
+        ``dc_replace``.
+
+    Returns
+    -------
+    outputs : ScanOutputs
+        Container with all 2D result matrices.
+    param1_values, param2_values : ndarray
+        Scanned parameter grids.
+    param1_name, param2_name : str
+        Names of the two scanned parameters.
     """
     
     # Extract scan parameters
@@ -815,34 +828,121 @@ def generic_2D_scan(scan_params, fixed_params, params_obj):
     
     # Initialize outputs container
     outputs = ScanOutputs(shape=(param1_n, param2_n))
-    
-    # Apply fixed parameters to params_obj
-    for param_name, param_value in fixed_params.items():
-        if hasattr(params_obj, param_name):
-            setattr(params_obj, param_name, param_value)
+
+    # ── Build a single base config with all fixed overrides applied once ──
+    fixed_overrides = {k: v for k, v in fixed_params.items()
+                       if k in GlobalConfig.__dataclass_fields__}
+    base = dc_replace(base_config, **fixed_overrides) if fixed_overrides else base_config
     
     # Scanning loop
     for y, param1_val in enumerate(tqdm(param1_values, desc=f'Scanning {param1_name}')):
         for x, param2_val in enumerate(param2_values):
-            
-            # Set scan parameter values
-            setattr(params_obj, param1_name, param1_val)
-            setattr(params_obj, param2_name, param2_val)
-            
+
+            # ── Build per-point config via dc_replace (immutable) ─────────
+            point_overrides = {param1_name: param1_val,
+                               param2_name: param2_val}
+            config = dc_replace(base, **point_overrides)
+
             try:
-                # Run calculation
-                results = run(params_obj)
+                # Run calculation (silent: verbose=0 to avoid flooding output)
+                results = run(config, verbose=0)
                 
-                # Unpack results
+                # ===========================================================
+                # Unpack the full run() return tuple (v2 — 81 outputs)
+                #
+                # Index  Variable                     Note
+                # -----  --------                     ----
+                #   0    B0                            On-axis toroidal field [T]
+                #   1    B_CS                          Central solenoid peak field [T]
+                #   2    B_pol                         Poloidal field at LCFS [T]
+                #   3    tauE                          Energy confinement time [s]
+                #   4    W_th                          Thermal stored energy [J]
+                #   5    Q                             Fusion gain
+                #   6    Volume                        Plasma volume [m³]
+                #   7    Surface                       First wall surface [m²]
+                #   8    Ip                            Plasma current [MA]
+                #   9    Ib                            Bootstrap current [MA]
+                #  10    I_CD                          Current drive current [MA]
+                #  11    I_Ohm                         Ohmic current [MA]
+                #  12    nbar                          Volume-averaged density [10²⁰ m⁻³]
+                #  13    nbar_line                     Line-averaged density [10²⁰ m⁻³]
+                #  14    nG                            Greenwald density limit [10²⁰ m⁻³]
+                #  15    pbar                          Volume-averaged pressure [MPa]
+                #  16    betaN                         Normalized beta [% m T / MA]
+                #  17    betaT                         Toroidal beta (fraction)
+                #  18    betaP                         Poloidal beta
+                #  19    qstar                         Kink safety factor
+                #  20    q95                           Safety factor at 95% flux
+                #  21    P_CD                          Current drive + heating power [MW]
+                #  22    P_sep                         Power across separatrix [MW]
+                #  23    P_Thresh                      L-H threshold power [MW]
+                #  24    eta_CD                        Effective CD efficiency [10²⁰ A/W/m²]
+                #  25    P_elec                        Net electric power [MW]
+                #  26    P_wallplug                    Wall-plug CD power [MW]
+                #  27    cost                          Machine cost proxy [m³]
+                #  28    P_Brem                        Bremsstrahlung power [MW]
+                #  29    P_syn                         Synchrotron power [MW]
+                #  30    P_line                        Total line radiation [MW]
+                #  31    P_line_core                   Core line radiation [MW]
+                #  32    heat                          P_sep/R0 [MW/m]
+                #  33    heat_par                      P_sep·B0/R0 [MW·T/m]
+                #  34    heat_pol                      P_sep·B0/(q95·R0·A) [MW·T/m]
+                #  35    lambda_q                      Eich SOL width [m]
+                #  36    q_target                      Peak divertor heat flux [MW/m²]
+                #  37    P_wall_H                      First-wall load H-mode [MW/m²]
+                #  38    P_wall_L                      First-wall load L-mode [MW/m²]
+                #  39    Gamma_n                       Neutron wall loading [MW/m²]
+                #  40    f_alpha                       Helium ash fraction
+                #  41    tau_alpha                     Alpha confinement time [s]
+                #  42    J_TF                          TF cable current density [A/m²]
+                #  43    J_CS_1                        CS cable current density [A/m²]
+                #  44    c_TF                          TF inboard thickness [m]
+                #  45    c_WP_TF                       TF winding pack thickness [m]
+                #  46    c_Nose_TF                     TF nose thickness [m]
+                #  47    σ_z_TF                        TF axial stress [MPa]
+                #  48    σ_theta_TF                    TF hoop stress [MPa]
+                #  49    σ_r_TF                        TF radial stress [MPa]
+                #  50    Steel_fraction_TF             TF steel fraction
+                #  51    d_CS                          CS radial thickness [m]
+                #  52    σ_z_CS                        CS axial stress [MPa]
+                #  53    σ_theta_CS                    CS hoop stress [MPa]
+                #  54    σ_r_CS                        CS radial stress [MPa]
+                #  55    Steel_fraction_CS             CS steel fraction
+                #  56    B_CS_out                      CS field (duplicate) [T]
+                #  57    J_CS_out                      CS J (duplicate) [A/m²]
+                #  58    r_minor    = R0 - a           [m]
+                #  59    r_sep      = R0 - a - b       [m]
+                #  60    r_c        = R0 - a - b - c   [m]
+                #  61    r_d        = R0 - a - b - c - d  [m]
+                #  62    κ                             LCFS elongation
+                #  63    κ_95                          Elongation at 95% flux
+                #  64    δ                             LCFS triangularity
+                #  65    δ_95                          Triangularity at 95% flux
+                #  66    ΨPI                           Breakdown flux [Wb]
+                #  67    ΨRampUp                       Ramp-up flux [Wb]
+                #  68    Ψplateau                      Flat-top flux [Wb]
+                #  69    ΨPF                           PF coil flux [Wb]
+                #  70    ΨCS                           CS total flux swing [Wb]
+                #  71    eta_LH                        LH CD efficiency
+                #  72    eta_EC                        EC CD efficiency
+                #  73    eta_NBI                       NBI CD efficiency
+                #  74    P_LH                          LH power [MW]
+                #  75    P_EC                          EC power [MW]
+                #  76    P_NBI                         NBI power [MW]
+                #  77    P_ICR                         ICRH power [MW]
+                #  78    I_LH                          LH driven current [MA]
+                #  79    I_EC                          EC driven current [MA]
+                #  80    I_NBI                         NBI driven current [MA]
+                # ===========================================================
                 (B0, B_CS, B_pol,
                  tauE, W_th,
                  Q, Volume, Surface,
                  Ip, Ib, I_CD, I_Ohm,
-                 nbar, nG, pbar,
+                 nbar, nbar_line, nG, pbar,
                  betaN, betaT, betaP,
                  qstar, q95,
-                 P_CD, P_sep, P_Thresh, eta_CD, P_elec,
-                 cost, P_Brem, P_syn,
+                 P_CD, P_sep, P_Thresh, eta_CD, P_elec, P_wallplug,
+                 cost, P_Brem, P_syn, P_line, P_line_core,
                  heat, heat_par, heat_pol, lambda_q, q_target,
                  P_wall_H, P_wall_L,
                  Gamma_n,
@@ -852,15 +952,20 @@ def generic_2D_scan(scan_params, fixed_params, params_obj):
                  d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS_out, J_CS_out,
                  r_minor, r_sep, r_c, r_d,
                  κ, κ_95, δ, δ_95,
-                 ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS) = results
+                 ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS,
+                 eta_LH, eta_EC, eta_NBI,
+                 P_LH, P_EC, P_NBI, P_ICR,
+                 I_LH, I_EC, I_NBI) = results
                 
-                # Calculate plasma limit conditions
-                betaN_limit_value = params_obj.betaN_limit
-                q_limit_value     = params_obj.q_limit
-                
-                n_condition = nbar / nG
+                # ── Plasma stability limits ──────────────────────────────
+                betaN_limit_value = config.betaN_limit
+                q_limit_value     = config.q_limit
+
+                # Greenwald limit is defined in line-averaged density:
+                # n_condition must compare nbar_line (not nbar_vol) to n_G.
+                n_condition    = nbar_line / nG      if nG > 0       else np.nan
                 beta_condition = betaN / betaN_limit_value
-                q_condition = q_limit_value / qstar
+                q_condition    = q_limit_value / qstar
                 
                 max_limit = max(n_condition, beta_condition, q_condition)
                 
@@ -868,13 +973,13 @@ def generic_2D_scan(scan_params, fixed_params, params_obj):
                 outputs.set_point(y, x,
                     # Performance
                     Q=Q,
-                    P_fus=params_obj.P_fus,
+                    P_fus=config.P_fus,
                     P_elec=P_elec,
                     Cost=cost,
                     
                     # Plasma parameters
                     Ip=Ip,
-                    n=nbar,
+                    n=nbar_line,       # Line-averaged density (consistent with label)
                     beta_N=betaN,
                     beta_T=betaT,
                     beta_P=betaP,
@@ -902,7 +1007,7 @@ def generic_2D_scan(scan_params, fixed_params, params_obj):
                     P_Brem=P_Brem,
                     P_syn=P_syn,
                     q_target=q_target,
-                    lambda_q=lambda_q * 1000 if lambda_q else np.nan,  # Convert to mm
+                    lambda_q=lambda_q * 1000 if lambda_q else np.nan,  # Convert m → mm
                     
                     # Geometry
                     c=r_sep - r_c if not np.isnan(r_c) else np.nan,
@@ -913,7 +1018,7 @@ def generic_2D_scan(scan_params, fixed_params, params_obj):
                     delta=δ,
                     Volume=Volume,
                     Surface=Surface,
-                    A=params_obj.R0 / params_obj.a if params_obj.a > 0 else np.nan,
+                    A=config.R0 / config.a if config.a > 0 else np.nan,
                     
                     # Structural
                     sigma_TF=max(abs(σ_z_TF), abs(σ_theta_TF), abs(σ_r_TF)) if σ_z_TF else np.nan,
@@ -935,7 +1040,7 @@ def generic_2D_scan(scan_params, fixed_params, params_obj):
                 
                 # Check radial build validity
                 if not np.isnan(r_d) and max_limit < 1 and r_d > 0:
-                    outputs['radial_build'][y, x] = params_obj.R0
+                    outputs['radial_build'][y, x] = config.R0
                 else:
                     outputs['radial_build'][y, x] = np.nan
                 
@@ -1036,24 +1141,26 @@ def plot_generic_contours(ax, matrix, param_key,
 
 
 def plot_scan_results(outputs, param1_values, param2_values,
-                      param1_name, param2_name, params, output_dir,
+                      param1_name, param2_name, config, output_dir,
                       iso_param_1=None, iso_param_2=None):
     """
     Generate scan visualization with two user-selectable iso-contour parameters.
-    
-    Args:
-        outputs: ScanOutputs object with all result matrices
-        param1_values: Array of first scan parameter values (Y-axis)
-        param2_values: Array of second scan parameter values (X-axis)
-        param1_name: Name of first scan parameter
-        param2_name: Name of second scan parameter
-        params: Parameters object (for reference values)
-        output_dir: Output directory (unused, kept for compatibility)
-        iso_param_1: Pre-selected first iso-contour parameter (black lines, optional)
-        iso_param_2: Pre-selected second iso-contour parameter (white lines, optional)
-    
-    Returns:
-        fig, ax, iso_param_1, iso_param_2
+
+    Parameters
+    ----------
+    outputs       : ScanOutputs   All result matrices.
+    param1_values : ndarray       First scan parameter grid (Y-axis).
+    param2_values : ndarray       Second scan parameter grid (X-axis).
+    param1_name   : str           Name of first scan parameter.
+    param2_name   : str           Name of second scan parameter.
+    config        : GlobalConfig  Reference configuration (for default values).
+    output_dir    : str or None   Unused, kept for API compatibility.
+    iso_param_1   : str or None   Pre-selected first iso-contour parameter.
+    iso_param_2   : str or None   Pre-selected second iso-contour parameter.
+
+    Returns
+    -------
+    fig, ax, iso_param_1, iso_param_2
     """
     
     # Get units for scan parameters
@@ -1218,13 +1325,19 @@ def plot_scan_results(outputs, param1_values, param2_values,
 #%% Save Results
 
 def save_scan_results(fig, outputs, param1_values, param2_values,
-                     param1_name, param2_name, params, output_dir,
+                     param1_name, param2_name, config, output_dir,
                      iso_param_1, iso_param_2, input_file_path=None):
     """
     Save scan results to timestamped directory.
-    
-    Returns:
-        Path to output directory
+
+    Parameters
+    ----------
+    config : GlobalConfig
+        Reference configuration (used to dump fixed parameters).
+
+    Returns
+    -------
+    str : Path to output directory.
     """
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1238,8 +1351,9 @@ def save_scan_results(fig, outputs, param1_values, param2_values,
         input_copy = os.path.join(output_path, "scan_parameters.txt")
         shutil.copy2(input_file_path, input_copy)
     else:
-        # Generate input file from parameters
+        # Generate input file from configuration
         input_copy = os.path.join(output_path, "scan_parameters.txt")
+        config_dict = asdict(config)
         with open(input_copy, "w", encoding='utf-8') as f:
             f.write("# D0FUS Scan Parameters\n")
             f.write(f"# Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
@@ -1247,8 +1361,8 @@ def save_scan_results(fig, outputs, param1_values, param2_values,
             f.write(f"{param1_name} = [{param1_values[0]:.2f}, {param1_values[-1]:.2f}, {len(param1_values)}]\n")
             f.write(f"{param2_name} = [{param2_values[0]:.2f}, {param2_values[-1]:.2f}, {len(param2_values)}]\n")
             f.write("\n# Fixed parameters:\n")
-            for key, value in vars(params).items():
-                if key not in [param1_name, param2_name]:
+            for key, value in config_dict.items():
+                if key not in (param1_name, param2_name):
                     f.write(f"{key} = {value}\n")
             f.write(f"\n# Visualization:\n")
             f.write(f"iso_param_1 = {iso_param_1}  # Black dashed lines\n")
@@ -1281,16 +1395,14 @@ def main(input_file=None, auto_plot=False,
          iso_param_1=None, iso_param_2=None):
     """
     Main execution function for scans.
-    
-    Args:
-        input_file: Path to input file (optional)
-        auto_plot: If True, use provided iso_param_1 and iso_param_2 without asking
-        iso_param_1: First iso-contour parameter - black lines (if auto_plot=True)
-        iso_param_2: Second iso-contour parameter - white lines (if auto_plot=True)
+
+    Parameters
+    ----------
+    input_file   : str or None   Path to input file.
+    auto_plot    : bool           If True, use provided iso parameters without prompting.
+    iso_param_1  : str or None    First iso-contour parameter (black lines).
+    iso_param_2  : str or None    Second iso-contour parameter (white lines).
     """
-    
-    # Load parameters
-    p = GlobalConfig()
     
     input_file_path = input_file
     
@@ -1305,8 +1417,13 @@ def main(input_file=None, auto_plot=False,
         raise FileNotFoundError(f"Input file not found: {input_file}")
     
     print(f"\nLoading parameters from: {input_file}")
+
+    # ── Build base config from fixed parameters in the input file ────────
+    # load_config_from_file skips bracketed scan declarations and returns a
+    # GlobalConfig with only the scalar overrides applied.
+    base_config = load_config_from_file(input_file, verbose=2)
     
-    # Load scan and fixed parameters
+    # Load scan and fixed parameters (for grid definition and display)
     scan_params, fixed_params = load_scan_parameters(input_file)
     
     # Print scan configuration
@@ -1328,19 +1445,19 @@ def main(input_file=None, auto_plot=False,
     try:
         # Perform scan
         outputs, param1_values, param2_values, param1_name, param2_name = generic_2D_scan(
-            scan_params, fixed_params, p
+            scan_params, fixed_params, base_config
         )
         
         # Plot results
         if auto_plot and iso_param_1 and iso_param_2:
             fig, ax, iso_used_1, iso_used_2 = plot_scan_results(
                 outputs, param1_values, param2_values, param1_name, param2_name,
-                p, None, iso_param_1, iso_param_2
+                base_config, None, iso_param_1, iso_param_2
             )
         else:
             fig, ax, iso_used_1, iso_used_2 = plot_scan_results(
                 outputs, param1_values, param2_values, param1_name, param2_name,
-                p, None
+                base_config, None
             )
         
         # Save results
@@ -1348,7 +1465,7 @@ def main(input_file=None, auto_plot=False,
         os.makedirs(output_dir, exist_ok=True)
         output_path = save_scan_results(
             fig, outputs, param1_values, param2_values, param1_name, param2_name,
-            p, output_dir, iso_used_1, iso_used_2, input_file_path
+            base_config, output_dir, iso_used_1, iso_used_2, input_file_path
         )
         
         plt.show()

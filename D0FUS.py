@@ -293,7 +293,7 @@ def execute_with_mode_detection(input_file):
         print("\n" + "="*60)
         print("Mode: RUN (default parameters)")
         print("="*60 + "\n")
-        D0FUS_run.main(None)
+        D0FUS_run.main(None, save_figures=True)
         return
     
     # Detect mode from input file
@@ -306,7 +306,7 @@ def execute_with_mode_detection(input_file):
             print("Mode: RUN (single point calculation)")
             print(f"Input: {os.path.basename(input_file)}")
             print("="*60 + "\n")
-            D0FUS_run.main(input_file)
+            D0FUS_run.main(input_file, save_figures=True)
         
         elif mode == 'scan':
             # SCAN mode detected
