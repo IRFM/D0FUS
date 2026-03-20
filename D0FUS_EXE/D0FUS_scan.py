@@ -1313,119 +1313,6 @@ def get_input_parameter_range(param_name):
     return None
 
 
-# ─── Nice tick candidates for automatic step selection ────────────────────────
-_NICE_STEPS = np.array([
-    0.001, 0.002, 0.005,
-    0.01, 0.02, 0.05,
-    0.1, 0.2, 0.25, 0.5,
-    1, 2, 2.5, 5,
-    10, 20, 25, 50,
-    100, 200, 250, 500,
-    1000, 2000, 2500, 5000,
-    10000, 20000, 50000,
-])
-
-
-def _auto_nice_step(data_range, target_nticks=8):
-    """
-    Choose a 'nice' tick step yielding ~target_nticks ticks.
-
-    Parameters
-    ----------
-    data_range : float
-        Total span of the axis (max - min).
-    target_nticks : int
-        Desired number of ticks (default 8).
-
-    Returns
-    -------
-    float
-        Rounded tick step from the _NICE_STEPS table.
-    """
-    raw = data_range / max(target_nticks, 1)
-    idx = np.argmin(np.abs(_NICE_STEPS - raw))
-    return _NICE_STEPS[idx]
-
-
-def compute_physical_ticks(param_values, param_name):
-    """
-    Compute axis tick positions and labels aligned to physically round values.
-
-    If *param_name* has a registered ``tick_step`` in INPUT_PARAMETER_REGISTRY
-    the ticks are placed at exact multiples of that step.  Otherwise an
-    automatic nice step is chosen from the data range.
-
-    Parameters
-    ----------
-    param_values : ndarray
-        1-D array of scanned physical values (monotonically increasing).
-    param_name : str
-        Name of the scanned parameter (key in INPUT_PARAMETER_REGISTRY).
-
-    Returns
-    -------
-    tick_indices : ndarray of int
-        Array indices into *param_values* closest to the round tick values.
-    tick_labels : list of str
-        Formatted label strings for each tick.
-    """
-    v_min, v_max = param_values[0], param_values[-1]
-    data_range = v_max - v_min
-    if data_range == 0:
-        return np.array([0]), [f"{v_min}"]
-
-    # --- Determine physical tick step ----------------------------------------
-    entry = INPUT_PARAMETER_REGISTRY.get(param_name)
-    if entry is not None and entry.tick_step is not None:
-        step = entry.tick_step
-    else:
-        step = _auto_nice_step(data_range)
-
-    # --- Generate round tick values spanning the data range -------------------
-    first_tick = np.ceil(v_min / step) * step
-    tick_values = np.arange(first_tick, v_max + step * 0.01, step)
-    # Keep only values within the data range (small tolerance)
-    tick_values = tick_values[(tick_values >= v_min - step * 0.01) &
-                             (tick_values <= v_max + step * 0.01)]
-
-    if len(tick_values) == 0:
-        tick_values = np.array([v_min, v_max])
-
-    # Safety: if too many ticks, double the step until manageable
-    while len(tick_values) > 15:
-        step *= 2
-        first_tick = np.ceil(v_min / step) * step
-        tick_values = np.arange(first_tick, v_max + step * 0.01, step)
-        tick_values = tick_values[(tick_values >= v_min - step * 0.01) &
-                                 (tick_values <= v_max + step * 0.01)]
-
-    # --- Map physical tick values to nearest array indices --------------------
-    tick_indices = np.array([np.argmin(np.abs(param_values - tv))
-                            for tv in tick_values])
-
-    # --- Format labels --------------------------------------------------------
-    if step >= 100:
-        fmt = "%.0f"
-    elif step >= 1:
-        fmt = "%.1f"   # Always one decimal: e.g. 3.0 rather than 3
-    elif step >= 0.1:
-        fmt = "%.1f"
-    elif step >= 0.01:
-        fmt = "%.2f"
-    elif step >= 0.001:
-        fmt = "%.3f"
-    else:
-        fmt = "%.2e"
-
-    # Override with InputParameter.fmt if available
-    if entry is not None and entry.fmt is not None:
-        fmt = entry.fmt
-
-    tick_labels = [fmt % tv for tv in tick_values]
-
-    return tick_indices, tick_labels
-
-
 def display_input_parameters():
     """Print all scannable input parameters grouped by theme."""
     groups = [
@@ -1861,44 +1748,55 @@ def get_user_plot_choice(prompt, valid_options):
         print(f"  Hint: {', '.join(valid_options[:10])}...")
 
 
-def plot_generic_contours(ax, matrix, param_key, 
+def plot_generic_contours(ax, matrix, param_key,
                           color='black', linestyle='dashed',
-                          linewidth=2.5, fontsize=22):
+                          linewidth=2.5, fontsize=22,
+                          X=None, Y=None):
     """
     Plot contours for any registered parameter.
-    
-    Args:
-        ax: Matplotlib axes
-        matrix: 2D data matrix (already inverted if needed)
-        param_key: Parameter name from OUTPUT_REGISTRY
-        color: Contour line color
-        linestyle: Line style ('solid', 'dashed', etc.)
-        linewidth: Line width
-        fontsize: Font size for contour labels
-    
-    Returns:
-        Line2D object for legend, or None if no contours plotted
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+    matrix : ndarray (2-D)
+        Data matrix (already row-inverted if needed).
+    param_key : str
+        Key in OUTPUT_REGISTRY.
+    color, linestyle, linewidth, fontsize : plot styling.
+    X, Y : ndarray or None
+        Physical coordinate meshgrids.  When provided the contours are
+        drawn in physical space (requires imshow ``extent`` on the axes).
+
+    Returns
+    -------
+    Line2D or None
+        Legend handle, or None if no contours could be drawn.
     """
     param = OUTPUT_REGISTRY.get(param_key)
     if param is None:
         print(f"  Warning: Unknown parameter '{param_key}'")
         return None
-    
+
     levels = param.get_levels()
     if levels is None or len(levels) == 0:
         return None
-    
+
     # Filter levels to data range
     data_min, data_max = np.nanmin(matrix), np.nanmax(matrix)
     valid_levels = levels[(levels >= data_min) & (levels <= data_max)]
-    
+
     if len(valid_levels) == 0:
         print(f"  Note: No contour levels in data range for {param_key} [{data_min:.2f}, {data_max:.2f}]")
         return None
-    
+
     try:
-        contour = ax.contour(matrix, levels=valid_levels, colors=color,
-                            linestyles=linestyle, linewidths=linewidth)
+        # Use physical coordinates when available
+        if X is not None and Y is not None:
+            contour = ax.contour(X, Y, matrix, levels=valid_levels, colors=color,
+                                linestyles=linestyle, linewidths=linewidth)
+        else:
+            contour = ax.contour(matrix, levels=valid_levels, colors=color,
+                                linestyles=linestyle, linewidths=linewidth)
         ax.clabel(contour, inline=True, fmt=param.fmt, fontsize=fontsize)
         
         # Create legend entry
@@ -1968,56 +1866,70 @@ def plot_scan_results(outputs, param1_values, param2_values,
     font_other = 15
     plt.rcParams.update({'font.size': font_other})
     
-    # Get matrices and invert for plotting (Y-axis convention)
-    radial_build = outputs['radial_build'][::-1, :]
+    # Get matrices in natural order (row 0 = smallest param1 value).
+    # origin='lower' in imshow will place row 0 at the bottom of the plot,
+    # so param1 increases upward — no manual [::-1] inversion needed.
+    radial_build = outputs['radial_build']
     
     # Get iso-contour matrices with fixed masking behavior:
     #   - iso_param_1 (black): ALWAYS masked to radial build valid region
     #   - iso_param_2 (white): ALWAYS on full figure (no mask)
-    iso_matrix_1 = outputs.get_masked(iso_param_1, outputs['radial_build'])[::-1, :]
-    iso_matrix_2 = outputs[iso_param_2][::-1, :]
+    iso_matrix_1 = outputs.get_masked(iso_param_1, outputs['radial_build'])
+    iso_matrix_2 = outputs[iso_param_2]
     
     # Limit matrices for colored background
-    inv_density = outputs['density_limit'][::-1, :].copy()
-    inv_beta = outputs['beta_limit'][::-1, :].copy()
-    inv_q = outputs['q_limit'][::-1, :].copy()
-    inv_limits = outputs['limits'][::-1, :]
+    density_lim = outputs['density_limit'].copy()
+    beta_lim = outputs['beta_limit'].copy()
+    q_lim = outputs['q_limit'].copy()
+    limits_all = outputs['limits']
     
     # Set NaN where not the dominant limit
-    conditions = np.array([inv_density, inv_beta, inv_q])
+    conditions = np.array([density_lim, beta_lim, q_lim])
     idx_max = np.argmax(conditions, axis=0)
     
-    inv_density_plot = np.where(idx_max == 0, inv_density, np.nan)
-    inv_beta_plot = np.where(idx_max == 1, inv_beta, np.nan)
-    inv_q_plot = np.where(idx_max == 2, inv_q, np.nan)
+    density_plot = np.where(idx_max == 0, density_lim, np.nan)
+    beta_plot = np.where(idx_max == 1, beta_lim, np.nan)
+    q_plot = np.where(idx_max == 2, q_lim, np.nan)
     
     # Only show where limits < 2
-    mask_valid = inv_limits < 2
-    inv_density_plot = np.where(mask_valid, inv_density_plot, np.nan)
-    inv_beta_plot = np.where(mask_valid, inv_beta_plot, np.nan)
-    inv_q_plot = np.where(mask_valid, inv_q_plot, np.nan)
+    mask_valid = limits_all < 2
+    density_plot = np.where(mask_valid, density_plot, np.nan)
+    beta_plot = np.where(mask_valid, beta_plot, np.nan)
+    q_plot = np.where(mask_valid, q_plot, np.nan)
     
     # Create figure
     fig, ax = plt.subplots(figsize=(10, 13))
     
+    # ── Physical coordinate system ──────────────────────────────────────
+    # extent maps the pixel grid onto [param2_min, param2_max] × [param1_min, param1_max].
+    # With origin='lower', row 0 (smallest param1) sits at the bottom.
+    extent = [param2_values[0], param2_values[-1],
+              param1_values[0], param1_values[-1]]
+    
+    # Meshgrid for contour calls (natural order, matching the matrices)
+    X, Y = np.meshgrid(param2_values, param1_values)
+    
     # Plot color maps for plasma limits
     min_val, max_val = 0.5, 2.0
-    im_density = ax.imshow(inv_density_plot, cmap='Blues', aspect='auto',
-                          interpolation='nearest', norm=Normalize(vmin=min_val, vmax=max_val))
-    im_q = ax.imshow(inv_q_plot, cmap='Greens', aspect='auto',
-                     interpolation='nearest', norm=Normalize(vmin=min_val, vmax=max_val))
-    im_beta = ax.imshow(inv_beta_plot, cmap='Reds', aspect='auto',
-                       interpolation='nearest', norm=Normalize(vmin=min_val, vmax=max_val))
+    im_density = ax.imshow(density_plot, cmap='Blues', aspect='auto',
+                          interpolation='nearest', norm=Normalize(vmin=min_val, vmax=max_val),
+                          extent=extent, origin='lower')
+    im_q = ax.imshow(q_plot, cmap='Greens', aspect='auto',
+                     interpolation='nearest', norm=Normalize(vmin=min_val, vmax=max_val),
+                     extent=extent, origin='lower')
+    im_beta = ax.imshow(beta_plot, cmap='Reds', aspect='auto',
+                       interpolation='nearest', norm=Normalize(vmin=min_val, vmax=max_val),
+                       extent=extent, origin='lower')
     
     # Plasma stability boundary (limit = 1)
     linewidth = 2.5
-    ax.contour(inv_limits, levels=[1.0], colors='white', linewidths=linewidth)
+    ax.contour(X, Y, limits_all, levels=[1.0], colors='white', linewidths=linewidth)
     white_boundary = mlines.Line2D([], [], color='white', linewidth=linewidth,
                                    label='Plasma stability boundary')
     
     # Radial build boundary
     filled_matrix = np.where(np.isnan(radial_build), -1, 1)
-    ax.contour(filled_matrix, levels=[0], linewidths=linewidth, colors='black')
+    ax.contour(X, Y, filled_matrix, levels=[0], linewidths=linewidth, colors='black')
     black_boundary = mlines.Line2D([], [], color='black', linewidth=linewidth,
                                    label='Radial build limit')
     
@@ -2026,6 +1938,13 @@ def plot_scan_results(outputs, param1_values, param2_values,
     label_param1 = f"${param1_name}$" + (f" [{unit_param1}]" if unit_param1 else "")
     ax.set_xlabel(label_param2, fontsize=24)
     ax.set_ylabel(label_param1, fontsize=24)
+    
+    # ── Axis ticks — let matplotlib place them at exact physical values ─
+    from matplotlib.ticker import MaxNLocator
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=8, steps=[1, 2, 2.5, 5, 10]))
+    ax.yaxis.set_major_locator(MaxNLocator(nbins=10, steps=[1, 2, 2.5, 5, 10]))
+    ax.tick_params(labelsize=font_legend, axis='x', rotation=45)
+    ax.tick_params(labelsize=font_legend, axis='y')
     
     # Configure colorbars
     divider = make_axes_locatable(ax)
@@ -2053,27 +1972,17 @@ def plot_scan_results(outputs, param1_values, param2_values,
     for cax in [cax1, cax2, cax3]:
         cax.axvline(x=1, color='white', linewidth=2.5)
     
-    # Configure Y-axis ticks (param1) — physically round values
-    y_tick_idx, y_tick_labels = compute_physical_ticks(param1_values, param1_name)
-    # Invert indices for the [::-1] convention used by imshow
-    y_tick_idx_inv = (len(param1_values) - 1) - y_tick_idx
-    ax.set_yticks(y_tick_idx_inv)
-    ax.set_yticklabels(y_tick_labels[::-1], fontsize=font_legend)
-    
-    # Configure X-axis ticks (param2) — physically round values
-    x_tick_idx, x_tick_labels = compute_physical_ticks(param2_values, param2_name)
-    ax.set_xticks(x_tick_idx)
-    ax.set_xticklabels(x_tick_labels, rotation=45, ha='right', fontsize=font_legend)
-    
     # Plot ISO-CONTOUR 1 (black dashed)
     iso_legend_1 = plot_generic_contours(ax, iso_matrix_1, iso_param_1,
                                          color='black', linestyle='dashed',
-                                         linewidth=linewidth, fontsize=font_iso_1)
+                                         linewidth=linewidth, fontsize=font_iso_1,
+                                         X=X, Y=Y)
     
     # Plot ISO-CONTOUR 2 (white dashed)
     iso_legend_2 = plot_generic_contours(ax, iso_matrix_2, iso_param_2,
                                          color='white', linestyle='dashed',
-                                         linewidth=linewidth, fontsize=font_iso_2)
+                                         linewidth=linewidth, fontsize=font_iso_2,
+                                         X=X, Y=Y)
     
     # Build legend
     legend_handles = [white_boundary, black_boundary]
