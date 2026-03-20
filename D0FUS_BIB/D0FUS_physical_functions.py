@@ -6137,7 +6137,7 @@ def f_volume(a, b, c, d, R0, κ):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# RUNAWAY ELECTRON INDICATORS (POST-DISRUPTION)
+# RUNAWAY ELECTRON INDICATORS (POST-DISRUPTION) developped by Puel Louis
 # ══════════════════════════════════════════════════════════════════════════════
 #
 # Indicative assessment of runaway electron (RE) generation during a tokamak
@@ -6146,7 +6146,7 @@ def f_volume(a, b, c, d, R0, κ):
 # Two mechanisms are modelled:
 #   1. Hot-tail seed  — Smith, Phys. Plasmas 15, 072502 (2008)
 #      Profile-integrated: the local RE fraction f_RE(ρ) depends nonlinearly
-#      on Te(ρ) and J(ρ), so ⟨f_RE(Te)⟩ ≠ f_RE(⟨Te⟩).  The code evaluates
+#      on Te(ρ) ne(ρ) and J(ρ), so ⟨f_RE(Te)⟩ ≠ f_RE(⟨Te⟩).  The code evaluates
 #      the Smith model at each radial point and integrates over the plasma
 #      volume, following the same methodology as f_P_line_radiation_profile.
 #
@@ -6158,7 +6158,6 @@ def f_volume(a, b, c, d, R0, κ):
 # the D0FUS self-consistent solver loop.
 #
 # ══════════════════════════════════════════════════════════════════════════════
-
 
 
 # ── Physical constants (RE section) ──────────────────────────────────────────
@@ -6746,32 +6745,12 @@ def compute_RE_indicators(Ip, nbar, Tbar, a, R0, κ, Z_eff, li,
     ║  The quantities returned by this function are ORDER-OF-MAGNITUDE     ║
     ║  estimates intended solely for COMPARATIVE RANKING of designs.       ║
     ║  They cannot and should not be used as absolute predictions of the   ║
-    ║  RE current expected in a real disruption.  Reasons:                 ║
-    ║                                                                      ║
-    ║  1. The hot-tail seed (Smith 2008) is exponentially sensitive to     ║
-    ║     Te(ρ, t): a factor-2 uncertainty in τ_TQ or T_final changes      ║
-    ║     I_RE_seed by orders of magnitude.                                ║
-    ║                                                                      ║
-    ║  2. The avalanche model (Breizman 2019 Eq. 99) assumes full-current  ║
-    ║     conservation during the current quench (CQ), neglects wall       ║
-    ║     absorption, 3D MHD, and partial current conversion.              ║
-    ║                                                                      ║
-    ║  3. The pellet dilution applied here (see below) is a fixed factor   ║
-    ║     independent of pellet size, injection geometry, assimilation     ║
-    ║     efficiency, or material choice.  It encodes the qualitative      ║
-    ║     effect of SPI / MGI but not the details.                         ║
-    ║                                                                      ║
-    ║  4. The Dreicer seed, tritium/Compton sources, and partial-orbit     ║
-    ║     losses are not included.                                         ║
-    ║                                                                      ║
-    ║  APPROPRIATE USE: comparing two machine configurations A and B       ║
-    ║  (same τ_TQ, T_final, pellet_dilution) to determine which presents   ║
-    ║  a higher RE risk.  Ratios are more robust than absolute values.     ║
+    ║  RE current expected in a real disruption.                           ║
     ╚══════════════════════════════════════════════════════════════════════╝
 
     Physical scenario
     -----------------
-    This function models the **safe-landing** (mitigated disruption) scenario
+    This function models the safe-landing (mitigated disruption) scenario
     in which the disruption is *triggered* by the injection of a shattered
     pellet (SPI) or a massive gas injection (MGI).  The pellet raises n_e
     before the thermal quench onset, so the elevated density is seen by the
@@ -6780,9 +6759,9 @@ def compute_RE_indicators(Ip, nbar, Tbar, a, R0, κ, Z_eff, li,
       - Both the hot-tail seed and the avalanche amplification are computed
         at the post-pellet density  n_e,diluted = pellet_dilution × n_e,pre.
       - A higher n_e raises E_c ∝ n_e, suppresses hot-tail generation, and
-        increases the knock-on collision rate, all of which reduce I_RE.
+        increases colisionality, all of which reduce I_RE.
 
-    To model an *unmitigated* disruption (no SPI/MGI, pellet arrives after
+    To model an unmitigated disruption (no SPI/MGI, pellet arrives after
     the TQ), set ``pellet_dilution = 1.0``.
 
     Physical upper bound
@@ -6859,12 +6838,13 @@ def compute_RE_indicators(Ip, nbar, Tbar, a, R0, κ, Z_eff, li,
 
     References
     ----------
-    Smith, Phys. Plasmas 15, 072502 (2008)       — hot-tail seed model.
+    Smith, Phys. Plasmas 15, 072502 (2008)        — hot-tail seed model.
     Breizman et al., NF 59, 083001 (2019)         — avalanche amplification.
     Lehnen et al., Nucl. Fusion 55, 123027 (2015) — ITER SPI specifications.
     Reux et al., Nucl. Fusion 61, 116054 (2021)   — DEMO disruption mitigation.
-    Martin-Solis et al., PRL 105, 185002 (2010)   — knock-on generation.
+    Martin-Solis et al., PRL 105, 185002 (2010)   — Avalanche generation.
     """
+    
     Ip_A  = Ip * 1e6                    # [MA] → [A]
     ne_SI = nbar * 1e20                 # [10²⁰ m⁻³] → [m⁻³]
 
