@@ -1,0 +1,404 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# D0FUS Input Parameters — ITER 15 MA DT Q=10 Baseline (Scenario 2)
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# References (primary):
+#   [Shimada07]   Shimada et al., Nucl. Fusion 47 (2007) S1–S17
+#                 "Progress in the ITER Physics Basis — Chapter 1: Overview"
+#   [Kim18]       Kim et al., Nucl. Fusion 58 (2018) 056013
+#                 "Investigation of key parameters for the development of
+#                  reliable ITER baseline operation scenarios using CORSICA"
+#
+# References (secondary):
+#   [IPB99]       ITER Physics Basis, Nucl. Fusion 39 (1999) 2137
+#   [Aymar02]     Aymar et al., PPCF 44 (2002) 519
+#   [Campbell16]  Campbell et al., EPN 47/5-6 (2016) 28
+#   [Casper14]    Casper et al., Nucl. Fusion 54 (2014) 013005
+#   [Gormezano07] Gormezano et al., Nucl. Fusion 47 (2007) S285
+#   [Polevoi05]   Polevoi et al., Nucl. Fusion 45 (2005) 1451
+#   [Angioni07]   Angioni et al., Nucl. Fusion 47 (2007) 1326
+#   [Sauter99]    Sauter et al., Phys. Plasmas 6 (1999) 2834
+#   [Martin08]    Martin et al., J. Phys.: Conf. Ser. 123 (2008) 012033
+#   [Ejima82]     Ejima et al., Nucl. Fusion 22 (1982) 1313
+#   [Lloyd91]     Lloyd et al., PPCF 33 (1991) 2031
+#   [Pitts19]     Pitts et al., NME 20 (2019) 100696
+#   [Libeyre09]   Libeyre et al., Fusion Eng. Des. 84 (2009) 1188
+#   [Corato16]    Corato et al., SST 29 (2016) 065014
+#   [Pinches04]   Pinches et al., PPCF 46 (2004) B187
+#
+# Lines starting with # are comments.
+# Format: parameter_name = value
+# Parameters not listed here are left at GlobalConfig defaults.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── 1. Primary scan variables (geometry, field, power, confinement) ──────────
+
+P_fus = 500                     # Fusion power [MW]
+                                # [Shimada07] Table 2: 500 MW (700 MW upgradeable)
+                                # [Kim18] §3: P_alpha ~ 106 MW → P_fus ~ 530 MW at Q~10.5
+                                # Fix at 500 MW for the nominal Q=10 design point.
+
+# SCAN PARAMETERS (exactly 2 required)
+a = [1, 3, 15]               # Minor radius scan [m]
+R0 = [3, 9, 15]              # Major radius scan [m]
+
+b     = 1.4                     # Blanket + shield radial thickness [m]
+                                # ITER shielding block + breeding blanket radial build.
+                                # [Casper14] Fig. 1 radial build; includes recent
+                                # increase in inboard shielding block thickness [Kim18] §2.
+
+Bmax_TF  = 11.80               # Peak field on TF conductor [T]
+                                # [Shimada07] Table 2: B0 = 5.3 T at R = 6.2 m
+                                # Peak field on inner-leg: Bmax ≈ B0 × R0/(R0−a−Δr) ≈ 11.8 T
+
+Bmax_CS_adm  = 15.0                 # Maximum admissible CS conductor field [T]
+                                # Relaxed from ITER Nb3Sn limit (13.5 T, Libeyre09).
+
+Tbar  = 8.9                     # Volume-averaged temperature [keV]
+                                # [Kim18] §3, Fig. 2(b): <Te> ~ 9 keV at flat-top
+                                # [Shimada07] §3.1: tau_E = 3.7 s at Q=10 conditions
+                                # Consistent with T0 ~ 22–24 keV, T_ped ~ 4.7 keV [Kim18]
+
+H     = 1.0                     # Confinement enhancement factor H98(y,2) [-]
+                                # [Shimada07] Table 3: H98(y,2) = 1.0 for Scenario 2
+                                # [Kim18] §3: H98 ~ 1.0 in reference CORSICA simulation
+
+# ── 2. Physics and operation ─────────────────────────────────────────────────
+
+Operation_mode        = Pulsed  # ITER baseline Scenario 2 is inductively driven
+                                # [Shimada07] Table 3: ~400 s burn duration
+
+Temps_Plateau_input   = 450     # Flat-top (burn) duration [s]
+                                # [Shimada07] Table 2: 400 s for 15 MA inductive burn
+                                # [Kim18] §3: flat-top ends at t=500 s (ramp-up 60s + 440s)
+                                # The usable burn is ~400 s excluding ramp overhead.
+
+# P_aux_input is overridden by the Multi-source CD block below.
+
+Scaling_Law           = IPB98(y,2)   # Reference ITER design basis scaling law
+                                     # [Shimada07] Eq. (3.1-1): τ_E,th expression
+                                     # [IPB99] Chapter 2, §6.4
+
+L_H_Scaling_choice    = Martin       # Martin et al. (2008) L-H threshold scaling
+                                     # [Kim18] §2: Martin scaling used in CORSICA
+                                     # [Martin08]: Pth (n, B, S)
+
+Bootstrap_choice      = Sauter       # Sauter (1999) neoclassical bootstrap model
+                                     # [Sauter99]: standard for ITER scenario analyses
+                                     # [Kim18] uses Sauter-consistent resistivity
+
+Option_Kappa          = Wenninger    # Wenninger elongation scaling (κ vs A)
+                                     # Yields κ ≈ 1.85 at A = 3.1, consistent with
+                                     # [Shimada07] Table 2: κ_sep = 1.85, κ_95 = 1.70
+
+Option_q95            = Sauter       # Sauter (2016) q₉₅ formula with LCFS shaping values
+
+# ── 2b. Plasma geometry model ────────────────────────────────────────────────
+
+Plasma_geometry = D0FUS              # Full Miller flux-surface integration (PCHIP κ/δ)
+                                     # Core flux surfaces more circular than LCFS;
+                                     # captures triangularity effect on volume integrals.
+                                     # Use D0FUS for single-point analysis.
+                                     # [Shimada07] Table 2: δ_95 = 0.33, δ_sep = 0.48
+                                     # → non-trivial δ(ρ) → D0FUS mode beneficial.
+
+N_rho_miller   = 50                 # Radial grid points for V'(ρ) numerical integration
+N_theta_miller = 50                 # Poloidal grid points
+
+# ── 2c. Plasma profiles — ITER 15 MA ELMy H-mode ────────────────────────────
+#
+# Profile parameterisation: (1 − ρ²)^ν with pedestal (tanh) overlay.
+#
+# [Kim18] §3, Fig. 2(b): H-mode flat-top profiles at t = 300 s
+#   - Density: nearly flat core (ne0/ne ~ 1.04), steep pedestal
+#   - Temperature: strongly peaked core, T0 ~ 22–24 keV, T_ped ~ 4.7 keV
+#
+# [Kim18] §5.2, Table 2: density peaking ne0/<ne> = 1.04–1.31 scanned.
+#   Peaking of ~1.15 is the physics-motivated baseline:
+#     [Angioni07]: collisionality-dependent peaking in H-mode
+#     nu_n = 0.15 restores pedestal density gradient → realistic f_bs ~ 20–25%.
+#
+# [Polevoi05]: ITER pedestal modelling → n_ped ~ 0.85–0.90 <n_vol>
+# [Kim18] §3: T_ped ~ 4.7 keV, <T> ~ 8.9 keV → T_ped/<T> ≈ 0.53
+#   But EPED1+SOLPS model in [Kim18] §5.3 gives T_ped ≈ 4.7 keV = 5.3/8.9 = 0.60 Tbar
+#   We adopt T_ped_frac = 0.60 consistent with EPED1 high-pedestal estimate.
+
+Plasma_profiles = Manual
+
+nu_n_manual  = 0.01             # Mild core density peaking
+                                # [Kim18] Table 2: flat profile
+
+nu_T_manual  = 2.80             # Temperature peaking exponent
+                                # T(0)/<T> ≈ 1 + nu_T*(something) → solved internally.
+                                # Calibrated to give T0 ~ 22–24 keV at <T> = 8.9 keV
+                                # [Kim18] Fig. 2(b): Te(0) ~ 22–24 keV, Ti(0) ~ 22 keV.
+
+rho_ped      = 0.95             # Normalised pedestal radius ρ_tor [-]
+                                # [Kim18] §3: pedestal top at ρ_tor ~ 0.95
+                                # [Polevoi05]: ρ_ped = 0.95 for ITER 15 MA
+
+n_ped_frac   = 0.99             # n_ped / <n_vol> [-]
+                                # [Kim18] §3: n_e,ped ~ 9.41e19/m³ vs <ne> ~ 9.36e19/m³
+                                #   → ratio ≈ 1.0 (but that is for ne0/<ne>=1.04 flat)
+
+T_ped_frac   = 0.55             # T_ped / <T_vol> [-]
+                                # [Kim18] §3: Te,ped ~ 4.7 keV, <Te> ~ 8.9 keV → 0.53
+                                # [Kim18] §5.3: EPED1+SOLPS model → 4.7 keV (132 kPa)
+                                # With tanh-pedestal profile, T(rho_ped) ≈ 0.98 × T_ped
+                                # (tanh envelope ≈ 1 at pedestal top). Adopt Kim18 value.
+
+# ── 3. Plasma stability limits ───────────────────────────────────────────────
+
+betaN_limit     = 2.8           # Troyon normalised beta stability limit [-]
+                                # [Shimada07] Table 3: ITER operates at βN = 1.8
+                                # but the no-wall ideal MHD limit is ~2.4–3.5.
+                                # For a design space scan, use the Troyon stability
+                                # limit (2.8) rather than the ITER operating value.
+
+q_limit         = 2.5           # Safety factor limit: q95 ≥ 3.0
+                                # [Shimada07] Table 2: q95 = 3 at Ip = 15 MA, B = 5.3 T
+                                # [Kim18]: all 15 MA scenarios at q95 ~ 3
+
+Greenwald_limit = 1.0           # Density / Greenwald density [-]
+                                # [Shimada07] §2: new ITER operates at or below n_GW
+                                # [Kim18] §3: ne/nGW ~ 0.78 (85% of nGW central density)
+
+ms              = 0.3           # Vertical stability margin parameter [-]
+                                # Default; conservative for ITER plasma-wall gap.
+
+# ── 4. Plasma composition ────────────────────────────────────────────────────
+
+Atomic_mass = 2.5               # D-T: <A> = 2.5 AMU
+Zeff        = 1.65              # Target Zeff for Q=10 scenario
+                                # [Kim18] §3: Zeff ~ 1.4 (low W, nBe/ne = 1.9%)
+                                # [Kim18] §4.3: Zeff = 1.4–1.67 depending on W conc.
+                                # Adopt 1.65 as a realistic mid-range estimate
+                                # including Be first-wall + W divertor erosion.
+
+r_synch     = 0.6               # Synchrotron wall reflectivity [-]
+                                # ITER first wall (Be-coated) has moderate reflectivity
+                                # Default EU-DEMO value; acceptable for ITER.
+
+C_Alpha     = 5.0               # Helium ash confinement parameter [-]
+                                # τ_He* / τ_E ≈ 5 (standard assumption)
+
+# Impurity mix: full-W wall (ITER re-baseline 2024) + Ne seeding.
+#
+# Tungsten (W), nW/ne = 2e-5:
+#   Maximum tolerable core W concentration: ~10⁻⁵ (Dux, NME 2007).
+#   Fajardo et al. (NF 64, 2024, 104001): ITER core W transport is
+#     turbulence-dominated → flat profiles; W tolerance limited by
+#     global radiation exceeding P_sep for H-mode, not local peaking.
+#   Kim18 §4.3: H-mode access marginal at 2-3e-5, reliable at ~1e-5.
+#   Adopt 2e-5 as mid-range for full-W ITER.
+#
+# Neon (Ne), fNe/ne = 7e-3:
+#   Calibrated to reproduce Zeff ~ 1.65 self-consistently:
+#     dZeff(W)  = Z_W(Z_W-1) fW  ~ 46*45*2e-5 ~ 0.04
+#     dZeff(Ne) = Z_Ne(Z_Ne-1) fNe ~ 10*9*7e-3 ~ 0.63
+#     Zeff ~ 1 + 0.04 + 0.63 = 1.67  (target: 1.65, Kim18 §3)
+#   JET-ILW Ne-seeded DT (Carvalho, EPS 2024): CNe ~ 2%, Zeff ~ 2.7
+#     but JET cannot reach ITER Ne compression → higher core CNe.
+impurity_species = W, Ne
+f_imp_core       = 2e-5, 7e-3
+
+# ── 5. Magnetic flux model ───────────────────────────────────────────────────
+
+Ce        = 0.45                # Ejima constant [-]
+                                # [Ejima82]; [IPB99]: ITER reference value ≈ 0.45
+                                # [Kim18] §6: poloidal flux consumption is tight at 15 MA;
+                                # Ce = 0.45 well-established for ITER.
+
+eta_model = sauter              # Sauter neoclassical resistivity model
+                                # Consistent with Bootstrap_choice = Sauter.
+                                # Used for li, Ψ_resistive, loop voltage.
+
+E_phi_BD  = 0.3                 # Breakdown toroidal E-field [V/m]
+                                # [Lloyd91]: ITER uses actively aided breakdown
+                                # → 0.3 V/m sufficient (EC-assisted pre-ionisation).
+
+t_BD      = 0.5                 # Breakdown duration [s]
+
+C_PF      = 0.95                # PF flux coefficient [-]
+                                # ITER PF system optimised; close to theoretical max.
+                                # [Casper14]: PF coils well within limits at 15 MA.
+
+# ── 6. Structural materials ──────────────────────────────────────────────────
+
+Chosen_Steel  = 316L            # ITER structural steel: 316L(N)-IG
+                                # σ_y ~ 200 MPa at 4.2 K for jacket material
+nu_Steel      = 0.29            # Poisson's ratio for 316L stainless steel
+
+fatigue_CS    = 2.0             # CS fatigue knockdown factor (Pulsed + Wedging)
+                                # [Casper14]: ITER CS designed for ~30 000 cycles
+
+# ── 7. TF coil engineering ───────────────────────────────────────────────────
+
+Radial_build_model   = D0FUS    # Full D0FUS stress model (multilayer thick cylinder)
+Choice_Buck_Wedg     = Wedging  # ITER TF coils are wedged inboard
+                                # [Shimada07] Fig. 1: "18, wedged" TF coils
+Supra_choice         = Nb3Sn   # TF conductor: Nb3Sn (CICC)
+                                # [Shimada07] Table 2 / Fig. 1
+
+n_TF                 = 1.0     # Square conductor shape factor (ITER CICC)
+c_BP                 = 0.07    # Backplate (intercoil structure) thickness [m]
+coef_inboard_tension = 0.5     # Inboard/outboard vertical tension ratio [-]
+F_CClamp             = 0.0     # No C-clamp contribution (ITER uses intercoil wedging)
+
+# ── 8. Central Solenoid ──────────────────────────────────────────────────────
+
+Gap      = 0.10                 # CS–TF mechanical clearance [m]
+
+N_sub_CS = 6                    # 6 CS sub-modules: CS1U/L, CS2U/L, CS3U/L
+                                # [Shimada07] Fig. 1: "6 modules"
+                                # [Kim18] Fig. 1: CS3U, CS2U, CS1U, CS1L, CS2L, CS3L
+
+n_CS     = 1.0                  # CS conductor shape factor (square CICC)
+
+cs_axial_stress = True          # Include fringe-field axial stress in Tresca criterion
+                                # Non-negligible at ITER scale:
+                                # B_z ~ 1–2 T at coil ends → σ_z contribution to Tresca.
+                                # Refined analytical formula (finite-length solenoid).
+
+# ── 9. Superconductor operating conditions ───────────────────────────────────
+
+T_helium       = 4.5            # Supercritical He at 4.5 K / 0.4 MPa
+                                # [Shimada07]: ITER operates at 4.5 K (not superfluid He-II)
+Marge_T_He     = 0.3            # Temperature margin from 10-bar He operation [K]
+
+Marge_T_Nb3Sn  = 1.5            # Nb3Sn temperature margin [K]
+                                # [Corato16]: conservative Nb3Sn operating margin
+
+f_He_pipe      = 0.10           # He cooling pipe/channel fraction in conductor [-]
+f_void         = 0.33           # Interstitial void fraction in strand bundle [-]
+                                # NOTE: class-level attributes, not dataclass fields.
+                                # Add ': float' annotation in GlobalConfig to enable
+                                # input-file override.
+f_In           = 0.15           # Insulation fraction [-]
+
+Eps            = -6e-3          # Effective axial strain on Nb3Sn [-]
+                                # [Corato16]; accounts for thermal + mechanical strain
+
+I_cond         = 68e3           # TF conductor current: ~68 kA
+                                # ITER TF CICC specification
+V_max          = 10e3           # Maximum dump voltage [V]
+tau_h_LTS      = 4.0            # Detection + hold time [s]
+                                # ITER quench detection system specification
+T_hotspot      = 250.0          # Hot-spot temperature limit [K]
+RRR            = 100.0          # Copper RRR (conservative)
+
+Dump_resistor_subdivision = 2   # 2 TF coils per dump resistor (9 pairs for 18 TF)
+
+# ── 10. Power conversion ─────────────────────────────────────────────────────
+
+eta_T     = 0.35                # Thermal-to-electric efficiency [-]
+                                # ITER is not a power plant — no electricity generation.
+                                # 0.35 for accounting purposes (conservative estimate).
+
+M_blanket = 1.0                 # No blanket energy multiplication credit
+                                # ITER has test blanket modules (TBM) only.
+
+eta_RF    = 0.40                # Wall-plug efficiency (power-weighted NBI+ICRH+ECCD)
+                                # [Gormezano07], [Shimada07] Table 4:
+                                #   NBI (1 MeV D, 33 MW):  η ~ 0.30
+                                #   IC  (40–53 MHz, 20 MW): η ~ 0.75
+                                #   EC  (170 GHz, 20 MW):   η ~ 0.45
+                                # Power-weighted avg ≈ 0.38 → round to 0.40
+
+# ── 11. Multi-source current drive ───────────────────────────────────────────
+#
+# ITER Q=10 heating systems ([Shimada07] Table 4, start-up column):
+#   - NBI: 2 × 16.5 MW = 33 MW co-injected at 1 MeV (D beams)
+#   - EC:  20 MW at 170 GHz (two upper ports for NTM control + equatorial)
+#   - IC:  20 MW at 40–53 MHz (minority ³He or ²nd harmonic T)
+#
+# [Kim18] §3: Total Paux ~ 50 MW during flat-top (EC reduced to 6.7 MW after
+# L-H transition to avoid overshoot; IC = 10 MW; NBI = 33 MW → 49.7 MW).
+# For D0FUS steady-burn balance, we prescribe the flat-top values:
+#
+# Note: [Kim18] §5.4, Table 3 scans Paux = 46–63 MW:
+#   At 50 MW: Q = 10.5, Palpha = 106 MW, H98 = 1.0
+#   P_NBI = 33 MW, P_EC = 6.7 MW, P_IC = 10 MW → 49.7 MW
+
+CD_source   = Multi             # Multi-source current drive model
+
+P_NBI       = 33.0              # NBI plasma power [MW]
+                                # [Shimada07] Table 4: 33 MW NB (1 MeV)
+                                # [Kim18] §2: 33 MW in all baseline scenarios
+
+P_ECRH      = 6.7               # ECCD plasma power [MW]
+                                # [Kim18] §3: EC reduced to 6.7 MW during flat-top
+                                # (20 MW during ramp-up, then cut back for burn control)
+                                # Note: [Shimada07] Table 4 lists 20 MW installed;
+                                # only ~7 MW used for flat-top NTM control.
+
+P_ICRH      = 10.0              # ICRH plasma power [MW] (heating only, γ_ICR = 0)
+                                # [Kim18] §3: IC = 10 MW during flat-top
+                                # [Shimada07] Table 4: 20 MW installed
+
+P_LH        = 0.0              # No LHCD on ITER
+                                # [Shimada07] Table 4: LHCD = 0 in start-up configuration
+                                # (20 MW LH foreseen only in upgrade phase for SS scenario)
+
+# NBI parameters — 1 MeV D beams, co-tangential injection
+A_beam      = 2                 # Deuterium beam
+E_beam_keV  = 1000.0            # 1 MeV injection energy
+                                # [Shimada07] Table 4: NB (1 MeV)
+                                # [Kim18] §2: 1 MeV deuterium NBI
+
+rho_NBI     = 0.30              # Normalised deposition radius [-]
+                                # Deep central deposition at 1 MeV in ITER-scale plasma.
+                                # [Kim18] Fig. 2(b): NBI current peaks at rho ~ 0.2–0.4
+
+C_NBI = 0.70                    # Cordey (1982) tangential co-injection factor
+                                # [Kim18] §3, Fig. 2(d): CORSICA gives I_NBI ≈ 2 MA
+
+# ECCD parameters — 170 GHz O-mode
+rho_EC      = 0.40              # Off-axis deposition: rho_tor ~ 0.35–0.45
+                                # [Kim18] §2: EC at 170 GHz, used for NTM control
+                                # → deposited near q=3/2 surface (rho ~ 0.4–0.5)
+                                # Also used for central heating in some phases.
+
+C_EC        = 0.32              # O-mode tangential injection pre-factor
+                                # Kim (1991) default for ECCD efficiency.
+
+# ── 12. Plasma-facing components ─────────────────────────────────────────────
+
+theta_deg   = 2.5               # Divertor strike-point grazing angle [deg]
+                                # [Pitts19]: ITER divertor target geometry
+                                # Grazing angle kept low to spread power over larger area.
+
+# ── 13. Maintenance constraints ──────────────────────────────────────────────
+
+ripple_adm  = 0.005             # ITER TF ripple ≤ 0.5 % at separatrix
+                                # [Pinches04]: ferritic inserts reduce ripple losses
+                                # [Shimada07] §3.10: optimised ferritic inserts in ITER
+
+L_min       = 3.6               # Equatorial port access width [m]
+                                # ITER equatorial port: ~3.6 m toroidal extent
+
+# ══════════════════════════════════════════════════════════════════════════════
+# END OF INPUT FILE
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Expected D0FUS outputs for this configuration (order of magnitude):
+#   Ip       ~ 15 MA             [Shimada07] Table 2
+#   B0       ~ 5.3 T             [Shimada07] Table 2
+#   τ_E      ~ 3.7 s             [Shimada07] §3.1
+#   Q        ~ 10                [Shimada07] Table 2; [Kim18] §3: Q = 10.5
+#   P_alpha  ~ 100 MW            [Kim18] §3: 106 MW
+#   I_NBI    ~ 2 MA              [Kim18] §3, Fig. 2(d): NBCD dominates CD
+#   I_bs     ~ 3 MA              [Kim18] §3: bootstrap ~ 20% of Ip
+#   f_bs     ~ 15–25 %           [Shimada07] Table 3; [Kim18] §3: 20%
+#   βN       ~ 1.8               [Shimada07] Table 3
+#   P_rad    ~ 50–70 MW          [Polevoi17]; [Loarte14]
+#   q95      ~ 3.0               [Shimada07] Table 2
+#
+# Sensitivity to key parameters [Kim18]:
+#   - Density peaking ne0/<ne>: Q increases from 10.5 (1.04) to 18.7 (1.31)
+#   - W concentration: H-mode access fails above nW/ne ~ 3–5 × 10⁻⁵
+#   - Pedestal pressure: ±16% pedestal → Q changes from 9.3 to 10.5
+#   - Paux: Q decreases with increasing Paux (at fixed confinement)
+#
+# ══════════════════════════════════════════════════════════════════════════════

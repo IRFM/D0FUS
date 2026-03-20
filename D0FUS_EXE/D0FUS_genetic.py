@@ -34,98 +34,141 @@ except ImportError:
 
 # Import D0FUS modules
 from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG
+from D0FUS_BIB.D0FUS_physical_functions import f_volume
+from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
+from D0FUS_BIB.D0FUS_cost_data import *
 from D0FUS_EXE.D0FUS_run import run, save_run_output
 
+# ── Fitness objective ────────────────────────────────────────────────────────
+# Selectable via 'fitness_objective = ...' in the input file.
+#
+#   'COE'      : minimise cost of electricity (Sheffield 2016)     [EUR/MWh]
+#                 with C_invest <= C_invest_max budget constraint   (DEFAULT)
+#   'volume'   : minimise (V_BB + V_TF + V_CS) / P_fus  [m^3/MW]
+#   'C_invest' : minimise total capital cost (Sheffield 2016)      [M EUR]
+#   'P_elec'   : maximise net electric power (minimise -P_elec)    [MW]
+#
+VALID_FITNESS_OBJECTIVES = ('COE', 'volume', 'C_invest', 'P_elec')
+
 # =============================================================================
-# run() return-tuple index map  (v2 — 81 outputs)
+# run() return-tuple index map  (v3 — 93 outputs)
 #
 # This dictionary is the SINGLE SOURCE OF TRUTH for mapping symbolic names
 # to positional indices in the tuple returned by run().  Both
 # evaluate_individual() and debug_single_run() reference it so that a
 # change in run()'s return ordering only requires an update here.
+#
+# Indices 0–80  : physics outputs (unchanged from v2)
+# Indices 81–92 : cable-level conductor fractions (TF then CS)
 # =============================================================================
 _IDX = {
-    'B0':        0,
-    'B_CS':      1,
-    'B_pol':     2,
-    'tauE':      3,
-    'W_th':      4,
-    'Q':         5,
-    'Volume':    6,
-    'Surface':   7,
-    'Ip':        8,
-    'Ib':        9,
-    'I_CD':     10,
-    'I_Ohm':    11,
-    'nbar':     12,   # Volume-averaged density [10²⁰ m⁻³]
-    'nbar_line':13,   # Line-averaged density [10²⁰ m⁻³]
-    'nG':       14,   # Greenwald density limit [10²⁰ m⁻³]
-    'pbar':     15,
-    'betaN':    16,   # Normalized beta [% m T / MA]
-    'betaT':    17,   # Toroidal beta (fraction, ×100 for %)
-    'betaP':    18,
-    'qstar':    19,   # Kink safety factor
-    'q95':      20,
-    'P_CD':     21,
-    'P_sep':    22,
-    'P_Thresh': 23,
-    'eta_CD':   24,
-    'P_elec':   25,
+    # ── Fields and plasma ──────────────────────────────────────────────────
+    'B0':          0,
+    'B_CS':        1,
+    'B_pol':       2,
+    'tauE':        3,
+    'W_th':        4,   # [J]  — divide by 1e6 for MJ
+    'Q':           5,
+    'Volume':      6,
+    'Surface':     7,
+    'Ip':          8,
+    'Ib':          9,
+    'I_CD':       10,
+    'I_Ohm':      11,
+    'nbar':       12,   # Volume-averaged density [10²⁰ m⁻³]
+    'nbar_line':  13,   # Line-averaged density  [10²⁰ m⁻³]
+    'nG':         14,   # Greenwald density limit [10²⁰ m⁻³]
+    'pbar':       15,   # Volume-averaged pressure [MPa]
+    'betaN':      16,   # Normalized beta [% m T / MA]
+    'betaT':      17,   # Toroidal beta (fraction, ×100 for %)
+    'betaP':      18,
+    'qstar':      19,   # Kink safety factor
+    'q95':        20,
+    # ── Power balance ─────────────────────────────────────────────────────
+    'P_CD':       21,
+    'P_sep':      22,
+    'P_Thresh':   23,
+    'eta_CD':     24,
+    'P_elec':     25,
     'P_wallplug': 26,
-    'cost':     27,   # Machine volume proxy [m³]
-    'P_Brem':   28,
-    'P_syn':    29,
-    'P_line':   30,
-    'P_line_core': 31,
-    'heat':     32,
-    'heat_par': 33,
-    'heat_pol': 34,
-    'lambda_q': 35,
-    'q_target': 36,
-    'P_wall_H': 37,
-    'P_wall_L': 38,
-    'Gamma_n':  39,
-    'f_alpha':  40,
-    'tau_alpha': 41,
-    'J_TF':     42,
-    'J_CS':     43,
-    'c':        44,
-    'c_WP_TF':  45,
-    'c_Nose_TF':46,
-    'sigma_z_TF':   47,
-    'sigma_th_TF':  48,
-    'sigma_r_TF':   49,
-    'Steel_frac_TF':50,
-    'd':        51,
-    'sigma_z_CS':   52,
-    'sigma_th_CS':  53,
-    'sigma_r_CS':   54,
-    'Steel_frac_CS':55,
-    'B_CS_dup': 56,
-    'J_CS_dup': 57,
-    'r_minor':  58,   # R0 - a
-    'r_sep':    59,   # R0 - a - b
-    'r_c':      60,   # R0 - a - b - c
-    'r_d':      61,   # R0 - a - b - c - d  (must be > 0)
-    'kappa':    62,
-    'kappa_95': 63,
-    'delta':    64,
-    'delta_95': 65,
-    'PsiPI':    66,
-    'PsiRU':    67,
-    'PsiPlat':  68,
-    'PsiPF':    69,
-    'PsiCS':    70,
-    'eta_LH':   71,
-    'eta_EC':   72,
-    'eta_NBI':  73,
-    'P_LH':     74,
-    'P_EC':     75,
-    'P_NBI':    76,
-    'P_ICR':    77,
-    'I_LH':     78,
-    'I_EC':     79,
-    'I_NBI':    80,
+    'cost':       27,   # Machine volume proxy [m³]
+    'P_Brem':     28,
+    'P_syn':      29,
+    'P_line':     30,
+    'P_line_core':31,
+    'heat':       32,
+    'heat_par':   33,
+    'heat_pol':   34,
+    'lambda_q':   35,
+    'q_target':   36,
+    'P_wall_H':   37,
+    'P_wall_L':   38,
+    'Gamma_n':    39,
+    'f_alpha':    40,
+    'tau_alpha':  41,
+    # ── Coil currents ─────────────────────────────────────────────────────
+    'J_TF':       42,
+    'J_CS':       43,
+    # ── TF radial build ───────────────────────────────────────────────────
+    'c':          44,
+    'c_WP_TF':    45,
+    'c_Nose_TF':  46,
+    'sigma_z_TF': 47,
+    'sigma_th_TF':48,
+    'sigma_r_TF': 49,
+    'Steel_frac_TF': 50,
+    # ── CS radial build ───────────────────────────────────────────────────
+    'd':          51,
+    'sigma_z_CS': 52,
+    'sigma_th_CS':53,
+    'sigma_r_CS': 54,
+    'Steel_frac_CS': 55,
+    'B_CS_dup':   56,   # B_CS repeated (same value as index 1)
+    'J_CS_dup':   57,   # J_CS repeated (same value as index 43)
+    # ── Radii ─────────────────────────────────────────────────────────────
+    'r_minor':    58,   # R0 − a
+    'r_sep':      59,   # R0 − a − b
+    'r_c':        60,   # R0 − a − b − c
+    'r_d':        61,   # R0 − a − b − c − d  (must be > 0)
+    # ── Shape ─────────────────────────────────────────────────────────────
+    'kappa':      62,
+    'kappa_95':   63,
+    'delta':      64,
+    'delta_95':   65,
+    # ── Magnetic flux ─────────────────────────────────────────────────────
+    'PsiPI':      66,
+    'PsiRU':      67,
+    'PsiPlat':    68,
+    'PsiPF':      69,
+    'PsiCS':      70,
+    # ── New outputs (V_loop, li) ──────────────────────────────────────────
+    'Vloop':      71,   # Steady-state loop voltage [V]
+    'li':         72,   # Internal inductance li(3) [-]
+    # ── Per-source CD efficiencies & powers ───────────────────────────────
+    'eta_LH':     73,
+    'eta_EC':     74,
+    'eta_NBI':    75,
+    'P_LH':       76,
+    'P_EC':       77,
+    'P_NBI':      78,
+    'P_ICR':      79,
+    'I_LH':       80,
+    'I_EC':       81,
+    'I_NBI':      82,
+    # ── TF cable-level fractions (new in v3) ──────────────────────────────
+    'f_sc_TF':    83,
+    'f_cu_TF':    84,
+    'f_He_pipe_TF': 85,
+    'f_void_TF':  86,
+    'f_He_TF':    87,
+    'f_In_TF':    88,
+    # ── CS cable-level fractions (new in v3) ──────────────────────────────
+    'f_sc_CS':    89,
+    'f_cu_CS':    90,
+    'f_He_pipe_CS': 91,
+    'f_void_CS':  92,
+    'f_He_CS':    93,
+    'f_In_CS':    94,
 }
 
 #%% Global Variables (default values)
@@ -181,15 +224,52 @@ def to_serializable(x):
 
 def compute_stability_penalty(nbar_line, nG, betaT, betaN, qstar,
                                q_min=DEFAULT_CONFIG.q_limit,
-                               penalty_strength=1000.0):
+                               penalty_step=2.0,
+                               penalty_slope=20.0,
+                               margin_width=0.05,
+                               margin_amplitude=0.15):
     """
-    Strong exponential penalty for stability violations.
+    Step + quadratic penalty for stability violations.
+
+    Design philosophy
+    -----------------
+    Two requirements must be satisfied simultaneously:
+
+    1. NO MARGINAL CHEATING — crossing a stability boundary must always
+       cost more than any COE gain.  This is achieved by a *step*
+       penalty at the boundary: fitness is immediately ×3 worse.
+
+    2. BOUNDED GROWTH — even severely violated designs must stay below
+       PENALTY_VALUE / 2 so the GA keeps them in the gene pool and can
+       extract useful genetic material.  A quadratic (not exponential)
+       growth guarantees this.
+
+    3. GENTLE MARGIN PREFERENCE — the margin zone provides a *small*
+       nudge toward designs with more headroom, but must NOT create a
+       wall that prevents the GA from exploring near-limit designs.
+       Good tokamak designs (ITER, DEMO) operate within 5–10% of
+       stability limits — this is a feature, not a bug.
+
+       margin_amplitude = 0.15 → at the boundary (0% margin), the
+       fitness is multiplied by 1.15 (a 15% cost surcharge).
+       At 5% margin, penalty → 0 (no surcharge).
+
+    penalty_per_constraint (violation)  = penalty_step + penalty_slope × excess²
+    penalty_per_constraint (margin zone) = margin_amplitude × (1 − margin)³
+
+    Examples (per constraint, violation side):
+      At boundary (ε → 0⁺):  2.0             → multiplier ≈ 3.0
+      At 10% excess:         2.0 + 0.2 = 2.2 → multiplier ≈ 3.2
+
+    Examples (per constraint, margin zone):
+      At 0% margin (just feasible):  0.15     → multiplier ≈ 1.15
+      At 2% margin:                  0.054    → multiplier ≈ 1.054
+      At 5% margin:                  0.0      → multiplier = 1.0
 
     Parameters
     ----------
     nbar_line : float
-        Line-averaged density [10²⁰ m⁻³].  The Greenwald limit is defined
-        in line-averaged density, so nbar_line (not nbar_vol) must be used.
+        Line-averaged density [10²⁰ m⁻³].
     nG : float
         Greenwald density limit [10²⁰ m⁻³].
     betaT : float
@@ -200,8 +280,15 @@ def compute_stability_penalty(nbar_line, nG, betaT, betaN, qstar,
         Kink safety factor.
     q_min : float
         Minimum safety factor.
-    penalty_strength : float
-        Penalty multiplier.
+    penalty_step : float
+        Discontinuity cost at the stability boundary.  A value of 2.0
+        means the fitness is multiplied by ≥ 3 for any violation.
+    penalty_slope : float
+        Quadratic growth coefficient beyond the boundary.
+    margin_width : float
+        Width of the margin zone as a fraction of the limit (default 0.05 = 5%).
+    margin_amplitude : float
+        Maximum penalty in the margin zone (default 0.15 → ×1.15 at boundary).
     """
     violations = {}
     penalty_terms = []
@@ -211,45 +298,44 @@ def compute_stability_penalty(nbar_line, nG, betaT, betaN, qstar,
         density_ratio = nbar_line / nG
         if density_ratio > 1.0:
             excess = density_ratio - 1.0
-            penalty = penalty_strength * (np.exp(10 * excess) - 1)
+            penalty = penalty_step + penalty_slope * excess ** 2
             penalty_terms.append(penalty)
             violations['density'] = {
                 'value': float(nbar_line), 'limit': float(nG),
                 'ratio': float(density_ratio)
             }
-        elif density_ratio > 0.90:
-            margin_used = (density_ratio - 0.90) / 0.10
-            penalty_terms.append(10 * margin_used ** 3)
+        elif density_ratio > (1.0 - margin_width):
+            margin_used = (density_ratio - (1.0 - margin_width)) / margin_width
+            penalty_terms.append(margin_amplitude * margin_used ** 3)
     
     # Beta limit: betaT (in %) < betaN (in %)
-    # betaT from D0FUS is a fraction, multiply by 100 to get %
     betaT_percent = betaT * 100
     if betaN > 0:
         beta_ratio = betaT_percent / betaN
         if beta_ratio > 1.0:
             excess = beta_ratio - 1.0
-            penalty = penalty_strength * (np.exp(10 * excess) - 1)
+            penalty = penalty_step + penalty_slope * excess ** 2
             penalty_terms.append(penalty)
             violations['beta'] = {
                 'value': float(betaT_percent), 'limit': float(betaN),
                 'ratio': float(beta_ratio)
             }
-        elif beta_ratio > 0.90:
-            margin_used = (beta_ratio - 0.90) / 0.10
-            penalty_terms.append(10 * margin_used ** 3)
+        elif beta_ratio > (1.0 - margin_width):
+            margin_used = (beta_ratio - (1.0 - margin_width)) / margin_width
+            penalty_terms.append(margin_amplitude * margin_used ** 3)
     
     # Kink safety factor: qstar > q_min
     if qstar < q_min:
         deficit = (q_min - qstar) / q_min
-        penalty = penalty_strength * (np.exp(10 * deficit) - 1)
+        penalty = penalty_step + penalty_slope * deficit ** 2
         penalty_terms.append(penalty)
         violations['qstar'] = {
             'value': float(qstar), 'limit': float(q_min),
             'ratio': float(qstar / q_min)
         }
-    elif qstar < q_min * 1.10:
-        margin = (qstar - q_min) / (q_min * 0.10)
-        penalty_terms.append(10 * (1 - margin) ** 3)
+    elif qstar < q_min * (1.0 + margin_width):
+        margin = (qstar - q_min) / (q_min * margin_width)
+        penalty_terms.append(margin_amplitude * (1 - margin) ** 3)
     
     total_penalty = 1.0 + sum(penalty_terms)
     is_stable = len(violations) == 0
@@ -323,12 +409,16 @@ def evaluate_individual(individual, verbose=False):
 
     Uses the centralised ``_IDX`` map for all tuple indexing so that any
     change in run()'s return ordering is automatically propagated.
+
+    The fitness objective is read from ``static_inputs['fitness_objective']``
+    (default: 'volume').  See VALID_FITNESS_OBJECTIVES for options.
     """
     import warnings
 
     try:
         param_dict = {k: individual[i] for i, k in enumerate(param_keys)}
-        all_params  = {**param_dict, **static_inputs}
+        # GA-optimised values override static defaults (not the reverse!)
+        all_params  = {**static_inputs, **param_dict}
 
         # Build an immutable GlobalConfig, filtering out non-field keys
         config = GlobalConfig(**{k: v for k, v in all_params.items()
@@ -355,19 +445,119 @@ def evaluate_individual(individual, verbose=False):
         is_valid, reason = check_radial_build(
             cost, R0_abcd, c_TF, d_CS, qstar, betaT, nbar_line)
         if not is_valid:
+            if verbose:
+                print(f"  [PENALTY] radial build: {reason}")
+                print(f"    cost={cost:.4g}  r_d={R0_abcd:.4g}  "
+                      f"c_TF={c_TF:.4g}  d_CS={d_CS:.4g}")
             return (PENALTY_VALUE,)
 
         # ── Stability penalty ────────────────────────────────────────────
         q_lim = static_inputs.get('q_limit', DEFAULT_CONFIG.q_limit)
         is_stable, penalty_multiplier, violations = compute_stability_penalty(
             nbar_line, nG, betaT, betaN, qstar,
-            q_min=q_lim, penalty_strength=1000.0
+            q_min=q_lim
         )
 
-        fitness = cost * penalty_multiplier
+        # ── Compute fitness value based on selected objective ────────────
+        objective = static_inputs.get('fitness_objective', 'COE')
+
+        # Capital cost (Sheffield), computed for COE / C_invest / P_elec
+        # objectives.  Used both as a fitness metric and for the budget
+        # ceiling constraint.  Remains NaN for the 'volume' legacy proxy.
+        _C_inv = np.nan
+
+        if objective == 'volume':
+            # Legacy cost proxy: (V_BB + V_TF + V_CS) / P_fus [m^3/MW]
+            raw_fitness = cost
+
+        elif objective in ('COE', 'C_invest', 'P_elec'):
+            # Sheffield (2016) cost model — needs derived quantities
+            P_CD    = _safe_real(output[_IDX['P_CD']])
+            P_elec  = _safe_real(output[_IDX['P_elec']])
+            Gamma_n = _safe_real(output[_IDX['Gamma_n']])
+            Surface = _safe_real(output[_IDX['Surface']])
+            κ       = _safe_real(output[_IDX['kappa']])
+
+            if any(np.isnan(v) for v in [P_CD, P_elec, Gamma_n, Surface, κ]):
+                if verbose:
+                    print(f"  [PENALTY] NaN in cost inputs: P_CD={P_CD:.4g} "
+                          f"P_elec={P_elec:.4g} Gamma_n={Gamma_n:.4g} "
+                          f"Surface={Surface:.4g} kappa={κ:.4g}")
+                return (PENALTY_VALUE,)
+
+            P_th = config.P_fus * config.M_blanket + P_CD
+            (V_BB, V_TF, V_CS, V_FI) = f_volume(
+                config.a, config.b, c_TF, d_CS, config.R0, κ)
+
+            _cres = f_costs_Sheffield(
+                discount_rate=config.discount_rate,
+                contingency=config.contingency,
+                T_life=config.T_life,
+                T_build=config.T_build,
+                P_t=P_th,
+                P_e=max(P_elec, 1.0),
+                P_aux=P_CD,
+                Gamma_n=Gamma_n,
+                Util_factor=config.Util_factor,
+                Dwell_factor=config.Dwell_factor,
+                dt_rep=config.dt_rep,
+                V_FI=V_FI,
+                V_pc=V_TF + V_CS,
+                V_sg=V_BB,
+                V_bl=V_BB,
+                S_tt=0.1 * Surface,
+                Supra_cost_factor=config.Supra_cost_factor,
+            )
+            _COE   = _safe_real(_cres[3])   # COE [EUR/MWh]
+            _C_inv = _safe_real(_cres[2])    # C_invest [M EUR]
+
+            if objective == 'COE':
+                raw_fitness = _COE
+            elif objective == 'C_invest':
+                raw_fitness = _C_inv
+            else:  # P_elec
+                raw_fitness = -P_elec if np.isfinite(P_elec) else PENALTY_VALUE
+
+        else:
+            # Fallback to volume proxy
+            raw_fitness = cost
+
+        if not np.isfinite(raw_fitness) or (raw_fitness <= 0 and objective != 'P_elec'):
+            return (PENALTY_VALUE,)
+
+        # ── Capital cost ceiling: soft quadratic penalty ─────────────────
+        # Applied as a multiplicative factor (like the stability penalty)
+        # so it scales naturally regardless of the fitness objective.
+        #
+        # penalty_budget = 1 + k * (excess)^2      k = 3.0
+        #   excess = 0.04 (26 vs 25 B) → ×1.005   (barely noticeable)
+        #   excess = 0.5                → ×1.75    (moderate pressure)
+        #   excess = 1.0               → ×4.0     (strong, but survives)
+        #
+        # Skipped when C_invest is not available (volume objective)
+        # or when the user directly minimises C_invest (redundant).
+        budget_multiplier = 1.0
+        C_max = config.C_invest_max
+        if (objective != 'C_invest'
+                and np.isfinite(_C_inv) and np.isfinite(C_max)
+                and _C_inv > C_max):
+            excess = (_C_inv - C_max) / C_max
+            budget_multiplier = 1.0 + 3.0 * excess ** 2
+
+        if objective == 'P_elec':
+            # For maximisation (negative fitness), dividing by the penalty
+            # multipliers moves fitness toward zero, i.e. worsens it.
+            fitness = raw_fitness / (penalty_multiplier * budget_multiplier)
+        else:
+            fitness = raw_fitness * penalty_multiplier * budget_multiplier
         return (fitness,)
 
-    except Exception:
+    except Exception as _exc:
+        # Unphysical parameter combinations routinely fail (NaN in Miller
+        # geometry, negative radii, etc.) — this is expected, not alarming.
+        # Only print a one-line diagnostic when explicitly requested.
+        if verbose:
+            print(f"  [PENALTY] {type(_exc).__name__}: {_exc}")
         return (PENALTY_VALUE,)
 
 #%% I/O Management
@@ -417,10 +607,18 @@ def load_input_file(input_file):
                     try:
                         min_val, max_val = float(values[0]), float(values[1])
                         opt_ranges[key] = (min_val, max_val)
+                        # Remove from static_inputs if a scalar line was
+                        # parsed earlier for the same key — prevents the GA
+                        # value from being silently overwritten at merge time.
+                        static_inputs.pop(key, None)
                         print(f"  {key} = [{min_val}, {max_val}] (optimize)")
                     except ValueError:
                         pass
             else:
+                # Skip scalar lines for keys already declared as GA ranges
+                # (e.g. a user might have 'a = 3.0' before 'a = [2, 4]').
+                if key in opt_ranges:
+                    continue
                 try:
                     static_inputs[key] = float(value)
                 except ValueError:
@@ -472,7 +670,7 @@ def setup_toolbox(opt_ranges, param_keys, n_generations):
     toolbox.register("mate", tools.cxSimulatedBinaryBounded,
                      low=[opt_ranges[k][0] for k in param_keys],
                      up=[opt_ranges[k][1] for k in param_keys],
-                     eta=10.0)  # Lower eta = more spread
+                     eta=5.0)  # Lower eta = more spread
     
     # Enhanced mutation for better exploration
     def exploratory_mutation(individual, indpb=0.4):
@@ -483,8 +681,8 @@ def setup_toolbox(opt_ranges, param_keys, n_generations):
         """
         progress = current_generation / max(n_total_generations, 1)
         
-        # Exploration probability decreases over time
-        explore_prob = 0.3 * (1 - progress)
+        # Exploration probability decreases over time but keeps a floor
+        explore_prob = max(0.10, 0.3 * (1 - progress))
         
         for i, key in enumerate(param_keys):
             if random.random() < indpb:
@@ -495,7 +693,7 @@ def setup_toolbox(opt_ranges, param_keys, n_generations):
                     individual[i] = lo + random.random() * (hi - lo)
                 else:
                     # EXPLOITATION: Polynomial mutation with adaptive eta
-                    eta = 5 + 50 * progress  # Start wide, narrow down
+                    eta = 5 + 25 * progress  # Start wide (5), cap at 30
                     x = individual[i]
                     delta = hi - lo
                     
@@ -511,17 +709,25 @@ def setup_toolbox(opt_ranges, param_keys, n_generations):
         return (individual,)
     
     toolbox.register("mutate", exploratory_mutation)
-    toolbox.register("select", tools.selTournament, tournsize=3)
+    toolbox.register("select", tools.selTournament, tournsize=2)
 
 
 def inject_diverse_individuals(pop, n_inject, opt_ranges, param_keys):
-    """Inject random individuals to maintain diversity"""
+    """Inject random individuals to maintain diversity (UNCONDITIONAL).
+
+    Previous version only replaced the worst individual if the random
+    newcomer was better — once the population converges, this condition
+    is almost never met, making injection a no-op.
+
+    Now: always replace the n_inject worst individuals, regardless of
+    the newcomer's fitness.  This forces the GA to re-explore even if
+    the new point is initially poor.
+    """
     for _ in range(n_inject):
         new_ind = creator.Individual([
             random.uniform(opt_ranges[k][0], opt_ranges[k][1])
             for k in param_keys
         ])
-        # Evaluate the new individual first
         new_ind.fitness.values = toolbox.evaluate(new_ind)
         
         # Find worst individual (only among those with valid fitness)
@@ -530,11 +736,8 @@ def inject_diverse_individuals(pop, n_inject, opt_ranges, param_keys):
         
         if valid_indices:
             worst_idx = max(valid_indices, key=lambda i: pop[i].fitness.values[0])
-            # Only replace if new individual is better
-            if new_ind.fitness.values[0] < pop[worst_idx].fitness.values[0]:
-                pop[worst_idx] = new_ind
+            pop[worst_idx] = new_ind
         else:
-            # If no valid individuals, just append
             pop[0] = new_ind
     
     return pop
@@ -577,7 +780,7 @@ def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
     print(f"    Population: {pop_size}")
     print(f"    Generations: {n_generations}")
     print(f"    Crossover: {cxpb}, Mutation: {mutpb}")
-    print(f"    Diversity injection every 10 generations")
+    print(f"    Diversity injection every 7 generations")
     print(f"{'='*70}\n")
     
     # Initial evaluation
@@ -592,6 +795,15 @@ def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
         print(f"\n  *** WARNING: 0 / {pop_size} initial designs are valid! ***")
         print(f"  The parameter ranges likely produce unphysical configurations")
         print(f"  (complex-valued sqrt, negative radial build, etc.).")
+        # Run the first individual with verbose diagnostics
+        print(f"\n  ── Diagnostic: evaluating first individual with tracing ──")
+        _diag_params = {k: pop[0][i] for i, k in enumerate(param_keys)}
+        for k, v in _diag_params.items():
+            print(f"    {k} = {v:.4f}")
+        print(f"  static_inputs keys that overlap param_keys: "
+              f"{[k for k in param_keys if k in static_inputs]}")
+        evaluate_individual(pop[0], verbose=True)
+        print(f"  ── End diagnostic ──\n")
         print(f"  Suggestions:")
         print(f"    1. Narrow the optimisation ranges (especially R0, a, Bmax_TF)")
         print(f"    2. Run debug_single_run() with a known-good parameter set")
@@ -640,8 +852,18 @@ def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
         for ind, fit in zip(invalid_ind, fitnesses):
             ind.fitness.values = fit
         
-        # Mu+Lambda selection
-        pop[:] = tools.selBest(pop + offspring, mu)
+        # Mu+Lambda selection — tournament-based, NOT pure elitist.
+        # selBest kills diversity: once a basin dominates, exploration dies.
+        # Tournament selection (size 2) keeps weaker individuals alive with
+        # probability ~25%, allowing the GA to maintain multiple basins.
+        combined = pop + offspring
+        pop[:] = tools.selTournament(combined, mu, tournsize=3)
+        
+        # Minimal elitism: guarantee the overall best is never lost.
+        # Replace the worst individual in pop with the HoF champion.
+        if hof and hof[0].fitness.values[0] < max(ind.fitness.values[0] for ind in pop):
+            worst_i = max(range(len(pop)), key=lambda i: pop[i].fitness.values[0])
+            pop[worst_i] = toolbox.clone(hof[0])
         
         hof.update(pop)
         record = stats.compile(pop)
@@ -661,10 +883,10 @@ def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
                 stagnation_counter = 0
         
         # Inject diversity if stagnating or periodically
-        if stagnation_counter >= 5 or gen % 10 == 0:
-            n_inject = max(2, pop_size // 20)
+        if stagnation_counter >= 3 or gen % 7 == 0:
+            n_inject = max(5, pop_size // 10)
             pop = inject_diverse_individuals(pop, n_inject, opt_ranges, param_keys)
-            if stagnation_counter >= 5:
+            if stagnation_counter >= 3:
                 stagnation_counter = 0
                 if verbose:
                     print(f"    [Diversity injection: {n_inject} new individuals]")
@@ -771,6 +993,18 @@ def run_genetic_optimization(input_file,
         mutation_rate = float(static_inputs.pop('mutation_rate'))
         print(f"  [input file] mutation_rate   = {mutation_rate}")
 
+    # Fitness objective: kept in static_inputs (read by evaluate_individual)
+    # but validated here.  Default: 'COE' with C_invest_max budget constraint.
+    _obj = static_inputs.get('fitness_objective', 'COE')
+    if _obj not in VALID_FITNESS_OBJECTIVES:
+        print(f"  [warn] Unknown fitness_objective '{_obj}' — defaulting to 'COE'")
+        static_inputs['fitness_objective'] = 'COE'
+        _obj = 'COE'
+    print(f"  [input file] fitness_objective = {_obj}")
+    if _obj == 'COE':
+        _budget = static_inputs.get('C_invest_max', DEFAULT_CONFIG.C_invest_max)
+        print(f"  [input file] C_invest_max      = {float(_budget)*1e-3:.1f} B EUR (budget ceiling)")
+
     if len(param_keys) < 1:
         print("\n ERROR: Need at least 1 optimization parameter")
         sys.exit(1)
@@ -819,12 +1053,47 @@ def run_genetic_optimization(input_file,
     
     # betaT is fraction, convert to % for display
     betaT_percent = betaT * 100
-    
+
+    # Compute Sheffield COE for the best design (regardless of objective)
+    _COE_best = np.nan
+    _C_invest_best = np.nan
+    try:
+        P_CD_best    = final_output[_IDX['P_CD']]
+        Gamma_n_best = final_output[_IDX['Gamma_n']]
+        Surface_best = final_output[_IDX['Surface']]
+        κ_best       = final_output[_IDX['kappa']]
+        P_th_best    = config.P_fus * config.M_blanket + P_CD_best
+        (V_BB_b, V_TF_b, V_CS_b, V_FI_b) = f_volume(
+            config.a, config.b, c_TF, d_CS, config.R0, κ_best)
+        _cres_best = f_costs_Sheffield(
+            discount_rate=config.discount_rate, contingency=config.contingency,
+            T_life=config.T_life, T_build=config.T_build,
+            P_t=P_th_best, P_e=max(P_elec, 1.0), P_aux=P_CD_best,
+            Gamma_n=Gamma_n_best,
+            Util_factor=config.Util_factor, Dwell_factor=config.Dwell_factor,
+            dt_rep=config.dt_rep,
+            V_FI=V_FI_b, V_pc=V_TF_b+V_CS_b, V_sg=V_BB_b, V_bl=V_BB_b,
+            S_tt=0.1*Surface_best,
+            Supra_cost_factor=config.Supra_cost_factor)
+        _COE_best     = _cres_best[3]
+        _C_invest_best = _cres_best[2] * 1e-3  # M EUR -> B EUR
+    except Exception:
+        pass
+
+    objective = static_inputs.get('fitness_objective', 'COE')
+    print(f"\n Fitness objective: {objective}")
+    if objective == 'COE':
+        _budget = config.C_invest_max
+        _within = _C_invest_best * 1e3 <= _budget if np.isfinite(_C_invest_best) else False
+        _tag = "WITHIN BUDGET" if _within else "OVER BUDGET"
+        print(f"    Budget ceiling:             {_budget*1e-3:.1f} B EUR  [{_tag}]")
     print(f"\n Best design metrics:")
-    print(f"    Cost: {cost:.4f}")
-    print(f"    Q factor: {Q:.2f}")
-    print(f"    Ip: {Ip:.2f} MA")
-    print(f"    P_elec: {P_elec:.1f} MW")
+    print(f"    Volume proxy (V/P_fus):     {cost:.4f} [m^3/MW]")
+    print(f"    COE (Sheffield):            {_COE_best:.1f} [EUR/MWh]")
+    print(f"    C_invest:                   {_C_invest_best:.2f} [B EUR]")
+    print(f"    Q factor:                   {Q:.2f}")
+    print(f"    Ip:                         {Ip:.2f} MA")
+    print(f"    P_elec:                     {P_elec:.1f} MW")
     print(f"    n_line/nG: {nbar_line/nG:.3f} ({(1-nbar_line/nG)*100:+.1f}% margin)")
     print(f"    betaT/betaN: {betaT_percent/betaN:.3f} ({(1-betaT_percent/betaN)*100:+.1f}% margin)")
     q_lim = static_inputs.get('q_limit', DEFAULT_CONFIG.q_limit)
@@ -859,6 +1128,8 @@ def run_genetic_optimization(input_file,
     summary = {
         "timestamp": datetime.now().isoformat(),
         "seed": seed,
+        "fitness_objective": objective,
+        "C_invest_max_MEUR": to_serializable(config.C_invest_max),
         "settings": {
             "population_size": population_size,
             "generations": generations,
@@ -867,6 +1138,12 @@ def run_genetic_optimization(input_file,
         },
         "optimized_parameters": {k: to_serializable(v) for k, v in best_params.items()},
         "best_fitness": to_serializable(best.fitness.values[0]),
+        "cost_metrics": {
+            "volume_proxy_m3_per_MW": to_serializable(cost),
+            "COE_EUR_per_MWh": to_serializable(_COE_best),
+            "C_invest_BEUR": to_serializable(_C_invest_best),
+            "P_elec_MW": to_serializable(P_elec),
+        },
         "is_stable": is_stable,
         "is_buildable": _rb_ok,
         "stability_margins": {

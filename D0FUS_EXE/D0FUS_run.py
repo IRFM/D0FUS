@@ -23,7 +23,30 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG
 from D0FUS_BIB.D0FUS_radial_build_functions import *
 from D0FUS_BIB.D0FUS_physical_functions import *
+from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
+from D0FUS_BIB.D0FUS_cost_data import *
 from scipy.optimize import brentq
+
+
+#%% Profile preset table
+# ---------------------------------------------------------------------------
+# SINGLE SOURCE OF TRUTH for plasma profile peaking factors and pedestal
+# parameters across run(), _build_run_dict(), and save_run_output().
+# Any change to a preset value must be made here ONLY.
+#
+# Calibration references:
+#   'L'        : purely parabolic (no pedestal).
+#   'H'        : ITER CORSICA H-mode study (Doyle et al. 2007, PIPB Ch.2).
+#   'Advanced' : EU-DEMO 2017 PROCESS reference run (Franza 2019).
+# ---------------------------------------------------------------------------
+_PROFILE_PRESETS = {
+    'L':        {'nu_n': 0.50, 'nu_T': 1.75, 'rho_ped': 1.00,
+                 'n_ped_frac': 0.00, 'T_ped_frac': 0.00},
+    'H':        {'nu_n': 0.01, 'nu_T': 2.80, 'rho_ped': 0.95,
+                 'n_ped_frac': 0.99, 'T_ped_frac': 0.55},
+    'Advanced': {'nu_n': 1.00, 'nu_T': 1.45, 'rho_ped': 0.95,
+                 'n_ped_frac': 0.78, 'T_ped_frac': 0.43},
+}
 
 
 #%% Input file loader
@@ -114,22 +137,42 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
 
     Returns
     -------
-    tuple
-        Ordered scalar outputs (see bottom of function for full list).
-        All entries are np.nan if the self-consistent solver fails to converge.
+    tuple of 93 scalars
+        Ordered outputs.  All entries are np.nan if the self-consistent solver
+        fails to converge.
+
+        Unit conventions (all other quantities follow standard D0FUS units):
+          - W_th  (index 4) : Joules [J]  — divide by 1e6 for MJ.
+            All other power-like quantities are in MW.
+          - J_TF, J_CS (indices 42–43) : A/m²  — divide by 1e6 for A/mm².
+          - betaT (index 17) : dimensionless fraction  — multiply by 100 for %.
+          - lambda_q (index 35) : metres [m]  — multiply by 1000 for mm.
+
+        Full ordering: B0, B_CS, B_pol, tauE, W_th[J], Q, Volume, Surface,
+        Ip, Ib, I_CD, I_Ohm, nbar, nbar_line, nG, pbar, betaN, betaT, betaP,
+        qstar, q95, P_CD, P_sep, P_Thresh, eta_CD, P_elec, P_wallplug, cost,
+        P_Brem, P_syn, P_line, P_line_core, heat, heat_par, heat_pol, lambda_q,
+        q_target, P_wall_rad, P_wall_div, Gamma_n, f_alpha, tau_alpha, J_TF, J_CS,
+        c, c_WP_TF, c_Nose_TF, σ_z_TF, σ_theta_TF, σ_r_TF, Steel_frac_TF,
+        d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_frac_CS, B_CS(dup), J_CS(dup),
+        r_minor, r_sep, r_c, r_d, κ, κ_95, δ, δ_95,
+        ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS, Vloop, li,
+        eta_LH, eta_EC, eta_NBI, P_LH, P_EC, P_NBI, P_ICR, I_LH, I_EC, I_NBI,
+        f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF,
+        f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS.
     """
 
     # ── Resolve configuration ─────────────────────────────────────────────────
     if config is None:
         config = DEFAULT_CONFIG
-
+        
     # Unpack every field into local names so the downstream physics code
     # is unchanged (no 'config.X' references scattered throughout).
     R0                        = config.R0
     a                         = config.a
     b                         = config.b
     Bmax_TF                   = config.Bmax_TF
-    Bmax_CS                   = config.Bmax_CS
+    Bmax_CS_adm                   = config.Bmax_CS_adm
     P_fus                     = config.P_fus
     Tbar                      = config.Tbar
     H                         = config.H
@@ -145,10 +188,11 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     Scaling_Law               = config.Scaling_Law
     L_H_Scaling_choice        = config.L_H_Scaling_choice
     Bootstrap_choice          = config.Bootstrap_choice
+    Option_q95                = config.Option_q95
     Option_Kappa              = config.Option_Kappa
     κ_manual                  = config.κ_manual
-    betaN_limit               = config.betaN_limit
-    q_limit                   = config.q_limit
+    betaN_limit               = config.betaN_limit   # Used in D0FUS_scan.py check_radial_build
+    q_limit                   = config.q_limit        # Used in D0FUS_scan.py check_radial_build
     Greenwald_limit           = config.Greenwald_limit
     ms                        = config.ms
     Atomic_mass               = config.Atomic_mass
@@ -158,9 +202,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     Ce                        = config.Ce
     eta_model                 = config.eta_model
     Chosen_Steel              = config.Chosen_Steel
-    nu_Steel                  = config.nu_Steel
-    Young_modul_Steel         = config.Young_modul_Steel
-    Young_modul_GF            = config.Young_modul_GF
+    # NOTE: nu_Steel, Young_modul_Steel, Young_modul_GF are accessed directly
+    # from the config object inside f_CS_D0FUS / f_CS_CIRCE — no local alias needed.
     fatigue_CS                = config.fatigue_CS
     Radial_build_model        = config.Radial_build_model
     Choice_Buck_Wedg          = config.Choice_Buck_Wedg
@@ -176,7 +219,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     N_sub_CS                  = config.N_sub_CS
     T_helium                  = config.T_helium
     Marge_T_He                = config.Marge_T_He
-    f_He                      = config.f_He
+    f_He_pipe                 = config.f_He_pipe
+    f_void                    = config.f_void
     f_In                      = config.f_In
     Marge_T_Nb3Sn             = config.Marge_T_Nb3Sn
     Marge_T_NbTi              = config.Marge_T_NbTi
@@ -191,7 +235,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     RRR                       = config.RRR
     Dump_resistor_subdivision = config.Dump_resistor_subdivision
     eta_T                     = config.eta_T
-    eta_RF                    = config.eta_RF
+    eta_WP                    = config.eta_WP_acad if config.CD_source == 'Academic' else config.eta_RF
     theta_deg                 = config.theta_deg
     ripple_adm                = config.ripple_adm
     L_min                     = config.L_min
@@ -219,9 +263,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # in τ_E and the scaling law inversion (it never crosses the separatrix).
     # Radiation emitted at ρ > rho_rad_core is edge radiation that reduces
     # P_sep but does NOT affect confinement.
-    # Typical value: 0.7 (well inside pedestal top for ITER/DEMO shaping).
-    # Set to 1.0 to recover the legacy behaviour (all radiation subtracted).
-    rho_rad_core = getattr(config, 'rho_rad_core', 0.7)
+    # Value set in GlobalConfig (default 0.7, well inside pedestal top).
+    rho_rad_core = config.rho_rad_core
 
     # ── Multi-impurity parsing ────────────────────────────────────────────────
     def _parse_impurity_list(species_raw, conc_raw):
@@ -255,25 +298,19 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                          for s, c in zip(imp_species_list, imp_conc_list))
 
     # ── Profile peaking factors ───────────────────────────────────────────────
-    # L-mode  : purely parabolic (no pedestal)
-    # H-mode  : parabola-with-pedestal, calibrated on EU-DEMO 2017 PROCESS run
-    # Advanced: highly peaked core
-    # Manual  : user-defined from GlobalConfig
-    profiles = {
-        'L':        {'nu_n': 0.5,  'nu_T': 1.75, 'rho_ped': 1.00, 'n_ped_frac': 0.00, 'T_ped_frac': 0.00},
-        'H':        {'nu_n': 1.0,  'nu_T': 1.45, 'rho_ped': 0.94, 'n_ped_frac': 0.80, 'T_ped_frac': 0.40},
-        'Advanced': {'nu_n': 1.5,  'nu_T': 2.00, 'rho_ped': 0.94, 'n_ped_frac': 0.80, 'T_ped_frac': 0.40},
-    }
+    # Values are read from the module-level _PROFILE_PRESETS table (single
+    # source of truth shared with _build_run_dict and save_run_output).
     if Plasma_profiles == 'Manual':
         nu_n       = nu_n_manual
         nu_T       = nu_T_manual
         # rho_ped, n_ped_frac, T_ped_frac already read from config above
-    elif Plasma_profiles in profiles:
-        nu_n       = profiles[Plasma_profiles]['nu_n']
-        nu_T       = profiles[Plasma_profiles]['nu_T']
-        rho_ped    = profiles[Plasma_profiles]['rho_ped']
-        n_ped_frac = profiles[Plasma_profiles]['n_ped_frac']
-        T_ped_frac = profiles[Plasma_profiles]['T_ped_frac']
+    elif Plasma_profiles in _PROFILE_PRESETS:
+        _p         = _PROFILE_PRESETS[Plasma_profiles]
+        nu_n       = _p['nu_n']
+        nu_T       = _p['nu_T']
+        rho_ped    = _p['rho_ped']
+        n_ped_frac = _p['n_ped_frac']
+        T_ped_frac = _p['T_ped_frac']
     else:
         raise ValueError(
             f"Unknown Plasma_profiles: '{Plasma_profiles}'. "
@@ -356,17 +393,6 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             P_total += _Pt
         return P_core, P_total
 
-    def _compute_P_line_total(nbar_loc, Tbar_loc, V_loc):
-        """Sum profile-integrated line radiation (total only) [MW].
-        Retained for backward compatibility and per-species reporting."""
-        P_total = 0.0
-        for sp, fc in zip(imp_species_list, imp_conc_list):
-            P_total += f_P_line_radiation_profile(
-                sp, fc, nbar_loc, Tbar_loc, nu_n, nu_T, V_loc,
-                rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
-                Vprime_data=Vprime_data)
-        return P_total
-
     # ── Area elongation for confinement scaling laws ──────────────────────────
     # The IPB98(y,2), DS03, ITER89-P, and L-mode scaling laws were fitted using
     # the "area elongation" κ_a ≡ V_p / (2π²R₀a²), which is the elongation of
@@ -405,16 +431,29 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     tau_h = tau_h_HTS if Supra_choice == 'REBCO' else tau_h_LTS
 
     N_TF, ripple, Delta = Number_TF_coils(R0, a, b, ripple_adm, L_min)
-    N_sub = N_TF / Dump_resistor_subdivision
+    # N_TF is a float from Number_TF_coils; truncate to int before dividing so
+    # that N_sub is an integer count of protection subdivisions, not a ratio.
+    # A fractional N_sub would be silently rounded inside calculate_cable_current_density
+    # (via int(N_sub)), potentially causing ~1 A/m² discontinuities at scan boundaries.
+    N_sub = int(N_TF) // Dump_resistor_subdivision
 
     result_J_TF = calculate_cable_current_density(
         sc_type=Supra_choice, B_peak=Bmax_TF, T_op=T_helium, E_mag=E_mag_TF,
-        I_cond=I_cond, V_max=V_max, N_sub=N_sub, tau_h=tau_h, f_He=f_He, f_In=f_In,
+        I_cond=I_cond, V_max=V_max, N_sub=N_sub, tau_h=tau_h,
+        f_He_pipe=f_He_pipe, f_void=f_void, f_In=f_In,
         T_hotspot=T_hotspot, RRR=RRR, Marge_T_He=Marge_T_He,
         Marge_T_Nb3Sn=Marge_T_Nb3Sn, Marge_T_NbTi=Marge_T_NbTi,
         Marge_T_REBCO=Marge_T_REBCO, Eps=Eps, Tet=Tet,
         J_wost_Manual=J_wost_Manual if Supra_choice == 'Manual' else None)
     J_max_TF_conducteur = result_J_TF['J_wost']
+
+    # ── Cable-level fractions (wost = without steel) ─────────────────────────
+    f_sc_TF      = result_J_TF['f_sc']
+    f_cu_TF      = result_J_TF['f_cu']
+    f_He_pipe_TF = result_J_TF['f_He_pipe']
+    f_void_TF    = result_J_TF['f_void']
+    f_He_TF      = result_J_TF['f_He']
+    f_In_TF      = result_J_TF['f_In']
 
     # ── On-axis magnetic field and alpha power ────────────────────────────────
     B0_solution = f_B0(Bmax_TF, a, b, R0)
@@ -541,7 +580,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                            P_Aux_in, P_Ohm_in, P_rad_core_loc)
 
         if _dbg:
-            W_th_dbg = 1.5 * pbar_loc * 1e6 * Volume_solution / 1e6  # MJ
+            W_th_dbg = f_W_th(pbar_loc, Volume_solution) / 1e6  # MJ
             P_loss_dbg = P_Alpha + P_Aux_in + P_Ohm_in - P_rad_core_loc
             print(f"    W_th={W_th_dbg:.1f} MJ, "
                   f"P_loss={P_Alpha:.0f}+{P_Aux_in:.0f}+{P_Ohm_in:.0f}"
@@ -565,7 +604,10 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         # Bootstrap current
         # q95 is needed by Sauter/Redl models and is always useful for the
         # post-convergence cache; f_q95 is algebraic so the overhead is negligible.
-        q95_loc = f_q95(B0_solution, Ip_loc, R0, a, κ_95, δ_95)
+        # Sauter (2016) uses LCFS shaping (κ, δ); ITER_1989 uses 95%-surface
+        # values (κ_95, δ_95).  Both sets are passed so f_q95 picks the right one.
+        q95_loc = f_q95(B0_solution, Ip_loc, R0, a, κ, δ, κ_95, δ_95,
+                        Option_q95=Option_q95)
 
         if Bootstrap_choice in ('Sauter', 'Redl'):
             if Bootstrap_choice == 'Sauter':
@@ -636,7 +678,9 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 I_CD_loc   = f_I_CD(R0, nbar_loc, eta_CD_loc, P_CD_loc)
 
             I_Ohm_loc = f_I_Ohm(Ip_loc, Ib_loc, I_CD_loc)
-            P_Ohm_loc = f_P_Ohm(I_Ohm_loc, Tbar, R0, a, κ)
+            P_Ohm_loc = f_P_Ohm(I_Ohm_loc, Tbar, R0, a, κ, Z_eff=Zeff,
+                                nbar=nbar_loc, eta_model=eta_model,
+                                q95=q95_loc)
             Q_loc     = f_Q(P_fus, P_CD_loc, P_Ohm_loc)
 
         if _dbg:
@@ -1201,7 +1245,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             _nan, _nan, _nan, _nan,            # cost, P_Brem, P_syn, P_line
             _nan,                               # P_line_core
             _nan, _nan, _nan, _nan, _nan,      # heat, heat_par, heat_pol, lambda_q, q_target
-            _nan, _nan,                          # P_wall_H, P_wall_L
+            _nan, _nan,                          # P_wall_rad, P_wall_div
             _nan,                               # Gamma_n
             _nan, _nan,                          # f_alpha, tau_alpha
             _nan, _nan,                          # J_TF, J_CS
@@ -1209,10 +1253,12 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             _nan, _nan, _nan, _nan, _nan, _nan, _nan,  # CS radial build + stresses
             _nan, _nan, _nan, _nan,            # r_minor, r_sep, r_c, r_d
             _nan, _nan, _nan, _nan,            # κ, κ_95, δ, δ_95
-            _nan, _nan, _nan, _nan, _nan,      # ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS
+            _nan, _nan, _nan, _nan, _nan, _nan, _nan,  # ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS, Vloop, li
             _nan, _nan, _nan,                  # eta_LH, eta_EC, eta_NBI
             _nan, _nan, _nan, _nan,            # P_LH, P_EC, P_NBI, P_ICR
             _nan, _nan, _nan,                  # I_LH, I_EC, I_NBI
+            _nan, _nan, _nan, _nan, _nan, _nan,  # f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF
+            _nan, _nan, _nan, _nan, _nan, _nan,  # f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS
         )
 
     # =========================================================================
@@ -1227,7 +1273,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     _chain = _converged_chain[0]
     nbar_solution        = _chain['nbar']
     pbar_solution        = _chain['pbar']
-    W_th_solution        = 1.5 * pbar_solution * 1e6 * Volume_solution   # [J]
+    W_th_solution        = f_W_th(pbar_solution, Volume_solution)      # [J]
     nbar_line_solution   = _chain['nbar_line']
     P_Brem_solution      = _chain['P_Brem']
     P_syn_solution       = _chain['P_syn']
@@ -1269,7 +1315,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     qstar_solution  = f_qstar(a, B0_solution, R0, Ip_solution, κ)
     
     # --- Remaining MHD quantities (qstar/q95 already computed above) ---
-    B_pol_solution  = f_Bpol(q95_solution, B0_solution, a, R0)
+    B_pol_solution  = f_Bpol(q95_solution, B0_solution, a, R0, kappa=κ)
     betaT_solution  = f_beta_T(pbar_solution, B0_solution)
     betaP_solution  = f_beta_P(a, κ, pbar_solution, Ip_solution)
     beta_solution   = f_beta(betaP_solution, betaT_solution)
@@ -1282,7 +1328,9 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # ── Individual CD efficiencies (computed once, reused in breakdown) ────────
     eta_LH_solution  = f_etaCD_LH(a, R0, B0_solution, nbar_solution, Tbar,
                                    nu_n, nu_T,
-                                   rho_ped=rho_ped, n_ped_frac=n_ped_frac)
+                                   Z_eff=Zeff,
+                                   rho_ped=rho_ped, n_ped_frac=n_ped_frac,
+                                   T_ped_frac=T_ped_frac)
     eta_EC_solution  = f_etaCD_EC(a, R0, Tbar, nbar_solution, Zeff, nu_T, nu_n,
                                    rho_EC, C_EC,
                                    rho_ped, n_ped_frac, T_ped_frac)
@@ -1316,7 +1364,9 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac)
             I_CD_solution = f_I_CD(R0, nbar_solution, eta_CD_solution, P_CD_solution)
         I_Ohm_solution = f_I_Ohm(Ip_solution, Ib_solution, I_CD_solution)
-        P_Ohm_solution = f_P_Ohm(I_Ohm_solution, Tbar, R0, a, κ)
+        P_Ohm_solution = f_P_Ohm(I_Ohm_solution, Tbar, R0, a, κ, Z_eff=Zeff,
+                                  nbar=nbar_solution, eta_model=eta_model,
+                                  q95=q95_solution)
         # Effective γ computed a posteriori for reporting only:
         # γ_eff = I_CD · R₀ · n̄ / P_CD_non_ICRH  (ICRH denominator excluded since it
         # drives no current — using P_CD_total would artifically dilute the figure of merit)
@@ -1351,9 +1401,12 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         I_EC_solution  = cd_bd['I_EC']
         I_NBI_solution = cd_bd['I_NBI']
 
-    # Separatrix power: P_sep = P_alpha + P_CD - P_rad_total
-    # P_rad_total is used here (not P_rad_core) because edge radiation
-    # reduces the power reaching the divertor target plates.
+    # Divertor power: P_α + P_CD − P_rad_total
+    # P_rad_total (not P_rad_core) is subtracted because edge/SOL radiation
+    # also reduces the power reaching the divertor target plates.
+    # Note: this is P_div, not the true P_sep (which uses P_rad_core).
+    # The variable name P_sep_solution is kept for backward compatibility
+    # with the genetic algorithm, scan module and figures module.
     P_sep_solution      = f_P_sep(P_fus, P_CD_solution, P_rad_total_solution)
     Gamma_n_solution    = f_Gamma_n(a, P_fus, R0, κ, S_wall=Surface_solution)
     heat_D0FUS_solution = f_heat_D0FUS(R0, P_sep_solution)
@@ -1361,18 +1414,51 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     heat_pol_solution   = f_heat_pol(R0, B0_solution, P_sep_solution, a, q95_solution)
     lambda_q_Eich_m, q_parallel0_Eich, q_target_Eich = f_heat_PFU_Eich(
         P_sep_solution, B_pol_solution, R0, a / R0, theta_deg)
-    P_1rst_wall_Hmod = f_P_wall(P_sep_solution, P_CD_solution, Surface_solution,
-                                H_mode=True)
-    P_1rst_wall_Lmod  = f_P_wall(P_sep_solution, P_CD_solution, Surface_solution,
-                                 H_mode=False)
-    P_wallplug_solution = P_CD_solution / eta_RF   # Wall-plug power consumed by heating/CD [MW]
-    P_elec_solution   = f_P_elec(P_fus, P_CD_solution, eta_T, M_blanket, eta_RF)
-    li_solution = f_li(
-        nu_T, nu_n, Tbar, nbar_solution,
-        Zeff, a, R0, q95_solution,
-        eta_model=eta_model,
-        rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac
+    # First-wall load: radiative power distributed over the plasma surface
+    P_1rst_wall_rad    = f_P_wall(P_rad_total_solution, Surface_solution)
+    # Exhaust power density: P_div / S (useful divertor figure of merit)
+    P_1rst_wall_div   = P_sep_solution / Surface_solution if Surface_solution > 0 else 0.0
+    P_wallplug_solution = P_CD_solution / eta_WP   # Wall-plug power consumed by heating/CD [MW]
+    P_elec_solution   = f_P_elec(P_fus, P_CD_solution, eta_T, M_blanket, eta_WP)
+
+    # ── Loop voltage ──────────────────────────────────────────────────────────
+    Vloop_solution = f_Vloop(I_Ohm_solution, a, κ, R0, Tbar, nbar_solution,
+                             Zeff, q95_solution, nu_T, nu_n, eta_model,
+                             rho_ped=rho_ped, n_ped_frac=n_ped_frac,
+                             T_ped_frac=T_ped_frac,
+                             Vprime_data=Vprime_data)
+
+    # ── Self-consistent q-profile from Ampère integration ─────────────────
+    # Computes q(ρ), j(ρ), and l_i from neoclassical conductivity +
+    # bootstrap current on the converged global quantities.
+    # This replaces the former analytical f_q_profile + f_li pair.
+
+    # Effective CD deposition radius and width — weighted by per-source
+    # current when Multi-source CD is active.
+    if CD_source == 'Multi' and I_CD_solution > 0:
+        _I_sources = np.array([abs(I_LH_solution), abs(I_EC_solution), abs(I_NBI_solution)])
+        _rho_sources = np.array([0.5, rho_EC, rho_NBI])
+        _delta_sources = np.array([0.20, 0.05, 0.15])
+        _w = _I_sources / max(np.sum(_I_sources), 1e-10)
+        _rho_CD_eff  = float(np.dot(_w, _rho_sources))
+        _delta_CD_eff = float(np.dot(_w, _delta_sources))
+    elif CD_source == 'ECCD':
+        _rho_CD_eff, _delta_CD_eff = rho_EC, 0.05
+    elif CD_source == 'NBCD':
+        _rho_CD_eff, _delta_CD_eff = rho_NBI, 0.15
+    else:  # LHCD or fallback
+        _rho_CD_eff, _delta_CD_eff = 0.5, 0.20
+
+    _q_sc = f_q_profile_selfconsistent(
+        Ip_solution, I_Ohm_solution, I_CD_solution, q95_solution,
+        R0, a, B0_solution, κ, nbar_solution, Tbar, Zeff,
+        nu_n, nu_T,
+        eta_model=eta_model, bootstrap_model=Bootstrap_choice,
+        rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
+        Vprime_data=Vprime_data, kappa_95=κ_95,
+        rho_CD=_rho_CD_eff, delta_CD=_delta_CD_eff,
     )
+    li_solution      = _q_sc['li']
 
     # L-H power threshold — all Martin/Delabie scalings were fitted with line-averaged density
     if L_H_Scaling_choice == 'Martin':
@@ -1420,12 +1506,13 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     t_BD=config.t_BD,
     C_PF=config.C_PF,
     rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
+    Vprime_data=Vprime_data,
     )
     # ==============================================================================
     #    CENTRAL SOLENOID (CS) DESIGN
     #    Determines the CS radial thickness 'd' to satisfy the Volt-second budget.
     # ==============================================================================
-    cs_args = (ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax_TF, Bmax_CS, σ_CS,
+    cs_args = (ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax_TF, Bmax_CS_adm, σ_CS,
            Supra_choice, J_wost_Manual, T_helium, Choice_Buck_Wedg, κ, N_sub_CS, tau_h,
            config)
 
@@ -1443,8 +1530,36 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # ΨCS = Breakdown + Ramp-up + Flat-top − External PF contribution
     ΨCS = ΨPI + ΨRampUp + Ψplateau - ΨPF
 
-    # Volume-based machine cost proxy
-    cost_solution = f_cost(a, b, c, d, R0, κ, P_fus)
+    # ── CS coil current density (cable-level fractions) ──────────────────────
+    # The CS solver computes J_wost and Steel_fraction internally, but does not
+    # expose the sub-fractions (SC, Cu, He pipe, void, insulation).
+    # We call calculate_cable_current_density with B_CS to recover them.
+    # The LRU cache makes this essentially free (same call was made inside solver).
+    if np.isfinite(B_CS) and B_CS > 0:
+        Supra_choice_CS = config.Supra_choice   # Same SC for TF and CS
+        E_mag_CS_post = calculate_E_mag_CS(
+            B_CS, R0 - a - b - c - d, R0 - a - b - c, 2 * (κ * a + b + 1))
+        result_J_CS = calculate_cable_current_density(
+            sc_type=Supra_choice_CS, B_peak=B_CS, T_op=T_helium,
+            E_mag=E_mag_CS_post,
+            I_cond=I_cond, V_max=V_max, N_sub=N_sub_CS, tau_h=tau_h,
+            f_He_pipe=f_He_pipe, f_void=f_void, f_In=f_In,
+            T_hotspot=T_hotspot, RRR=RRR, Marge_T_He=Marge_T_He,
+            Marge_T_Nb3Sn=Marge_T_Nb3Sn, Marge_T_NbTi=Marge_T_NbTi,
+            Marge_T_REBCO=Marge_T_REBCO, Eps=Eps, Tet=Tet,
+            J_wost_Manual=J_wost_Manual if Supra_choice == 'Manual' else None)
+        f_sc_CS      = result_J_CS['f_sc']
+        f_cu_CS      = result_J_CS['f_cu']
+        f_He_pipe_CS = result_J_CS['f_He_pipe']
+        f_void_CS    = result_J_CS['f_void']
+        f_He_CS      = result_J_CS['f_He']
+        f_In_CS      = result_J_CS['f_In']
+    else:
+        f_sc_CS = f_cu_CS = f_He_pipe_CS = f_void_CS = f_He_CS = f_In_CS = np.nan
+
+    # Component volumes (Pappus centroid theorem, rectangular cross-sections)
+    (V_BB, V_TF, V_CS, V_FI) = f_volume(a, b, c, d, R0, κ)
+    cost_solution = (V_BB + V_TF + V_CS) / P_fus   # legacy cost proxy [m^3/MW]
 
     return (B0_solution,  B_CS,  B_pol_solution,
             tauE_solution,  W_th_solution,
@@ -1459,7 +1574,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             P_line_core_solution,
             heat_D0FUS_solution,  heat_par_solution,  heat_pol_solution,
             lambda_q_Eich_m,  q_target_Eich,
-            P_1rst_wall_Hmod,  P_1rst_wall_Lmod,
+            P_1rst_wall_rad,  P_1rst_wall_div,
             Gamma_n_solution,
             f_alpha_solution,  tau_alpha,
             J_max_TF_conducteur,  J_CS,
@@ -1467,10 +1582,12 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             d,  σ_z_CS,  σ_theta_CS,  σ_r_CS,  Steel_fraction_CS,  B_CS,  J_CS,
             R0 - a,  R0 - a - b,  R0 - a - b - c,  R0 - a - b - c - d,
             κ,  κ_95,  δ,  δ_95,
-            ΨPI,  ΨRampUp,  Ψplateau,  ΨPF,  ΨCS,
+            ΨPI,  ΨRampUp,  Ψplateau,  ΨPF,  ΨCS,  Vloop_solution,  li_solution,
             eta_LH_solution,  eta_EC_solution,  eta_NBI_solution,
             P_LH_solution,  P_EC_solution,  P_NBI_solution,  P_ICR_solution,
-            I_LH_solution,  I_EC_solution,  I_NBI_solution)
+            I_LH_solution,  I_EC_solution,  I_NBI_solution,
+            f_sc_TF,  f_cu_TF,  f_He_pipe_TF,  f_void_TF,  f_He_TF,  f_In_TF,
+            f_sc_CS,  f_cu_CS,  f_He_pipe_CS,  f_void_CS,  f_He_CS,  f_In_CS)
 
 
 #%% Output writer
@@ -1506,7 +1623,7 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
      _cost, _P_Brem, _P_syn, _P_line,
      _P_line_core,
      _heat, _heat_par, _heat_pol, _lambda_q, _q_target,
-     _P_wall_H, _P_wall_L,
+     _P_wall_rad, _P_wall_div,
      _Gamma_n,
      _f_alpha, _tau_alpha,
      _J_TF, _J_CS_1,
@@ -1516,15 +1633,43 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
      kappa_edge, kappa_95, delta_edge, delta_95,
      *_rest) = results
 
+    # ── Cable-level fractions (explicit positions in the new tuple layout) ─────
+    # Expected *_rest layout (29 values):
+    #   [0:7]   ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS, Vloop, li
+    #   [7:10]  eta_LH, eta_EC, eta_NBI
+    #   [10:14] P_LH, P_EC, P_NBI, P_ICR
+    #   [14:17] I_LH, I_EC, I_NBI
+    #   [17:23] f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF
+    #   [23:29] f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS
+    if len(_rest) >= 29:
+        _f_sc_TF      = _rest[17]
+        _f_cu_TF      = _rest[18]
+        _f_He_pipe_TF = _rest[19]
+        _f_void_TF    = _rest[20]
+        _f_He_TF      = _rest[21]
+        _f_In_TF      = _rest[22]
+        _f_sc_CS      = _rest[23]
+        _f_cu_CS      = _rest[24]
+        _f_He_pipe_CS = _rest[25]
+        _f_void_CS    = _rest[26]
+        _f_He_CS      = _rest[27]
+        _f_In_CS      = _rest[28]
+    elif len(_rest) >= 23:
+        # Intermediate format: TF fracs only
+        _f_sc_TF      = _rest[17]
+        _f_cu_TF      = _rest[18]
+        _f_He_pipe_TF = _rest[19]
+        _f_void_TF    = _rest[20]
+        _f_He_TF      = _rest[21]
+        _f_In_TF      = _rest[22]
+        _f_sc_CS = _f_cu_CS = _f_He_pipe_CS = _f_void_CS = _f_He_CS = _f_In_CS = np.nan
+    else:
+        # Old tuple format: no cable fractions
+        _f_sc_TF = _f_cu_TF = _f_He_pipe_TF = _f_void_TF = _f_He_TF = _f_In_TF = np.nan
+        _f_sc_CS = _f_cu_CS = _f_He_pipe_CS = _f_void_CS = _f_He_CS = _f_In_CS = np.nan
+
     # ── Profile peaking / pedestal parameters ─────────────────────────────────
-    _prof_presets = {
-        'L':        {'nu_n': 0.5,  'nu_T': 1.75, 'rho_ped': 1.00,
-                     'n_ped_frac': 0.00, 'T_ped_frac': 0.00},
-        'H':        {'nu_n': 1.0,  'nu_T': 1.45, 'rho_ped': 0.94,
-                     'n_ped_frac': 0.80, 'T_ped_frac': 0.40},
-        'Advanced': {'nu_n': 1.5,  'nu_T': 2.00, 'rho_ped': 0.94,
-                     'n_ped_frac': 0.80, 'T_ped_frac': 0.40},
-    }
+    # Use the module-level _PROFILE_PRESETS table (single source of truth).
     if config.Plasma_profiles == 'Manual':
         nu_n       = config.nu_n_manual
         nu_T       = config.nu_T_manual
@@ -1532,7 +1677,7 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         n_ped_frac = config.n_ped_frac
         T_ped_frac = config.T_ped_frac
     else:
-        _p         = _prof_presets.get(config.Plasma_profiles, _prof_presets['H'])
+        _p         = _PROFILE_PRESETS.get(config.Plasma_profiles, _PROFILE_PRESETS['H'])
         nu_n       = _p['nu_n'];       nu_T       = _p['nu_T']
         rho_ped    = _p['rho_ped'];    n_ped_frac = _p['n_ped_frac']
         T_ped_frac = _p['T_ped_frac']
@@ -1629,6 +1774,23 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         "e_fw":        getattr(config, 'e_fw',      0.05),
         "e_blanket":   getattr(config, 'e_blanket', 0.45),
         "e_shield":    getattr(config, 'e_shield',  0.50),
+        # Conductor cable fractions (wost = without steel) — TF
+        "Supra_choice": config.Supra_choice,
+        "Steel_fraction_TF": _f(_sf_TF, 0.50),
+        "f_sc_TF":      _f(_f_sc_TF, np.nan),
+        "f_cu_TF":      _f(_f_cu_TF, np.nan),
+        "f_He_pipe_TF": _f(_f_He_pipe_TF, np.nan),
+        "f_void_TF":    _f(_f_void_TF, np.nan),
+        "f_He_TF":      _f(_f_He_TF, np.nan),
+        "f_In_TF":      _f(_f_In_TF, np.nan),
+        # Conductor cable fractions (wost = without steel) — CS
+        "Steel_fraction_CS": _f(_sf_CS, 0.50),
+        "f_sc_CS":      _f(_f_sc_CS, np.nan),
+        "f_cu_CS":      _f(_f_cu_CS, np.nan),
+        "f_He_pipe_CS": _f(_f_He_pipe_CS, np.nan),
+        "f_void_CS":    _f(_f_void_CS, np.nan),
+        "f_He_CS":      _f(_f_He_CS, np.nan),
+        "f_In_CS":      _f(_f_In_CS, np.nan),
     }
 
 
@@ -1686,7 +1848,7 @@ def save_run_output(config: GlobalConfig,
      cost, P_Brem, P_syn, P_line,
      P_line_core_solution,
      heat, heat_par, heat_pol, lambda_q, q_target,
-     P_wall_H, P_wall_L,
+     P_wall_rad, P_wall_div,
      Gamma_n,
      f_alpha, tau_alpha,
      J_TF, J_CS,
@@ -1694,10 +1856,12 @@ def save_run_output(config: GlobalConfig,
      d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS, J_CS,
      r_minor, r_sep, r_c, r_d,
      κ, κ_95, δ, δ_95,
-     ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS_Total,
+     ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS_Total, Vloop, li_sc,
      eta_LH, eta_EC, eta_NBI,
      P_LH_out, P_EC_out, P_NBI_out, P_ICR_out,
-     I_LH_out, I_EC_out, I_NBI_out) = results
+     I_LH_out, I_EC_out, I_NBI_out,
+     f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF,
+     f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS) = results
 
     # Re-parse multi-impurity config for per-species display
     _Z_CORONAL = {'Be': 4, 'C': 6, 'N': 7, 'Ne': 10, 'Ar': 18, 'Kr': 34, 'Xe': 44, 'W': 46}
@@ -1717,17 +1881,13 @@ def save_run_output(config: GlobalConfig,
     f_imp_dilution = sum(_Z_CORONAL.get(s, 10) * c
                          for s, c in zip(imp_species_list, imp_conc_list))
 
-    # Reconstruct profile params and Vprime_data for per-species display
-    profiles = {
-        'L':        {'nu_n': 0.5,  'nu_T': 1.75, 'rho_ped': 1.00, 'n_ped_frac': 0.00, 'T_ped_frac': 0.00},
-        'H':        {'nu_n': 1.0,  'nu_T': 1.45, 'rho_ped': 0.94, 'n_ped_frac': 0.80, 'T_ped_frac': 0.40},
-        'Advanced': {'nu_n': 1.5,  'nu_T': 2.00, 'rho_ped': 0.94, 'n_ped_frac': 0.80, 'T_ped_frac': 0.40},
-    }
+    # Reconstruct profile params and Vprime_data for per-species display.
+    # Use the module-level _PROFILE_PRESETS table (single source of truth).
     if config.Plasma_profiles == 'Manual':
         nu_n = config.nu_n_manual; nu_T = config.nu_T_manual
         rho_ped = config.rho_ped; n_ped_frac = config.n_ped_frac; T_ped_frac = config.T_ped_frac
-    elif config.Plasma_profiles in profiles:
-        p = profiles[config.Plasma_profiles]
+    elif config.Plasma_profiles in _PROFILE_PRESETS:
+        p = _PROFILE_PRESETS[config.Plasma_profiles]
         nu_n = p['nu_n']; nu_T = p['nu_T']; rho_ped = p['rho_ped']
         n_ped_frac = p['n_ped_frac']; T_ped_frac = p['T_ped_frac']
     else:
@@ -1737,7 +1897,7 @@ def save_run_output(config: GlobalConfig,
         Vprime_data = precompute_Vprime(config.R0, config.a, κ, δ,
                                          geometry_model='D0FUS',
                                          kappa_95=κ_95, delta_95=δ_95)
-    rho_rad_core = getattr(config, 'rho_rad_core', 0.7)
+    rho_rad_core = config.rho_rad_core
 
     # ── Write results report (console + file) ─────────────────────────────────
     output_file = os.path.join(output_path, "output_results.txt")
@@ -1781,13 +1941,28 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] J_E-TF (TF engineering current density)         : {J_TF/1e6:.3f} [MA/m²]",  file=out)
         print(f"[O] J_E-CS (CS engineering current density)         : {J_CS/1e6:.3f} [MA/m²]",  file=out)
         print(f"[O] Steel fraction TF                               : {Steel_fraction_TF*100:.3f} [%]", file=out)
+        print(f"[O] Cable fraction TF  (1 - Steel)                  : {(1-Steel_fraction_TF)*100:.3f} [%]", file=out)
+        print(f"[O]  ├ f_sc      (superconductor)                   : {f_sc_TF*100:.2f} [%]", file=out)
+        print(f"[O]  ├ f_cu      (copper stabiliser)                : {f_cu_TF*100:.2f} [%]", file=out)
+        print(f"[O]  ├ f_He_pipe (He cooling pipe)                  : {f_He_pipe_TF*100:.2f} [%]", file=out)
+        print(f"[O]  ├ f_void    (interstitial He void)             : {f_void_TF*100:.2f} [%]", file=out)
+        print(f"[O]  ├ f_He      (total He = pipe + void)           : {f_He_TF*100:.2f} [%]", file=out)
+        print(f"[O]  └ f_In      (insulation)                       : {f_In_TF*100:.2f} [%]", file=out)
         print(f"[O] Steel fraction CS                               : {Steel_fraction_CS*100:.3f} [%]", file=out)
+        print(f"[O] Cable fraction CS  (1 - Steel)                  : {(1-Steel_fraction_CS)*100:.3f} [%]", file=out)
+        print(f"[O]  ├ f_sc      (superconductor)                   : {f_sc_CS*100:.2f} [%]", file=out)
+        print(f"[O]  ├ f_cu      (copper stabiliser)                : {f_cu_CS*100:.2f} [%]", file=out)
+        print(f"[O]  ├ f_He_pipe (He cooling pipe)                  : {f_He_pipe_CS*100:.2f} [%]", file=out)
+        print(f"[O]  ├ f_void    (interstitial He void)             : {f_void_CS*100:.2f} [%]", file=out)
+        print(f"[O]  ├ f_He      (total He = pipe + void)           : {f_He_CS*100:.2f} [%]", file=out)
+        print(f"[O]  └ f_In      (insulation)                       : {f_In_CS*100:.2f} [%]", file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[O] Psi_PI      (Breakdown flux)                    : {ΨPI:.3f} [Wb]",      file=out)
         print(f"[O] Psi_RampUp  (Ramp-up flux)                      : {ΨRampUp:.3f} [Wb]",  file=out)
         print(f"[O] Psi_Plateau (Flat-top flux)                     : {Ψplateau:.3f} [Wb]", file=out)
         print(f"[O] Psi_PF      (External PF contribution)          : {ΨPF:.3f} [Wb]",      file=out)
         print(f"[O] Psi_CS      (CS flux requirement)               : {ΨCS_Total:.3f} [Wb]", file=out)
+        print(f"[O] V_loop      (Steady-state loop voltage)         : {Vloop*1e3:.1f} [mV]", file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[I] P_fus  (Fusion power)                           : {config.P_fus:.3f} [MW]",  file=out)
         print(f"[O] P_CD   (Current drive power)                    : {P_CD:.3f} [MW]",           file=out)
@@ -1832,6 +2007,7 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] I_CD           (Driven current)                 : {I_CD:.3f} [MA]",            file=out)
         print(f"[O] I_Ohm          (Ohmic current)                  : {I_Ohm:.3f} [MA]",           file=out)
         print(f"[O] f_b            (Bootstrap fraction)             : {(Ib/Ip)*100:.3f} [%]",      file=out)
+        print(f"[O] l_i(3)         (Internal inductance, ITER conv.) : {li_sc:.3f} [-]",           file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[I] Tbar  (Volume-averaged ion temperature)         : {config.Tbar:.3f} [keV]",    file=out)
         print(f"[O] nbar  (Volume-averaged electron density)        : {nbar:.3f} [10²⁰ m⁻³]",     file=out)
@@ -1850,15 +2026,144 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] q*   (Kink safety factor)                       : {qstar:.3f}", file=out)
         print(f"[O] q95  (Safety factor at 95% flux surface)        : {q95:.3f}",   file=out)
         print("-------------------------------------------------------------------------", file=out)
-        print(f"[O] P_sep    (Power crossing the separatrix)        : {P_sep:.3f} [MW]",    file=out)
+        print(f"[O] P_div    (P_α+P_CD−P_rad_tot, divertor power)   : {P_sep:.3f} [MW]",    file=out)
         print(f"[O] P_Thresh (L-H power threshold)                  : {P_Thresh:.3f} [MW]", file=out)
-        print(f"[O] (P_sep - P_thresh) / S_wall                     : {P_wall_H:.3f} [MW/m²]", file=out)
-        print(f"[O] P_sep / S_wall                                  : {P_wall_L:.3f} [MW/m²]", file=out)
+        print(f"[O] P_rad_tot / S_wall  (FW radiative load)         : {P_wall_rad:.3f} [MW/m²]", file=out)
+        print(f"[O] P_div / S_wall  (mean SOL exhaust flux)         : {P_wall_div:.3f} [MW/m²]", file=out)
         print(f"[O] P_sep / R0  (Divertor heat scaling)             : {heat:.3f} [MW/m]",      file=out)
         print(f"[O] P_sep·B0 / R0  (Parallel heat flux proxy)       : {heat_par:.3f} [MW·T/m]", file=out)
         print(f"[O] P_sep·B0 / (q95·R0·A)  (Poloidal heat flux)     : {heat_pol:.3f} [MW·T/m]", file=out)
         print(f"[O] Gamma_n  (Neutron wall load)                    : {Gamma_n:.3f} [MW/m²]",   file=out)
         print("=========================================================================", file=out)
+
+        # ── Runaway Electron Indicators (post-convergence diagnostic) ─────────
+        # Indicative only — does NOT affect any convergence loop.
+        # li recalculated here from available profile data (not in results tuple).
+        print("=== Runaway Electron Indicators (Indicative) ===", file=out)
+        print("-------------------------------------------------------------------------", file=out)
+        try:
+            # li is the self-consistent value from f_q_profile_selfconsistent,
+            # passed through the results tuple.
+            RE = compute_RE_indicators(
+                Ip=Ip, nbar=nbar, Tbar=config.Tbar,
+                a=config.a, R0=config.R0, κ=κ, Z_eff=config.Zeff, li=li_sc,
+                nu_n=nu_n, nu_T=nu_T,
+                rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
+                Te_final_eV=config.Te_final_eV, tau_TQ=config.tau_TQ,
+                Vprime_data=Vprime_data, V=Volume,
+                pellet_dilution=config.pellet_dilution,
+            )
+            print(f"[!] INDICATOR ONLY — order-of-magnitude estimate for design comparison.", file=out)
+            print(f"[I] tau_TQ         (Thermal quench time)                : {RE['tau_TQ']*1e3:.1f} [ms]", file=out)
+            print(f"[I] Te_final       (Post-TQ temperature)                : {RE['Te_final_eV']:.0f} [eV]", file=out)
+            print(f"[I] pellet_dilution (SPI/MGI density factor)            : {RE['pellet_dilution']:.1f} [-]", file=out)
+            print(f"[I] nbar_diluted   (Post-pellet density)                : {RE['nbar_diluted']:.3f} [1e20 m-3]", file=out)
+            print(f"[O] f_RE_core      (Hot-tail fraction at rho=0)         : {RE['f_RE_core']:.3e} [-]", file=out)
+            print(f"[O] f_RE_avg       (Volume-averaged hot-tail fraction)  : {RE['f_RE_avg']:.3e} [-]", file=out)
+            print(f"[O] I_RE_seed      (Hot-tail seed, pre-pellet)          : {RE['I_RE_seed']:.3e} [A]", file=out)
+            print(f"[O] I_RE_aval      (After avalanche, post-pellet)       : {RE['I_RE_avalanche']*1e-6:.3f} [MA]", file=out)
+            print(f"[O] I_RE / Ip      (RE-to-plasma current fraction)      : {RE['f_RE_to_Ip']*100:.1f} [%]", file=out)
+            print(f"[O] W_mag_RE       (RE magnetic energy = 1/2 Li I^2_RE): {RE['W_mag_RE']:.1f} [MJ]", file=out)
+            print(f"[O] E_RE_kin       (RE kinetic energy, <gamma>=10)      : {RE['E_RE_kin']:.1f} [MJ]", file=out)
+        except Exception as _e:
+            print(f"[O] RE indicators could not be computed: {_e}", file=out)
+        print("=========================================================================", file=out)
+
+        # ── Techno-economic cost assessment (post-convergence) ────────────
+        # Sheffield & Milora, Fus. Sci. Technol. 70, 14–35 (2016).
+        # Uses D0FUS radial build volumes and power balance outputs.
+        if config.cost_model != 'None':
+            print("=== Cost Assessment — Sheffield (2016) ===", file=out)
+            print("-------------------------------------------------------------------------", file=out)
+            try:
+                # Derived quantities from D0FUS convergence
+                P_th = config.P_fus * config.M_blanket + P_CD   # total thermal [MW]
+                P_e  = max(P_elec, 1.0)                          # net electric [MWe]
+                S_FW = Surface                                   # first-wall surface [m^2]
+
+                # Component volumes from D0FUS radial build
+                (V_BB_c, V_TF_c, V_CS_c, V_FI_c) = f_volume(
+                    config.a, config.b, c, d, config.R0, κ)
+
+                _res = f_costs_Sheffield(
+                    discount_rate     = config.discount_rate,
+                    contingency       = config.contingency,
+                    T_life            = config.T_life,
+                    T_build           = config.T_build,
+                    P_t               = P_th,
+                    P_e               = P_e,
+                    P_aux             = P_CD,
+                    Gamma_n           = Gamma_n,
+                    Util_factor       = config.Util_factor,
+                    Dwell_factor      = config.Dwell_factor,
+                    dt_rep            = config.dt_rep,
+                    V_FI              = V_FI_c,
+                    V_pc              = V_TF_c + V_CS_c,
+                    V_sg              = V_BB_c,
+                    V_bl              = V_BB_c,
+                    S_tt              = 0.1 * S_FW,
+                    Supra_cost_factor = config.Supra_cost_factor,
+                )
+                (T_op_limit, CF, C_invest, COE,
+                 C_ind, C_Op_waste, C_Op_OM, C_Op_F,
+                 C_syst_other, C_syst_BOP, C_syst_heat, C_syst_aux,
+                 C_reac_tt, C_reac_bl, C_reac_sg, C_reac_pc) = _res
+                C_D = C_invest - C_ind  # direct cost [M EUR]
+
+                # Inputs (condensed)
+                print(f"[I] r={config.discount_rate:.0%}  T_life={config.T_life}yr"
+                      f"  T_build={config.T_build}yr"
+                      f"  contingency={config.contingency:.0%}"
+                      f"  Supra_cost={config.Supra_cost_factor:.1f}x", file=out)
+                print(f"[I] Util={config.Util_factor:.2f}"
+                      f"  Dwell={config.Dwell_factor:.2f}"
+                      f"  dt_rep={config.dt_rep:.1f}yr", file=out)
+                print("-------------------------------------------------------------------------", file=out)
+
+                # Derived inputs from D0FUS
+                print(f"[O] P_th  (thermal power to BoP)                    : {P_th:.1f} [MW]", file=out)
+                print(f"[O] P_e   (net electric power)                      : {P_e:.1f} [MWe]", file=out)
+                print(f"[O] Gamma_n (neutron wall load)                     : {Gamma_n:.3f} [MW/m^2]", file=out)
+                print("-------------------------------------------------------------------------", file=out)
+
+                # Component volumes
+                print(f"[O] V_BB  (blanket + shield + VV + gaps)            : {V_BB_c:.1f} [m^3]", file=out)
+                print(f"[O] V_TF  (TF coil winding packs)                  : {V_TF_c:.1f} [m^3]", file=out)
+                print(f"[O] V_CS  (central solenoid)                        : {V_CS_c:.1f} [m^3]", file=out)
+                print(f"[O] V_FI  (fusion island envelope)                  : {V_FI_c:.1f} [m^3]", file=out)
+                print("-------------------------------------------------------------------------", file=out)
+
+                # Availability
+                print(f"[O] T_op_limit (time before replacement)            : {T_op_limit:.3f} [yr]", file=out)
+                print(f"[O] CF (capacity factor)                            : {CF:.3f}", file=out)
+                print("-------------------------------------------------------------------------", file=out)
+
+                # CapEx breakdown
+                print(f"[O] C_reac_pc (primary coils)                       : {C_reac_pc:.1f} [M EUR]", file=out)
+                print(f"[O] C_reac_bl (blanket)                             : {C_reac_bl:.1f} [M EUR]", file=out)
+                print(f"[O] C_reac_sg (shield & gaps)                       : {C_reac_sg:.1f} [M EUR]", file=out)
+                print(f"[O] C_reac_tt (divertor targets)                    : {C_reac_tt:.1f} [M EUR]", file=out)
+                print(f"[O] C_syst_heat (heat transfer)                     : {C_syst_heat:.1f} [M EUR]", file=out)
+                print(f"[O] C_syst_aux (heating & CD)                       : {C_syst_aux:.1f} [M EUR]", file=out)
+                print(f"[O] C_syst_BOP (turbine & BoP)                      : {C_syst_BOP:.1f} [M EUR]", file=out)
+                print(f"[O] C_syst_other (buildings & auxiliaries)           : {C_syst_other:.1f} [M EUR]", file=out)
+                print(f"[O] C_D    (total direct cost)                      : {C_D:.1f} [M EUR]", file=out)
+                print(f"[O] C_ind  (indirect + contingency)                 : {C_ind:.1f} [M EUR]", file=out)
+                print(f"[O] C_invest (total capital cost)                   : {C_invest*1e-3:.3f} [B EUR]", file=out)
+                print("-------------------------------------------------------------------------", file=out)
+
+                # OpEx
+                print(f"[O] C_Op_OM (annual O&M)                            : {C_Op_OM:.1f} [M EUR/yr]", file=out)
+                print(f"[O] C_Op_F  (annual fuel & replacements)            : {C_Op_F:.1f} [M EUR/yr]", file=out)
+                print(f"[O] C_Op_waste (waste disposal)                     : {C_Op_waste:.3f} [EUR/MWh]", file=out)
+                print("-------------------------------------------------------------------------", file=out)
+
+                # Bottom line
+                print(f"[O] COE (cost of electricity)                       : {COE:.3f} [EUR/MWh]", file=out)
+
+            except Exception as _e:
+                print(f"[!] Cost assessment failed: {_e}", file=out)
+            print("=========================================================================", file=out)
 
     if verbose >= 2:
         print(f"\n✓ Results saved to: {output_path}\n")
@@ -1917,6 +2222,33 @@ def _generate_run_figures(config: GlobalConfig, results: tuple,
 
     # ── Assemble run-dict ─────────────────────────────────────────────────────
     run_dict = _build_run_dict(config, results)
+
+    # ── Self-consistent q-profile for figures ─────────────────────────────────
+    # Recompute using the converged global quantities stored in run_dict.
+    # Cost is negligible (~50 ms) and avoids modifying the results tuple.
+    try:
+        _Ip    = run_dict.get("Ip", 15.0)
+        _q95   = run_dict.get("q95", 3.0)
+        _I_Ohm = results[11] if len(results) > 11 else _Ip * 0.5
+        _I_CD  = results[10] if len(results) > 10 else 0.0
+        _q_sc = f_q_profile_selfconsistent(
+            _Ip, _I_Ohm, _I_CD, _q95,
+            config.R0, config.a, run_dict.get("B0", config.Bmax_TF),
+            run_dict.get("kappa_edge", 1.7), run_dict.get("nbar", 1.0),
+            config.Tbar, config.Zeff,
+            run_dict["nu_n"], run_dict["nu_T"],
+            eta_model=config.eta_model,
+            bootstrap_model=config.Bootstrap_choice,
+            rho_ped=run_dict["rho_ped"],
+            n_ped_frac=run_dict["n_ped_frac"],
+            T_ped_frac=run_dict["T_ped_frac"],
+            Vprime_data=run_dict.get("Vprime_data"),
+            rho_CD=config.rho_EC, delta_CD=0.15,
+        )
+        run_dict["_q_sc"]        = _q_sc
+    except Exception as _e:
+        if verbose >= 1:
+            print(f"  [warn] Self-consistent q-profile for figures failed: {_e}")
 
     # ── Generate full figure catalogue ────────────────────────────────────────
     if verbose >= 2:

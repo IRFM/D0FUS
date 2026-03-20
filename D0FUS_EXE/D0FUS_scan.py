@@ -19,7 +19,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from D0FUS_BIB.D0FUS_parameterization import *
 from D0FUS_BIB.D0FUS_radial_build_functions import *
 from D0FUS_BIB.D0FUS_physical_functions import *
-from D0FUS_EXE.D0FUS_run import run, load_config_from_file
+from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
+from D0FUS_BIB.D0FUS_cost_data import *
+from D0FUS_EXE.D0FUS_run import run, load_config_from_file, _PROFILE_PRESETS
 from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG
 
 #%% Output Parameter Registry
@@ -100,6 +102,26 @@ OUTPUT_REGISTRY = {
         use_radial_mask=False,
         category='performance',
         description='Reactor volume (cost proxy)'
+    ),
+    'COE': OutputParameter(
+        name='COE',
+        label='COE',
+        unit='EUR/MWh',
+        levels=(50, 500, 25),
+        fmt='%d',
+        use_radial_mask=True,
+        category='performance',
+        description='Cost of electricity (Sheffield 2016)'
+    ),
+    'C_invest': OutputParameter(
+        name='C_invest',
+        label='$C_{invest}$',
+        unit='B EUR',
+        levels=(5, 50, 2),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='performance',
+        description='Total capital investment cost'
     ),
     
     # -------------------------------------------------------------------------
@@ -521,6 +543,264 @@ OUTPUT_REGISTRY = {
         category='structural',
         description='CS steel fraction'
     ),
+
+    # -------------------------------------------------------------------------
+    # RADIATION (additional)
+    # -------------------------------------------------------------------------
+    'P_line': OutputParameter(
+        name='P_line',
+        label='$P_{line}$',
+        unit='MW',
+        levels=(0, 300, 15),
+        fmt='%d',
+        use_radial_mask=False,
+        category='power',
+        description='Total impurity line radiation'
+    ),
+    'P_wallplug': OutputParameter(
+        name='P_wallplug',
+        label='$P_{wallplug}$',
+        unit='MW',
+        levels=(0, 500, 25),
+        fmt='%d',
+        use_radial_mask=False,
+        category='power',
+        description='Wall-plug heating and CD power'
+    ),
+
+    # -------------------------------------------------------------------------
+    # ADDITIONAL PLASMA QUANTITIES
+    # -------------------------------------------------------------------------
+    'pbar': OutputParameter(
+        name='pbar',
+        label='$\\bar{p}$',
+        unit='MPa',
+        levels=(0, 1.5, 0.05),
+        fmt='%.2f',
+        use_radial_mask=True,
+        category='plasma',
+        description='Volume-averaged plasma pressure'
+    ),
+    'nbar_vol': OutputParameter(
+        name='nbar_vol',
+        label='$\\bar{n}_{vol}$',
+        unit='$10^{20}$ m$^{-3}$',
+        levels=(0.25, 5, 0.25),
+        fmt='%.2f',
+        use_radial_mask=True,
+        category='plasma',
+        description='Volume-averaged electron density'
+    ),
+    'Ib': OutputParameter(
+        name='Ib',
+        label='$I_{BS}$',
+        unit='MA',
+        levels=(0, 25, 1),
+        fmt='%d',
+        use_radial_mask=True,
+        category='plasma',
+        description='Bootstrap current'
+    ),
+    'I_CD': OutputParameter(
+        name='I_CD',
+        label='$I_{CD}$',
+        unit='MA',
+        levels=(0, 15, 1),
+        fmt='%d',
+        use_radial_mask=True,
+        category='plasma',
+        description='Non-inductive driven current'
+    ),
+    'I_Ohm': OutputParameter(
+        name='I_Ohm',
+        label='$I_{Ohm}$',
+        unit='MA',
+        levels=(0, 20, 1),
+        fmt='%d',
+        use_radial_mask=True,
+        category='plasma',
+        description='Ohmic (inductive) current'
+    ),
+    'tau_alpha': OutputParameter(
+        name='tau_alpha',
+        label='$\\tau_\\alpha$',
+        unit='s',
+        levels=(0, 20, 1),
+        fmt='%.1f',
+        use_radial_mask=True,
+        category='plasma',
+        description='Alpha particle confinement time'
+    ),
+
+    # -------------------------------------------------------------------------
+    # MAGNETIC FLUX
+    # -------------------------------------------------------------------------
+    'PsiCS': OutputParameter(
+        name='PsiCS',
+        label='$\\Psi_{CS}$',
+        unit='Wb',
+        levels=(0, 500, 25),
+        fmt='%d',
+        use_radial_mask=True,
+        category='magnetic',
+        description='CS total flux swing'
+    ),
+
+    # -------------------------------------------------------------------------
+    # PER-SOURCE CURRENT DRIVE
+    # -------------------------------------------------------------------------
+    'eta_LH': OutputParameter(
+        name='eta_LH',
+        label='$\\gamma_{LH}$',
+        unit='$10^{20}$ A·m$^{-2}$·W$^{-1}$',
+        levels=(0, 0.6, 0.05),
+        fmt='%.2f',
+        use_radial_mask=True,
+        category='plasma',
+        description='LHCD figure of merit'
+    ),
+    'eta_EC': OutputParameter(
+        name='eta_EC',
+        label='$\\gamma_{EC}$',
+        unit='$10^{20}$ A·m$^{-2}$·W$^{-1}$',
+        levels=(0, 0.4, 0.02),
+        fmt='%.2f',
+        use_radial_mask=True,
+        category='plasma',
+        description='ECCD figure of merit'
+    ),
+    'eta_NBI': OutputParameter(
+        name='eta_NBI',
+        label='$\\gamma_{NBI}$',
+        unit='$10^{20}$ A·m$^{-2}$·W$^{-1}$',
+        levels=(0, 0.5, 0.05),
+        fmt='%.2f',
+        use_radial_mask=True,
+        category='plasma',
+        description='NBCD figure of merit'
+    ),
+
+    # -------------------------------------------------------------------------
+    # CONDUCTOR FRACTIONS (TF & CS)
+    # -------------------------------------------------------------------------
+    'f_sc_TF': OutputParameter(
+        name='f_sc_TF',
+        label='$f_{SC,TF}$',
+        unit='%',
+        levels=(0, 60, 5),
+        fmt='%d',
+        use_radial_mask=True,
+        category='structural',
+        description='TF superconductor cross-section fraction'
+    ),
+    'f_He_TF': OutputParameter(
+        name='f_He_TF',
+        label='$f_{He,TF}$',
+        unit='%',
+        levels=(0, 50, 5),
+        fmt='%d',
+        use_radial_mask=True,
+        category='structural',
+        description='TF helium cross-section fraction'
+    ),
+    'f_sc_CS': OutputParameter(
+        name='f_sc_CS',
+        label='$f_{SC,CS}$',
+        unit='%',
+        levels=(0, 60, 5),
+        fmt='%d',
+        use_radial_mask=True,
+        category='structural',
+        description='CS superconductor cross-section fraction'
+    ),
+    'f_He_CS': OutputParameter(
+        name='f_He_CS',
+        label='$f_{He,CS}$',
+        unit='%',
+        levels=(0, 50, 5),
+        fmt='%d',
+        use_radial_mask=True,
+        category='structural',
+        description='CS helium cross-section fraction'
+    ),
+
+    # -------------------------------------------------------------------------
+    # RUNAWAY ELECTRONS (post-convergence diagnostic)
+    # -------------------------------------------------------------------------
+    # All RE quantities are computed from the converged plasma state using
+    # the hot-tail seed model (Smith 2008) + avalanche amplification
+    # (Breizman 2019).  They depend on config.tau_TQ and config.Te_final_eV.
+    # -------------------------------------------------------------------------
+    'I_RE_seed': OutputParameter(
+        name='I_RE_seed',
+        label='$I_{RE,seed}$',
+        unit='kA',
+        levels=(0, 10000, 500),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='runaway',
+        description='Hot-tail RE seed current (Smith 2008) — unmitigated ~kA range; stored in kA'
+    ),
+    'I_RE_aval': OutputParameter(
+        name='I_RE_aval',
+        label='$I_{RE,aval}$',
+        unit='MA',
+        levels=(0, 15, 1),
+        fmt='%.1f',
+        use_radial_mask=True,
+        category='runaway',
+        description='Final RE current after avalanche amplification (Breizman 2019)'
+    ),
+    'f_RE_Ip': OutputParameter(
+        name='f_RE_Ip',
+        label='$I_{RE}/I_p$',
+        unit='%',
+        levels=(0, 100, 5),
+        fmt='%d',
+        use_radial_mask=True,
+        category='runaway',
+        description='Ratio of final RE current to plasma current'
+    ),
+    'f_RE_avg': OutputParameter(
+        name='f_RE_avg',
+        label='$\\langle f_{RE} \\rangle$',
+        unit='',
+        levels=(0, 0.01, 5e-4),
+        fmt='%.3e',
+        use_radial_mask=True,
+        category='runaway',
+        description='Volume-averaged hot-tail seed fraction'
+    ),
+    'f_RE_core': OutputParameter(
+        name='f_RE_core',
+        label='$f_{RE}(0)$',
+        unit='',
+        levels=(0, 0.05, 0.005),
+        fmt='%.3e',
+        use_radial_mask=True,
+        category='runaway',
+        description='On-axis hot-tail seed fraction'
+    ),
+    'E_RE_kin': OutputParameter(
+        name='E_RE_kin',
+        label='$E_{RE,kin}$',
+        unit='MJ',
+        levels=(0, 2000, 100),
+        fmt='%d',
+        use_radial_mask=True,
+        category='runaway',
+        description='Kinetic energy of RE beam (⟨γ⟩=10)'
+    ),
+    'W_mag_RE': OutputParameter(
+        name='W_mag_RE',
+        label='$W_{mag,RE}$',
+        unit='MJ',
+        levels=(0, 500, 25),
+        fmt='%d',
+        use_radial_mask=True,
+        category='runaway',
+        description='RE beam magnetic energy (½LI²_RE)'
+    ),
     
     # -------------------------------------------------------------------------
     # PLASMA LIMITS (internal use, colored background)
@@ -585,6 +865,7 @@ CATEGORY_INFO = {
     'power': ('Power & Heat', 'Power balance and heat exhaust'),
     'geometry': ('Geometry', 'Plasma and coil dimensions'),
     'structural': ('Structural', 'Mechanical stress and materials'),
+    'runaway': ('Runaway Electrons', 'RE seed and avalanche indicators (post-convergence diagnostic)'),
     'limits': ('Limits', 'Operational limits (internal)'),
 }
 
@@ -772,22 +1053,424 @@ def load_scan_parameters(input_file):
     return scan_params, fixed_params
 
 
+
+# =============================================================================
+# INPUT PARAMETER REGISTRY
+# =============================================================================
+# Complete catalogue of scannable GlobalConfig fields.
+# Each entry gives a human-readable name, physical unit, and a suggested
+# [min, max, n_points] range for typical 2D scan usage.
+#
+# Usage in input files (bracket syntax):
+#   R0 = [4.0, 10.0, 20]     → scanned parameter
+#   Bmax_TF = 13.0            → fixed parameter
+# =============================================================================
+
+@dataclass
+class InputParameter:
+    """Metadata for a scannable GlobalConfig input parameter."""
+    name         : str    # GlobalConfig field name
+    display_name : str    # Human-readable description
+    unit         : str    # Physical unit (empty string if dimensionless)
+    min_val      : float  # Physically motivated lower bound
+    max_val      : float  # Physically motivated upper bound
+    n_default    : int    # Suggested grid resolution for a 2D scan
+    fmt          : str = None     # Display format override (None → inferred from tick_step)
+    tick_step    : float = None   # Preferred axis tick spacing in physical units
+                                  # (None -> auto-computed from range)
+
+INPUT_PARAMETER_REGISTRY = {
+
+    # ── 1. Primary geometry ───────────────────────────────────────────────────
+    'R0': InputParameter(
+        name='R0', display_name='Major plasma radius',
+        unit='m', min_val=0.0, max_val=40.0, n_default=20, tick_step=1.0),
+    'a': InputParameter(
+        name='a', display_name='Minor plasma radius',
+        unit='m', min_val=0.0, max_val=10.0, n_default=20, tick_step=0.5),
+    'b': InputParameter(
+        name='b', display_name='Blanket + shield radial thickness',
+        unit='m', min_val=0.0, max_val=5.0, n_default=10, tick_step=0.2),
+
+    # ── 2. Magnetic field ─────────────────────────────────────────────────────
+    'Bmax_TF': InputParameter(
+        name='Bmax_TF', display_name='Peak field on TF conductor',
+        unit='T', min_val=8.0, max_val=20.0, n_default=20, tick_step=2.0),
+    'Bmax_CS_adm': InputParameter(
+        name='Bmax_CS_adm', display_name='Peak field on CS conductor',
+        unit='T', min_val=12.0, max_val=25.0, n_default=14, tick_step=2.0),
+
+    # ── 3. Fusion power ───────────────────────────────────────────────────────
+    'P_fus': InputParameter(
+        name='P_fus', display_name='Total fusion power',
+        unit='MW', min_val=200.0, max_val=4000.0, n_default=15, fmt='%.0f', tick_step=500),
+
+    # ── 4. Core plasma physics ────────────────────────────────────────────────
+    'Tbar': InputParameter(
+        name='Tbar', display_name='Volume-averaged plasma temperature',
+        unit='keV', min_val=8.0, max_val=22.0, n_default=20, tick_step=2.0),
+    'H': InputParameter(
+        name='H', display_name='H-factor (confinement enhancement)',
+        unit='', min_val=0.8, max_val=1.5, n_default=15, tick_step=0.1),
+    'Zeff': InputParameter(
+        name='Zeff', display_name='Effective plasma charge',
+        unit='', min_val=1.0, max_val=3.0, n_default=10, tick_step=0.5),
+    'betaN_limit': InputParameter(
+        name='betaN_limit', display_name='Troyon normalized beta limit',
+        unit='% m T / MA', min_val=2.0, max_val=4.0, n_default=10, tick_step=0.5),
+    'C_Alpha': InputParameter(
+        name='C_Alpha', display_name='Helium ash confinement factor',
+        unit='', min_val=3.0, max_val=8.0, n_default=10, tick_step=1.0),
+    'rho_rad_core': InputParameter(
+        name='rho_rad_core', display_name='Core/edge radiation boundary radius',
+        unit='', min_val=0.5, max_val=1.0, n_default=10, tick_step=0.1),
+
+    # ── 5. Profile peaking (Manual mode) ─────────────────────────────────────
+    'nu_n': InputParameter(
+        name='nu_n', display_name='Density peaking exponent (Manual profiles)',
+        unit='', min_val=0.0, max_val=1.5, n_default=10, tick_step=0.25),
+    'nu_T': InputParameter(
+        name='nu_T', display_name='Temperature peaking exponent (Manual profiles)',
+        unit='', min_val=0.5, max_val=3.5, n_default=10, tick_step=0.5),
+
+    # ── 6. Operation and heating ──────────────────────────────────────────────
+    'P_aux_input': InputParameter(
+        name='P_aux_input', display_name='Auxiliary heating power (Pulsed)',
+        unit='MW', min_val=10.0, max_val=200.0, n_default=15, fmt='%.0f', tick_step=25),
+    'Temps_Plateau_input': InputParameter(
+        name='Temps_Plateau_input', display_name='Flat-top (burn) duration (Pulsed)',
+        unit='s', min_val=300.0, max_val=14400.0, n_default=10, fmt='%.0f', tick_step=2000),
+
+    # ── 7. MHD stability limits ───────────────────────────────────────────────
+    'q_limit': InputParameter(
+        name='q_limit', display_name='Kink safety factor lower limit (q* > q_limit)',
+        unit='', min_val=2.0, max_val=3.5, n_default=10, tick_step=0.5),
+    'Greenwald_limit': InputParameter(
+        name='Greenwald_limit', display_name='Greenwald density fraction limit',
+        unit='', min_val=0.6, max_val=1.2, n_default=10, tick_step=0.1),
+
+    # ── 8. Structural / TF engineering ───────────────────────────────────────
+    'fatigue_CS': InputParameter(
+        name='fatigue_CS', display_name='CS fatigue knockdown factor (Pulsed + Wedging)',
+        unit='', min_val=1.5, max_val=3.0, n_default=10, tick_step=0.5),
+    'coef_inboard_tension': InputParameter(
+        name='coef_inboard_tension', display_name='TF inboard/outboard vertical stress fraction',
+        unit='', min_val=0.3, max_val=0.7, n_default=10, tick_step=0.1),
+    'Gap': InputParameter(
+        name='Gap', display_name='Mechanical clearance CS–TF',
+        unit='m', min_val=0.04, max_val=0.20, n_default=10, tick_step=0.02),
+    'c_BP': InputParameter(
+        name='c_BP', display_name='TF back-plate radial thickness',
+        unit='m', min_val=0.02, max_val=0.15, n_default=8, tick_step=0.02),
+
+    # ── 9. Superconductor operating conditions ────────────────────────────────
+    'T_helium': InputParameter(
+        name='T_helium', display_name='Helium bath temperature',
+        unit='K', min_val=3.5, max_val=5.5, n_default=10, tick_step=0.5),
+    'Marge_T_He': InputParameter(
+        name='Marge_T_He', display_name='Temperature margin from 10-bar He operation',
+        unit='K', min_val=0.1, max_val=0.6, n_default=8, tick_step=0.1),
+    'Marge_T_Nb3Sn': InputParameter(
+        name='Marge_T_Nb3Sn', display_name='Nb₃Sn temperature margin above T_op',
+        unit='K', min_val=0.5, max_val=3.0, n_default=10, tick_step=0.5),
+    'Marge_T_NbTi': InputParameter(
+        name='Marge_T_NbTi', display_name='NbTi temperature margin above T_op',
+        unit='K', min_val=0.5, max_val=3.0, n_default=10, tick_step=0.5),
+    'Marge_T_REBCO': InputParameter(
+        name='Marge_T_REBCO', display_name='REBCO temperature margin above T_op',
+        unit='K', min_val=2.0, max_val=10.0, n_default=10, tick_step=1.0),
+    'f_He_pipe': InputParameter(
+        name='f_He_pipe', display_name='Helium pipe area fraction in CICC (without steel)',
+        unit='', min_val=0.05, max_val=0.20, n_default=8, tick_step=0.05),
+    'f_void': InputParameter(
+        name='f_void', display_name='Interstitial void fraction in CICC strand bundle',
+        unit='', min_val=0.20, max_val=0.45, n_default=8, tick_step=0.05),
+    'f_In': InputParameter(
+        name='f_In', display_name='Insulation area fraction in CICC cross-section',
+        unit='', min_val=0.08, max_val=0.25, n_default=8, tick_step=0.05),
+
+    # ── 10. Quench protection ─────────────────────────────────────────────────
+    'I_cond': InputParameter(
+        name='I_cond', display_name='Nominal conductor current',
+        unit='A', min_val=20e3, max_val=100e3, n_default=8, fmt='%.0f', tick_step=10000),
+    'V_max': InputParameter(
+        name='V_max', display_name='Maximum dump voltage',
+        unit='V', min_val=5e3, max_val=20e3, n_default=8, fmt='%.0f', tick_step=5000),
+    'T_hotspot': InputParameter(
+        name='T_hotspot', display_name='Maximum hot-spot temperature during quench',
+        unit='K', min_val=150.0, max_val=350.0, n_default=10, fmt='%.0f', tick_step=50),
+    'RRR': InputParameter(
+        name='RRR', display_name='Copper residual resistivity ratio',
+        unit='', min_val=50.0, max_val=300.0, n_default=8, fmt='%.0f', tick_step=50),
+
+    # ── 11. Power conversion ──────────────────────────────────────────────────
+    'eta_T': InputParameter(
+        name='eta_T', display_name='Thermal-to-electric conversion efficiency',
+        unit='', min_val=0.30, max_val=0.50, n_default=10, tick_step=0.05),
+    'M_blanket': InputParameter(
+        name='M_blanket', display_name='Blanket energy multiplication factor',
+        unit='', min_val=1.0, max_val=1.4, n_default=8, tick_step=0.1),
+    'eta_RF': InputParameter(
+        name='eta_RF', display_name='Heating and CD wall-plug efficiency',
+        unit='', min_val=0.25, max_val=0.65, n_default=10, tick_step=0.1),
+
+    # ── 12. Multi-source CD (Steady-State) ────────────────────────────────────
+    'f_heat_LH': InputParameter(
+        name='f_heat_LH', display_name='LHCD power fraction (Steady-State Multi)',
+        unit='', min_val=0.0, max_val=1.0, n_default=10, tick_step=0.2),
+    'f_heat_EC': InputParameter(
+        name='f_heat_EC', display_name='ECCD power fraction (Steady-State Multi)',
+        unit='', min_val=0.0, max_val=1.0, n_default=10, tick_step=0.2),
+    'f_heat_NBI': InputParameter(
+        name='f_heat_NBI', display_name='NBCD power fraction (Steady-State Multi)',
+        unit='', min_val=0.0, max_val=1.0, n_default=10, tick_step=0.2),
+    'rho_EC': InputParameter(
+        name='rho_EC', display_name='ECCD normalised deposition radius',
+        unit='', min_val=0.1, max_val=0.7, n_default=10, tick_step=0.1),
+    'rho_NBI': InputParameter(
+        name='rho_NBI', display_name='NBCD normalised deposition radius',
+        unit='', min_val=0.1, max_val=0.6, n_default=10, tick_step=0.1),
+    'E_beam_keV': InputParameter(
+        name='E_beam_keV', display_name='NBI beam injection energy',
+        unit='keV', min_val=100.0, max_val=1000.0, n_default=10, fmt='%.0f', tick_step=100),
+
+    # ── 13. Plasma-facing components ─────────────────────────────────────────
+    'theta_deg': InputParameter(
+        name='theta_deg', display_name='Divertor strike-point grazing angle',
+        unit='°', min_val=0.5, max_val=6.0, n_default=10, tick_step=1.0),
+
+    # ── 14. Ejima / flux model ────────────────────────────────────────────────
+    'Ce': InputParameter(
+        name='Ce', display_name='Ejima resistive ramp-up coefficient',
+        unit='', min_val=0.2, max_val=0.5, n_default=10, tick_step=0.1),
+    'C_PF': InputParameter(
+        name='C_PF', display_name='PF coil flux scaling coefficient',
+        unit='', min_val=0.7, max_val=1.1, n_default=10, tick_step=0.1),
+    'E_phi_BD': InputParameter(
+        name='E_phi_BD', display_name='Toroidal electric field at plasma breakdown',
+        unit='V/m', min_val=0.3, max_val=1.0, n_default=8, tick_step=0.1),
+    't_BD': InputParameter(
+        name='t_BD', display_name='Plasma breakdown duration',
+        unit='s', min_val=0.2, max_val=1.5, n_default=8, tick_step=0.25),
+
+    # ── 15. Disruption / runaway electron indicators ──────────────────────────
+    # These parameters govern the post-convergence RE indicator computation.
+    # They do NOT enter the physics convergence loop.
+    # A scan over pellet_dilution maps RE risk vs mitigation efficiency.
+    'tau_TQ': InputParameter(
+        name='tau_TQ', display_name='Thermal quench e-folding time',
+        unit='s', min_val=1e-4, max_val=3e-3, n_default=10, fmt='%.2e', tick_step=5e-4),
+    'Te_final_eV': InputParameter(
+        name='Te_final_eV', display_name='Post-TQ residual electron temperature',
+        unit='eV', min_val=2.0, max_val=20.0, n_default=10, tick_step=2.0),
+    'pellet_dilution': InputParameter(
+        name='pellet_dilution',
+        display_name='SPI/MGI density multiplication (disruption mitigation)',
+        unit='', min_val=1.0, max_val=50.0, n_default=10, tick_step=10),
+
+    # ── 16. Techno-economic (Sheffield 2016, post-convergence) ────────────
+    'discount_rate': InputParameter(
+        name='discount_rate', display_name='Real discount rate',
+        unit='', min_val=0.03, max_val=0.12, n_default=10, tick_step=0.02),
+    'T_life': InputParameter(
+        name='T_life', display_name='Plant operational lifetime',
+        unit='yr', min_val=20, max_val=60, n_default=10, fmt='%.0f', tick_step=10),
+    'T_build': InputParameter(
+        name='T_build', display_name='Construction duration',
+        unit='yr', min_val=6, max_val=15, n_default=10, fmt='%.0f', tick_step=2),
+    'contingency': InputParameter(
+        name='contingency', display_name='Contingency fraction',
+        unit='', min_val=0.05, max_val=0.30, n_default=10, tick_step=0.05),
+    'Util_factor': InputParameter(
+        name='Util_factor', display_name='Utilisation factor',
+        unit='', min_val=0.50, max_val=0.95, n_default=10, tick_step=0.1),
+    'Dwell_factor': InputParameter(
+        name='Dwell_factor', display_name='Dwell factor (1.0 = SS)',
+        unit='', min_val=0.5, max_val=1.0, n_default=10, tick_step=0.1),
+    'dt_rep': InputParameter(
+        name='dt_rep', display_name='Scheduled replacement downtime',
+        unit='yr', min_val=0.5, max_val=3.0, n_default=10, tick_step=0.5),
+    'Supra_cost_factor': InputParameter(
+        name='Supra_cost_factor', display_name='SC coil cost multiplier',
+        unit='', min_val=1.0, max_val=4.0, n_default=10, tick_step=0.5),
+    'C_invest_max': InputParameter(
+        name='C_invest_max', display_name='Capital cost budget ceiling',
+        unit='M EUR', min_val=5e3, max_val=50e3, n_default=10, fmt='%.0f', tick_step=5000),
+}
+
+
 def get_input_parameter_unit(param_name):
-    """Get the unit for an input parameter name"""
-    units = {
-        'R0': 'm', 'a': 'm', 'b': 'm',
-        'P_fus': 'MW',
-        'Bmax': 'T',
-        'Tbar': 'keV',
-        'H': '',
-        'nu_n': '', 'nu_T': '',
-    }
-    return units.get(param_name, '')
+    """Return physical unit string for a scannable input parameter."""
+    entry = INPUT_PARAMETER_REGISTRY.get(param_name)
+    return entry.unit if entry else ''
+
+
+def get_input_parameter_range(param_name):
+    """Return suggested (min, max, n_default) scan range for a parameter."""
+    entry = INPUT_PARAMETER_REGISTRY.get(param_name)
+    if entry:
+        return (entry.min_val, entry.max_val, entry.n_default)
+    return None
+
+
+# ─── Nice tick candidates for automatic step selection ────────────────────────
+_NICE_STEPS = np.array([
+    0.001, 0.002, 0.005,
+    0.01, 0.02, 0.05,
+    0.1, 0.2, 0.25, 0.5,
+    1, 2, 2.5, 5,
+    10, 20, 25, 50,
+    100, 200, 250, 500,
+    1000, 2000, 2500, 5000,
+    10000, 20000, 50000,
+])
+
+
+def _auto_nice_step(data_range, target_nticks=8):
+    """
+    Choose a 'nice' tick step yielding ~target_nticks ticks.
+
+    Parameters
+    ----------
+    data_range : float
+        Total span of the axis (max - min).
+    target_nticks : int
+        Desired number of ticks (default 8).
+
+    Returns
+    -------
+    float
+        Rounded tick step from the _NICE_STEPS table.
+    """
+    raw = data_range / max(target_nticks, 1)
+    idx = np.argmin(np.abs(_NICE_STEPS - raw))
+    return _NICE_STEPS[idx]
+
+
+def compute_physical_ticks(param_values, param_name):
+    """
+    Compute axis tick positions and labels aligned to physically round values.
+
+    If *param_name* has a registered ``tick_step`` in INPUT_PARAMETER_REGISTRY
+    the ticks are placed at exact multiples of that step.  Otherwise an
+    automatic nice step is chosen from the data range.
+
+    Parameters
+    ----------
+    param_values : ndarray
+        1-D array of scanned physical values (monotonically increasing).
+    param_name : str
+        Name of the scanned parameter (key in INPUT_PARAMETER_REGISTRY).
+
+    Returns
+    -------
+    tick_indices : ndarray of int
+        Array indices into *param_values* closest to the round tick values.
+    tick_labels : list of str
+        Formatted label strings for each tick.
+    """
+    v_min, v_max = param_values[0], param_values[-1]
+    data_range = v_max - v_min
+    if data_range == 0:
+        return np.array([0]), [f"{v_min}"]
+
+    # --- Determine physical tick step ----------------------------------------
+    entry = INPUT_PARAMETER_REGISTRY.get(param_name)
+    if entry is not None and entry.tick_step is not None:
+        step = entry.tick_step
+    else:
+        step = _auto_nice_step(data_range)
+
+    # --- Generate round tick values spanning the data range -------------------
+    first_tick = np.ceil(v_min / step) * step
+    tick_values = np.arange(first_tick, v_max + step * 0.01, step)
+    # Keep only values within the data range (small tolerance)
+    tick_values = tick_values[(tick_values >= v_min - step * 0.01) &
+                             (tick_values <= v_max + step * 0.01)]
+
+    if len(tick_values) == 0:
+        tick_values = np.array([v_min, v_max])
+
+    # Safety: if too many ticks, double the step until manageable
+    while len(tick_values) > 15:
+        step *= 2
+        first_tick = np.ceil(v_min / step) * step
+        tick_values = np.arange(first_tick, v_max + step * 0.01, step)
+        tick_values = tick_values[(tick_values >= v_min - step * 0.01) &
+                                 (tick_values <= v_max + step * 0.01)]
+
+    # --- Map physical tick values to nearest array indices --------------------
+    tick_indices = np.array([np.argmin(np.abs(param_values - tv))
+                            for tv in tick_values])
+
+    # --- Format labels --------------------------------------------------------
+    if step >= 100:
+        fmt = "%.0f"
+    elif step >= 1:
+        fmt = "%.1f"   # Always one decimal: e.g. 3.0 rather than 3
+    elif step >= 0.1:
+        fmt = "%.1f"
+    elif step >= 0.01:
+        fmt = "%.2f"
+    elif step >= 0.001:
+        fmt = "%.3f"
+    else:
+        fmt = "%.2e"
+
+    # Override with InputParameter.fmt if available
+    if entry is not None and entry.fmt is not None:
+        fmt = entry.fmt
+
+    tick_labels = [fmt % tv for tv in tick_values]
+
+    return tick_indices, tick_labels
+
+
+def display_input_parameters():
+    """Print all scannable input parameters grouped by theme."""
+    groups = [
+        ('Primary geometry',         ['R0', 'a', 'b']),
+        ('Magnetic field',           ['Bmax_TF', 'Bmax_CS_adm']),
+        ('Fusion power',             ['P_fus']),
+        ('Core plasma physics',      ['Tbar', 'H', 'Zeff', 'betaN_limit', 'C_Alpha', 'rho_rad_core']),
+        ('Profile peaking (Manual)', ['nu_n', 'nu_T']),
+        ('Operation & heating',      ['P_aux_input', 'Temps_Plateau_input']),
+        ('MHD limits',               ['q_limit', 'Greenwald_limit']),
+        ('TF/CS engineering',        ['fatigue_CS', 'coef_inboard_tension', 'Gap', 'c_BP']),
+        ('Superconductor',           ['T_helium', 'Marge_T_He', 'Marge_T_Nb3Sn',
+                                      'Marge_T_NbTi', 'Marge_T_REBCO',
+                                      'f_He_pipe', 'f_void', 'f_In']),
+        ('Quench protection',        ['I_cond', 'V_max', 'T_hotspot', 'RRR']),
+        ('Power conversion',         ['eta_T', 'M_blanket', 'eta_RF']),
+        ('Multi-source CD',          ['f_heat_LH', 'f_heat_EC', 'f_heat_NBI',
+                                      'rho_EC', 'rho_NBI', 'E_beam_keV']),
+        ('Plasma-facing',            ['theta_deg']),
+        ('Flux model',               ['Ce', 'C_PF', 'E_phi_BD', 't_BD']),
+        ('Disruption / RE indicators (post-convergence)',
+                                     ['tau_TQ', 'Te_final_eV', 'pellet_dilution']),
+        ('Techno-economics (Sheffield, post-convergence)',
+                                     ['discount_rate', 'T_life', 'T_build', 'contingency',
+                                      'Util_factor', 'Dwell_factor', 'dt_rep',
+                                      'Supra_cost_factor', 'C_invest_max']),
+    ]
+    print("\n" + "=" * 78)
+    print("SCANNABLE INPUT PARAMETERS  (use bracket syntax: key = [min, max, n])")
+    print("=" * 78)
+    for group_name, keys in groups:
+        print(f"\n  ── {group_name}")
+        for k in keys:
+            p = INPUT_PARAMETER_REGISTRY[k]
+            rng = f"[{p.min_val}, {p.max_val}]"
+            unit_str = f" [{p.unit}]" if p.unit else ""
+            print(f"     {k:<22s} {p.display_name:<46s}{unit_str}  suggested: {rng}")
+    print("=" * 78)
+
+
 
 
 #%% Core Scan Function
 
-def generic_2D_scan(scan_params, fixed_params, base_config):
+def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True):
     """
     Perform generic 2D scan over any two parameters.
 
@@ -803,6 +1486,11 @@ def generic_2D_scan(scan_params, fixed_params, base_config):
     base_config : GlobalConfig
         Base configuration from which each grid point is derived via
         ``dc_replace``.
+    compute_re : bool, optional
+        If True (default), compute runaway electron indicators at each grid
+        point after the main physics chain.  Uses reduced resolution
+        (N_rho=30, n_times=100) to limit overhead.  Disable for large scans
+        (>30×30 points) or when RE quantities are not needed.
 
     Returns
     -------
@@ -824,7 +1512,8 @@ def generic_2D_scan(scan_params, fixed_params, base_config):
     print(f"\nStarting 2D scan:")
     print(f"  {param1_name}: [{param1_min}, {param1_max}] with {param1_n} points")
     print(f"  {param2_name}: [{param2_min}, {param2_max}] with {param2_n} points")
-    print(f"  Total calculations: {param1_n * param2_n}\n")
+    print(f"  Total calculations: {param1_n * param2_n}")
+    print(f"  Runaway electron indicators: {'enabled (N_rho=30, n_times=100)' if compute_re else 'disabled'}\n")
     
     # Initialize outputs container
     outputs = ScanOutputs(shape=(param1_n, param2_n))
@@ -848,7 +1537,7 @@ def generic_2D_scan(scan_params, fixed_params, base_config):
                 results = run(config, verbose=0)
                 
                 # ===========================================================
-                # Unpack the full run() return tuple (v2 — 81 outputs)
+                # Unpack the full run() return tuple (v3 — 93 outputs)
                 #
                 # Index  Variable                     Note
                 # -----  --------                     ----
@@ -856,13 +1545,13 @@ def generic_2D_scan(scan_params, fixed_params, base_config):
                 #   1    B_CS                          Central solenoid peak field [T]
                 #   2    B_pol                         Poloidal field at LCFS [T]
                 #   3    tauE                          Energy confinement time [s]
-                #   4    W_th                          Thermal stored energy [J]
+                #   4    W_th                          Thermal stored energy [J]  ← raw J
                 #   5    Q                             Fusion gain
                 #   6    Volume                        Plasma volume [m³]
                 #   7    Surface                       First wall surface [m²]
                 #   8    Ip                            Plasma current [MA]
                 #   9    Ib                            Bootstrap current [MA]
-                #  10    I_CD                          Current drive current [MA]
+                #  10    I_CD                          Non-inductive driven current [MA]
                 #  11    I_Ohm                         Ohmic current [MA]
                 #  12    nbar                          Volume-averaged density [10²⁰ m⁻³]
                 #  13    nbar_line                     Line-averaged density [10²⁰ m⁻³]
@@ -873,15 +1562,15 @@ def generic_2D_scan(scan_params, fixed_params, base_config):
                 #  18    betaP                         Poloidal beta
                 #  19    qstar                         Kink safety factor
                 #  20    q95                           Safety factor at 95% flux
-                #  21    P_CD                          Current drive + heating power [MW]
+                #  21    P_CD                          CD + heating power [MW]
                 #  22    P_sep                         Power across separatrix [MW]
                 #  23    P_Thresh                      L-H threshold power [MW]
-                #  24    eta_CD                        Effective CD efficiency [10²⁰ A/W/m²]
+                #  24    eta_CD                        Effective CD efficiency
                 #  25    P_elec                        Net electric power [MW]
-                #  26    P_wallplug                    Wall-plug CD power [MW]
+                #  26    P_wallplug                    Wall-plug power [MW]
                 #  27    cost                          Machine cost proxy [m³]
-                #  28    P_Brem                        Bremsstrahlung power [MW]
-                #  29    P_syn                         Synchrotron power [MW]
+                #  28    P_Brem                        Bremsstrahlung [MW]
+                #  29    P_syn                         Synchrotron [MW]
                 #  30    P_line                        Total line radiation [MW]
                 #  31    P_line_core                   Core line radiation [MW]
                 #  32    heat                          P_sep/R0 [MW/m]
@@ -895,44 +1584,19 @@ def generic_2D_scan(scan_params, fixed_params, base_config):
                 #  40    f_alpha                       Helium ash fraction
                 #  41    tau_alpha                     Alpha confinement time [s]
                 #  42    J_TF                          TF cable current density [A/m²]
-                #  43    J_CS_1                        CS cable current density [A/m²]
-                #  44    c_TF                          TF inboard thickness [m]
-                #  45    c_WP_TF                       TF winding pack thickness [m]
-                #  46    c_Nose_TF                     TF nose thickness [m]
-                #  47    σ_z_TF                        TF axial stress [MPa]
-                #  48    σ_theta_TF                    TF hoop stress [MPa]
-                #  49    σ_r_TF                        TF radial stress [MPa]
-                #  50    Steel_fraction_TF             TF steel fraction
-                #  51    d_CS                          CS radial thickness [m]
-                #  52    σ_z_CS                        CS axial stress [MPa]
-                #  53    σ_theta_CS                    CS hoop stress [MPa]
-                #  54    σ_r_CS                        CS radial stress [MPa]
-                #  55    Steel_fraction_CS             CS steel fraction
-                #  56    B_CS_out                      CS field (duplicate) [T]
-                #  57    J_CS_out                      CS J (duplicate) [A/m²]
-                #  58    r_minor    = R0 - a           [m]
-                #  59    r_sep      = R0 - a - b       [m]
-                #  60    r_c        = R0 - a - b - c   [m]
-                #  61    r_d        = R0 - a - b - c - d  [m]
-                #  62    κ                             LCFS elongation
-                #  63    κ_95                          Elongation at 95% flux
-                #  64    δ                             LCFS triangularity
-                #  65    δ_95                          Triangularity at 95% flux
-                #  66    ΨPI                           Breakdown flux [Wb]
-                #  67    ΨRampUp                       Ramp-up flux [Wb]
-                #  68    Ψplateau                      Flat-top flux [Wb]
-                #  69    ΨPF                           PF coil flux [Wb]
-                #  70    ΨCS                           CS total flux swing [Wb]
-                #  71    eta_LH                        LH CD efficiency
-                #  72    eta_EC                        EC CD efficiency
-                #  73    eta_NBI                       NBI CD efficiency
-                #  74    P_LH                          LH power [MW]
-                #  75    P_EC                          EC power [MW]
-                #  76    P_NBI                         NBI power [MW]
-                #  77    P_ICR                         ICRH power [MW]
-                #  78    I_LH                          LH driven current [MA]
-                #  79    I_EC                          EC driven current [MA]
-                #  80    I_NBI                         NBI driven current [MA]
+                #  43    J_CS                          CS cable current density [A/m²]
+                #  44–50 TF radial build + stresses
+                #  51–57 CS radial build + stresses
+                #  58–61 r_minor, r_sep, r_c, r_d
+                #  62–65 κ, κ_95, δ, δ_95
+                #  66–70 ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS
+                #  71    Vloop (steady-state loop voltage [V])
+                #  72    li    (internal inductance li(3) [-])
+                #  73–75 eta_LH, eta_EC, eta_NBI
+                #  76–79 P_LH, P_EC, P_NBI, P_ICR
+                #  80–82 I_LH, I_EC, I_NBI
+                #  83–88 f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF
+                #  89–94 f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS
                 # ===========================================================
                 (B0, B_CS, B_pol,
                  tauE, W_th,
@@ -952,10 +1616,12 @@ def generic_2D_scan(scan_params, fixed_params, base_config):
                  d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS_out, J_CS_out,
                  r_minor, r_sep, r_c, r_d,
                  κ, κ_95, δ, δ_95,
-                 ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS,
+                 ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS, Vloop_sc, li_sc,
                  eta_LH, eta_EC, eta_NBI,
                  P_LH, P_EC, P_NBI, P_ICR,
-                 I_LH, I_EC, I_NBI) = results
+                 I_LH, I_EC, I_NBI,
+                 f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF,
+                 f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS) = results
                 
                 # ── Plasma stability limits ──────────────────────────────
                 betaN_limit_value = config.betaN_limit
@@ -968,7 +1634,39 @@ def generic_2D_scan(scan_params, fixed_params, base_config):
                 q_condition    = q_limit_value / qstar
                 
                 max_limit = max(n_condition, beta_condition, q_condition)
-                
+
+                # ── Sheffield cost model (post-convergence) ───────────
+                _COE_val = np.nan
+                _C_invest_val = np.nan
+                if config.cost_model != 'None' and np.isfinite(cost):
+                    try:
+                        P_th_scan = config.P_fus * config.M_blanket + P_CD
+                        (V_BB_s, V_TF_s, V_CS_s, V_FI_s) = f_volume(
+                            config.a, config.b, c, d, config.R0, κ)
+                        _cres = f_costs_Sheffield(
+                            discount_rate=config.discount_rate,
+                            contingency=config.contingency,
+                            T_life=config.T_life,
+                            T_build=config.T_build,
+                            P_t=P_th_scan,
+                            P_e=max(P_elec, 1.0),
+                            P_aux=P_CD,
+                            Gamma_n=Gamma_n,
+                            Util_factor=config.Util_factor,
+                            Dwell_factor=config.Dwell_factor,
+                            dt_rep=config.dt_rep,
+                            V_FI=V_FI_s,
+                            V_pc=V_TF_s + V_CS_s,
+                            V_sg=V_BB_s,
+                            V_bl=V_BB_s,
+                            S_tt=0.1 * Surface,
+                            Supra_cost_factor=config.Supra_cost_factor,
+                        )
+                        _COE_val = _cres[3]
+                        _C_invest_val = _cres[2] * 1e-3  # M EUR -> B EUR
+                    except Exception:
+                        pass
+
                 # Store all results using set_point
                 outputs.set_point(y, x,
                     # Performance
@@ -976,26 +1674,35 @@ def generic_2D_scan(scan_params, fixed_params, base_config):
                     P_fus=config.P_fus,
                     P_elec=P_elec,
                     Cost=cost,
+                    COE=_COE_val,
+                    C_invest=_C_invest_val,
                     
                     # Plasma parameters
                     Ip=Ip,
-                    n=nbar_line,       # Line-averaged density (consistent with label)
+                    Ib=Ib,
+                    I_CD=I_CD,
+                    I_Ohm=I_Ohm,
+                    n=nbar_line,         # Line-averaged density (consistent with scaling law label)
+                    nbar_vol=nbar,       # Volume-averaged density
+                    pbar=pbar,
                     beta_N=betaN,
                     beta_T=betaT,
                     beta_P=betaP,
                     q95=q95,
                     qstar=qstar,
                     tauE=tauE,
-                    W_th=W_th,
+                    W_th=W_th * 1e-6,   # [J] → [MJ]  (registry unit is MJ)
                     f_bs=Ib/Ip * 100 if Ip > 0 else 0,
                     f_alpha=f_alpha * 100,
+                    tau_alpha=tau_alpha,
                     
                     # Magnetic field
                     B0=B0,
                     BCS=B_CS,
                     B_pol=B_pol,
-                    J_TF=J_TF,
-                    J_CS=J_CS,
+                    J_TF=J_TF * 1e-6,   # [A/m²] → [A/mm²]
+                    J_CS=J_CS * 1e-6,   # [A/m²] → [A/mm²]
+                    PsiCS=ΨCS,
                     
                     # Power & heat
                     Heat=heat,
@@ -1006,12 +1713,19 @@ def generic_2D_scan(scan_params, fixed_params, base_config):
                     L_H=P_sep / P_Thresh if P_Thresh > 0 else np.nan,
                     P_Brem=P_Brem,
                     P_syn=P_syn,
+                    P_line=P_line,
+                    P_wallplug=P_wallplug,
                     q_target=q_target,
-                    lambda_q=lambda_q * 1000 if lambda_q else np.nan,  # Convert m → mm
+                    lambda_q=lambda_q * 1000 if lambda_q else np.nan,  # [m] → [mm]
+                    
+                    # Per-source CD
+                    eta_LH=eta_LH,
+                    eta_EC=eta_EC,
+                    eta_NBI=eta_NBI,
                     
                     # Geometry
                     c=r_sep - r_c if not np.isnan(r_c) else np.nan,
-                    d=r_c - r_d if not np.isnan(r_d) else np.nan,
+                    d=r_c - r_d   if not np.isnan(r_d) else np.nan,
                     r_minor=r_minor,
                     kappa=κ,
                     kappa_95=κ_95,
@@ -1025,6 +1739,10 @@ def generic_2D_scan(scan_params, fixed_params, base_config):
                     sigma_CS=max(abs(σ_z_CS), abs(σ_theta_CS), abs(σ_r_CS)) if σ_z_CS else np.nan,
                     Steel_fraction_TF=Steel_fraction_TF * 100 if Steel_fraction_TF else np.nan,
                     Steel_fraction_CS=Steel_fraction_CS * 100 if Steel_fraction_CS else np.nan,
+                    f_sc_TF=f_sc_TF * 100 if np.isfinite(f_sc_TF) else np.nan,
+                    f_He_TF=f_He_TF * 100 if np.isfinite(f_He_TF) else np.nan,
+                    f_sc_CS=f_sc_CS * 100 if np.isfinite(f_sc_CS) else np.nan,
+                    f_He_CS=f_He_CS * 100 if np.isfinite(f_He_CS) else np.nan,
                     
                     # Limits
                     limits=max_limit,
@@ -1033,17 +1751,70 @@ def generic_2D_scan(scan_params, fixed_params, base_config):
                     q_limit=q_condition,
                 )
                 
-                # Combined c+d
+                # Combined TF + CS thickness
                 c_val = r_sep - r_c if not np.isnan(r_c) else np.nan
-                d_val = r_c - r_d if not np.isnan(r_d) else np.nan
-                outputs['c_d'][y, x] = c_val + d_val if not (np.isnan(c_val) or np.isnan(d_val)) else np.nan
+                d_val = r_c  - r_d  if not np.isnan(r_d) else np.nan
+                outputs['c_d'][y, x] = (c_val + d_val
+                                        if not (np.isnan(c_val) or np.isnan(d_val))
+                                        else np.nan)
                 
                 # Check radial build validity
                 if not np.isnan(r_d) and max_limit < 1 and r_d > 0:
                     outputs['radial_build'][y, x] = config.R0
                 else:
                     outputs['radial_build'][y, x] = np.nan
-                
+
+                # ── Runaway electron indicators ──────────────────────────────
+                # Computed from the converged plasma state using the hot-tail
+                # seed model (Smith 2008) + avalanche amplification (Breizman
+                # 2019). Uses li from the run() output tuple (self-consistent).
+                # N_rho and n_times are reduced from defaults for scan performance.
+                if compute_re:
+                    # Resolve profile peaking factors — mirrors the _PROFILE_PRESETS
+                    # logic in run() so that nu_T, nu_n, rho_ped, n_ped_frac, and
+                    # T_ped_frac are defined for the RE indicator calls below.
+                    # Without this block these names are undefined → NameError.
+                    if config.Plasma_profiles == 'Manual':
+                        nu_n       = config.nu_n_manual
+                        nu_T       = config.nu_T_manual
+                        rho_ped    = config.rho_ped
+                        n_ped_frac = config.n_ped_frac
+                        T_ped_frac = config.T_ped_frac
+                    else:
+                        _pp        = _PROFILE_PRESETS.get(config.Plasma_profiles,
+                                                           _PROFILE_PRESETS['H'])
+                        nu_n       = _pp['nu_n'];       nu_T       = _pp['nu_T']
+                        rho_ped    = _pp['rho_ped'];    n_ped_frac = _pp['n_ped_frac']
+                        T_ped_frac = _pp['T_ped_frac']
+
+                    try:
+                        # li is available directly from run() output tuple
+                        # (self-consistent li(3) from f_q_profile_selfconsistent).
+                        _re = compute_RE_indicators(
+                            Ip=Ip, nbar=nbar, Tbar=config.Tbar,
+                            a=config.a, R0=config.R0, κ=κ,
+                            Z_eff=config.Zeff, li=li_sc,
+                            nu_n=nu_n, nu_T=nu_T,
+                            rho_ped=rho_ped, n_ped_frac=n_ped_frac,
+                            T_ped_frac=T_ped_frac,
+                            Te_final_eV=config.Te_final_eV,
+                            tau_TQ=config.tau_TQ,
+                            V=Volume,
+                            N_rho=30,    # Reduced from default 50 for scan performance
+                            n_times=100, # Reduced from default 300 for scan performance
+                            pellet_dilution=config.pellet_dilution,
+                        )
+                        outputs['I_RE_seed'][y, x]  = _re['I_RE_seed'] * 1e-3        # [A] → [kA]
+                        outputs['I_RE_aval'][y, x]  = _re['I_RE_avalanche'] * 1e-6  # [A] → [MA]
+                        outputs['f_RE_Ip'][y, x]    = _re['f_RE_to_Ip']     * 100   # [-] → [%]
+                        outputs['f_RE_avg'][y, x]   = _re['f_RE_avg']
+                        outputs['f_RE_core'][y, x]  = _re['f_RE_core']
+                        outputs['E_RE_kin'][y, x]   = _re['E_RE_kin']               # [MJ]
+                        outputs['W_mag_RE'][y, x]   = _re['W_mag_RE']               # [MJ]
+                    except Exception:
+                        # RE computation is non-critical — leave as NaN on failure
+                        pass
+
             except Exception as e:
                 outputs.fill_nan(y, x)
                 if y < 2 and x < 2:
@@ -1282,22 +2053,17 @@ def plot_scan_results(outputs, param1_values, param2_values,
     for cax in [cax1, cax2, cax3]:
         cax.axvline(x=1, color='white', linewidth=2.5)
     
-    # Configure Y-axis ticks (param1)
-    approx_step_y = (param1_values[-1] - param1_values[0]) / 10
-    real_step_y = (param1_values[-1] - param1_values[0]) / (len(param1_values) - 1)
-    index_step_y = max(1, int(round(approx_step_y / real_step_y)))
-    y_indices = np.arange(0, len(param1_values), index_step_y)
-    ax.set_yticks(y_indices)
-    ax.set_yticklabels(np.round(param1_values[::-1][y_indices], 2), fontsize=font_legend)
+    # Configure Y-axis ticks (param1) — physically round values
+    y_tick_idx, y_tick_labels = compute_physical_ticks(param1_values, param1_name)
+    # Invert indices for the [::-1] convention used by imshow
+    y_tick_idx_inv = (len(param1_values) - 1) - y_tick_idx
+    ax.set_yticks(y_tick_idx_inv)
+    ax.set_yticklabels(y_tick_labels[::-1], fontsize=font_legend)
     
-    # Configure X-axis ticks (param2)
-    approx_step_x = (param2_values[-1] - param2_values[0]) / 10
-    real_step_x = (param2_values[-1] - param2_values[0]) / (len(param2_values) - 1)
-    index_step_x = max(1, int(round(approx_step_x / real_step_x)))
-    x_indices = np.arange(0, len(param2_values), index_step_x)
-    ax.set_xticks(x_indices)
-    x_labels = [round(param2_values[i], 2) for i in x_indices]
-    ax.set_xticklabels(x_labels, rotation=45, ha='right', fontsize=font_legend)
+    # Configure X-axis ticks (param2) — physically round values
+    x_tick_idx, x_tick_labels = compute_physical_ticks(param2_values, param2_name)
+    ax.set_xticks(x_tick_idx)
+    ax.set_xticklabels(x_tick_labels, rotation=45, ha='right', fontsize=font_legend)
     
     # Plot ISO-CONTOUR 1 (black dashed)
     iso_legend_1 = plot_generic_contours(ax, iso_matrix_1, iso_param_1,
@@ -1391,8 +2157,9 @@ def save_scan_results(fig, outputs, param1_values, param2_values,
 
 #%% Main Function
 
-def main(input_file=None, auto_plot=False, 
-         iso_param_1=None, iso_param_2=None):
+def main(input_file=None, auto_plot=False,
+         iso_param_1=None, iso_param_2=None,
+         compute_re=True):
     """
     Main execution function for scans.
 
@@ -1402,6 +2169,9 @@ def main(input_file=None, auto_plot=False,
     auto_plot    : bool           If True, use provided iso parameters without prompting.
     iso_param_1  : str or None    First iso-contour parameter (black lines).
     iso_param_2  : str or None    Second iso-contour parameter (white lines).
+    compute_re   : bool           If True (default), compute runaway electron indicators.
+                                  Set to False to speed up large scans.
+                                  Can also be overridden by ``compute_re = 0`` in the input file.
     """
     
     input_file_path = input_file
@@ -1425,6 +2195,25 @@ def main(input_file=None, auto_plot=False,
     
     # Load scan and fixed parameters (for grid definition and display)
     scan_params, fixed_params = load_scan_parameters(input_file)
+
+    # Allow input file to override compute_re flag (e.g. "compute_re = 0")
+    _TRUTHY = {'1', 'true', 'yes', 'on'}
+    _FALSY  = {'0', 'false', 'no', 'off'}
+    try:
+        with open(input_file, 'r', encoding='utf-8') as _fh:
+            for _line in _fh:
+                _line = _line.split('#')[0].strip()
+                if not _line or '=' not in _line:
+                    continue
+                _k, _, _v = _line.partition('=')
+                if _k.strip().lower() == 'compute_re':
+                    _v = _v.strip().lower()
+                    if _v in _TRUTHY:
+                        compute_re = True
+                    elif _v in _FALSY:
+                        compute_re = False
+    except OSError:
+        pass
     
     # Print scan configuration
     print("\n" + "="*73)
@@ -1432,20 +2221,23 @@ def main(input_file=None, auto_plot=False,
     print("="*73)
     print(f"\nScan parameters:")
     for param_name, min_val, max_val, n_points in scan_params:
-        unit = get_input_parameter_unit(param_name)
-        unit_str = f" [{unit}]" if unit else ""
-        print(f"  {param_name}: [{min_val}, {max_val}]{unit_str} with {n_points} points")
+        entry = INPUT_PARAMETER_REGISTRY.get(param_name)
+        unit_str = f" [{entry.unit}]" if (entry and entry.unit) else ""
+        desc_str = f"  ({entry.display_name})" if entry else ""
+        print(f"  {param_name}: [{min_val}, {max_val}]{unit_str} × {n_points} pts{desc_str}")
     
     print(f"\nFixed parameters:")
     for key, value in list(fixed_params.items())[:6]:
-        print(f"  {key} = {value}")
+        entry = INPUT_PARAMETER_REGISTRY.get(key)
+        unit_str = f" [{entry.unit}]" if (entry and entry.unit) else ""
+        print(f"  {key} = {value}{unit_str}")
     if len(fixed_params) > 6:
         print(f"  ... and {len(fixed_params) - 6} more")
     
     try:
         # Perform scan
         outputs, param1_values, param2_values, param1_name, param2_name = generic_2D_scan(
-            scan_params, fixed_params, base_config
+            scan_params, fixed_params, base_config, compute_re=compute_re
         )
         
         # Plot results

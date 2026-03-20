@@ -39,9 +39,6 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib.gridspec as gridspec
 
-# Physical constants
-_E_ELEM = 1.602176634e-19   # Elementary charge [C]
-
 # Package-relative imports (production mode)
 if __name__ != "__main__":
     from .D0FUS_physical_functions import (
@@ -52,6 +49,7 @@ if __name__ != "__main__":
         f_nbar_line,
         get_Lz,
         f_He_fraction,
+        f_q_profile,
     )
     from .D0FUS_radial_build_functions import (
         J_non_Cu_NbTi, J_non_Cu_Nb3Sn, J_non_Cu_REBCO,
@@ -62,7 +60,7 @@ if __name__ != "__main__":
         F_CIRCE0D, compute_von_mises_stress,
         calculate_E_mag_TF,
     )
-    from .D0FUS_parameterization import DEFAULT_CONFIG
+    from .D0FUS_parameterization import DEFAULT_CONFIG, E_ELEM
 
 # Standalone-execution imports (development / testing)
 else:
@@ -77,6 +75,7 @@ else:
         f_nbar_line,
         get_Lz,
         f_He_fraction,
+        f_q_profile,
     )
     from D0FUS_BIB.D0FUS_radial_build_functions import (
         J_non_Cu_NbTi, J_non_Cu_Nb3Sn, J_non_Cu_REBCO,
@@ -87,7 +86,7 @@ else:
         F_CIRCE0D, compute_von_mises_stress,
         calculate_E_mag_TF,
     )
-    from D0FUS_BIB.D0FUS_parameterization import DEFAULT_CONFIG
+    from D0FUS_BIB.D0FUS_parameterization import DEFAULT_CONFIG, E_ELEM
 
 
 # =============================================================================
@@ -640,8 +639,8 @@ def plot_density_line_vol(
 # =============================================================================
 
 def plot_Lz_cooling(
-    Te_min_keV: float = 0.01,
-    Te_max_keV: float = 50.0,
+    Te_min_keV: float = 0.05,
+    Te_max_keV: float = 100.0,
     n_points: int = 500,
     smoothing_width: int = 15,
     save_dir: str | None = None,
@@ -684,21 +683,22 @@ def plot_Lz_cooling(
         ax.plot(Te_arr, Lz_sm, color=color, lw=2.0, label=label)
 
     # Plasma zone shading
-    ax.axvspan(Te_min_keV, 0.3,  alpha=0.07, color="steelblue")
-    ax.axvspan(0.3,        1.0,  alpha=0.07, color="goldenrod")
-    ax.axvspan(1.0,        20.0, alpha=0.07, color="tomato")
-    ax.text(0.045, 2e-31, "Edge",     fontsize=10, color="steelblue",  ha="center")
-    ax.text(0.55,  2e-31, "Pedestal", fontsize=10, color="goldenrod",  ha="center")
-    ax.text(4.5,   2e-31, "Core",     fontsize=10, color="tomato",     ha="center")
+    ax.axvspan(0.1, 0.3,   alpha=0.07, color="steelblue")
+    ax.axvspan(0.3, 1.0,   alpha=0.07, color="goldenrod")
+    ax.axvspan(1.0, 100.0, alpha=0.07, color="tomato")
+    
+    ax.text(0.17, 2e-31, "Edge",     fontsize=10, color="steelblue", ha="center")
+    ax.text(0.55, 2e-31, "Pedestal", fontsize=10, color="goldenrod", ha="center")
+    ax.text(10,   2e-31, "Core",     fontsize=10, color="tomato", ha="center")
 
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_xlim(Te_min_keV, Te_max_keV)
-    ax.set_ylim(1e-36, 10e-31)
+    ax.set_xlim(0.1, 50)
+    ax.set_ylim(1e-34, 10e-31)
     ax.set_xlabel(r"$T_e$  [keV]", fontsize=12)
     ax.set_ylabel(r"$L_z(T_e)$  [W·m³]", fontsize=12)
     ax.set_title("Coronal radiative cooling coefficient\n"
-                 r"(Mavrin 2018 / ADAS; coronal equilibrium)", fontsize=11)
+                 r"(Mavrin 2018 / ADAS)", fontsize=11)
     ax.legend(fontsize=10, loc="lower right")
     ax.grid(True, which="both", alpha=0.2)
 
@@ -818,8 +818,9 @@ def plot_cable_current_density(
     V_max: float = 10e3,
     N_sub: float = 6,
     tau_h: float = 0.5,
-    f_He: float = 0.33,
-    f_In: float = 0.05,
+    f_He_pipe: float = None,
+    f_void: float = None,
+    f_In: float = None,
     T_hotspot: float = None,
     RRR: float = None,
     cfg=None,
@@ -839,23 +840,28 @@ def plot_cable_current_density(
 
     Parameters
     ----------
-    B_min, B_max : float  Field scan range [T].
-    T_op         : float  Operating temperature [K].
-    E_mag        : float  Coil magnetic energy [J].
-    I_cond       : float  Conductor current [A].
-    V_max        : float  Maximum dump voltage [V].
-    N_sub        : float  Number of quench protection subdivisions [-].
-    tau_h        : float  Detection + hold time [s].
-    f_He, f_In   : float  Helium and insulation void fractions [-].
-    T_hotspot    : float or None  Max hotspot temperature [K] (from cfg if None).
-    RRR          : float or None  Copper residual resistivity ratio (from cfg if None).
-    cfg          : config object  D0FUS global configuration (DEFAULT_CONFIG if None).
-    save_dir     : str or None
+    B_min, B_max  : float  Field scan range [T].
+    T_op          : float  Operating temperature [K].
+    E_mag         : float  Coil magnetic energy [J].
+    I_cond        : float  Conductor current [A].
+    V_max         : float  Maximum dump voltage [V].
+    N_sub         : float  Number of quench protection subdivisions [-].
+    tau_h         : float  Detection + hold time [s].
+    f_He_pipe     : float or None  He pipe fraction [-] (from cfg if None).
+    f_void        : float or None  Interstitial void fraction [-] (from cfg if None).
+    f_In          : float or None  Insulation fraction [-] (from cfg if None).
+    T_hotspot     : float or None  Max hotspot temperature [K] (from cfg if None).
+    RRR           : float or None  Copper residual resistivity ratio (from cfg if None).
+    cfg           : config object  D0FUS global configuration (DEFAULT_CONFIG if None).
+    save_dir      : str or None
     """
     if cfg is None:
         cfg = DEFAULT_CONFIG
 
-    # Resolve quench-protection parameters from cfg with explicit fallbacks
+    # Resolve parameters from cfg with explicit fallbacks
+    f_He_pipe     = f_He_pipe     if f_He_pipe is not None else cfg.f_He_pipe
+    f_void        = f_void        if f_void    is not None else cfg.f_void
+    f_In          = f_In          if f_In      is not None else cfg.f_In
     T_hotspot     = T_hotspot     if T_hotspot is not None else cfg.T_hotspot
     RRR           = RRR           if RRR       is not None else cfg.RRR
     Marge_T_He    = cfg.Marge_T_He
@@ -868,7 +874,8 @@ def plot_cable_current_density(
     B_range = np.linspace(B_min, B_max, 30)
     coil_params = dict(
         E_mag=E_mag, I_cond=I_cond, V_max=V_max,
-        N_sub=N_sub, tau_h=tau_h, f_He=f_He, f_In=f_In,
+        N_sub=N_sub, tau_h=tau_h,
+        f_He_pipe=f_He_pipe, f_void=f_void, f_In=f_In,
         T_hotspot=T_hotspot, RRR=RRR,
         Marge_T_He=Marge_T_He, Marge_T_Nb3Sn=Marge_T_Nb3Sn,
         Marge_T_NbTi=Marge_T_NbTi, Marge_T_REBCO=Marge_T_REBCO,
@@ -1247,151 +1254,6 @@ def _resolve_kinetics(run: dict) -> tuple:
     )
 
 
-def _q_profile_arr(rho: np.ndarray, q95: float) -> np.ndarray:
-    """
-    Parabolic safety-factor profile q(ρ) = q₀ + (q₉₅ − q₀) ρ².
-
-    Consistent with the parameterisation used internally by f_Sauter_Ib.
-
-    Parameters
-    ----------
-    rho  : ndarray  Normalised radial grid ρ ∈ [0, 1].
-    q95  : float    Safety factor at the 95 % flux surface.
-
-    Returns
-    -------
-    q : ndarray  Local safety factor.
-    """
-    q0 = max(1.0, q95 / 3.0)
-    return q0 + (q95 - q0) * rho**2
-
-
-def _bootstrap_profile_arr(
-    rho: np.ndarray,
-    R0: float,
-    a: float,
-    kappa_edge: float,
-    kappa_95: float,
-    B0: float,
-    nbar: float,
-    Tbar: float,
-    q95: float,
-    Z_eff: float,
-    nu_n: float,
-    nu_T: float,
-    rho_ped: float,
-    n_ped_frac: float,
-    T_ped_frac: float,
-    Vprime_data=None,
-) -> np.ndarray:
-    """
-    Compute the local bootstrap current density profile j_bs(ρ) [MA/m²].
-
-    This is a *visualisation-only* implementation that mirrors the Sauter
-    (1999) physics of f_Sauter_Ib but returns the full radial array instead
-    of the integrated current.  It uses the large-aspect-ratio limit of the
-    Sauter L₃₁ bootstrap coefficient.
-
-    NOTE — intentional duplication
-        This function is kept in D0FUS_figures deliberately to preserve the
-        physics-module / figures-module separation.  It must be kept
-        consistent with f_Sauter_Ib whenever physics updates occur.
-
-    Parameters
-    ----------
-    rho                        : ndarray  Normalised radial coordinate.
-    R0, a                      : float    Major / minor radii [m].
-    kappa_edge, kappa_95       : float    Edge and 95 % elongation [-].
-    B0                         : float    On-axis toroidal field [T].
-    nbar, Tbar                 : float    Volume-averaged n [10²⁰ m⁻³] and T [keV].
-    q95                        : float    Safety factor at ρ₉₅.
-    Z_eff                      : float    Effective ion charge.
-    nu_n, nu_T                 : float    Density / temperature peaking exponents.
-    rho_ped, n_ped_frac        : float    Pedestal parameters (density).
-    T_ped_frac                 : float    Pedestal temperature fraction.
-    Vprime_data                : tuple or None  Precomputed Miller geometry.
-
-    Returns
-    -------
-    j_bs : ndarray  Bootstrap current density [MA/m²], same shape as rho.
-
-    References
-    ----------
-    Sauter, Angioni & Lin-Liu, Phys. Plasmas 6, 2834 (1999).
-    Sauter, Angioni & Lin-Liu, Phys. Plasmas 9, 5140 (2002) — errata.
-    """
-    rho  = np.asarray(rho, dtype=float)
-    j_bs = np.zeros_like(rho)
-
-    # Profile arrays on the requested radial grid
-    T_arr = f_Tprof(Tbar, nu_T, rho, rho_ped, T_ped_frac)    # [keV]
-    n_arr = f_nprof(nbar, nu_n, rho, rho_ped, n_ped_frac)    # [10²⁰ m⁻³]
-    q_arr = _q_profile_arr(rho, q95)
-
-    # Numerical logarithmic gradients [m⁻¹]
-    dT_drho = np.gradient(T_arr, rho)
-    dn_drho = np.gradient(n_arr, rho)
-    dln_T   = np.where(T_arr > 0.01, dT_drho / (T_arr * a), 0.0)
-    dln_n   = np.where(n_arr > 1e-3, dn_drho / (n_arr * a), 0.0)
-
-    # Local kappa(ρ) — D0FUS mode uses PCHIP profile, Academic uses constant
-    use_miller = Vprime_data is not None
-    kap_arr = (kappa_profile(rho, kappa_edge, kappa_95)
-               if use_miller else np.full_like(rho, kappa_edge))
-
-    for i, r in enumerate(rho):
-        if r < 0.02:
-            continue                              # Avoid on-axis singularity
-
-        n_loc = n_arr[i]
-        T_loc = T_arr[i]
-        q_loc = q_arr[i]
-        if n_loc < 1e-3 or T_loc < 0.1:
-            continue
-
-        eps  = r * a / R0                        # Local inverse aspect ratio ε = r/R
-        kap  = kap_arr[i]
-
-        # Trapped particle fraction — Chang-Hinton / Sauter correction
-        eps_eff = eps / kap
-        eps_eff = min(eps_eff, 0.9)
-        f_t = np.clip(
-            1.0 - (1.0 - eps_eff)**2
-                  / (np.sqrt(1.0 - eps_eff**2) * (1.0 + 1.46 * np.sqrt(eps_eff))),
-            0.0, 0.95,
-        )
-        f_c = 1.0 - f_t                          # Circulating fraction
-
-        # Electron collisionality parameter ν*_e (Sauter 1999 eq. 18)
-        n_e  = n_loc * 1e20                      # [m⁻³]
-        T_eV = T_loc * 1e3                       # [eV]
-        Lambda = max(15.0,
-                     17.3 - 0.5 * np.log(n_e / 1e20)
-                          + 1.5 * np.log(T_eV  / 1e3))
-        nu_e_star = 6.921e-18 * q_loc * R0 * n_e * Z_eff * Lambda / (
-            T_eV**2 * eps**1.5)
-
-        # Sauter L₃₁ coefficient (large-aspect-ratio approximation)
-        L31 = (f_t / (1.0 + 0.15 * nu_e_star + 0.24 * nu_e_star**2)
-               * (1.0 + 0.46 * eps))
-
-        # Local pressure [Pa] and combined logarithmic gradient [m⁻¹]
-        n_i   = n_e / max(Z_eff, 1.0)
-        p_tot = (n_e + n_i) * T_eV * _E_ELEM
-        dln_p = dln_n[i] + dln_T[i]
-
-        # Bootstrap coefficient C_bs (simplified Sauter eq. 14a)
-        # Note: the single minus sign in the j_bs formula below accounts
-        # for the Sauter sign convention; C_bs itself is positive.
-        C_bs = L31 * f_c**2 / max(f_c**2 + f_t, 1e-9)
-
-        # j_bs [A/m²]: j_bs = -(R B_φ) × p × C_bs × d(ln p)/dr / B²
-        I_psi  = R0 * B0                         # R·B_tor ≈ const [T·m]
-        j_bs[i] = -I_psi * p_tot * C_bs * dln_p / B0**2
-
-    return j_bs / 1e6                            # [MA/m²]
-
-
 def _radiation_emissivity(
     rho: np.ndarray,
     nbar: float,
@@ -1486,7 +1348,7 @@ def plot_run_nTp(
     n_prof = f_nprof(nbar, nu_n, rho, rho_ped, n_ped_frac)   # [10²⁰ m⁻³]
     T_prof = f_Tprof(Tbar, nu_T, rho, rho_ped, T_ped_frac)   # [keV]
     # Total pressure [kPa]: p = n_e (1 + 1/Z_eff) T_e
-    p_prof = (n_prof * 1e20) * (1.0 + 1.0 / Z_eff) * (T_prof * 1e3) * _E_ELEM / 1e3
+    p_prof = (n_prof * 1e20) * (1.0 + 1.0 / Z_eff) * (T_prof * 1e3) * E_ELEM / 1e3
 
     fig, axes = plt.subplots(1, 3, figsize=(16, 5))
 
@@ -1694,112 +1556,165 @@ def plot_q_profile(
     save_dir: str | None = None,
 ) -> None:
     """
-    Plot the safety factor profile q(ρ) using the parabolic parameterisation
-    consistent with the D0FUS bootstrap current model.
+    Plot the safety factor, current density, and enclosed current profiles.
 
-    q(ρ) = q₀ + (q₉₅ − q₀) ρ²,  q₀ = max(1, q₉₅/3).
+    Uses the self-consistent q-profile data from
+    f_q_profile_selfconsistent() when available in run['_q_sc'].
+    Falls back to the analytical f_q_profile() model otherwise.
 
-    The kink stability limit q = 2 is drawn as a dashed reference line.
+    When self-consistent data is present, the current density panel
+    shows the decomposition j_total = j_Ohm+CD + j_bootstrap.
+
+    Three panels:
+      (a) q(ρ) — safety factor profile with q₀ and q₉₅ markers.
+      (b) j(ρ)/j(0) — normalised current density (total + decomposition).
+      (c) I(ρ)/Ip — enclosed current fraction.
 
     Parameters
     ----------
     run      : dict   D0FUS run output (requires key 'q95').
-    n_rho    : int    Number of radial grid points.
+    n_rho    : int    Number of radial grid points (used only for fallback).
     save_dir : str or None
 
     References
     ----------
-    Wesson, Tokamaks, 4th ed., §3.5 — parabolic q profile convention.
+    Wesson, Tokamaks, 4th ed., §3.5 — cylindrical j–q Ampère relation.
+    Sauter et al., Phys. Plasmas 6 (1999) 2834 — neoclassical σ.
+    Kovari et al., Fus. Eng. Des. 89 (2014) 3054 — PROCESS §18.
     """
-    q95 = float(run["q95"])
+    q95     = float(run["q95"])
+    Ip      = run.get("Ip", None)
+    _q_sc   = run.get("_q_sc", None)
 
-    rho   = np.linspace(0.0, 1.0, n_rho)
-    q_arr = _q_profile_arr(rho, q95)
+    # ── Data source: self-consistent or analytical fallback ────────────
+    if _q_sc is not None and 'q_arr' in _q_sc:
+        # Self-consistent path
+        rho     = _q_sc['rho']
+        q_arr   = _q_sc['q_arr']
+        j_total = _q_sc['j_total']
+        j_bs    = _q_sc['j_bs']
+        j_Ohm   = _q_sc.get('j_Ohm', _q_sc['j_non_bs'])
+        j_CD    = _q_sc.get('j_CD', np.zeros_like(rho))
+        I_enc   = _q_sc['I_enc']
+        li      = _q_sc['li']
+        n_iter  = _q_sc['n_iter']
+        has_decomposition = True
 
-    fig, ax = plt.subplots(figsize=(6, 4.5))
+        # Normalise current profiles to j_total(0)
+        j0 = j_total[0] if j_total[0] > 0 else 1.0
+        j_norm      = j_total / j0
+        j_Ohm_norm  = j_Ohm / j0
+        j_CD_norm   = j_CD / j0
+        j_bs_norm   = j_bs / j0
+
+        # Normalise enclosed current to Ip
+        I_norm = I_enc / np.maximum(I_enc[-1], 1e-3)
+
+        suptitle_str = (
+            r"Self-consistent $q(\rho)$ from Amp"
+            + "\u00e8"
+            + r"re integration"
+            + rf"   —   $l_i(3) = {li:.2f}$,  {n_iter} iter."
+        )
+    else:
+        # Analytical fallback (no self-consistent data available)
+        rho     = np.linspace(0.0, 0.99, n_rho)
+        alpha_J = 1.5   # IPDG89 reference for analytical fallback
+        q_arr   = f_q_profile(rho, q95=q95, rho95=0.95, alpha_J=alpha_J)
+        has_decomposition = False
+
+        q_edge = q_arr[-1]
+        I_norm = q_edge * rho**2 / np.maximum(q_arr, 1e-3)
+        I_norm = I_norm / np.maximum(I_norm[-1], 1e-10)
+        j_norm = np.maximum(1.0 - rho**2, 0.0)**alpha_J
+
+        rho_s    = np.where(rho > 1e-8, rho, 1.0)
+        li_integ = np.where(rho > 1e-8, I_norm**2 / rho_s, 0.0)
+        li       = 2.0 * np.trapezoid(li_integ, rho)
+
+        suptitle_str = (
+            rf"$q(\rho)$ from $j \propto (1 - \rho^2)^{{\alpha_J}}$"
+            rf"   —   analytical fallback ($\alpha_J = 1.5$)"
+        )
+
+    # ── Figure ────────────────────────────────────────────────────────
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.8))
+
+    # (a) q(ρ) ─────────────────────────────────────────────────────────
+    ax = axes[0]
     ax.plot(rho, q_arr, "tab:blue", lw=2.2)
-    ax.set_xlabel(r"$\rho = r/a$", fontsize=12)
+    ax.axhline(1.0, color="gray", ls=":", lw=0.8, alpha=0.5)
+    ax.axhline(q95, color="gray", ls="--", lw=0.8, alpha=0.5)
+    ax.axvline(0.95, color="gray", ls=":", lw=0.8, alpha=0.4)
+    ax.plot(rho[0],  q_arr[0],  "o", color="tab:blue", ms=7, zorder=5)
+    ax.plot(0.95, q95, "s", color="tab:red",  ms=7, zorder=5,
+            label=rf"$q_{{95}} = {q95:.2f}$")
+    ax.text(0.04, 0.92,
+            rf"$q_0 = {q_arr[0]:.2f}$" + "\n"
+            rf"$l_i(3) = {li:.2f}$" + "\n"
+            rf"$q(1) = {q_arr[-1]:.2f}$",
+            transform=ax.transAxes, fontsize=9, va="top",
+            bbox=dict(boxstyle="round,pad=0.3", fc="lightyellow", alpha=0.85))
+    ax.set_xlabel(r"$\rho$", fontsize=12)
     ax.set_ylabel(r"$q(\rho)$", fontsize=12)
-    ax.set_title("Safety factor profile  q(ρ)", fontsize=11)
-    ax.grid(True, alpha=0.3)
+    ax.set_title("(a) Safety factor", fontsize=11)
+    ax.legend(fontsize=9, loc="lower right")
     ax.set_xlim(0, 1)
     ax.set_ylim(bottom=0)
+    ax.grid(True, alpha=0.25)
+
+    # (b) j(ρ)/j(0) — current density decomposition ───────────────────
+    ax = axes[1]
+    if has_decomposition:
+        ax.plot(rho, j_norm,     color="k",          lw=2.2,         label=r"$j_{total}$")
+        ax.plot(rho, j_Ohm_norm, color="tab:blue",   lw=1.5, ls="-", label=r"$j_{Ohm}$")
+        ax.plot(rho, j_CD_norm,  color="tab:red",    lw=1.5, ls="-", label=r"$j_{CD}$")
+        ax.plot(rho, j_bs_norm,  color="tab:green",  lw=1.5, ls="-", label=r"$j_{bs}$")
+        ax.legend(fontsize=8, loc="upper right")
+        # Current fraction annotation
+        _dA_fig = np.gradient(rho)
+        _dA_fig[0] = _dA_fig[1]
+        _norm = max(np.sum(j_norm * _dA_fig), 1e-10)
+        _f_Ohm = np.sum(j_Ohm_norm * _dA_fig) / _norm
+        _f_CD  = np.sum(j_CD_norm  * _dA_fig) / _norm
+        _f_bs  = np.sum(j_bs_norm  * _dA_fig) / _norm
+        ax.text(0.52, 0.92,
+                rf"$I_{{Ohm}}$: {_f_Ohm:.0%}   "
+                rf"$I_{{CD}}$: {_f_CD:.0%}   "
+                rf"$I_{{bs}}$: {_f_bs:.0%}",
+                transform=ax.transAxes, fontsize=8, ha="center", va="top",
+                bbox=dict(boxstyle="round,pad=0.3", fc="lightyellow", alpha=0.85))
+    else:
+        ax.plot(rho, j_norm, "tab:orange", lw=2.2, label=r"$j_{total}$")
+    ax.axhline(0, color="k", lw=0.5, alpha=0.3)
+    ax.set_xlabel(r"$\rho$", fontsize=12)
+    ax.set_ylabel(r"$j(\rho)\,/\,j(0)$", fontsize=12)
+    ax.set_title("(b) Current density decomposition", fontsize=11)
+    ax.set_xlim(0, 1)
+    ax.set_ylim(bottom=min(0, np.min(j_norm) * 1.1))
+    ax.grid(True, alpha=0.25)
+
+    # (c) I(ρ)/Ip ─────────────────────────────────────────────────────
+    ax = axes[2]
+    ax.plot(rho, I_norm, "tab:green", lw=2.2)
+    ax.axhline(1.0, color="gray", ls="--", lw=0.8, alpha=0.5)
+    ax.set_xlabel(r"$\rho$", fontsize=12)
+    ax.set_ylabel(r"$I(\rho)\,/\,I_p$", fontsize=12)
+    ax.set_title("(c) Enclosed current", fontsize=11)
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1.05)
+    ax.grid(True, alpha=0.25)
+
+    li_text = rf"$l_i = {li:.3f}$"
+    if Ip is not None:
+        li_text += rf"  ($I_p = {Ip:.1f}$ MA)"
+    ax.text(0.04, 0.92, li_text,
+            transform=ax.transAxes, fontsize=10, va="top",
+            bbox=dict(boxstyle="round,pad=0.3", fc="lightyellow", alpha=0.85))
+
+    fig.suptitle(suptitle_str, fontsize=12, y=1.01)
     plt.tight_layout()
     _save_or_show(fig, save_dir, "run_q_profile")
-
-
-# ---------------------------------------------------------------------------
-# A5 — Bootstrap current density profile j_bs(ρ)
-# ---------------------------------------------------------------------------
-
-def plot_current_profile(
-    run: dict,
-    n_rho: int = 200,
-    save_dir: str | None = None,
-) -> None:
-    """
-    Plot the neoclassical bootstrap current density profile j_bs(ρ) [MA/m²].
-
-    Uses the simplified Sauter (1999) model implemented in
-    _bootstrap_profile_arr.  The integrated bootstrap current is estimated
-    and annotated; it should be compared with the authoritative value from
-    f_Sauter_Ib / f_Redl_Ib used in the power-balance solver.
-
-    Parameters
-    ----------
-    run      : dict   D0FUS run output.
-    n_rho    : int    Number of radial grid points.
-    save_dir : str or None
-
-    Notes
-    -----
-    A warning annotation reminds the user that this is a *profile shape*
-    tool; f_Sauter_Ib / f_Redl_Ib are the authoritative integrated values.
-    """
-    R0, a, kappa_edge, delta_edge, kappa_95, delta_95, Vprime_data = \
-        _resolve_geometry(run)
-    nbar, Tbar, nu_n, nu_T, rho_ped, n_ped_frac, T_ped_frac = \
-        _resolve_kinetics(run)
-    B0   = float(run.get("B0",   5.3))
-    q95  = float(run.get("q95",  3.0))
-    Z_eff = float(run.get("Z_eff", 1.7))
-    Ip   = run.get("Ip", None)
-
-    rho  = np.linspace(0.02, 1.0, n_rho)
-    j_bs = _bootstrap_profile_arr(
-        rho, R0, a, kappa_edge, kappa_95, B0,
-        nbar, Tbar, q95, Z_eff,
-        nu_n, nu_T, rho_ped, n_ped_frac, T_ped_frac,
-        Vprime_data=Vprime_data,
-    )
-
-    # Estimate integrated bootstrap current I_bs [MA]
-    kap_arr  = kappa_profile(rho, kappa_edge, kappa_95)
-    dA_drho  = 2 * np.pi * kap_arr * a**2 * rho   # d(area) / d(ρ) [m²]
-    I_bs_est = float(np.trapezoid(j_bs * dA_drho, rho))
-
-    fig, ax = plt.subplots(figsize=(6.5, 4.5))
-    ax.plot(rho, j_bs, "tab:purple", lw=2.2,
-            label=r"$j_{bs}(\rho)$ — Sauter (1999) simplified")
-    ax.axhline(0, color="k", lw=0.7, alpha=0.4)
-    if rho_ped < 0.99:
-        ax.axvline(rho_ped, color="gray", lw=0.9, ls=":", alpha=0.6,
-                   label=f"ρ_ped = {rho_ped}")
-
-    ax.set_xlabel(r"$\rho = r/a$", fontsize=12)
-    ax.set_ylabel(r"$j_{bs}(\rho)$ [MA/m²]", fontsize=12)
-
-    title = f"Bootstrap current profile — R₀={R0} m, a={a} m, B₀={B0} T"
-    if Ip is not None:
-        bs_frac = abs(I_bs_est) / Ip * 100
-        title += f"\nÎ_bs ≈ {I_bs_est:.2f} MA  ({bs_frac:.0f} % of Ip={Ip:.1f} MA)"
-    ax.set_title(title, fontsize=11)
-    ax.legend(fontsize=10)
-    ax.grid(True, alpha=0.3)
-    ax.set_xlim(0, 1)
-
-    plt.tight_layout()
-    _save_or_show(fig, save_dir, "run_bootstrap_profile")
 
 
 # ---------------------------------------------------------------------------
@@ -2594,18 +2509,14 @@ def plot_all(
     _p(11, "Safety factor q(ρ)")
     plot_q_profile(run, save_dir=save_dir)
 
-    # ── Transport & current ───────────────────────────────────────────
     _p(12, "Resistivity models")
     plot_resistivity_models(save_dir=save_dir)
 
-    _p(13, "Bootstrap current j_bs(ρ)")
-    plot_current_profile(run, save_dir=save_dir)
-
-    _p(14, "Radiation profiles")
+    _p(13, "Radiation profiles")
     plot_radiation_profile(run, save_dir=save_dir)
 
     # ── Radiation & impurities ────────────────────────────────────────
-    _p(15, "Coronal cooling coefficient L_z(T)")
+    _p(14, "Coronal cooling coefficient L_z(T)")
     plot_Lz_cooling(save_dir=save_dir)
 
     _p(16, "Helium ash fraction")
@@ -2618,14 +2529,16 @@ def plot_all(
     _p(18, "Cable current density J_wost(B)")
     plot_cable_current_density(cfg=cfg, save_dir=save_dir)
 
-    _p(19, "CICC conductor cross-sections (TF + CS)")
+    _p(19, "CICC equivalent conductor model (TF + CS)")
     fig_cicc, axes_cicc = plt.subplots(1, 2, figsize=(12, 7))
-    fig_cicc.suptitle("ITER CICC conductor cross-sections",
+    fig_cicc.suptitle("CICC equivalent conductor model",
                       fontsize=13, fontweight="bold")
-    plot_CICC_cross_section(_CONDUCTOR_ITER_TF, ax=axes_cicc[0])
-    plot_CICC_cross_section(_CONDUCTOR_ITER_CS, ax=axes_cicc[1])
+    conductor_TF = build_conductor_from_run(run, coil="TF")
+    conductor_CS = build_conductor_from_run(run, coil="CS")
+    plot_CICC_cross_section(conductor_TF, ax=axes_cicc[0])
+    plot_CICC_cross_section(conductor_CS, ax=axes_cicc[1])
     plt.tight_layout()
-    _save_or_show(fig_cicc, save_dir, "conductor_ITER_TF_CS")
+    _save_or_show(fig_cicc, save_dir, "conductor_TF_CS")
 
     # ── Coil sizing & mechanics ───────────────────────────────────────
     _p(20, "TF thickness vs peak field")
@@ -2661,24 +2574,23 @@ def plot_run(
     save_dir: str | None = None,
 ) -> None:
     """
-    Render the run-specific figure set (11 figures).
+    Render the run-specific figure set (10 figures).
 
     This is the subset called after each D0FUS run.  It contains only the
     figures that depend on the current run configuration and results —
     no validation curves, no benchmarks, no scaling-law surveys.
 
     Figures produced:
-      [ 1/11]  Tokamak LCFS comparison (with D0FUS overlay)
-      [ 2/11]  Miller flux surfaces (run geometry)
-      [ 3/11]  Shaping profiles κ(ρ), δ(ρ)
-      [ 4/11]  Kinetic profiles n(ρ), T(ρ), p(ρ)
-      [ 5/11]  Safety factor q(ρ)
-      [ 6/11]  Bootstrap current j_bs(ρ)
-      [ 7/11]  Radiation profiles
-      [ 8/11]  TF coil side view
-      [ 9/11]  CICC TF conductor
-      [10/11]  CS cross-section
-      [11/11]  CICC CS conductor
+      [ 1/10]  Tokamak LCFS comparison (with D0FUS overlay)
+      [ 2/10]  Miller flux surfaces (run geometry)
+      [ 3/10]  Shaping profiles κ(ρ), δ(ρ)
+      [ 4/10]  Kinetic profiles n(ρ), T(ρ), p(ρ)
+      [ 5/10]  Safety factor q(ρ) and current decomposition
+      [ 6/10]  Radiation profiles
+      [ 7/10]  TF coil side view
+      [ 8/10]  CICC TF conductor
+      [ 9/10]  CS cross-section
+      [10/10]  CICC CS conductor
 
     Parameters
     ----------
@@ -2687,7 +2599,7 @@ def plot_run(
         If provided, figures are saved as PNG files.
         Pass ``None`` to display interactively.
     """
-    N = 11
+    N = 10
 
     def _p(i, label):
         print(f"  [{i:2d}/{N}] {label}")
@@ -2712,24 +2624,21 @@ def plot_run(
     plot_q_profile(run, save_dir=save_dir)
 
     # ── Transport & radiation ─────────────────────────────────────────
-    _p(6, "Bootstrap current j_bs(ρ)")
-    plot_current_profile(run, save_dir=save_dir)
-
-    _p(7, "Radiation profiles")
+    _p(6, "Radiation profiles")
     plot_radiation_profile(run, save_dir=save_dir)
 
     # ── Coils & conductors ────────────────────────────────────────────
-    _p(8, "TF coil side view")
+    _p(7, "TF coil side view")
     plot_TF_side_view(run, save_dir=save_dir)
 
-    _p(9, "CICC TF conductor")
-    plot_CICC_cross_section(_CONDUCTOR_ITER_TF, save_dir=save_dir)
+    _p(8, "CICC TF conductor")
+    plot_CICC_cross_section(build_conductor_from_run(run, coil="TF"), save_dir=save_dir)
 
-    _p(10, "CS cross-section")
+    _p(9, "CS cross-section")
     plot_CS_cross_section(run, save_dir=save_dir)
 
-    _p(11, "CICC CS conductor")
-    plot_CICC_cross_section(_CONDUCTOR_ITER_CS, save_dir=save_dir)
+    _p(10, "CICC CS conductor")
+    plot_CICC_cross_section(build_conductor_from_run(run, coil="CS"), save_dir=save_dir)
 
     print("Done.")
 
@@ -3102,7 +3011,7 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
 #       Cable = disc of radius R_cable.
 #
 #   Level 2 — cable-space circle:
-#       f_He_pipe + f_SC + f_Cu + f_He = 1
+#       f_He_pipe + f_SC + f_Cu + f_void = 1
 #
 # The conductor is described by a dict with the following keys:
 #
@@ -3115,7 +3024,7 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
 #   f_He_pipe      : float  He pipe area / cable-space area [-]
 #   f_SC           : float  SC strand area / cable-space area [-]
 #   f_Cu           : float  Cu strand area / cable-space area [-]
-#   f_He           : float  Interstitial He void / cable-space area [-]
+#   f_void         : float  Interstitial He void / cable-space area [-]
 #   d_strand       : float  Individual strand diameter [mm]
 #   Cu_nonCu       : float  Cu-to-nonCu ratio in SC strands [-]
 #   I_op           : float  Operating current [A]  (optional, display only)
@@ -3210,44 +3119,114 @@ _SC_COLOR = {
     "REBCO": _CICC_COLORS["strand_REBCO"],
 }
 
-# Default reference conductors — ITER TF and CS, Nb3Sn CICC
+# Default conductors — generic TF and CS, Nb3Sn CICC equivalent model
 # Calibration visual: 100 mm side, 1/3-split cable fractions.
 #
 # Level 1:  f_steel + f_insulation + f_cable = 1   (f_cable derived)
-# Level 2:  f_He_pipe + f_SC + f_Cu + f_He   = 1   (cable-space)
+# Level 2:  f_He_pipe + f_SC + f_Cu + f_void  = 1   (cable-space)
 
-_CONDUCTOR_ITER_TF = {
-    "name":          "ITER TF",
+
+def build_conductor_from_run(run: dict, coil: str = "TF") -> dict:
+    """
+    Build a CICC conductor dict from a D0FUS run output dict.
+
+    Converts wost-level fractions (from calculate_cable_current_density) into
+    the two-level format expected by plot_CICC_cross_section:
+        Level 1 (total conductor): f_steel, f_insulation, f_cable
+        Level 2 (cable-space):     f_He_pipe, f_SC, f_Cu, f_void
+
+    Parameters
+    ----------
+    run  : dict  D0FUS run output dict (from _build_run_dict).
+    coil : str   'TF' or 'CS' (only TF fractions are currently computed).
+
+    Returns
+    -------
+    dict  Conductor description for plot_CICC_cross_section.
+          Returns the static fallback (_CONDUCTOR_TF) if fractions are unavailable.
+    """
+    f_steel = run.get(f"Steel_fraction_{coil}", np.nan)
+    f_sc    = run.get(f"f_sc_{coil}", np.nan)
+    f_cu    = run.get(f"f_cu_{coil}", np.nan)
+    f_pipe  = run.get(f"f_He_pipe_{coil}", np.nan)
+    f_void  = run.get(f"f_void_{coil}", np.nan)
+    f_In    = run.get(f"f_In_{coil}", np.nan)
+    sc_type = run.get("Supra_choice", "Nb3Sn")
+
+    # Guard: fall back to static dict if any fraction is NaN or unphysical
+    fallback = _CONDUCTOR_TF if coil == "TF" else _CONDUCTOR_CS
+    fracs = [f_steel, f_sc, f_cu, f_pipe, f_void, f_In]
+    if not all(np.isfinite(fracs)):
+        return fallback
+    if not all(0.0 <= f <= 1.0 for f in fracs):
+        return fallback
+    wost_sum = f_sc + f_cu + f_pipe + f_void + f_In
+    if abs(wost_sum - 1.0) > 0.05:
+        return fallback
+
+    # ── Level 1: convert wost fractions to total-conductor fractions ──
+    # wost fraction of total = (1 - f_steel)
+    wost_frac = 1.0 - f_steel
+    f_insulation_total = f_In * wost_frac   # insulation as fraction of total
+    # f_cable_total = wost_frac - f_insulation_total  (derived)
+
+    # ── Level 2: renormalise wost fractions to cable-space ──
+    # cable-space = wost minus insulation → fraction of wost = (1 - f_In)
+    f_cable_wost = 1.0 - f_In
+    if f_cable_wost < 1e-6:
+        return fallback
+
+    f_SC_cable      = f_sc   / f_cable_wost
+    f_Cu_cable      = f_cu   / f_cable_wost
+    f_He_pipe_cable = f_pipe / f_cable_wost
+    f_void_cable    = f_void / f_cable_wost
+
+    return {
+        "name":          f"{coil} coil",
+        "sc_type":       sc_type,
+        "aspect_ratio":  1.0,
+        "side":          100.0,
+        "f_steel":       f_steel,
+        "f_insulation":  f_insulation_total,
+        "f_He_pipe":     f_He_pipe_cable,
+        "f_SC":          f_SC_cable,
+        "f_Cu":          f_Cu_cable,
+        "f_void":        f_void_cable,
+        "d_strand":      2.5,
+        "Cu_nonCu":      0.0,
+    }
+
+
+_CONDUCTOR_TF = {
+    "name":          "TF coil",
     "sc_type":       "Nb3Sn",
     "aspect_ratio":  1.0,            # Square outer jacket
     "side":          100.0,          # 100 mm = 10 cm side
     "f_steel":       0.50,           # 50 % steel
     "f_insulation":  0.03,           # 3 % insulation (thin ring)
     # --- cable-space sub-fractions (sum = 1) ---
-    "f_He_pipe":     0.05,           # 5 % He pipe
+    "f_He_pipe":     0.05,           # 5 % He pipe (central spiral)
     "f_SC":          0.317,          # ~1/3 of remaining 95 %
     "f_Cu":          0.317,          # ~1/3
-    "f_He":          0.317,          # ~1/3 interstitial He void
+    "f_void":        0.317,          # ~1/3 interstitial He void (LTS)
     "d_strand":      2.5,            # Strand diameter [mm] (enlarged for display)
     "Cu_nonCu":      0.0,            # Pure SC strands (calibration visual)
-    "reference":     "Mitchell et al., SST 25 (2012) 095004",
 }
 
-_CONDUCTOR_ITER_CS = {
-    "name":          "ITER CS",
+_CONDUCTOR_CS = {
+    "name":          "CS coil",
     "sc_type":       "Nb3Sn",
     "aspect_ratio":  1.0,            # Square for visual check
     "side":          100.0,          # 100 mm = 10 cm side
     "f_steel":       0.50,           # 50 % steel
     "f_insulation":  0.03,           # 3 % insulation (thin ring)
     # --- cable-space sub-fractions (sum = 1) ---
-    "f_He_pipe":     0.05,           # 5 % He pipe
+    "f_He_pipe":     0.05,           # 5 % He pipe (central spiral)
     "f_SC":          0.317,          # ~1/3 of remaining 95 %
     "f_Cu":          0.317,          # ~1/3
-    "f_He":          0.317,          # ~1/3 interstitial He void
+    "f_void":        0.317,          # ~1/3 interstitial He void (LTS)
     "d_strand":      2.5,            # Strand diameter [mm] (enlarged for display)
     "Cu_nonCu":      0.0,            # Pure SC strands (calibration visual)
-    "reference":     "Mitchell & Devred, SST 25 (2012) 095004",
 }
 
 
@@ -3276,7 +3255,7 @@ def plot_CICC_cross_section(
         t_ins   = R_hole - R_cable
 
     Level 2 — cable-space circle:
-        f_He_pipe + f_SC + f_Cu + f_He = 1
+        f_He_pipe + f_SC + f_Cu + f_void = 1
         R_He = sqrt(f_He_pipe * A_cable / pi)
 
     Parameters
@@ -3295,8 +3274,9 @@ def plot_CICC_cross_section(
     else:
         fig = ax.get_figure()
 
-    sc_type = conductor["sc_type"]
-    col_sc  = _SC_COLOR.get(sc_type, "#444444")
+    # SC strand color: adapts to superconductor type if specified
+    sc_type = conductor.get("sc_type", None)
+    col_sc  = _SC_COLOR.get(sc_type, "#2E8B57") if sc_type else "#2E8B57"
 
     # ---- Geometry derivation ------------------------------------------------
     AR      = conductor["aspect_ratio"]
@@ -3386,10 +3366,11 @@ def plot_CICC_cross_section(
             ha="right", va="center", fontsize=8, color="dimgray", rotation=90)
 
     # ---- Legend (color key only) ---------------------------------------------
+    sc_label = f"SC ({sc_type})" if sc_type else "SC"
     legend_lines = [
         (_CICC_COLORS["jacket_steel"],   "Steel"),
         (_CICC_COLORS["insulation"],     "Insulation"),
-        (col_sc,                         f"SC ({sc_type})"),
+        (col_sc,                         sc_label),
         (_CICC_COLORS["strand_cu"],      "Cu"),
         (_CICC_COLORS["he_channel"],     "He pipe"),
         (_CICC_COLORS["void_he"],        "He void"),
@@ -3404,9 +3385,15 @@ def plot_CICC_cross_section(
     ax.set_ylim(-lim * 1.10, lim)
     ax.set_xlabel("x  [mm]", fontsize=10)
     ax.set_ylabel("y  [mm]", fontsize=10)
+
+    # Retrieve void fraction for display
+    f_void_val = conductor.get("f_void", 1.0 - f_He_pipe - f_SC - f_Cu)
+
     ax.set_title(
-        f"{conductor['name']}  ({sc_type} CICC)\n"
-        f"{conductor.get('reference', '')}",
+        f"{conductor['name']}  —  CICC equivalent model"
+        + (f"  ({sc_type})" if sc_type else "") +
+        f"\nSteel={f_steel*100:.0f}%   SC={f_SC*100:.1f}%   Cu={f_Cu*100:.1f}%   "
+        f"He pipe={f_He_pipe*100:.1f}%   He void={f_void_val*100:.1f}%",
         fontsize=9, fontweight="bold",
     )
     ax.grid(False)

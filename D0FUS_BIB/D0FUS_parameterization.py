@@ -31,16 +31,16 @@ and must never be modified by the user.
 """
 
 # ── Fundamental constants ──────────────────────────────────────────────────────
-E_ELEM = 1.602176634e-19    # Elementary charge [C]
-M_E    = 9.1094e-31         # Electron mass [kg]
-M_I    = 2 * 1.6726e-27     # Ion mass (deuterium) [kg]
-μ0     = 4.0 * np.pi * 1e-7 # Vacuum permeability [H/m]
-EPS_0  = 8.8542e-12         # Vacuum permittivity [F/m]
+E_ELEM  = 1.602176634e-19    # Elementary charge [C]          (CODATA 2018, exact)
+M_E     = 9.10938370e-31    # Electron mass [kg]             (CODATA 2018)
+M_I     = 2 * 1.6726e-27    # Ion mass (deuterium) [kg]
+μ0      = 4.0 * np.pi * 1e-7 # Vacuum permeability [H/m]
+EPS_0   = 8.854187817e-12   # Vacuum permittivity [F/m]      (CODATA 2018)
+C_LIGHT = 2.99792458e8      # Speed of light [m/s]           (CODATA 2018, exact)
 
 # ── Fusion reaction energetics ─────────────────────────────────────────────────
-E_ALPHA = 3.5e6  * E_ELEM   # Alpha particle energy [J]
-E_N     = 14.1e6 * E_ELEM   # Neutron energy [J]
-E_F     = 22.4e6 * E_ELEM   # Total fusion energy (Li blanket breeding assumed) [J]
+E_ALPHA = 3.5168e6  * E_ELEM   # Alpha particle energy [J]
+E_N     = 14.0671e6 * E_ELEM   # Neutron energy [J]
 
 #%% D0FUS Global Configuration
 """
@@ -48,9 +48,6 @@ Centralised repository of all user-adjustable design parameters,
 including primary scan variables (geometry, field, power) and
 physical/engineering assumptions.
 """
-
-from dataclasses import dataclass, field
-from typing import Optional
 
 @dataclass
 class GlobalConfig:
@@ -89,6 +86,7 @@ class GlobalConfig:
      11. Multi-source current drive – source powers, fractions, deposition radii
      12. Plasma-facing components   – divertor geometry
      13. Maintenance constraints    – ripple, port access
+     14. Disruption RE diagnostic   – thermal quench parameters (indicative)
     """
 
     # ── 1. Primary scan variables ──────────────────────────────────────────────
@@ -96,7 +94,7 @@ class GlobalConfig:
     a     : float = 3.0        # Minor plasma radius [m]
     b     : float = 1.2        # Breeding blanket + neutron shield radial thickness [m]
     Bmax_TF  : float = 12.0    # Peak magnetic field on TF conductor [T]
-    Bmax_CS  : float = 25.0    # Peak magnetic field allowed on the CS [T]
+    Bmax_CS_adm  : float = 25.0    # Peak magnetic field allowed on the CS [T]
     P_fus : float = 2000.0     # Total fusion power [MW]
     Tbar  : float = 14.0       # Volume-averaged ion temperature [keV]
     H     : float = 1.0        # Confinement enhancement factor (H-factor) [-]
@@ -116,6 +114,17 @@ class GlobalConfig:
     Scaling_Law        : str   = 'IPB98(y,2)'  # Energy confinement scaling law
     L_H_Scaling_choice : str   = 'New_Ip'      # L-H threshold scaling: 'Martin', 'New_S', 'New_Ip'
     Bootstrap_choice    : str   = 'Redl'       # Bootstrap current model ['Freidberg', 'Segal', 'Sauter', 'Redl']
+
+    # q₉₅ formula selector.  Two conventions differ in their shaping-parameter argument:
+    #   'Sauter'    — uses LCFS values (κ_edge, δ_edge).
+    #                 Sauter, Fusion Eng. Des. 112 (2016) 633, Eq. (30).
+    #                 Recommended for shaped H-mode 0D systems studies.
+    #   'ITER_1989' — uses ψ_N = 0.95 values (κ₉₅, δ₉₅).
+    #                 ITER Physics Design Guidelines, Uckan (1989/1991).
+    #                 Also adopted by Johner (2011) / HELIOS.
+    # See f_q95() docstring for a detailed discussion of the bias between
+    # the two conventions (up to a factor 2 at negative δ — Fig. 2d of Sauter 2016).
+    Option_q95 : str = 'Sauter'  # q₉₅ formula: 'Sauter' (default) or 'ITER_1989'
 
     Option_Kappa       : str   = 'Wenninger'   # Elongation model: 'Wenninger', 'Stambaugh', 'Freidberg', 'Manual'
     κ_manual           : float = 1.9           # Elongation (Manual mode only) [-]
@@ -164,7 +173,7 @@ class GlobalConfig:
     Atomic_mass : float = 2.5   # Volume-averaged ionic mass [AMU]  (D-T: 2.5)
     Zeff        : float = 2.0   # Effective plasma charge [-]
     r_synch     : float = 0.5   # Synchrotron radiation wall reflectivity [-]
-    C_Alpha     : float = 5.0   # Helium ash dilution tuning parameter [-]
+    C_Alpha     : float = 7.0   # Helium ash dilution tuning parameter [-] (default taken from PROCESS RUN)
 
     # Impurity line radiation (0D bulk-plasma estimate)
     # impurity_species : None → line radiation disabled (pure D-T, no seeding).
@@ -183,11 +192,22 @@ class GlobalConfig:
     impurity_species : str = ''     # Comma-separated species: 'W', 'W, Ne', '' = none
     f_imp_core       : str = ''     # Matching concentrations: '5e-5', '1e-5, 3e-3'
 
+    # Core / edge radiation boundary for τ_E and P_sep convention.
+    # Radiation emitted at ρ < rho_rad_core is subtracted from P_heat in the
+    # scaling law inversion and the τ_E power balance (it never crosses the
+    # separatrix as conducted heat).
+    # Radiation at ρ > rho_rad_core is edge radiation that reduces P_sep
+    # (divertor load) but does NOT affect core confinement.
+    # Typical value: 0.7 (well inside pedestal top for ITER/DEMO shaping).
+    # Set to 1.0 to recover the legacy behaviour (all radiation subtracted).
+    # References: Doyle et al. NF 47 (2007) S18; Kovari et al. FED 89 (2014) 3054.
+    rho_rad_core : float = 0.75  # Core/edge radiation boundary (normalised radius) [-]
+
     # ── 5. Magnetic flux model ─────────────────────────────────────────────────
     Ce        : float = 0.30     # Ejima constant (resistive ramp-up flux) [-]
                                  # Ψ_res = Ce * μ0 * R0 * Ip
                                  # Typical: ITER 0.45, EU-DEMO 0.30, CFETR 0.30
-    eta_model : str   = 'sauter'  # Plasma resistivity model for R_eff and li
+    eta_model : str   = 'redl'  # Plasma resistivity model for R_eff and li
                                  # 'old' | 'spitzer' | 'sauter' | 'redl' (recommended)
     # Plasma initiation flux: Ψ_PI = 2π * R0 * E_phi_BD * t_BD
     E_phi_BD  : float = 0.5     # Toroidal electric field at breakdown [V/m]
@@ -201,10 +221,10 @@ class GlobalConfig:
                                  
     # ── 6. Structural materials ────────────────────────────────────────────────
     Chosen_Steel         : str   = '316L'   # Structural steel grade '316L' , 'N50H', 'Manual'
-    σ_manual             : float = 1500.0    # Manual steel yield strength [MPa] (used only if Chosen_Steel='Manual')
-    nu_Steel             : float = 0.29     # Steel Poisson's ratio [-]
-    Young_modul_Steel    : float = 200e9    # Steel Young's modulus [Pa]
-    Young_modul_GF       : float = 90e9     # S-glass fiber Young's modulus [Pa]
+    σ_manual             : float = 1500.0   # Manual steel yield strength [MPa] (used only if Chosen_Steel='Manual')
+    nu_Steel             : float = 0.29     # Steel Poisson's ratio [-] (only used in CIRCE model)
+    Young_modul_Steel    : float = 200e9    # Steel Young's modulus [Pa] (only used in CIRCE model)
+    Young_modul_GF       : float = 90e9     # S-glass fiber Young's modulus [Pa] (only used in CIRCE model)
     fatigue_CS           : float = 2.0      # CS fatigue knockdown factor (pulsed & wedging only) [-]
 
     # ── 7. TF coil engineering ─────────────────────────────────────────────────
@@ -228,7 +248,8 @@ class GlobalConfig:
     # ── 9. Superconductor operating conditions ─────────────────────────────────
     T_helium  : float = 4.2   # Liquid helium bath temperature [K]
     Marge_T_He: float = 0.3   # Temperature margin from 10-bar He operation [K]
-    f_He      : float = 0.3   # Helium channel area fraction [-]
+    f_He_pipe = 0.10     # Helium cooling pipe/channel fraction in wost [-]
+    f_void    = 0.33     # Interstitial void fraction in strand bundle [-] (LTS)
     f_In      : float = 0.15  # Insulation area fraction [-]
 
     # Temperature margins above T_helium defining T_operating [K]
@@ -259,21 +280,57 @@ class GlobalConfig:
                                # Arises from exothermic ⁶Li + n reactions in the TBM.
                                # Typical: 1.0 (conservative/no credit) to 1.3 (HCPB blanket)
                                # Hernandez et al., Nucl. Fusion 57 (2017) 016011
-    eta_RF    : float = 0.4    # Wall-plug efficiency of heating/CD systems [-]
-                               # P_wallplug = P_CD / eta_RF
-                               # Used in f_P_elec:
-                               #   P_elec = η_T × M_blanket × P_fus − P_CD / η_RF
+    eta_RF    : float = 0.4    # [RESERVED — future technology-specific modes]
+                               # Wall-plug efficiency of heating/CD systems [-]
+                               # Will be used when LHCD/ECCD/NBCD/Multi modes
+                               # become operational.  Ignored in Academic mode.
                                # Typical values by source:
                                #   LH  klystron  : 0.50–0.60
                                #   EC  gyrotron  : 0.40–0.55
                                #   NBI injector  : 0.25–0.40
                                #   ICR amplifier : 0.70–0.85
-                               # Use the power-weighted average for a mixed heating scenario.
-                               # Default 0.40: conservative estimate for an EC-dominated system.
                                # Gormezano et al. (ITER PIPB Ch. 6), NF 47 (2007) S285
 
-    # ── 11. Multi-source current drive ────────────────────────────────────────
-    CD_source   : str   = 'LHCD'   # Active CD model: 'LHCD' | 'ECCD' | 'NBCD' | 'Multi'
+    # ── 11. Auxiliary heating and current drive ──────────────────────────────
+    #
+    # ┌─────────────────────────────────────────────────────────────────────┐
+    # │  IMPORTANT — DEVELOPMENT STATUS (as of 2026)                        │
+    # │                                                                     │
+    # │  Only CD_source = 'Academic' is fully operational and validated.    │
+    # │                                                                     │
+    # │  The technology-specific models ('LHCD', 'ECCD', 'NBCD', 'Multi')   │
+    # │  are UNDER ACTIVE DEVELOPMENT: the underlying physics functions     │
+    # │  (f_etaCD_LH, f_etaCD_EC, f_etaCD_NBI) exist but have NOT been      │
+    # │  validated against experiment or other systems codes.  Use them     │
+    # │  at your own risk — results may be quantitatively unreliable.       │
+    # │                                                                     │
+    # │  For production runs, parameter scans, and publications,            │
+    # │  use CD_source = 'Academic' with gamma_CD_acad and eta_WP_acad.     │
+    # └─────────────────────────────────────────────────────────────────────┘
+    #
+    CD_source   : str   = 'Academic'  # CD model: 'Academic' (recommended)
+                                       #           'LHCD' | 'ECCD' | 'NBCD' | 'Multi'
+                                       #           (under development — see warning above)
+
+    # ── Academic (technology-agnostic) heating/CD ────────────────────────────
+    # When CD_source = 'Academic', no technology-specific CD model is called.
+    # The user specifies only P_aux_input (absorbed heating power), a fixed
+    # current-drive figure of merit γ_CD, and a generic wall-plug efficiency.
+    #
+    #   I_CD       = γ_CD_acad × P_aux / (R₀ × n̄_e)
+    #   P_wallplug = P_aux / η_WP_acad
+    #
+    # Typical γ_CD values for orientation (ITER PIPB Ch. 6):
+    #   0.15 – 0.20   conservative generic mix
+    #   0.30 – 0.40   optimistic (off-axis ECCD or N-NBI at high T)
+    #   0.0           pure heating, no current drive
+    #
+    # Typical η_WP values:
+    #   0.30 – 0.40   conservative (NBI-dominated or mixed)
+    #   0.40 – 0.55   moderate (EC-dominated)
+    #   0.50 – 0.60   optimistic (LH-dominated)
+    gamma_CD_acad : float = 0.20   # Fixed CD figure of merit [MA/(MW·m²)] (Academic mode)
+    eta_WP_acad   : float = 0.40   # Wall-plug efficiency [-] (Academic mode)
 
     # --- Pulsed mode: fixed plasma power per source [MW] ---
     # Used when Operation_mode = 'Pulsed' and CD_source = 'Multi'.
@@ -312,7 +369,74 @@ class GlobalConfig:
 
     # ── 13. Maintenance constraints ────────────────────────────────────────────
     ripple_adm : float = 0.01    # Admissible toroidal field ripple [-]  (1%)
-    L_min      : float = 3.6     # Minimum toroidal maintenance access width [m]
+    L_min      : float = 2.00       # Minimum toroidal maintenance access width [m]
+
+    # ── 14. Disruption RE diagnostic (indicative, post-convergence) ──────────
+    #
+    # ┌─────────────────────────────────────────────────────────────────────┐
+    # │  INDICATOR ONLY — for comparative design ranking, not absolute      │
+    # │  prediction.  See compute_RE_indicators() for full discussion.      │
+    # └─────────────────────────────────────────────────────────────────────┘
+    #
+    # These parameters control the RE indicator computation called once
+    # after convergence in save_run_output() and in the 2D scan loop.
+    # They do NOT enter the D0FUS convergence loop.
+    tau_TQ       : float = 1e-3  # Thermal quench e-folding time [s]
+    # Typical range: 0.1–3 ms.
+    # ITER mitigated TQ ~ 1–3 ms (Lehnen 2015, J. Nucl. Mater. 463, 39).
+    # Unmitigated: 0.1–0.5 ms.  A shorter τ_TQ dramatically increases the
+    # hot-tail seed (exponential sensitivity).
+
+    Te_final_eV  : float = 5.0   # Post-TQ residual electron temperature [eV]
+    # Typical range: 2–20 eV.  Set by Ohmic–radiation power balance.
+    # ITER post-TQ: ~5–10 eV (Aleynikov & Breizman 2017, NF 57, 046009).
+
+    pellet_dilution : float = 10.0
+    # Density multiplication factor for SPI/MGI assimilation before CQ.
+    # Both hot-tail seed and avalanche are evaluated at n_diluted = pellet_dilution × n_e.
+    #
+    # Typical SPI values (sensitivity studies):
+    #   1.0  — unmitigated baseline
+    #   2–5  — modest SPI (early ITER target range)
+    #  10–30 — highly effective mitigation (seed → 0)
+
+    # ── 15. Techno-economic cost model (post-convergence) ──────────────────
+    #
+    # ┌─────────────────────────────────────────────────────────────────────┐
+    # │  POST-CONVERGENCE ONLY — does not enter the D0FUS physics solver.   │
+    # │  Called in save_run_output() for economic figure-of-merit output.    │
+    # └─────────────────────────────────────────────────────────────────────┘
+    #
+    # Model: Sheffield & Milora, Fus. Sci. Technol. 70 (2016).
+    #        Volume-based cost scaling from ITER 2008 estimates.
+    #        Uses D0FUS radial build outputs (V_BB, V_TF, V_CS, V_FI).
+    # Set cost_model = 'None' to skip cost computation entirely.
+
+    cost_model          : str   = 'Sheffield'  # 'Sheffield' or 'None'
+
+    # --- Financial parameters ---
+    # Ref: Sheffield (2016) Section III.D.
+    discount_rate       : float = 0.07   # Real discount rate [-]
+    T_life              : int   = 40     # Plant operational lifetime [yr]
+    T_build             : int   = 10     # Construction phase duration [yr]
+    contingency         : float = 0.15   # Contingency fraction (owner's cost, risk) [-]
+
+    # --- Availability & capacity factor ---
+    Util_factor         : float = 0.85   # Utilisation factor [-]
+    Dwell_factor        : float = 1.0    # Dwell factor (1.0 = SS, <1 for pulsed) [-]
+    dt_rep              : float = 1.5    # Scheduled replacement downtime [yr]
+
+    # --- Superconductor cost multiplier ---
+    # Typical: 1.5 (Nb3Sn mature) to 3.0 (REBCO FOAK).
+    # Ref: Wade & Leuer, Fus. Sci. Technol. 77 (2021).
+    Supra_cost_factor   : float = 2.0    # SC coil cost multiplier vs Cu [-]
+
+    # --- Budget constraint (genetic algorithm) ---
+    # Maximum admissible total capital cost.  Designs exceeding this budget
+    # are penalised in the genetic optimiser when fitness_objective = 'COE'.
+    # Default: 20 B EUR — representative of EU-DEMO class.
+    # Set to a very large value (e.g. 1e6) to effectively disable.
+    C_invest_max        : float = 25e3   # Capital cost ceiling [M EUR]
 
 # Module-level default instance — import and reuse rather than reinstantiating
 DEFAULT_CONFIG = GlobalConfig()
