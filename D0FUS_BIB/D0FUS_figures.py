@@ -1422,8 +1422,10 @@ def plot_shaping_run(
     Plot radial elongation κ(ρ) and triangularity δ(ρ) profiles for the
     geometry used in a D0FUS run.
 
-    Uses the Christiansen PCHIP parameterisation as implemented in
-    kappa_profile() and delta_profile() (D0FUS_physical_functions).
+    In 'D0FUS' geometry mode, the Christiansen PCHIP parameterisation is
+    used (radially varying κ and δ with core penetration).
+    In 'Academic' mode, κ(ρ) = κ_edge = const and δ(ρ) = 0 everywhere,
+    consistent with the cylindrical-torus approximation.
 
     Parameters
     ----------
@@ -1437,21 +1439,32 @@ def plot_shaping_run(
     Ball & Parra, PPCF 57, 045006 (2015) — κ core penetration.
     """
     R0, a, kappa_edge, delta_edge, kappa_95, delta_95, _ = _resolve_geometry(run)
+    geom_mode = run.get("Plasma_geometry", "D0FUS")
     rho = np.linspace(1e-4, 1.0, n_rho)
 
-    kap_arr = kappa_profile(rho, kappa_edge, kappa_95)
-    del_arr = delta_profile(rho, delta_edge, delta_95)
+    if geom_mode == "Academic":
+        # Academic: constant κ = κ_edge, δ = 0 everywhere
+        kap_arr = np.full_like(rho, kappa_edge)
+        del_arr = np.zeros_like(rho)
+    else:
+        # D0FUS PCHIP profiles with radial variation
+        kap_arr = kappa_profile(rho, kappa_edge, kappa_95)
+        del_arr = delta_profile(rho, delta_edge, delta_95)
 
     fig, axes = plt.subplots(1, 2, figsize=(11, 4))
 
-    # κ(ρ)
+    # ── κ(ρ) panel ────────────────────────────────────────────────────
     ax = axes[0]
-    ax.plot(rho, kap_arr, "tab:blue", lw=2.2, label="D0FUS PCHIP")
-    ax.axhline(kappa_edge, color="tab:orange", lw=1.4, ls="--",
-               label=f"κ_edge = {kappa_edge:.3f}")
-    ax.axhline(kappa_95,   color="tab:gray",   lw=1.0, ls=":",
-               label=f"κ₉₅   = {kappa_95:.3f}")
-    ax.axvline(0.95, color="gray", lw=0.8, ls=":", alpha=0.5)
+    if geom_mode == "Academic":
+        ax.axhline(kappa_edge, color="tab:blue", lw=2.2,
+                   label=f"Academic: κ = κ_edge = {kappa_edge:.3f} (const)")
+    else:
+        ax.plot(rho, kap_arr, "tab:blue", lw=2.2, label="D0FUS PCHIP")
+        ax.axhline(kappa_edge, color="tab:orange", lw=1.4, ls="--",
+                   label=f"κ_edge = {kappa_edge:.3f}")
+        ax.axhline(kappa_95,   color="tab:gray",   lw=1.0, ls=":",
+                   label=f"κ₉₅   = {kappa_95:.3f}")
+        ax.axvline(0.95, color="gray", lw=0.8, ls=":", alpha=0.5)
     ax.set_xlabel(r"$\rho = r/a$", fontsize=12)
     ax.set_ylabel(r"$\kappa(\rho)$", fontsize=12)
     ax.set_title("Elongation profile κ(ρ)", fontsize=11)
@@ -1459,15 +1472,19 @@ def plot_shaping_run(
     ax.grid(True, alpha=0.3)
     ax.set_xlim(0, 1)
 
-    # δ(ρ)
+    # ── δ(ρ) panel ────────────────────────────────────────────────────
     ax = axes[1]
-    ax.plot(rho, del_arr, "tab:red", lw=2.2, label="D0FUS PCHIP")
-    ax.axhline(delta_edge, color="tab:orange", lw=1.4, ls="--",
-               label=f"δ_edge = {delta_edge:.3f}")
-    ax.axhline(delta_95,   color="tab:gray",   lw=1.0, ls=":",
-               label=f"δ₉₅   = {delta_95:.3f}")
+    if geom_mode == "Academic":
+        ax.axhline(0, color="tab:blue", lw=2.2,
+                   label="Academic: δ = 0 (const)")
+    else:
+        ax.plot(rho, del_arr, "tab:red", lw=2.2, label="D0FUS PCHIP")
+        ax.axhline(delta_edge, color="tab:orange", lw=1.4, ls="--",
+                   label=f"δ_edge = {delta_edge:.3f}")
+        ax.axhline(delta_95,   color="tab:gray",   lw=1.0, ls=":",
+                   label=f"δ₉₅   = {delta_95:.3f}")
+        ax.axvline(0.95, color="gray", lw=0.8, ls=":", alpha=0.5)
     ax.axhline(0, color="k", lw=0.6, alpha=0.35)
-    ax.axvline(0.95, color="gray", lw=0.8, ls=":", alpha=0.5)
     ax.set_xlabel(r"$\rho = r/a$", fontsize=12)
     ax.set_ylabel(r"$\delta(\rho)$", fontsize=12)
     ax.set_title("Triangularity profile δ(ρ)", fontsize=11)
@@ -1475,8 +1492,9 @@ def plot_shaping_run(
     ax.grid(True, alpha=0.3)
     ax.set_xlim(0, 1)
 
+    _mode_str = "Academic" if geom_mode == "Academic" else "D0FUS PCHIP"
     plt.suptitle(
-        f"Run shaping profiles — R₀={R0} m, a={a} m\n"
+        f"Run shaping profiles ({_mode_str}) — R₀={R0} m, a={a} m\n"
         f"κ_edge={kappa_edge:.3f}, δ_edge={delta_edge:.3f}",
         fontsize=12, fontweight="bold",
     )
@@ -1495,7 +1513,13 @@ def plot_flux_surfaces_run(
     save_dir: str | None = None,
 ) -> None:
     """
-    Plot nested Miller flux surfaces for the actual geometry of a D0FUS run.
+    Plot nested flux surfaces for the actual geometry of a D0FUS run.
+
+    When Plasma_geometry == 'D0FUS', surfaces follow the Miller PCHIP
+    parameterisation with radially varying κ(ρ) and δ(ρ).
+    When Plasma_geometry == 'Academic' (or unset), surfaces are concentric
+    ellipses with constant κ = κ_edge and δ = 0, consistent with the
+    cylindrical-torus approximation used in the Academic solver branch.
 
     Single-panel poloidal cross-section view.  Surfaces are coloured from
     dark blue (core, ρ ≈ 0.1) to light blue (LCFS, ρ = 1.0).
@@ -1512,6 +1536,7 @@ def plot_flux_surfaces_run(
     Miller et al., Phys. Plasmas 5, 973 (1998).
     """
     R0, a, kappa_edge, delta_edge, kappa_95, delta_95, _ = _resolve_geometry(run)
+    geom_mode = run.get("Plasma_geometry", "D0FUS")
 
     theta      = np.linspace(0, 2 * np.pi, n_theta)
     rho_levels = np.linspace(0.1, 1.0, n_levels)
@@ -1520,9 +1545,16 @@ def plot_flux_surfaces_run(
     fig, ax = plt.subplots(figsize=(5.5, 8))
 
     for rho_val, col in zip(rho_levels, colors_fs):
-        R_surf, Z_surf = miller_RZ(rho_val, theta,
-                                   R0, a, kappa_edge, delta_edge,
-                                   kappa_95, delta_95)
+        if geom_mode == "Academic":
+            # Concentric ellipses: κ = κ_edge (const), δ = 0
+            R_surf = R0 + rho_val * a * np.cos(theta)
+            Z_surf = kappa_edge * rho_val * a * np.sin(theta)
+        else:
+            # D0FUS PCHIP Miller surfaces with radially varying κ(ρ), δ(ρ)
+            R_surf, Z_surf = miller_RZ(rho_val, theta,
+                                       R0, a, kappa_edge, delta_edge,
+                                       kappa_95, delta_95)
+
         is_lcfs = np.isclose(rho_val, rho_levels[-1])
         ax.plot(R_surf, Z_surf,
                 color=col,
@@ -1535,9 +1567,15 @@ def plot_flux_surfaces_run(
     ax.set_aspect("equal")
     ax.set_xlabel("R [m]", fontsize=12)
     ax.set_ylabel("Z [m]", fontsize=12)
+
+    if geom_mode == "Academic":
+        _geom_label = "Academic (elliptic, δ = 0)"
+    else:
+        _geom_label = f"D0FUS PCHIP (δ_edge = {delta_edge:.3f})"
+
     ax.set_title(
-        f"Miller flux surfaces\n"
-        f"R₀={R0} m, a={a} m, κ_edge={kappa_edge:.3f}, δ_edge={delta_edge:.3f}",
+        f"Flux surfaces — {_geom_label}\n"
+        f"R₀ = {R0} m, a = {a} m, κ_edge = {kappa_edge:.3f}",
         fontsize=11,
     )
     ax.legend(fontsize=9, loc="upper right")
@@ -1903,13 +1941,22 @@ def _resolve_build(run: dict) -> dict:
     c_TF       = float(run.get("c_TF", 0.56))
     c_CS       = float(run.get("c_CS", 0.70))
     N_TF       = int(  run.get("N_TF", 18))
-    Gap        = float(run.get("Gap",  0.02))
+    Gap              = float(run.get("Gap",  0.02))
+    # Delta_TF: extra outboard radial clearance imposed by the port-access
+    # constraint in Number_TF_coils() [m].  Default 0 for backward compatibility
+    # with run dicts produced before this field was added.
+    Delta_TF         = float(run.get("Delta_TF", 0.0))
+    Choice_Buck_Wedg = run.get("Choice_Buck_Wedg", "Wedging")
 
     # Derived radii
-    R_TF_in    = R0 - a - b                          # Inner face of TF inboard leg [m]
-    R_TF_out   = R0 + a + b + c_TF                  # Outer face of TF outboard leg [m]
-    R_CS_ext   = R_TF_in - c_TF - Gap               # CS outer radius [m]
-    R_CS_int   = max(R_CS_ext - c_CS, 0.05)         # CS inner radius [m]
+    R_TF_in  = R0 - a - b                               # Plasma-side face of TF inboard leg [m]
+    R_TF_out = R0 + a + b + Delta_TF + c_TF             # Outer face of TF outboard leg [m]
+    # Delta_TF shifts the outboard leg outward to match the ripple model:
+    # r2 = R0 + a + b + Delta_TF  (inner face of outboard leg, i.e. the plasma-facing face).
+    # Effective TF-CS gap: non-zero only in Wedging; zero in Bucking/Plug.
+    _gap_eff = Gap if Choice_Buck_Wedg == 'Wedging' else 0.0
+    R_CS_ext = R_TF_in - c_TF - _gap_eff           # CS outer face radius [m]
+    R_CS_int = max(R_CS_ext - c_CS, 0.05)          # CS inner bore radius [m]
 
     # TF coil full height — envelope of the D-shape (factor 1.15 above κ*(a+b))
     H_TF       = 2.0 * kappa_edge * (a + b) * 1.15  # Total height [m]
@@ -1921,7 +1968,7 @@ def _resolve_build(run: dict) -> dict:
     e_gap      = max(b - e_fw - e_blanket - e_shield, 0.0)
 
     return dict(
-        b=b, c_TF=c_TF, c_CS=c_CS, N_TF=N_TF, Gap=Gap,
+        b=b, c_TF=c_TF, c_CS=c_CS, N_TF=N_TF, Gap=Gap, Delta_TF=Delta_TF,
         H_TF=H_TF,
         R_TF_in=R_TF_in, R_TF_out=R_TF_out,
         R_CS_ext=R_CS_ext, R_CS_int=R_CS_int,
@@ -3126,6 +3173,58 @@ _SC_COLOR = {
 # Level 2:  f_He_pipe + f_SC + f_Cu + f_void  = 1   (cable-space)
 
 
+def _conductor_aspect_ratio(n: float, f_steel: float) -> float:
+    """
+    Compute the outer jacket aspect ratio h/w from the steel asymmetry
+    parameter n = δ_S1/δ_S2 and the total steel fraction.
+
+    Conductor geometry (see Surface_dilution_conductor figure):
+        - Circular cable space of radius r_c inscribed in a rectangular
+          steel jacket.
+        - δ_S1 = radial steel thickness,  δ_S2 = toroidal steel thickness.
+        - n = δ_S1 / δ_S2  (1 = square,  0 = no radial steel).
+        - w = 2(r_c + δ_S2),  h = 2(r_c + n·δ_S2).
+
+    From f_cable = π r_c² / (w·h) = 1 − f_steel, defining x = δ_S2/r_c:
+
+        n x² + (1+n) x + (1 − C) = 0     with C = π / [4 (1−f_steel)]
+
+    The positive root gives x, then AR = (1 + n x) / (1 + x).
+
+    Parameters
+    ----------
+    n       : float  Steel asymmetry parameter [-] (0 ≤ n ≤ 1).
+    f_steel : float  Total steel fraction [-] (0 < f_steel < 1).
+
+    Returns
+    -------
+    float  Jacket aspect ratio h/w  (1.0 for n = 1, < 1 for n < 1).
+    """
+    if f_steel <= 0.0 or f_steel >= 1.0:
+        return 1.0
+    C = np.pi / (4.0 * (1.0 - f_steel))
+    if C <= 1.0:
+        # Cable circle cannot fit — degenerate case
+        return 1.0
+
+    if n < 1e-6:
+        # n → 0 limit: linear equation  (1 + x) = C  →  x = C − 1
+        x = C - 1.0
+        return 1.0 / (1.0 + x)      # AR = 1 / (1 + x) since n·x ≈ 0
+
+    # Quadratic: n x² + (1+n) x + (1−C) = 0
+    a_coeff = n
+    b_coeff = 1.0 + n
+    c_coeff = 1.0 - C
+    disc = b_coeff**2 - 4.0 * a_coeff * c_coeff
+    if disc < 0:
+        return 1.0
+    x = (-b_coeff + np.sqrt(disc)) / (2.0 * a_coeff)
+    if x < 0:
+        return 1.0
+    return (1.0 + n * x) / (1.0 + x)
+
+
 def build_conductor_from_run(run: dict, coil: str = "TF") -> dict:
     """
     Build a CICC conductor dict from a D0FUS run output dict.
@@ -3135,10 +3234,20 @@ def build_conductor_from_run(run: dict, coil: str = "TF") -> dict:
         Level 1 (total conductor): f_steel, f_insulation, f_cable
         Level 2 (cable-space):     f_He_pipe, f_SC, f_Cu, f_void
 
+    Conductor geometry adapts to the run:
+        aspect_ratio : derived from n (steel asymmetry δ_S1/δ_S2) and
+                       f_steel via the inscribed-circle jacket model.
+                       n = 1 → square;  n < 1 → wider than tall.
+        side         : fixed at 50 mm for display (toroidal width)
+
+    The visual SC/Cu strand ratio is determined by f_SC and f_Cu
+    cable-space fractions (Cu_nonCu = 0, i.e. each strand is rendered
+    as either pure SC or pure Cu).
+
     Parameters
     ----------
     run  : dict  D0FUS run output dict (from _build_run_dict).
-    coil : str   'TF' or 'CS' (only TF fractions are currently computed).
+    coil : str   'TF' or 'CS'.
 
     Returns
     -------
@@ -3153,6 +3262,9 @@ def build_conductor_from_run(run: dict, coil: str = "TF") -> dict:
     f_In    = run.get(f"f_In_{coil}", np.nan)
     sc_type = run.get("Supra_choice", "Nb3Sn")
 
+    # Steel asymmetry parameter: n = δ_S1/δ_S2 (1 = square, 0 = optimal)
+    n_cond = float(run.get(f"n_{coil}", 1.0))
+
     # Guard: fall back to static dict if any fraction is NaN or unphysical
     fallback = _CONDUCTOR_TF if coil == "TF" else _CONDUCTOR_CS
     fracs = [f_steel, f_sc, f_cu, f_pipe, f_void, f_In]
@@ -3163,6 +3275,9 @@ def build_conductor_from_run(run: dict, coil: str = "TF") -> dict:
     wost_sum = f_sc + f_cu + f_pipe + f_void + f_In
     if abs(wost_sum - 1.0) > 0.05:
         return fallback
+
+    # ── Jacket aspect ratio from δ_S1/δ_S2 geometry ──
+    aspect_ratio = _conductor_aspect_ratio(n_cond, f_steel)
 
     # ── Level 1: convert wost fractions to total-conductor fractions ──
     # wost fraction of total = (1 - f_steel)
@@ -3181,18 +3296,22 @@ def build_conductor_from_run(run: dict, coil: str = "TF") -> dict:
     f_He_pipe_cable = f_pipe / f_cable_wost
     f_void_cable    = f_void / f_cable_wost
 
+    # Cu_nonCu = 0: each strand is rendered as either pure SC or pure Cu.
+    # The correct visual ratio is already ensured by f_SC_cable / f_Cu_cable
+    # which determine the number of green vs gold strands placed.
+
     return {
         "name":          f"{coil} coil",
         "sc_type":       sc_type,
-        "aspect_ratio":  1.0,
-        "side":          100.0,
+        "aspect_ratio":  aspect_ratio,
+        "side":          50.0,           # Toroidal width for display [mm]
         "f_steel":       f_steel,
         "f_insulation":  f_insulation_total,
         "f_He_pipe":     f_He_pipe_cable,
         "f_SC":          f_SC_cable,
         "f_Cu":          f_Cu_cable,
         "f_void":        f_void_cable,
-        "d_strand":      2.5,
+        "d_strand":      1.2,            # Cosmetic strand diameter [mm]
         "Cu_nonCu":      0.0,
     }
 
@@ -3200,8 +3319,8 @@ def build_conductor_from_run(run: dict, coil: str = "TF") -> dict:
 _CONDUCTOR_TF = {
     "name":          "TF coil",
     "sc_type":       "Nb3Sn",
-    "aspect_ratio":  1.0,            # Square outer jacket
-    "side":          100.0,          # 100 mm = 10 cm side
+    "aspect_ratio":  1.0,            # Square outer jacket (n_TF = 1)
+    "side":          50.0,           # 50 mm display size
     "f_steel":       0.50,           # 50 % steel
     "f_insulation":  0.03,           # 3 % insulation (thin ring)
     # --- cable-space sub-fractions (sum = 1) ---
@@ -3209,15 +3328,15 @@ _CONDUCTOR_TF = {
     "f_SC":          0.317,          # ~1/3 of remaining 95 %
     "f_Cu":          0.317,          # ~1/3
     "f_void":        0.317,          # ~1/3 interstitial He void (LTS)
-    "d_strand":      2.5,            # Strand diameter [mm] (enlarged for display)
-    "Cu_nonCu":      0.0,            # Pure SC strands (calibration visual)
+    "d_strand":      1.2,            # Strand diameter [mm] (cosmetic)
+    "Cu_nonCu":      0.0,            # Pure strand rendering (SC vs Cu by count)
 }
 
 _CONDUCTOR_CS = {
     "name":          "CS coil",
     "sc_type":       "Nb3Sn",
-    "aspect_ratio":  1.0,            # Square for visual check
-    "side":          100.0,          # 100 mm = 10 cm side
+    "aspect_ratio":  1.0,            # Square jacket (n_CS = 1)
+    "side":          50.0,           # 50 mm display size
     "f_steel":       0.50,           # 50 % steel
     "f_insulation":  0.03,           # 3 % insulation (thin ring)
     # --- cable-space sub-fractions (sum = 1) ---
@@ -3225,8 +3344,8 @@ _CONDUCTOR_CS = {
     "f_SC":          0.317,          # ~1/3 of remaining 95 %
     "f_Cu":          0.317,          # ~1/3
     "f_void":        0.317,          # ~1/3 interstitial He void (LTS)
-    "d_strand":      2.5,            # Strand diameter [mm] (enlarged for display)
-    "Cu_nonCu":      0.0,            # Pure SC strands (calibration visual)
+    "d_strand":      1.2,            # Strand diameter [mm] (cosmetic)
+    "Cu_nonCu":      0.0,            # Pure strand rendering (SC vs Cu by count)
 }
 
 
@@ -3424,11 +3543,12 @@ if __name__ == "__main__":
     # ITER Q=10 reference case — Shimada et al., Nucl. Fusion 47 (2007) S1
     ITER_RUN = {
         # Plasma geometry
-        "R0":          6.2,
-        "a":           2.0,
-        "kappa_edge":  1.85,
-        "delta_edge":  0.33,
-        "Vprime_data": None,
+        "R0":               6.2,
+        "a":                2.0,
+        "Plasma_geometry": "D0FUS",
+        "kappa_edge":       1.85,
+        "delta_edge":       0.33,
+        "Vprime_data":      None,
         # On-axis field and current
         "B0":          5.3,
         "B_max":       11.8,

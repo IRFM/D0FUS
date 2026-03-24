@@ -163,21 +163,25 @@ def _unpack_CS_config(config):
         Marge_T_REBCO, Eps, Tet, n_CS.
     """
     return dict(
-        Gap           = config.Gap,
-        I_cond        = config.I_cond,
-        V_max         = config.V_max,
-        f_He_pipe     = config.f_He_pipe,
-        f_void        = config.f_void,
-        f_In          = config.f_In,
-        T_hotspot     = config.T_hotspot,
-        RRR           = config.RRR,
-        Marge_T_He    = config.Marge_T_He,
-        Marge_T_Nb3Sn = config.Marge_T_Nb3Sn,
-        Marge_T_NbTi  = config.Marge_T_NbTi,
-        Marge_T_REBCO = config.Marge_T_REBCO,
-        Eps           = config.Eps,
-        Tet           = config.Tet,
-        n_CS          = config.n_CS,
+        Gap            = config.Gap,
+        I_cond         = config.I_cond,
+        V_max          = config.V_max,
+        f_He_pipe      = config.f_He_pipe,
+        f_void         = config.f_void,
+        f_In           = config.f_In,
+        T_hotspot      = config.T_hotspot,
+        RRR            = config.RRR,
+        Marge_T_He     = config.Marge_T_He,
+        Marge_T_Nb3Sn  = config.Marge_T_Nb3Sn,
+        Marge_T_NbTi   = config.Marge_T_NbTi,
+        Marge_T_REBCO  = config.Marge_T_REBCO,
+        Eps            = config.Eps,
+        Tet            = config.Tet,
+        n_CS           = config.n_CS,
+        # Fatigue knockdown factor and operation mode — consumed by
+        # the stress residual / f_sigma_diff closures in each CS solver.
+        fatigue_CS     = config.fatigue_CS,
+        Operation_mode = config.Operation_mode,
     )
 
 
@@ -3697,6 +3701,8 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     Marge_T_He, Marge_T_Nb3Sn = _c['Marge_T_He'], _c['Marge_T_Nb3Sn']
     Marge_T_NbTi, Marge_T_REBCO = _c['Marge_T_NbTi'], _c['Marge_T_REBCO']
     Eps, Tet, n_CS       = _c['Eps'], _c['Tet'], _c['n_CS']
+    fatigue_CS     = _c['fatigue_CS']
+    Operation_mode = _c['Operation_mode']
     debug = False
     Tol_CS = 1e-3
 
@@ -3832,7 +3838,18 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
         
         if Sigma_CS < Tol_CS:
             return np.nan
-        return Sigma_CS - σ_CS
+        # Effective stress allowable: apply fatigue knockdown only when the
+        # light case (CS own electromagnetic load dominant) governs AND the
+        # scenario is pulsed. In Wedging the light case is the only case
+        # (no TF back-pressure); in Bucking it governs when |P_CS-P_TF| > P_TF.
+        _light_governs = (
+            (Choice_Buck_Wedg == 'Wedging') or
+            (Choice_Buck_Wedg == 'Bucking' and abs(P_CS - P_TF) > P_TF)
+        )
+        σ_eff = (σ_CS / fatigue_CS
+                 if (Operation_mode == 'Pulsed' and _light_governs)
+                 else σ_CS)
+        return Sigma_CS - σ_eff
     
     # ------------------------------------------------------------------
     # STEP 2 — Direct two-point brentq (no linear scan required)
@@ -4046,6 +4063,8 @@ def f_CS_D0FUS(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
     Marge_T_He, Marge_T_Nb3Sn = _c['Marge_T_He'], _c['Marge_T_Nb3Sn']
     Marge_T_NbTi, Marge_T_REBCO = _c['Marge_T_NbTi'], _c['Marge_T_REBCO']
     Eps, Tet, n_CS       = _c['Eps'], _c['Tet'], _c['n_CS']
+    fatigue_CS     = _c['fatigue_CS']
+    Operation_mode = _c['Operation_mode']
     debug = False
     Tol_CS = 1e-3
 
@@ -4178,7 +4197,20 @@ def f_CS_D0FUS(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
         Sigma_CS, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = d_to_solve(d)
         if not np.isfinite(Sigma_CS):
             return np.nan
-        return Sigma_CS - σ_CS
+        # Effective stress allowable: apply fatigue knockdown only when the light
+        # case (CS own electromagnetic load dominant) governs AND the scenario is
+        # pulsed. The light case is identified by a net tensile hoop stress
+        # (sigma_theta > 0). In Wedging, sigma_theta is always tensile (no TF
+        # back-pressure); in Bucking, the sign depends on the relative magnitudes
+        # of P_CS and P_TF.
+        _light_governs = (
+            Choice_Buck_Wedg in ('Wedging', 'Bucking')
+            and np.isfinite(σ_theta) and σ_theta > 0.0
+        )
+        σ_eff = (σ_CS / fatigue_CS
+                 if (Operation_mode == 'Pulsed' and _light_governs)
+                 else σ_CS)
+        return Sigma_CS - σ_eff
     
     # ------------------------------------------------------------------
     # Root-finding — monotone-aware adaptive solver
@@ -4381,6 +4413,8 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
     Marge_T_He, Marge_T_Nb3Sn = _c['Marge_T_He'], _c['Marge_T_Nb3Sn']
     Marge_T_NbTi, Marge_T_REBCO = _c['Marge_T_NbTi'], _c['Marge_T_REBCO']
     Eps, Tet, n_CS       = _c['Eps'], _c['Tet'], _c['n_CS']
+    fatigue_CS     = _c['fatigue_CS']
+    Operation_mode = _c['Operation_mode']
     Young_modul_Steel = config.Young_modul_Steel
     nu_Steel          = config.nu_Steel
     debug = False
@@ -4570,7 +4604,20 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
         Sigma_CS, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = d_to_solve(d)
         if not np.isfinite(Sigma_CS):
             return np.nan
-        return Sigma_CS - σ_CS
+        # Effective stress allowable: apply fatigue knockdown only when the light
+        # case (CS own electromagnetic load dominant) governs AND the scenario is
+        # pulsed. The light case is identified by a net tensile hoop stress
+        # (sigma_theta > 0). In Wedging, sigma_theta is always tensile (no TF
+        # back-pressure); in Bucking, the sign depends on the relative magnitudes
+        # of P_CS and P_TF.
+        _light_governs = (
+            Choice_Buck_Wedg in ('Wedging', 'Bucking')
+            and np.isfinite(σ_theta) and σ_theta > 0.0
+        )
+        σ_eff = (σ_CS / fatigue_CS
+                 if (Operation_mode == 'Pulsed' and _light_governs)
+                 else σ_CS)
+        return Sigma_CS - σ_eff
     
     # ------------------------------------------------------------------
     # Root-finding — monotone-aware adaptive solver (see f_CS_D0FUS for

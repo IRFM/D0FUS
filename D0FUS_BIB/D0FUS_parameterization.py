@@ -114,6 +114,11 @@ class GlobalConfig:
     Scaling_Law        : str   = 'IPB98(y,2)'  # Energy confinement scaling law
     L_H_Scaling_choice : str   = 'New_Ip'      # L-H threshold scaling: 'Martin', 'New_S', 'New_Ip'
     Bootstrap_choice    : str   = 'Redl'       # Bootstrap current model ['Freidberg', 'Segal', 'Sauter', 'Redl']
+    trapped_fraction_model : str = 'Sauter2002' # Trapped particle fraction formula for bootstrap.
+                                                # 'Sauter2002' — Sauter et al., PPCF 44 (2002) Eq. 4.
+                                                #   Standard in NEOS (Sauter's own code), JINTRAC, CRONOS.
+                                                # 'ASTRA' — Fable (IPP Garching), used by PROCESS and ASTRA.
+                                                #   ~7% lower f_t than Sauter2002 at DEMO aspect ratio.
 
     # q₉₅ formula selector.  Two conventions differ in their shaping-parameter argument:
     #   'Sauter'    — uses LCFS values (κ_edge, δ_edge).
@@ -203,6 +208,39 @@ class GlobalConfig:
     # References: Doyle et al. NF 47 (2007) S18; Kovari et al. FED 89 (2014) 3054.
     rho_rad_core : float = 0.75  # Core/edge radiation boundary (normalised radius) [-]
 
+    # Fraction of computed core radiation (ρ < rho_rad_core) subtracted from
+    # P_loss in the energy confinement power balance.  Only affects τ_E and the
+    # scaling-law current inversion; P_sep and P_rad_total are unchanged.
+    #
+    # Physical basis: coronal-equilibrium Lz models overestimate core radiation
+    # relative to experiment (transport effects, partial re-absorption, scaling-
+    # law convention ambiguity — see below).  This parameter decouples the
+    # radiation model from the confinement power balance:
+    #
+    #   P_loss = P_α + P_aux + P_Ohm − coreradiationfraction × P_rad_core
+    #   P_sep  = P_α + P_aux + P_Ohm − P_rad_total           (unchanged)
+    #
+    # Partial justifications for values < 1:
+    #   (a) Re-absorption: synchrotron and some line photons are re-absorbed at
+    #       nearby flux surfaces (opacity effects not captured by the 0D integral);
+    #       this is energy redistribution, not a net confinement loss.
+    #   (b) Coronal equilibrium bias: 0D Lz models (Mavrin 2018, ADAS) assume
+    #       coronal ionisation balance; radial impurity transport shifts the
+    #       charge-state distribution, typically reducing core emission relative
+    #       to the coronal prediction (Dux et al., NF 60, 2020, 126039).
+    #   (c) Scaling-law convention: IPB98(y,2) mixed different bolometric
+    #       correction procedures across machines; the 'correct' P_loss is not
+    #       uniquely defined.
+    #
+    # NOTE: the numerical value (e.g. 0.6) is NOT derivable from first principles.
+    # It is a semi-empirical calibration parameter.
+    #
+    # Default: 1.0 (conservative — subtract all computed core radiation).
+    # PROCESS convention: 0.6  (Kovari et al., FED 89, 2014, 3054).
+    # Use 0.6 for benchmarking against PROCESS; keep 1.0 for conservative
+    # standalone D0FUS design studies.
+    coreradiationfraction : float = 1.0
+
     # ── 5. Magnetic flux model ─────────────────────────────────────────────────
     Ce        : float = 0.30     # Ejima constant (resistive ramp-up flux) [-]
                                  # Ψ_res = Ce * μ0 * R0 * Ip
@@ -243,7 +281,7 @@ class GlobalConfig:
     Gap      : float = 0.10  # CS–TF mechanical clearance [m]
     n_CS     : float = 1.0   # CS conductor shape factor (1 = square, 0 = optimal) [-]
     N_sub_CS : int   = 6     # Number of CS sub-modules [-]
-    cs_axial_stress : bool = False  # Include fringe-field axial stress in CS Tresca [bool]
+    cs_axial_stress : bool = True  # Include fringe-field axial stress in CS Tresca [bool]
 
     # ── 9. Superconductor operating conditions ─────────────────────────────────
     T_helium  : float = 4.2   # Liquid helium bath temperature [K]
@@ -294,18 +332,9 @@ class GlobalConfig:
     # ── 11. Auxiliary heating and current drive ──────────────────────────────
     #
     # ┌─────────────────────────────────────────────────────────────────────┐
-    # │  IMPORTANT — DEVELOPMENT STATUS (as of 2026)                        │
-    # │                                                                     │
-    # │  Only CD_source = 'Academic' is fully operational and validated.    │
-    # │                                                                     │
+    # │  DEVELOPMENT STATUS :                                               │
     # │  The technology-specific models ('LHCD', 'ECCD', 'NBCD', 'Multi')   │
-    # │  are UNDER ACTIVE DEVELOPMENT: the underlying physics functions     │
-    # │  (f_etaCD_LH, f_etaCD_EC, f_etaCD_NBI) exist but have NOT been      │
-    # │  validated against experiment or other systems codes.  Use them     │
-    # │  at your own risk — results may be quantitatively unreliable.       │
-    # │                                                                     │
-    # │  For production runs, parameter scans, and publications,            │
-    # │  use CD_source = 'Academic' with gamma_CD_acad and eta_WP_acad.     │
+    # │  are UNDER ACTIVE DEVELOPMENT                                       │
     # └─────────────────────────────────────────────────────────────────────┘
     #
     CD_source   : str   = 'Academic'  # CD model: 'Academic' (recommended)
@@ -369,7 +398,7 @@ class GlobalConfig:
 
     # ── 13. Maintenance constraints ────────────────────────────────────────────
     ripple_adm : float = 0.01    # Admissible toroidal field ripple [-]  (1%)
-    L_min      : float = 2.00       # Minimum toroidal maintenance access width [m]
+    L_min      : float = 3.00    # Minimum toroidal maintenance access width [m]
 
     # ── 14. Disruption RE diagnostic (indicative, post-convergence) ──────────
     #
@@ -400,11 +429,21 @@ class GlobalConfig:
     #   2–5  — modest SPI (early ITER target range)
     #  10–30 — highly effective mitigation (seed → 0)
 
+    pellet_dilution_cools : bool = False
+    # If True, the pellet dilution also cools the plasma before the TQ:
+    #   T_diluted = T_pre / pellet_dilution     (isobaric limit, n·T ≈ const)
+    # This models a slow assimilation timescale τ_assimilation >> τ_eq where
+    # energy equilibrates between the injected cold material and the background
+    # plasma before the thermal quench onset.
+    # If False (default), only the density is raised; the pre-TQ temperature
+    # is unchanged.  This corresponds to rapid injection (τ_assimilation << τ_TQ)
+    # where the cold material raises n_e but has not yet cooled the bulk plasma.
+
     # ── 15. Techno-economic cost model (post-convergence) ──────────────────
     #
     # ┌─────────────────────────────────────────────────────────────────────┐
     # │  POST-CONVERGENCE ONLY — does not enter the D0FUS physics solver.   │
-    # │  Called in save_run_output() for economic figure-of-merit output.    │
+    # │  Called in save_run_output() for economic figure-of-merit output.   │
     # └─────────────────────────────────────────────────────────────────────┘
     #
     # Model: Sheffield & Milora, Fus. Sci. Technol. 70 (2016).

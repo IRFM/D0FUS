@@ -22,3 +22,4 @@ dist/
 build/
 *.egg-info/input/
 *.egg-info/
+D0FUS_INPUTS/*.txt
