@@ -33,14 +33,12 @@ Created : 2025
 # Imports
 # =============================================================================
 
-import os
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-import matplotlib.gridspec as gridspec
+
+import os   # needed before D0FUS_import for sys.path resolution in standalone mode
 
 # Package-relative imports (production mode)
 if __name__ != "__main__":
+    from .D0FUS_import import *
     from .D0FUS_physical_functions import (
         f_Kappa, f_Kappa_95, f_Delta_95,
         kappa_profile, delta_profile, miller_RZ,
@@ -67,6 +65,7 @@ else:
     import sys
     sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+    from D0FUS_BIB.D0FUS_import import *
     from D0FUS_BIB.D0FUS_physical_functions import (
         f_Kappa, f_Kappa_95, f_Delta_95,
         kappa_profile, delta_profile, miller_RZ,
@@ -860,7 +859,7 @@ def plot_cable_current_density(
 
     # Resolve parameters from cfg with explicit fallbacks
     f_He_pipe     = f_He_pipe     if f_He_pipe is not None else cfg.f_He_pipe
-    f_void        = f_void        if f_void    is not None else cfg.f_void
+    f_void_user   = f_void        if f_void    is not None else cfg.f_void
     f_In          = f_In          if f_In      is not None else cfg.f_In
     T_hotspot     = T_hotspot     if T_hotspot is not None else cfg.T_hotspot
     RRR           = RRR           if RRR       is not None else cfg.RRR
@@ -871,11 +870,17 @@ def plot_cable_current_density(
     Eps           = cfg.Eps
     Tet           = cfg.Tet
 
+    # Auto-select f_void per SC type when the user/cfg did not fix it.
+    # LTS (NbTi, Nb3Sn): round strands in CICC → ~33% interstitial void.
+    # HTS (REBCO):       stacked tapes → no interstitial void.
+    _f_void_LTS = f_void_user if f_void_user is not None else 0.33
+    _f_void_HTS = f_void_user if f_void_user is not None else 0.00
+
     B_range = np.linspace(B_min, B_max, 30)
-    coil_params = dict(
+    coil_params_base = dict(
         E_mag=E_mag, I_cond=I_cond, V_max=V_max,
         N_sub=N_sub, tau_h=tau_h,
-        f_He_pipe=f_He_pipe, f_void=f_void, f_In=f_In,
+        f_He_pipe=f_He_pipe, f_In=f_In,
         T_hotspot=T_hotspot, RRR=RRR,
         Marge_T_He=Marge_T_He, Marge_T_Nb3Sn=Marge_T_Nb3Sn,
         Marge_T_NbTi=Marge_T_NbTi, Marge_T_REBCO=Marge_T_REBCO,
@@ -887,11 +892,12 @@ def plot_cable_current_density(
     J_REBCO  = []
 
     for B in B_range:
-        for sc, store in [("NbTi",  J_NbTi),
-                          ("Nb3Sn", J_Nb3Sn),
-                          ("REBCO", J_REBCO)]:
+        for sc, store, fv in [("NbTi",  J_NbTi,  _f_void_LTS),
+                              ("Nb3Sn", J_Nb3Sn, _f_void_LTS),
+                              ("REBCO", J_REBCO, _f_void_HTS)]:
             res = calculate_cable_current_density(
-                sc_type=sc, B_peak=B, T_op=T_op, **coil_params)
+                sc_type=sc, B_peak=B, T_op=T_op,
+                f_void=fv, **coil_params_base)
             val = res["J_wost"]
             store.append(val / 1e6 if val > 0 else np.nan)
 
@@ -2102,7 +2108,6 @@ def _princeton_D_contour(
     File, Stewart & Mills, IEEE TNS 18 (1971) — Princeton-D concept.
     Gralnick & Tenney, J. Appl. Phys. 47 (1976) — Analytical solution.
     """
-    from scipy.integrate import solve_ivp
 
     k = 0.5 * np.log(r2 / r1)
 
@@ -2365,7 +2370,6 @@ def plot_CS_cross_section(
     ITER Technical Basis, IAEA NF 40 (2001), §2.2.
     Sarasola et al., IEEE Trans. Appl. Supercond. 33, 1-5 (2023).
     """
-    from matplotlib.patches import Rectangle
 
     bd = _resolve_build(run)
 
@@ -2881,7 +2885,6 @@ def plot_TF_benchmark_table(cfg=None, save_dir=None) -> None:
         ("D0FUS",    "#4CAF50"),
     ]
 
-    import pandas as pd
     cols = ["Machine", "SC", "Config", "B_max [T]", "J [MA/m²]", "σ [MPa]", "c [m]"]
 
     for model_label, header_color in model_specs:
@@ -2982,8 +2985,6 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
         ("D0FUS",    f_CS_D0FUS, "#2196F3"),
         ("CIRCE",    f_CS_CIRCE, "#F44336"),
     ]
-
-    import pandas as pd
 
     cols = ["Machine", "SC", "Config", "Ψ [Wb]", "σ [MPa]",
             "Width [m]", "B_CS [T]", "J [MA/m²]"]
@@ -3384,7 +3385,6 @@ def plot_CICC_cross_section(
     seed      : int    Random seed for strand placement reproducibility.
     save_dir  : str or None  (only used when ``ax`` is None).
     """
-    from matplotlib.patches import Circle, Rectangle, Patch
 
     rng        = np.random.default_rng(seed)
     standalone = ax is None
@@ -3526,7 +3526,6 @@ def plot_CICC_cross_section(
 # =============================================================================
 
 if __name__ == "__main__":
-    import argparse
 
     parser = argparse.ArgumentParser(
         description="D0FUS_figures.py — stand-alone smoke test.\n"

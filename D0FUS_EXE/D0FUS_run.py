@@ -434,6 +434,17 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
 
     tau_h = tau_h_HTS if Supra_choice == 'REBCO' else tau_h_LTS
 
+    # ── Auto-select f_void based on conductor technology ──────────────────────
+    # REBCO tapes are stacked (no interstitial void between round strands).
+    # LTS (Nb3Sn, NbTi) use CICC with ~33% void fraction in the strand bundle.
+    # If the user explicitly sets f_void in GlobalConfig, that value is used;
+    # if left at the default sentinel (None), auto-select based on Supra_choice.
+    if f_void is None:
+        f_void = 0.00 if 'REBCO' in Supra_choice else 0.33
+        # Update config so downstream functions (f_CS_D0FUS, _unpack_CS_config)
+        # that read config.f_void directly also see the resolved value.
+        config = dc_replace(config, f_void=f_void)
+
     N_TF, ripple, Delta_TF = Number_TF_coils(R0, a, b, ripple_adm, L_min)
     # N_TF is a float from Number_TF_coils; truncate to int before dividing so
     # that N_sub is an integer count of protection subdivisions, not a ratio.
@@ -1546,11 +1557,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     P_elec_solution   = f_P_elec(P_fus, P_CD_solution, eta_T, M_blanket, eta_WP)
 
     # ── Loop voltage ──────────────────────────────────────────────────────────
-    Vloop_solution = f_Vloop(I_Ohm_solution, a, κ, R0, Tbar, nbar_solution,
-                             Zeff, q95_solution, nu_T, nu_n, eta_model,
-                             rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-                             T_ped_frac=T_ped_frac,
-                             Vprime_data=Vprime_data)
+    # V_loop is now computed inside Magnetic_flux (returned as 5th element)
+    # to avoid redundant neoclassical conductance integration.
 
     # ── Self-consistent q-profile from Ampère integration ─────────────────
     # Computes q(ρ), j(ρ), and l_i from neoclassical conductivity +
@@ -1617,21 +1625,19 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             f"Unknown radial build model: '{Radial_build_model}'. "
             "Valid options: 'academic', 'D0FUS', 'CIRCE'."
         )
-        
-    print(c_WP_TF)
 
     # ==============================================================================
     #    MAGNETIC FLUX REQUIREMENTS (Inductive Scenario)
     #    Volt-seconds budget for plasma initiation, ramp-up, and flat-top.
+    #    Also returns the steady-state loop voltage (avoids redundant computation).
     # ==============================================================================
-    (ΨPI, ΨRampUp, Ψplateau, ΨPF) = Magnetic_flux(
-    Ip_solution, I_Ohm_solution, Bmax_TF, a, b, c, R0, κ,
-    nbar_solution, Tbar, Ce, Temps_Plateau_input, li_solution,
-    Choice_Buck_Wedg, Gap,
-    Zeff, q95_solution, nu_T, nu_n, eta_model,
-    E_phi_BD=config.E_phi_BD,
-    t_BD=config.t_BD,
-    C_PF=config.C_PF,
+    _gap_eff = Gap if Choice_Buck_Wedg == 'Wedging' else 0.0
+    _RCS_ext = R0 - a - b - c - _gap_eff   # CS outer radius [m]
+    (ΨPI, ΨRampUp, Ψplateau, ΨPF, Vloop_solution) = Magnetic_flux(
+    Ip_solution, I_Ohm_solution, R0, a, κ, li_solution,
+    Ce, Temps_Plateau_input,
+    config.E_BD, betaP_solution, _RCS_ext,
+    nbar_solution, Tbar, Zeff, q95_solution, nu_T, nu_n, eta_model,
     rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
     Vprime_data=Vprime_data,
     )
@@ -1662,11 +1668,9 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # expose the sub-fractions (SC, Cu, He pipe, void, insulation).
     # We call calculate_cable_current_density with B_CS to recover them.
     # The LRU cache makes this essentially free (same call was made inside solver).
+
     if np.isfinite(B_CS) and B_CS > 0:
         Supra_choice_CS = config.Supra_choice   # Same SC for TF and CS
-        # Effective radial gap between TF inner bore and CS outer face.
-        # Non-zero only in Wedging configuration; zero in Bucking/Plug.
-        _gap_eff = Gap if Choice_Buck_Wedg == 'Wedging' else 0.0
         E_mag_CS_post = calculate_E_mag_CS(
             B_CS,
             R0 - a - b - c - _gap_eff - d,   # CS inner bore [m]

@@ -247,15 +247,13 @@ class GlobalConfig:
                                  # Typical: ITER 0.45, EU-DEMO 0.30, CFETR 0.30
     eta_model : str   = 'redl'  # Plasma resistivity model for R_eff and li
                                  # 'old' | 'spitzer' | 'sauter' | 'redl' (recommended)
-    # Plasma initiation flux: Ψ_PI = 2π * R0 * E_phi_BD * t_BD
-    E_phi_BD  : float = 0.5     # Toroidal electric field at breakdown [V/m]
-                                 # Ref: Lloyd et al., PPCF 33(11), 1991
-                                 # Range: 0.3 V/m (aggressive) to 1.0 V/m (conservative)
-    t_BD      : float = 0.5     # Breakdown duration [s]  → Ψ_PI ≈ 10 Wb (ITER-scale)
-    # PF coil flux contribution
-    C_PF      : float = 0.9     # Empirical PF coil scaling coefficient [-]
-                                 # Ψ_PF = C_PF * μ0 * R0 * Ip
-                                 # Calibrated: ITER ~0.95, CFETR ~0.82; uncertainty ±30%
+    # Plasma initiation flux: Ψ_PI = 2π * R0 * E_BD
+    E_BD      : float = 0.25    # Breakdown calibration parameter [V.s/m]
+                                 # Product of E_phi [V/m] and t_BD [s].
+                                 # Calibrated on ITER: Ψ_PI ~ 10 Wb => E_BD ~ 0.26.
+                                 # Ref: Lloyd et al., PPCF 33(11), 1991.
+    # PF coil flux contribution: Shafranov vertical field model (Johner 2011)
+    # Physics-based, no free parameter. See f_Psi_PF_shafranov docstring.
                                  
     # ── 6. Structural materials ────────────────────────────────────────────────
     Chosen_Steel         : str   = '316L'   # Structural steel grade '316L' , 'N50H', 'Manual'
@@ -286,8 +284,10 @@ class GlobalConfig:
     # ── 9. Superconductor operating conditions ─────────────────────────────────
     T_helium  : float = 4.2   # Liquid helium bath temperature [K]
     Marge_T_He: float = 0.3   # Temperature margin from 10-bar He operation [K]
-    f_He_pipe = 0.10     # Helium cooling pipe/channel fraction in wost [-]
-    f_void    = 0.33     # Interstitial void fraction in strand bundle [-] (LTS)
+    f_He_pipe : float = 0.10  # Helium cooling pipe/channel fraction in wost [-]
+    f_void    : float = None  # Interstitial void fraction in strand bundle [-]
+                              # None = auto: 0.33 (LTS) / 0.00 (REBCO).
+                              # Set explicitly (e.g. 0.30) to override.
     f_In      : float = 0.15  # Insulation area fraction [-]
 
     # Temperature margins above T_helium defining T_operating [K]

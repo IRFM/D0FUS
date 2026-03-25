@@ -36,7 +36,7 @@ import sympy as sp
 
 #%% Scipy - Optimization and Numerical Methods
 
-from scipy.integrate import quad
+from scipy.integrate import quad, solve_ivp, IntegrationWarning
 from scipy.interpolate import interp1d, griddata
 from scipy.optimize import (
     basinhopping,
@@ -52,6 +52,7 @@ from scipy.optimize import (
     shgo
 )
 from scipy.signal import find_peaks
+from scipy.special import erfc
 
 #%% Visualization Libraries
 
@@ -63,12 +64,17 @@ import matplotlib.cm as cm
 from scipy.interpolate import PchipInterpolator
 from matplotlib.colors import Normalize
 from matplotlib.gridspec import GridSpec
+from matplotlib.patches import Circle, Rectangle, Patch
 from matplotlib.ticker import MultipleLocator
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from pandas.plotting import table
 from tqdm import tqdm
 from dataclasses import dataclass
 from typing import Optional, Dict, List, Tuple
+
+#%% Standard Library (deferred)
+
+import argparse
 
 #%% Genetic Algorithm Libraries
 
