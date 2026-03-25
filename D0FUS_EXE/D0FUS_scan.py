@@ -1243,15 +1243,9 @@ INPUT_PARAMETER_REGISTRY = {
     'Ce': InputParameter(
         name='Ce', display_name='Ejima resistive ramp-up coefficient',
         unit='', min_val=0.2, max_val=0.5, n_default=10, tick_step=0.1),
-    'C_PF': InputParameter(
-        name='C_PF', display_name='PF coil flux scaling coefficient',
-        unit='', min_val=0.7, max_val=1.1, n_default=10, tick_step=0.1),
-    'E_phi_BD': InputParameter(
-        name='E_phi_BD', display_name='Toroidal electric field at plasma breakdown',
-        unit='V/m', min_val=0.3, max_val=1.0, n_default=8, tick_step=0.1),
-    't_BD': InputParameter(
-        name='t_BD', display_name='Plasma breakdown duration',
-        unit='s', min_val=0.2, max_val=1.5, n_default=8, tick_step=0.25),
+    'E_BD': InputParameter(
+        name='E_BD', display_name='Breakdown calibration parameter',
+        unit='V·s/m', min_val=0.10, max_val=0.50, n_default=10, tick_step=0.05),
 
     # ── 15. Disruption / runaway electron indicators ──────────────────────────
     # These parameters govern the post-convergence RE indicator computation.
@@ -1332,7 +1326,7 @@ def display_input_parameters():
         ('Multi-source CD',          ['f_heat_LH', 'f_heat_EC', 'f_heat_NBI',
                                       'rho_EC', 'rho_NBI', 'E_beam_keV']),
         ('Plasma-facing',            ['theta_deg']),
-        ('Flux model',               ['Ce', 'C_PF', 'E_phi_BD', 't_BD']),
+        ('Flux model',               ['Ce', 'E_BD']),
         ('Disruption / RE indicators (post-convergence)',
                                      ['tau_TQ', 'Te_final_eV', 'pellet_dilution']),
         ('Techno-economics (Sheffield, post-convergence)',

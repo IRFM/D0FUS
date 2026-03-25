@@ -105,8 +105,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from scipy.interpolate import PchipInterpolator
-from scipy.special import erfc
-from scipy.optimize import root_scalar
 
 
 # =============================================================================
@@ -1902,7 +1900,6 @@ def f_P_synchrotron(Tbar, R0, a, B0, nbar, kappa, nu_n, nu_T, r_synch,
     Fidone, Giruzzi & Granata, Nucl. Fusion 41 (2001) 1755.
     Kovari et al., Fus. Eng. Des. 89 (2014) 3054, §10.
     """
-    import math
     T0  = float(f_Tprof(Tbar, nu_T, 0.0, rho_ped, T_ped_frac,
                         Vprime_data))                              # on-axis T [keV]
     ne0 = float(f_nprof(nbar,  nu_n,  0.0, rho_ped, n_ped_frac,
@@ -3648,53 +3645,56 @@ def f_Reff(a, kappa, R0, Tbar, nbar, Z_eff, q95, nu_T, nu_n,
 
     Physical model
     --------------
-    In steady-state flat-top, the loop electric field E_phi is uniform
-    across the plasma cross-section.  The Ohmic current density follows:
+    In steady-state flat-top, Maxwell's equation (nabla x E = 0) in
+    axisymmetric geometry gives E_phi(R) = E_phi_0 * R0 / R.  The
+    Ohmic current density at normalised radius rho is therefore:
 
-        j_Ohm(rho) = E_phi / eta_neo(rho) = E_phi × sigma_neo(rho)
+        j_Ohm(rho) = E_phi_0 * R0 / (R * eta_neo(rho))
 
-    The effective resistance is defined by V_loop = R_eff × I_Ohm:
+    Integrating over the cross-section with dA = V'(rho) drho / (2 pi R0)
+    and using V_loop = 2 pi R0 * E_phi_0 yields V_loop = R_eff * I_Ohm:
 
-        R_eff = (2 pi R0)^2 / ∫_0^1 V'(rho) / eta_neo(rho) drho
+        R_eff = (2 pi R0)^2
+                / integral_0^1 <R0/R>_rho * V'(rho) / eta_neo(rho) drho
 
-    where V'(rho) = dV/drho is the shaped volume derivative from Miller
-    geometry (Vprime_data) when available, or the cylindrical approximation
-    V' = 4 pi^2 R0 a^2 kappa rho otherwise.
+    where <R0/R>_rho is the flux-surface average of R0/R.  For concentric
+    circular surfaces:  <R0/R>_rho = 1 / sqrt(1 - (rho * a / R0)^2).
 
-    The current profile emerges self-consistently from T(rho) and n(rho)
-    via the neoclassical conductivity — no prescribed alpha_J exponent.
+    The current profile j(rho) ~ sigma_neo(rho) emerges self-consistently
+    from T(rho) and n(rho) via the neoclassical conductivity — no
+    prescribed alpha_J exponent is used.
 
     Parameters
     ----------
     a : float
-        Minor radius [m].
+        Plasma minor radius [m].
     kappa : float
         Plasma elongation [-].
     R0 : float
-        Major radius [m].
+        Plasma major radius [m].
     Tbar : float
-        Volume-averaged temperature [keV].
+        Volume-averaged electron temperature [keV].
     nbar : float
-        Volume-averaged density [1e20 m^-3].
+        Volume-averaged electron density [1e20 m^-3].
     Z_eff : float
-        Effective charge [-].
+        Effective ionic charge [-].
     q95 : float
-        Safety factor at 95%% flux surface [-].
+        Safety factor at 95% flux surface [-].
     nu_T : float
         Temperature profile peaking exponent [-].
     nu_n : float
         Density profile peaking exponent [-].
-    eta_model : str
+    eta_model : str, optional
         Resistivity model: 'old', 'spitzer', 'sauter', 'redl' (default).
-    rho_ped : float
+    rho_ped : float, optional
         Normalised pedestal radius (1.0 = no pedestal).
-    n_ped_frac : float
+    n_ped_frac : float, optional
         n_ped / nbar.
-    T_ped_frac : float
+    T_ped_frac : float, optional
         T_ped / Tbar.
-    Vprime_data : tuple or None
+    Vprime_data : tuple or None, optional
         (rho_grid, Vprime, V_total) from precompute_Vprime().
-        When None, uses cylindrical V' = 4 pi^2 R0 a^2 kappa rho.
+        When None, cylindrical V' = 4 pi^2 R0 a^2 kappa rho is used.
 
     Returns
     -------
@@ -3703,15 +3703,14 @@ def f_Reff(a, kappa, R0, Tbar, nbar, Z_eff, q95, nu_T, nu_n,
 
     References
     ----------
-    Sauter O. et al., Phys. Plasmas 6 (1999) 2834.
-    Redl A. et al., Phys. Plasmas 28 (2021) 022502.
+    Sauter O. et al., Phys. Plasmas 6, 2834 (1999).
+    Redl A. et al., Phys. Plasmas 28, 022502 (2021).
+    Johner J., Fusion Sci. Technol. 59, 308 (2011), Eq. 31.
+        HELIOS — only other 0D code including the 1/R correction.
     """
-    from scipy import integrate
-    import warnings
-    from scipy.integrate import IntegrationWarning
 
     def _eta_local(rho):
-        """Neoclassical resistivity at normalised radius rho."""
+        """Neoclassical resistivity [Ohm.m] at normalised radius rho."""
         T_loc = max(float(f_Tprof(Tbar, nu_T, rho, rho_ped, T_ped_frac)), 0.1)
         n_loc = float(f_nprof(nbar, nu_n, rho, rho_ped, n_ped_frac))
         n_loc_m3 = n_loc * 1e20
@@ -3734,17 +3733,21 @@ def f_Reff(a, kappa, R0, Tbar, nbar, Z_eff, q95, nu_T, nu_n,
             return float(interpolate_Vprime(rho, Vprime_data[0], Vprime_data[1]))
         return 4.0 * np.pi**2 * R0 * a**2 * kappa * rho
 
+    def _R0_over_R_fsa(rho):
+        """Flux-surface average <R0/R> for concentric circular surfaces."""
+        eps_rho = rho * a / R0
+        return 1.0 / math.sqrt(1.0 - eps_rho**2)
+
     def _integrand(rho):
-        """V'(rho) / eta(rho) — shaped conductance integrand."""
-        return _Vprime_local(rho) / max(_eta_local(rho), 1e-12)
+        """Shaped conductance integrand with 1/R correction."""
+        return _R0_over_R_fsa(rho) * _Vprime_local(rho) / max(_eta_local(rho), 1e-12)
 
     with warnings.catch_warnings():
         warnings.filterwarnings('ignore', category=IntegrationWarning)
-        sigma_integral, _ = integrate.quad(
+        sigma_integral, _ = quad(
             _integrand, 0, 1.0,
             limit=200, epsabs=1e-8, epsrel=1e-4)
 
-    # R_eff = (2 pi R0)^2 / ∫ V'/eta drho
     return (2.0 * np.pi * R0)**2 / sigma_integral
 
 
@@ -4364,8 +4367,9 @@ def f_q_profile(rho, q95=3.0, rho95=0.95, alpha_J=1.5):
     On axis (L'Hôpital): q(0) = q_edge / (αJ + 1).
 
     This profile is self-consistent with the j-profile model used in
-    f_Reff() for the loop voltage calculation and with f_li() for the
-    internal inductance, ensuring coherent physics across the code.
+    f_Reff() for the loop voltage calculation.  The internal inductance
+    li(3) is computed inside f_q_profile_selfconsistent(), which uses
+    this function only as an initial guess for the Picard iteration.
 
     Choice of αJ
     -------------
@@ -4390,8 +4394,8 @@ def f_q_profile(rho, q95=3.0, rho95=0.95, alpha_J=1.5):
       αJ = 2.5 : strongly peaked (EU-DEMO, 2h burn, νT ≈ 2.8)
 
     The internal inductance l_i increases monotonically with αJ:
-        l_i(0) = 0.50, l_i(1.5) ≈ 1.08, l_i(3) ≈ 1.55.
-    Computed numerically by f_li().
+        l_i(αJ=0) = 0.50, l_i(αJ=1.5) ≈ 1.08, l_i(αJ=3) ≈ 1.55.
+    Now computed self-consistently by f_q_profile_selfconsistent().
     Note: the formula l_i = (αJ+1)/(2αJ+1) sometimes cited in textbooks
     gives the WRONG direction (decreasing with αJ).  Do not use it.
 
@@ -6748,8 +6752,8 @@ def f_hot_tail_seed_profile(nbar, Tbar, Ip, a, R0, κ, Z_eff,
 
     The current density profile J(ρ) is reconstructed from the Ohmic
     conductivity profile σ(ρ) = 1/η_Sp(T(ρ), n(ρ)), normalised so that
-    ∫ J dA = Ip.  This is the same approach as used in f_li (see
-    D0FUS_radial_build_functions.py).
+    ∫ J dA = Ip.  This is the same approach as used in
+    f_q_profile_selfconsistent() for the li(3) computation.
 
     Volume integration follows the D0FUS convention:
       - If Vprime_data is provided: uses Miller V'(ρ) flux-surface Jacobian

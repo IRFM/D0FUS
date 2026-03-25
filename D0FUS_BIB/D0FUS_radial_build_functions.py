@@ -35,7 +35,6 @@ else:
     cfg = DEFAULT_CONFIG
     
     # Suppress numpy divide/invalid warnings — these are handled via NaN returns
-    import warnings
     warnings.filterwarnings('ignore', category=RuntimeWarning)
     
 #%% ========================================================================
@@ -3156,431 +3155,390 @@ if __name__ == "__main__":
     
 #%% Magnetic flux calculation
 
-def f_Psi_PI(R0, E_phi_BD=0.5, t_BD=0.5):
+def f_Psi_PI(R0, E_BD=0.25):
     """
-    Estimate the magnetic flux required for plasma breakdown and initiation.
+    Plasma initiation flux from Faraday's law.
 
-    Physical model: the flux swing needed to sustain a toroidal electric field
-    E_phi_BD over a pre-ionization duration t_BD at major radius R0.
+    During plasma breakdown, the central solenoid imposes a toroidal
+    loop voltage V_loop = 2 pi R0 E_phi to ionise the filling gas and
+    burn through low-Z impurities.  Integrating Faraday's law over the
+    breakdown duration t_BD gives the consumed flux:
 
-        Psi_PI = 2 * pi * R0 * E_phi_BD * t_BD
+        Psi_PI = V_loop * t_BD = 2 pi R0 * (E_phi * t_BD)
 
-    Typical values:
-        E_phi_BD ~ 0.3–0.5 V/m (Lloyd et al. 1991, Ejima et al. 1982)
-        t_BD     ~ 0.3–0.5 s
+    Because only the product E_phi * t_BD is unknown ,
+    this product is lumped into a single calibration
+    parameter E_BD [V.s/m].  The formula reduces to:
 
-    Cross-check: ITER (R0=6.2 m, E=0.5 V/m, t=0.5 s) -> ~9.7 Wb ≈ 10 Wb [OK]
+        Psi_PI = 2 pi R0 * E_BD
 
-    References
-    ----------
-    Lloyd et al., Plasma Phys. Control. Fusion 33(11), 1991.
-    Ejima et al., Nucl. Fusion 22(10), 1982.
+    The geometric factor 2 pi R0 captures the machine-size scaling
+    (larger toroidal circumference requires more flux for the same
+    breakdown conditions).  All breakdown physics (fill pressure,
+    error field level, pre-ionisation, impurity content) is absorbed
+    into E_BD.
+
+    Calibration:
+        ITER (R0=6.2 m): Psi_PI ~ 10 Wb  =>  E_BD ~ 0.26 V.s/m.
+        Default E_BD = 0.25 is calibrated on this reference.
+
+    Note: Psi_PI is typically < 5% of the total CS flux budget,
+    so the result is weakly sensitive to the choice of E_BD.
 
     Parameters
     ----------
     R0 : float
         Plasma major radius [m].
-    E_phi_BD : float, optional
-        Toroidal electric field threshold for breakdown [V/m]. Default: 0.5.
-    t_BD : float, optional
-        Pre-ionization / breakdown duration [s]. Default: 0.5.
+    E_BD : float, optional
+        Breakdown calibration parameter [V.s/m]. Default: 0.25.
+        Product of the toroidal electric field at breakdown [V/m]
+        and the breakdown duration [s].
 
     Returns
     -------
     Psi_PI : float
-        Flux required for plasma initiation [Wb].
-    """
-    Psi_PI = 2.0 * np.pi * R0 * E_phi_BD * t_BD
-    return Psi_PI
-
-def f_Psi_PF(Ip, R0, C_PF=0.9):
-    """
-    Estimate the poloidal flux contribution from the PF coil system
-    using an empirical scaling law analogous to the Ejima formula.
-
-        Psi_PF = C_PF * μ0 * R0 * Ip
-
-    This scaling is motivated by dimensional analysis and calibrated
-    against ITER (C_PF ~ 0.98) and CFETR (C_PF ~ 0.82).
-    The uncertainty on C_PF is estimated at ±30%.
-
-    At 0D level, a reliable analytical estimate of Psi_PF is not
-    achievable without knowledge of the PF coil layout. This empirical
-    formula is the most honest approximation available.
-
-    Cross-check:
-        ITER  (R0=6.2 m,   Ip=15 MA):  Psi_PF = 110.9 Wb  [ref: ~115 Wb]
-        CFETR (R0=7.2 m,   Ip=13 MA):  Psi_PF = 112.0 Wb  [ref:  ~97 Wb]
-        JET   (R0=2.96 m,  Ip=4  MA):  Psi_PF =  14.1 Wb  [ref:  ~10 Wb]
+        Flux consumed during plasma initiation [Wb].
 
     References
     ----------
-    Ejima et al., Nucl. Fusion 22(10), 1982  (analogous formula for Psi_res).
-    Kovari et al., Fusion Eng. Des. 89, 2014 (PROCESS: C_PF treated as input).
+    Lloyd et al., Plasma Phys. Control. Fusion 33(11), 1441 (1991).
+        Breakdown electric field requirements in tokamaks.
+    Shimada et al., Nucl. Fusion 47, S1 (2007).
+        ITER reference flux budget (Psi_PI ~ 10 Wb).
+    """
+    return 2.0 * np.pi * R0 * E_BD
+
+
+def f_Psi_ind(R0, a, kappa, li, Ip):
+    """
+    Inductive flux consumed to build the plasma current (self-inductance).
+
+    The flux stored in the poloidal magnetic field of a current-carrying
+    torus is Psi_ind = Lp * Ip, where Lp = L_ext + L_int.
+
+    External inductance: Hirshman & Neilson (1986) fit
+    --------------------------------------------------
+    L_ext is computed from the Hirshman & Neilson fit, which is exact
+    for an axisymmetric current ring at finite inverse aspect ratio
+    epsilon = a/R0 and accounts for elongation:
+
+        aeps = (1 + 1.81 sqrt(eps) + 2.05 eps) ln(8/eps)
+               - (2 + 9.25 sqrt(eps) - 1.21 eps)
+        beps = 0.73 sqrt(eps) (1 + 2 eps^4 - 6 eps^5 + 3.7 eps^6)
+
+        L_ext = mu0 R0 * aeps * (1 - eps) / (1 - eps + beps * kappa)
+
+    This replaces the Neumann large-aspect-ratio formula
+    L_ext = mu0 R0 [ln(8 R0 / (a sqrt(kappa))) - 2], which underestimates
+    L_ext by ~8% for ITER (eps = 0.32) and fails qualitatively for
+    spherical tokamaks (eps > 0.4).
+
+    Internal inductance
+    -------------------
+        L_int = mu0 R0 li / 2
+
+    where li = li(3) is the normalised internal inductance from
+    f_q_profile_selfconsistent().
 
     Parameters
     ----------
-    Ip    : float  Plasma current [A].
-    R0    : float  Major radius [m].
-    C_PF  : float  Empirical PF flux coefficient [-]. Default: 0.95.
-                   Calibrated on ITER. Uncertainty: ±30%.
+    R0 : float
+        Plasma major radius [m].
+    a : float
+        Plasma minor radius [m].
+    kappa : float
+        Plasma elongation [-].
+    li : float
+        Normalised internal inductance li(3) [-].
+    Ip : float
+        Plasma current [A].
 
     Returns
     -------
-    Psi_PF : float  Estimated PF flux contribution [Wb].
-    """
-    return C_PF * μ0 * R0 * Ip
+    Psi_ind : float
+        Inductive flux [Wb].
+    Lp : float
+        Total plasma self-inductance [H].
 
-def Magnetic_flux(Ip, I_Ohm, B_max_TF, a, b, c, R0, κ, nbar, Tbar,
-                  Ce, Temps_Plateau, Li, Choice_Buck_Wedg, Gap,
-                  Z_eff, q, nu_T, nu_n, eta_model,
-                  E_phi_BD=0.5, t_BD=0.5,
-                  C_PF=0.9,
+    References
+    ----------
+    Hirshman S.P. & Neilson G.H., Phys. Fluids 29, 790 (1986).
+        External inductance fit (exact at finite epsilon).
+    Freidberg, Plasma Physics and Fusion Energy, Cambridge (2007), ch. 11.
+    Wesson, Tokamaks, 4th ed., Oxford (2011), Sec. 3.9.
+    """
+    if a <= 0.0 or R0 <= 0.0:
+        return (np.nan, np.nan)
+
+    eps = a / R0
+
+    # Hirshman & Neilson (1986) fit for external inductance
+    sqrt_eps = math.sqrt(eps)
+    aeps = ((1.0 + 1.81 * sqrt_eps + 2.05 * eps) * math.log(8.0 / eps)
+            - (2.0 + 9.25 * sqrt_eps - 1.21 * eps))
+    beps = 0.73 * sqrt_eps * (1.0 + 2.0*eps**4 - 6.0*eps**5 + 3.7*eps**6)
+
+    L_ext = μ0 * R0 * aeps * (1.0 - eps) / (1.0 - eps + beps * kappa)
+
+    # Internal inductance
+    L_int = μ0 * R0 * li / 2.0
+
+    Lp = L_ext + L_int
+    return Lp * Ip, Lp
+
+
+def f_Psi_res(R0, Ip, Ce=0.45):
+    """
+    Resistive flux consumed during plasma current ramp-up (Ejima formula).
+
+    During current ramp-up, the toroidal electric field must overcome
+    both the inductive back-EMF (accounted for in Psi_ind = Lp * Ip)
+    and the Ohmic dissipation in the resistive plasma.  The flux lost
+    to Ohmic dissipation is Psi_res.
+
+    Dimensional analysis shows that this flux is independent of the
+    plasma resistivity eta and minor radius a.  The resistive loop
+    voltage scales as V_res ~ 2 pi R0 * eta * Ip / (pi a^2), and the
+    ramp-up duration scales as the resistive diffusion time
+    tau_R ~ mu0 a^2 / eta.  Their product:
+
+        Psi_res ~ V_res * tau_R  ~  mu0 * R0 * Ip
+
+    where eta and a cancel.  The result depends only on R0 and Ip,
+    up to a dimensionless coefficient Ce:
+
+        Psi_res = Ce * mu0 * R0 * Ip
+
+    Ce is an empirical calibration coefficient.  It absorbs the effects
+    of current profile evolution during the ramp (skin effect), ramp
+    rate, early auxiliary heating (which reduces eta and hence Ce),
+    and sawtooth-induced reconnection.
+
+    Calibration:
+        Doublet III (Ejima 1982):  Ce ~ 0.4  (original measurement).
+        ITER (design basis):      Ce ~ 0.45 (default).
+
+    Parameters
+    ----------
+    R0 : float
+        Plasma major radius [m].
+    Ip : float
+        Flat-top plasma current [A].
+    Ce : float, optional
+        Ejima coefficient [-]. Default: 0.45 (ITER design basis).
+        Lower values (~ 0.30) are sometimes assumed for reactor
+        scenarios with early auxiliary heating during ramp-up,
+        but lack experimental validation at reactor scale.
+
+    Returns
+    -------
+    Psi_res : float
+        Resistive flux consumed during current ramp-up [Wb].
+
+    References
+    ----------
+    Ejima et al., Nucl. Fusion 22(10), 1341 (1982).
+        Original measurement on Doublet III and dimensional argument.
+    Shimada et al., Nucl. Fusion 47, S1 (2007).
+        ITER flux budget with Ce = 0.45.
+    """
+    return Ce * μ0 * R0 * Ip
+
+
+def f_Psi_PF(Ip, R0, a, kappa, beta_p, li, RCS_ext):
+    """
+    PF flux contribution from Shafranov equilibrium vertical field.
+
+    Physical model
+    --------------
+    Toroidal force balance (Shafranov) requires a vertical field B_V to
+    counteract the hoop force, tyre-tube force, and 1/R field gradient:
+
+        B_V = (mu0 Ip) / (4 pi R0)
+              * [beta_p + li/2 - 3/2 + ln(8 R0 / (a sqrt(kappa)))]
+
+    The flux linked to the plasma is the integral of B_V over the
+    annular area between the plasma axis and the CS outer face:
+
+        Psi_PF = pi * (R0^2 - RCS_ext^2) * B_V
+
+    The CS bore is excluded because flux threading the solenoid is
+    already counted in Psi_CS (HELIOS convention, Johner 2011).
+
+    Parameters
+    ----------
+    Ip : float
+        Plasma current [A].
+    R0 : float
+        Plasma major radius [m].
+    a : float
+        Plasma minor radius [m].
+    kappa : float
+        Plasma elongation [-].
+    beta_p : float
+        Poloidal beta [-].  Use f_beta_P() from D0FUS_physical_functions.
+    li : float
+        Normalised internal inductance li(3) [-].
+    RCS_ext : float
+        CS outer radius [m].
+
+    Returns
+    -------
+    Psi_PF : float
+        PF flux contribution [Wb].
+    B_V : float
+        Shafranov vertical field [T].
+
+    References
+    ----------
+    Shafranov V.D., Reviews of Plasma Physics, vol. 2 (1966).
+    Johner J., Fusion Sci. Technol. 59, 308 (2011)
+    Duchateau et al., Fusion Eng. Des. 89, 2606 (2014)
+    """
+    a_eff = a * math.sqrt(kappa)
+    B_V = (μ0 * Ip) / (4.0 * np.pi * R0) * (
+        beta_p + li / 2.0 - 1.5 + math.log(8.0 * R0 / a_eff)
+    )
+    Psi_PF = np.pi * (R0**2 - RCS_ext**2) * B_V
+    return Psi_PF, B_V
+
+
+def Magnetic_flux(Ip, I_Ohm, R0, a, κ, li, Ce, Temps_Plateau,
+                  E_BD, beta_p, RCS_ext,
+                  nbar, Tbar, Z_eff, q, nu_T, nu_n, eta_model,
                   rho_ped=1.0, n_ped_frac=0.0, T_ped_frac=0.0,
                   Vprime_data=None):
     """
-    Calculate the four magnetic flux components for a tokamak plasma scenario.
+    Assemble the four magnetic flux components for a tokamak plasma scenario.
 
-    Flux budget decomposition
-    -------------------------
-    The total flux that the CS must provide is:
+    Flux budget:  Ψ_CS = Ψ_PI + Ψ_RampUp + Ψ_plateau - Ψ_PF
 
-        Ψ_CS = Ψ_PI + Ψ_RampUp + Ψ_plateau - Ψ_PF
-
-    where each term is detailed below.
+    Each term is computed by a dedicated function with its own docstring:
+        f_Psi_PI   — plasma initiation (Faraday + calibration E_BD)
+        f_Psi_ind  — inductive ramp-up (Hirshman & Neilson 1986)
+        f_Psi_res  — resistive ramp-up (Ejima scaling)
+        f_Vloop    — flat-top loop voltage (neoclassical conductance)
+        f_Psi_PF   — PF coil contribution (Shafranov vertical field)
 
     Parameters
     ----------
     Ip : float
         Plasma current [MA].
     I_Ohm : float
-        Ohmic (inductive) plasma current fraction at flat-top [MA].
-    B_max_TF : float
-        Peak magnetic field at the inboard TF conductor [T].
-        Used to derive B0 = B_max_TF * (1 - (a+b)/R0).
-    a : float
-        Plasma minor radius [m].
-    b : float
-        Radial thickness from plasma edge to TF coil inner face [m].
-        Includes: first wall + breeding blanket + neutron shield +
-        vacuum vessel + assembly gaps.
-    c : float
-        TF coil inboard leg radial thickness [m].
+        Ohmic plasma current at flat-top [MA].
     R0 : float
         Plasma major radius [m].
+    a : float
+        Plasma minor radius [m].
     κ : float
-        Plasma elongation (X-point value) [-].
-        Used in the effective minor radius: a_eff = a * sqrt(κ).
+        Plasma elongation [-].
+    li : float
+        Normalised internal inductance li(3) [-].
+    Ce : float
+        Ejima coefficient [-].
+    Temps_Plateau : float
+        Flat-top (burn) duration [s].
+    E_BD : float
+        Breakdown calibration parameter [V.s/m].
+    beta_p : float
+        Poloidal beta [-]. Use f_beta_P() from D0FUS_physical_functions.
+    RCS_ext : float
+        CS outer radius [m].
     nbar : float
         Volume-averaged electron density [1e20 m^-3].
     Tbar : float
         Volume-averaged electron temperature [keV].
-    Ce : float
-        Ejima resistive startup coefficient [-].
-        Resistive ramp-up flux: Ψ_res = Ce * μ0 * R0 * Ip.
-        Typical values: ITER 0.45, EU-DEMO 0.30, CFETR 0.30.
-        Reference: Ejima et al., Nucl. Fusion 22(10), 1982.
-    Temps_Plateau : float
-        Flat-top (burn) duration [s].
-        Examples: ITER 600 s (10 min), EU-DEMO 7200 s (2 h),
-                  CFETR 14400 s (4 h).
-    Li : float
-        Normalized plasma internal inductance li(3) [-].
-        Recommended: use the li returned by f_q_profile_selfconsistent(),
-        which computes it self-consistently from the shaped j(ρ) profile.
-        Typical range: 0.5 (flat profile) to ~1.5 (very peaked).
-        Reference values: ITER ~0.80, EU-DEMO ~1.10, CFETR ~0.85.
-    Choice_Buck_Wedg : str
-        CS structural configuration: 'Bucking', 'Plug', or 'Wedging'.
-        Determines the CS outer radius: R_CS_ext = R0 - a - b - c [-Gap].
-    Gap : float
-        Radial gap between TF inboard leg and CS outer face [m].
-        Only used when Choice_Buck_Wedg = 'Wedging'.
     Z_eff : float
-        Plasma effective ionic charge [-].
-        Used in resistivity models (Spitzer, Sauter, Redl).
+        Effective ionic charge [-].
     q : float
-        Safety factor at the 95% flux surface [-].
-        Used by neoclassical resistivity models (Sauter, Redl) for the
-        electron collisionality: ν*_e ∝ q*R0 / (ε^1.5 * T^2).
+        Safety factor at 95%% flux surface [-].
     nu_T : float
-        Temperature profile peaking factor [-].
-        Profile: T(ρ) = Tbar * (1 + nu_T) * (1 - ρ²)^nu_T.
-        Typical: 0.8–1.5 for H-mode plasmas.
+        Temperature profile peaking exponent [-].
     nu_n : float
-        Density profile peaking factor [-].
-        Profile: n(ρ) = nbar * (1 + nu_n) * (1 - ρ²)^nu_n.
-        Typical: 0.1–0.5 for H-mode plasmas.
+        Density profile peaking exponent [-].
     eta_model : str
-        Plasma resistivity model for f_Vloop / f_Reff:
-        'spitzer'  — classical Spitzer-Härm with Z_eff and ln(Λ) correction.
-        'sauter'   — neoclassical Sauter et al., Phys. Plasmas 6, 2834 (1999).
-        'redl'     — neoclassical Redl et al., Phys. Plasmas 28, 022502 (2021).
-                     Recommended: better accuracy at high collisionality.
-    E_phi_BD : float, optional
-        Toroidal electric field threshold for plasma breakdown [V/m].
-        Default: 0.5 V/m.
-        Reference: Lloyd et al., Plasma Phys. Control. Fusion 33(11), 1991.
-    t_BD : float, optional
-        Pre-ionization / breakdown duration [s]. Default: 0.5 s.
-        Together: Ψ_PI = 2π * R0 * E_phi_BD * t_BD ≈ 10 Wb (ITER-scale).
-    rho_ped : float, optional
-        Normalised pedestal radius (1.0 = no pedestal, purely parabolic).
-        Passed through to f_Vloop, which uses it to evaluate the local
-        resistivity via f_Tprof / f_nprof.
-    n_ped_frac : float, optional
-        n_ped / nbar.  Ignored when rho_ped = 1.0.
-    T_ped_frac : float, optional
-        T_ped / Tbar.  Ignored when rho_ped = 1.0.
+        Resistivity model: 'spitzer', 'sauter', 'redl' (recommended).
+    rho_ped, n_ped_frac, T_ped_frac : float, optional
+        Pedestal parameters (passed to f_Vloop).
+    Vprime_data : tuple or None, optional
+        Miller volume derivative data (passed to f_Vloop).
 
     Returns
     -------
     ΨPI : float
-        Plasma initiation (breakdown) flux [Wb].
-        Ψ_PI = 2π * R0 * E_phi_BD * t_BD.
-        Weakly depends on machine size; typically 8–15 Wb.
+        Plasma initiation flux [Wb].
     ΨRampUp : float
-        Total flux consumed during current ramp-up [Wb].
-        Ψ_RampUp = Ψ_ind + Ψ_res
-                 = μ0*R0*[ln(8R0/a_eff) + Li/2 - 2]*Ip
-                   + Ce*μ0*R0*Ip.
+        Total ramp-up flux (inductive + resistive) [Wb].
     Ψplateau : float
-        Flux consumed during flat-top operation [Wb].
-        Purely resistive: Ψ_plateau = R_eff * I_Ohm * Temps_Plateau,
-        where R_eff is the conductance-weighted effective resistance:
-        R_eff = 2πR₀ / ∫ σ_neo(ρ) dA, with j(ρ) ∝ σ_neo(ρ) = 1/η_neo(ρ).
-        The current profile emerges self-consistently from T(ρ) and n(ρ)
-        via the neoclassical resistivity — no prescribed α_J exponent.
-        The inductive correction ΔΨ_li from current-profile relaxation
-        is neglected (~4% of Ψ_CS for ITER, within Ψ_PF uncertainty).
+        Flat-top flux [Wb].
     ΨPF : float
-        Flux swing provided by the external PF coil system [Wb].
-        Empirical scaling: Ψ_PF = C_PF * μ0 * R0 * Ip,
-        analogous to the Ejima formula. Calibrated on ITER (C_PF ~ 0.95)
-        and CFETR (C_PF ~ 0.82); default C_PF = 0.9.
-        Uncertainty: ±30% (geometry-dependent).
-
-    Notes
-    -----
-    Benchmark summary (ref vs D0FUS, eta_model='redl'):
-
-        Machine    ΨPI      ΨRampUp   Ψplateau   ΨPF     ΨCS
-        -------    ------   -------   --------   -----   -----
-        ITER       10/~10   200/205   30/~30     115/105 137/~124
-        (format: ref/calc)
-
-        ITER reference: Shimada NF 47 (2007), Polevoi NF 55 (2015).
-        Ψplateau = Ψ_res only (ΔΨ_li ~ 6 Wb neglected, see note above).
-
-        Note: EU-DEMO and CFETR are not benchmarked here because their
-        published Ψplateau values come from 0D system codes (PROCESS/
-        IPDG89) whose V_loop formula overestimates ITER by +60%.  No
-        1.5D transport code has published V_loop for these machines.
-
-    References
-    ----------
-    Lloyd et al., Plasma Phys. Control. Fusion 33(11), 1441 (1991).
-        -> Breakdown flux (ΨPI).
-    Mikkelsen, Nucl. Fusion 29(7), 1990 (1989).
-        -> Plasma self-inductance formula (ΨRampUp).
-    Freidberg, Plasma Physics and Fusion Energy, Cambridge (2007), ch. 11.
-        -> Large-aspect-ratio inductance; cylindrical li.
-    Wesson, Tokamaks, 4th ed., Oxford (2011), ch. 3.
-        -> βp definition; li convention.
-    Ejima et al., Nucl. Fusion 22(10), 1341 (1982).
-        -> Resistive startup coefficient Ce (ΨRampUp).
-    Sauter et al., Phys. Plasmas 6, 2834 (1999); Erratum 9, 5140 (2002).
-        -> Neoclassical resistivity (Ψplateau).
-    Redl et al., Phys. Plasmas 28, 022502 (2021).
-        -> Improved neoclassical resistivity (Ψplateau, recommended).
-    Shimada et al., Nucl. Fusion 47, S1 (2007).
-        -> ITER reference flux budget.
-    Polevoi et al., Nucl. Fusion 55, 063019 (2015).
-        -> ITER Ψ_res = 30 Wb (1.5D reference for Ψplateau validation).
+        PF coil flux contribution [Wb].
+    Vloop : float
+        Steady-state loop voltage [V].
     """
 
-    # --- Unit conversion ---
-    Ip    = Ip    * 1e6   # [MA] -> [A]
-    I_Ohm = I_Ohm * 1e6  # [MA] -> [A]
+    # --- Unit conversion: MA -> A ---
+    Ip_A    = Ip    * 1e6
+    I_Ohm_A = I_Ohm * 1e6
 
-    # -----------------------------------------------------------------------
-    # On-axis toroidal field (1/R scaling)
-    # -----------------------------------------------------------------------
-    B0 = B_max_TF * (1.0 - (a + b) / R0)
+    # --- 1. Plasma initiation flux ---
+    ΨPI = f_Psi_PI(R0, E_BD=E_BD)
 
-    # -----------------------------------------------------------------------
-    # Geometrical and plasma physics quantities
-    # -----------------------------------------------------------------------
-    # Approximate poloidal perimeter of the last closed flux surface [m]
-    L  = np.pi * np.sqrt(2.0 * (a**2 + (κ * a)**2))
+    # --- 2. Ramp-up flux = inductive + resistive ---
+    Ψind, _Lp = f_Psi_ind(R0, a, κ, li, Ip_A)
+    Ψres      = f_Psi_res(R0, Ip_A, Ce)
+    ΨRampUp   = Ψind + Ψres
 
-    # Poloidal beta (Wesson, Tokamaks 4th ed., eq. 3.9.3)
-    βp = (4.0 / μ0) * L**2 * (nbar * 1e20) * (E_ELEM * 1e3 * Tbar) / Ip**2
-
-    # -----------------------------------------------------------------------
-    # CS outer radius (geometry-dependent)
-    # -----------------------------------------------------------------------
-    if Choice_Buck_Wedg in ('Bucking', 'Plug'):
-        RCS_ext = R0 - a - b - c
-    elif Choice_Buck_Wedg == 'Wedging':
-        RCS_ext = R0 - a - b - c - Gap
-    else:
-        raise ValueError(
-            f"Choice_Buck_Wedg must be 'Bucking', 'Plug', or 'Wedging'. "
-            f"Got: '{Choice_Buck_Wedg}'."
-        )
-
-    # =======================================================================
-    # FLUX COMPONENTS
-    # =======================================================================
-
-    # -----------------------------------------------------------------------
-    # 1. Plasma initiation flux (ΨPI)
-    #    Ψ_PI = 2π * R0 * E_phi_BD * t_BD
-    #    Reference: Lloyd et al., PPCF 33(11), 1991.
-    #    Cross-check: ITER -> ~9.7 Wb ≈ 10 Wb [OK]
-    # -----------------------------------------------------------------------
-    ΨPI = f_Psi_PI(R0, E_phi_BD=E_phi_BD, t_BD=t_BD)
-
-    # -----------------------------------------------------------------------
-    # 2. Ramp-up flux (ΨRampUp = Ψind + Ψres)
-    #    Elongation-corrected minor radius: a_eff = a * sqrt(κ)
-    #    Plasma self-inductance (large-aspect-ratio Neumann formula):
-    #        Lp = μ0*R0 * [ln(8*R0/a_eff) + Li/2 - 2]
-    #    References: Freidberg (2007) ch.11; Wesson (2011) §3.9;
-    #                Mikkelsen NF 29(7), 1989.
-    #    Resistive term (Ejima formula):
-    #        Ψ_res = Ce * μ0 * R0 * Ip
-    #    Reference: Ejima et al., Nucl. Fusion 22(10), 1982.
-    # -----------------------------------------------------------------------
-    a_eff = a * math.sqrt(κ)   # Elongation-corrected effective minor radius [m]
-    if a_eff <= 0.0 or R0 <= 0.0:
-        return (np.nan, np.nan, np.nan, np.nan)
-    Lp      = μ0 * R0 * (math.log(8.0 * R0 / a_eff) + Li / 2.0 - 2.0)
-    Ψind    = Lp * Ip
-    Ψres    = Ce * μ0 * R0 * Ip
-    ΨRampUp = Ψind + Ψres
-
-    # -----------------------------------------------------------------------
-    # 3. Flat-top (plateau) flux: Ψplateau = V_loop × t_burn
-    #
-    #    Purely resistive steady-state dissipation during the burn phase.
-    #    V_loop computed by f_Vloop using shaped conductance integration:
-    #      R_eff = (2πR₀)² / ∫ V'(ρ)/η_neo(ρ) dρ
-    #    where V'(ρ) is the Miller volume derivative (shaped geometry)
-    #    and j(ρ) ∝ σ_neo(ρ) is self-consistent with T(ρ), n(ρ).
-    #
-    #    Note: the inductive correction ΔΨ_li = Ip×(μ₀R₀/2)×(li_EOB−li_SOB)
-    #    from current-profile relaxation during burn is neglected here.
-    #    For ITER Q=10 this term is ~6 Wb, i.e. ~4% of Ψ_CS — well within
-    #    the ±30% uncertainty on Ψ_PF.  Omitting it keeps the 0D model
-    #    consistent with PROCESS / SYCOMORE practice.
-    #
-    #    References:
-    #        Polevoi et al., Nucl. Fusion 55, 063019 (2015).
-    #        Shimada et al., Nucl. Fusion 47, S1 (2007) — flux budget.
-    # -----------------------------------------------------------------------
-
-    # I_Ohm was converted to [A] above; f_Vloop expects [MA]
-    Vloop    = f_Vloop(I_Ohm / 1e6, a, κ, R0, Tbar, nbar, Z_eff, q,
+    # --- 3. Flat-top flux = V_loop × t_burn ---
+    Vloop    = f_Vloop(I_Ohm, a, κ, R0, Tbar, nbar, Z_eff, q,
                        nu_T, nu_n, eta_model,
                        rho_ped=rho_ped, n_ped_frac=n_ped_frac,
                        T_ped_frac=T_ped_frac, Vprime_data=Vprime_data)
     Ψplateau = Vloop * Temps_Plateau
 
-    # -----------------------------------------------------------------------
-    # 4. Flux provided by PF coil system (ΨPF)
-    #    Empirical scaling: Ψ_PF = C_PF * μ0 * R0 * Ip
-    #    Analogous to Ejima formula. C_PF ≈ 0.95 (ITER), 0.82 (CFETR).
-    #    Default C_PF = 0.9 (conservative mid-range estimate).
-    #    Uncertainty: ±30%.
-    # -----------------------------------------------------------------------
-    ΨPF = f_Psi_PF(Ip, R0, C_PF)
+    # --- 4. PF coil contribution (Shafranov vertical field) ---
+    ΨPF, _BV = f_Psi_PF(Ip_A, R0, a, κ, beta_p, li, RCS_ext)
 
-    return (ΨPI, ΨRampUp, Ψplateau, ΨPF)
+    return (ΨPI, ΨRampUp, Ψplateau, ΨPF, Vloop)
 
 #%% Flux generation benchmark — ITER Q=10
-# ============================================================================
-# Benchmark of Magnetic_flux() against the published ITER flux budget.
-#
-# ITER is the only machine with a complete, 1.5D-validated reference:
-#   - Ψplateau from Polevoi NF 55 (2015): Ψ_res = 30 Wb, t_burn = 400 s
-#   - Full flux budget from ITER EDA NF 39 (1999), Shimada NF 47 S1 (2007)
-#
-# EU-DEMO and CFETR are NOT included because their published Ψplateau
-# values come from 0D system codes (PROCESS/IPDG89, Chinese system codes)
-# which use V_loop formulas known to overestimate ITER by +60%.  No 1.5D
-# transport simulation (JINTRAC, ASTRA, CRONOS, METIS) has published
-# an explicit flat-top V_loop for either machine.  Comparing a 0D model
-# against another 0D formula is not a meaningful validation.
-#
-# Reference values (ITER)
-# -----------------------
-# ΨPI~10, ΨRampUp~200, Ψplateau~30 (resistive only), ΨPF~115, ΨCS~131 Wb
-# Note: Polevoi NF 55 (2015) gives Ψplateau = 36 Wb = Ψ_res(30) + ΔΨ_li(6).
-# The ΔΨ_li term is intentionally neglected here (~4% of Ψ_CS).
-# ============================================================================
 
 if __name__ == "__main__":
 
-    # ── ITER parameter set ────────────────────────────────────────────────────
-    # Source: Shimada NF 47 S1 (2007); ITER EDA NF 39 (1999)
-    ITER = dict(
-        # Geometry
-        a=2.00, b=1.25, c=0.90, R0=6.2,
-        # Plasma
-        Ip=15.0, κ=1.70, nbar=1.0, Tbar=8.0,
-        # Magnetics
-        B_max_TF=13.0, Li=0.80, Z_eff=1.7, q=3.0, nu_T=1.0, nu_n=0.1,
-        # Operation
-        # I_Ohm: inductive (ohmic) current at flat-top.
-        # JINTRAC simulations (Militello Asp et al., NF 64, 126019, 2024)
-        # show I_inductive ≈ 2/3 × Ip ≈ 10 MA for the Q=10 baseline.
-        # Bootstrap fraction f_BS ≈ 25%, NBI/EC CD ≈ 8%, ohmic ≈ 67%.
-        I_Ohm=10.0, Ce=0.45, Temps_Plateau=400,   # 400 s (Polevoi NF 55, 2015)
-        # Note: Shimada NF 47 (2007) and Polevoi NF 55 (2015) reference
-        # Ψ_plateau = 36 Wb = Ψ_res(30) + ΔΨ_li(6) for t_burn = 400 s.
-        # Since ΔΨ_li is neglected in this model, the resistive-only
-        # reference is Ψ_res = 30 Wb (Polevoi NF 55, 2015).
-        configuration="Wedging",
-        # Published reference flux values [Wb]
-        # Source: ITER EDA NF 39 (1999); Shimada NF 47 S1 (2007)
-        # ref_plateau = 30 Wb (resistive only, ΔΨ_li ~ 6 Wb neglected)
-        ref_PI=10, ref_RampUp=200, ref_plateau=30, ref_PF=115, ref_CS=131,
-    )
+    p = dict(a=2.00, b=1.25, c=0.90, R0=6.2, Ip=15.0, κ=1.70,
+             nbar=1.0, Tbar=8.0, Li=0.80, beta_p=0.65,
+             Z_eff=1.7, q=3.0, nu_T=1.0, nu_n=0.1,
+             I_Ohm=10.0, Ce=0.45, Temps_Plateau=400)
 
-    # ── Run Magnetic_flux ─────────────────────────────────────────────────────
-    p = ITER
-    ΨPI, ΨRampUp, Ψplateau, ΨPF = Magnetic_flux(
-        p["Ip"],    p["I_Ohm"],  p["B_max_TF"],
-        p["a"],     p["b"],      p["c"],          p["R0"],
-        p["κ"],     p["nbar"],   p["Tbar"],
-        p["Ce"],    p["Temps_Plateau"],            p["Li"],
-        p["configuration"],      0.1,
-        p["Z_eff"], p["q"],      p["nu_T"],        p["nu_n"],
-        eta_model='redl'
-    )
-    ΨCS  = ΨPI + ΨRampUp + Ψplateau - ΨPF
+    RCS_ext = p["R0"] - p["a"] - p["b"] - p["c"] - 0.1
+    ΨPI, ΨRampUp, Ψplateau, ΨPF, Vloop = Magnetic_flux(
+        p["Ip"], p["I_Ohm"], p["R0"], p["a"], p["κ"], p["Li"],
+        p["Ce"], p["Temps_Plateau"],
+        E_BD=0.25, beta_p=p["beta_p"], RCS_ext=RCS_ext,
+        nbar=p["nbar"], Tbar=p["Tbar"],
+        Z_eff=p["Z_eff"], q=p["q"], nu_T=p["nu_T"], nu_n=p["nu_n"],
+        eta_model='redl')
     Ψtot = ΨPI + ΨRampUp + Ψplateau
 
-    # ── Summary table ─────────────────────────────────────────────────────────
-    # Note: li is no longer benchmarked here — it requires
-    # f_q_profile_selfconsistent (Picard iteration on j = j_Ohm + j_CD + j_bs)
-    # which needs more inputs than this standalone flux benchmark provides.
+    # ref = 0 means no published reference available
+    data = [
+        ("Ψ_PI",       ΨPI,          0,   ""),
+        ("Ψ_rampup",   ΨRampUp,      0,   ""),
+        ("Ψ_PI+rampup",ΨPI+ΨRampUp, 210,  "Polevoi NF 55 (2015)"),
+        ("Ψ_plateau",  Ψplateau,     30,  "Polevoi NF 55 (2015)"),
+        ("Ψ_total",    Ψtot,        240,  "Polevoi NF 55 (2015)"),
+        ("Ψ_PF",       ΨPF,          73,  "Duchateau FED 89 (2014)"),
+        ("Ψ_CS",       Ψtot - ΨPF,   0,   ""),
+        ("V_loop [mV]",Vloop*1e3,     0,   ""),
+    ]
+
+    print("\n  ITER Q=10 Flux Benchmark [Wb]")
+    print(f"  {'':>16} {'D0FUS':>8} {'ref':>8}  source")
+    print("  " + "-" * 58)
+    for name, val, ref, src in data:
+        r = f"{ref:.0f}" if ref else "—"
+        print(f"  {name:>16} {val:>8.1f} {r:>8}  {src}")
     print()
-    print("  Magnetic Flux Benchmark — ITER Q=10  [Wb]")
-    print("  " + "=" * 50)
-    print(f"  {'':>25}  {'ref':>8}  {'calc':>8}")
-    print("  " + "-" * 50)
-    print(f"  {'Ψ initiation  (ΨPI)':>25}  {p['ref_PI']:>8.1f}  {ΨPI:>8.1f}")
-    print(f"  {'Ψ ramp-up     (ΨRampUp)':>25}  {p['ref_RampUp']:>8.1f}  {ΨRampUp:>8.1f}")
-    print(f"  {'Ψ flat-top    (Ψplateau)':>25}  {p['ref_plateau']:>8.1f}  {Ψplateau:>8.1f}")
-    print("  " + "-" * 50)
-    ref_tot = p['ref_PI'] + p['ref_RampUp'] + p['ref_plateau']
-    print(f"  {'Total requirement':>25}  {ref_tot:>8.1f}  {Ψtot:>8.1f}")
-    print(f"  {'Ψ PF coils    (ΨPF)':>25}  {p['ref_PF']:>8.1f}  {ΨPF:>8.1f}")
-    print(f"  {'Ψ CS needed   (ΨCS)':>25}  {p['ref_CS']:>8.1f}  {ΨCS:>8.1f}")
-    print("  " + "=" * 50)
         
 #%% ===========================================================================
 # CS ACADEMIC MODEL
