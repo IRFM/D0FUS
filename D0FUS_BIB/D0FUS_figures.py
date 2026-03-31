@@ -54,6 +54,7 @@ if __name__ != "__main__":
         calculate_cable_current_density,
         eta_old, eta_spitzer, eta_sauter, eta_redl,
         f_TF_academic, f_TF_D0FUS,
+        Winding_Pack_D0FUS, gamma_func, _last_graded_profile,
         f_CS_ACAD, f_CS_D0FUS, f_CS_CIRCE,
         F_CIRCE0D, compute_von_mises_stress,
         calculate_E_mag_TF,
@@ -81,6 +82,7 @@ else:
         calculate_cable_current_density,
         eta_old, eta_spitzer, eta_sauter, eta_redl,
         f_TF_academic, f_TF_D0FUS,
+        Winding_Pack_D0FUS, gamma_func, _last_graded_profile,
         f_CS_ACAD, f_CS_D0FUS, f_CS_CIRCE,
         F_CIRCE0D, compute_von_mises_stress,
         calculate_E_mag_TF,
@@ -924,17 +926,17 @@ def plot_cable_current_density(
 # =============================================================================
 
 def plot_TF_thickness_vs_field(
-    a: float = 3.0,
-    b: float = 1.7,
+    a: float = 2.0,
+    b: float = 2.7,
     R0: float = 9.0,
-    sigma_TF: float = 860e6,
-    J_max_TF: float = 50e6,
+    sigma_TF: float = 867e6,
+    J_max_TF: float = 60e6,
     B_max: float = 25.0,
     cfg=None,
     save_dir: str | None = None,
 ) -> None:
     """
-    Plot TF coil winding-pack thickness vs peak magnetic field for four
+    Plot TF coil total inboard thickness vs peak magnetic field for four
     mechanical models (Academic/D0FUS × Wedging/Bucking).
 
     An optional MADE benchmark scatter dataset is superimposed on the Wedging
@@ -943,15 +945,29 @@ def plot_TF_thickness_vs_field(
     Parameters
     ----------
     a, b, R0   : float  Minor radius, blanket+shield thickness, major radius [m].
+                         Defaults give R_ext = R0 - a - b = 4.3 m (Giannini 2023).
     sigma_TF   : float  Allowable TF coil stress [Pa].
-    J_max_TF   : float  Maximum coil current density [A/m²].
-    B_max      : float  Maximum field at conductor [T].
+                         Default 867 MPa (SDC-IC Pm+Pb, austenitic steel at 4 K).
+    J_max_TF   : float  Current density on the non-steel area [A/m²].
+                         Default 60 MA/m². The D0FUS cable model (Maddock
+                         adiabatic hotspot) predicts ~40 MA/m² for HTS at
+                         20 T,
+                         From Giannini 2023 Fig. 20 (validated FEM
+                         design at 20.3 T): 234 conductors × 107 kA over
+                         a WP area of 0.67 m² gives J_WP = 38 MA/m²
+                         (including steel). Correcting for a typical jacket
+                         steel fraction of ~45% yields J_wost ≈ 55-65
+                         MA/m², hence the 60 MA/m² default.
+    B_max      : float  Upper bound of field scan [T].
     cfg        : config object (DEFAULT_CONFIG if None)
     save_dir   : str or None
 
     References
     ----------
-    Giannini et al. (2023) — MADE EU-DEMO Bmax vs R0 scan.
+    Giannini et al. (2023), FED 193, 113659.
+        Fig. 19: TF inner-leg total radial build vs B_max (HTS, pancake
+        wound, RIS cable, R_i = 4.3 m, σ = 867 MPa, 16 TF coils).
+        DOI: 10.1016/j.fusengdes.2023.113659
     """
     if cfg is None:
         cfg = DEFAULT_CONFIG
@@ -966,16 +982,19 @@ def plot_TF_thickness_vs_field(
         acad_b.append(f_TF_academic(a, b, R0, sigma_TF, J_max_TF, B,
                                     "Bucking", cfg.coef_inboard_tension,
                                     cfg.F_CClamp)[0])
+        # c_BP = 0: MADE total radial build = WP + case vault (no backplate)
         d0_w.append(f_TF_D0FUS(a, b, R0, sigma_TF, J_max_TF, B,
                                 "Wedging", 0.5, 1,
-                                cfg.c_BP, cfg.coef_inboard_tension,
+                                0.0, cfg.coef_inboard_tension,
                                 cfg.F_CClamp)[0])
         d0_b.append(f_TF_D0FUS(a, b, R0, sigma_TF, J_max_TF, B,
                                 "Bucking", 1.0, 1,
-                                cfg.c_BP, cfg.coef_inboard_tension,
+                                0.0, cfg.coef_inboard_tension,
                                 cfg.F_CClamp)[0])
 
-    # MADE EU-DEMO benchmark data (Giannini et al. 2023, Fig. 4i)
+    # MADE benchmark data — Giannini et al. (2023), FED 193, 113659, Fig. 19.
+    # Total TF inner-leg radial build vs B_max(TF).
+    # HTS pancake wound, RIS cable, R_i = 4.3 m, σ = 867 MPa, 16 TF.
     x_made = np.array([11.25, 13.25, 14.75, 16, 17, 18, 19,
                         19.75, 20.5, 21.25, 22, 22.5])
     y_made = np.array([0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8,
@@ -991,7 +1010,7 @@ def plot_TF_thickness_vs_field(
     ax.plot(B_vals, d0_w,   color=colors[1], lw=2, label="D0FUS — Wedging")
     ax.scatter(x_made, y_made, color="k", marker="x", s=80, label="MADE")
     ax.set_xlabel("Peak field B_max [T]", fontsize=12)
-    ax.set_ylabel("TF winding-pack thickness [m]", fontsize=12)
+    ax.set_ylabel("TF total inboard thickness [m]", fontsize=12)
     ax.set_title("Wedging configuration", fontsize=12)
     ax.legend(fontsize=10)
     ax.grid(True, ls="--", alpha=0.6)
@@ -1001,18 +1020,185 @@ def plot_TF_thickness_vs_field(
     ax.plot(B_vals, acad_b, color=colors[0], lw=2, label="Academic — Bucking")
     ax.plot(B_vals, d0_b,   color=colors[1], lw=2, label="D0FUS — Bucking")
     ax.set_xlabel("Peak field B_max [T]", fontsize=12)
-    ax.set_ylabel("TF winding-pack thickness [m]", fontsize=12)
+    ax.set_ylabel("TF total inboard thickness [m]", fontsize=12)
     ax.set_title("Bucking configuration", fontsize=12)
     ax.legend(fontsize=10)
     ax.grid(True, ls="--", alpha=0.6)
 
     plt.suptitle(
         f"TF coil thickness vs peak field\n"
-        f"(R₀ = {R0} m, a = {a} m, σ_max = {sigma_TF/1e6:.0f} MPa)",
+        f"(R_ext = {R0 - a - b:.1f} m, σ = {sigma_TF/1e6:.0f} MPa, "
+        f"J = {J_max_TF/1e6:.0f} MA/m²)",
         fontsize=12, fontweight="bold"
     )
     plt.tight_layout()
     _save_or_show(fig, save_dir, "TF_thickness_vs_field")
+
+
+# ── TF winding pack grading figures ──────────────────────────────────
+
+def plot_TF_grading_thickness_vs_field(
+    a: float = 3.0,
+    b: float = 1.7,
+    R0: float = 9.0,
+    sigma_TF: float = 660e6,
+    J_max_TF: float = 50e6,
+    n: float = 6,
+    cfg=None,
+    save_dir: str | None = None,
+) -> None:
+    """
+    WP thickness vs B_max comparing graded and ungraded designs.
+
+    Parameters
+    ----------
+    a, b, R0    : float  Geometry [m].
+    sigma_TF    : float  Allowable Tresca stress [Pa].
+    J_max_TF    : float  Engineering current density (non-steel) [A/m²].
+    n           : float  Conductor geometry factor for γ(α, n).
+    cfg         : config object (DEFAULT_CONFIG if None).
+    save_dir    : str or None.
+    """
+    if cfg is None:
+        cfg = DEFAULT_CONFIG
+
+    B_scan = np.arange(8, 21.5, 0.5)
+    c_u = np.full_like(B_scan, np.nan)
+    c_g = np.full_like(B_scan, np.nan)
+
+    for i, Bm in enumerate(B_scan):
+        ru = Winding_Pack_D0FUS(R0, a, b, sigma_TF, J_max_TF, Bm,
+                                0.5, n, grading=False)
+        rg = Winding_Pack_D0FUS(R0, a, b, sigma_TF, J_max_TF, Bm,
+                                0.5, n, grading=True)
+        if np.isfinite(ru[0]):
+            c_u[i] = ru[0] * 100
+        if np.isfinite(rg[0]):
+            c_g[i] = rg[0] * 100
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.plot(B_scan, c_u, 'r-o', ms=3, lw=1.8, label='Ungraded')
+    ax.plot(B_scan, c_g, 'b-s', ms=3, lw=1.8, label='Graded')
+    ax.set_xlabel('$B_{max}$ (T)')
+    ax.set_ylabel('$c_{WP}$ (cm)')
+    ax.set_title('Winding pack thickness vs peak field')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim([B_scan[0], B_scan[-1]])
+    ax.set_ylim(bottom=0)
+    fig.suptitle(
+        f'$R_0$={R0}, $a$={a}, $b$={b} m, '
+        f'$\\sigma_{{lim}}$={sigma_TF/1e6:.0f} MPa, '
+        f'$J_{{max}}$={J_max_TF/1e6:.0f} A/mm², $n$={n}',
+        fontsize=9, y=0.01)
+    fig.tight_layout(rect=[0, 0.03, 1, 1])
+    _save_or_show(fig, save_dir, "TF_grading_thickness_vs_field")
+
+
+def plot_TF_grading_reduction(
+    a: float = 3.0,
+    b: float = 1.7,
+    R0: float = 9.0,
+    sigma_TF: float = 660e6,
+    J_max_TF: float = 50e6,
+    n: float = 6,
+    cfg=None,
+    save_dir: str | None = None,
+) -> None:
+    """
+    WP thickness reduction (%) from grading vs B_max.
+    """
+    if cfg is None:
+        cfg = DEFAULT_CONFIG
+
+    B_scan = np.arange(8, 21.5, 0.5)
+    c_u = np.full_like(B_scan, np.nan)
+    c_g = np.full_like(B_scan, np.nan)
+
+    for i, Bm in enumerate(B_scan):
+        ru = Winding_Pack_D0FUS(R0, a, b, sigma_TF, J_max_TF, Bm,
+                                0.5, n, grading=False)
+        rg = Winding_Pack_D0FUS(R0, a, b, sigma_TF, J_max_TF, Bm,
+                                0.5, n, grading=True)
+        if np.isfinite(ru[0]):
+            c_u[i] = ru[0] * 100
+        if np.isfinite(rg[0]):
+            c_g[i] = rg[0] * 100
+
+    reduction = (1 - c_g / c_u) * 100
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.plot(B_scan, reduction, '-^', ms=4, lw=1.8, color='#2ca02c')
+    ax.set_xlabel('$B_{max}$ (T)')
+    ax.set_ylabel('Reduction (%)')
+    ax.set_title('WP thickness reduction from grading')
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim([B_scan[0], B_scan[-1]])
+    ax.set_ylim(bottom=0)
+    fig.suptitle(
+        f'$R_0$={R0}, $a$={a}, $b$={b} m, '
+        f'$\\sigma_{{lim}}$={sigma_TF/1e6:.0f} MPa, '
+        f'$J_{{max}}$={J_max_TF/1e6:.0f} A/mm², $n$={n}',
+        fontsize=9, y=0.01)
+    fig.tight_layout(rect=[0, 0.03, 1, 1])
+    _save_or_show(fig, save_dir, "TF_grading_reduction")
+
+
+def plot_TF_grading_alpha_profile(
+    a: float = 3.0,
+    b: float = 1.7,
+    R0: float = 9.0,
+    sigma_TF: float = 660e6,
+    J_max_TF: float = 50e6,
+    B_max: float = 13.0,
+    n: float = 6,
+    cfg=None,
+    save_dir: str | None = None,
+) -> None:
+    """
+    Conductor fraction α(R) profile for graded vs ungraded at a given B_max.
+
+    Reads the profile stored in _last_graded_profile by _solve_graded_wp.
+    """
+    if cfg is None:
+        cfg = DEFAULT_CONFIG
+
+    # Run graded (populates _last_graded_profile) then ungraded
+    rg = Winding_Pack_D0FUS(R0, a, b, sigma_TF, J_max_TF, B_max,
+                            0.5, n, grading=True)
+    ru = Winding_Pack_D0FUS(R0, a, b, sigma_TF, J_max_TF, B_max,
+                            0.5, n, grading=False)
+
+    if not np.isfinite(rg[0]) or not np.isfinite(ru[0]):
+        print("[plot_TF_grading_alpha_profile] Infeasible design point.")
+        return
+
+    prof = _last_graded_profile
+    if not prof:
+        print("[plot_TF_grading_alpha_profile] No graded profile available.")
+        return
+
+    alpha_unif = 1 - ru[4]
+    n_plot = min(len(prof['R']), len(prof['alpha']))
+
+    fig, ax = plt.subplots(figsize=(7, 5))
+    ax.plot(prof['R'][:n_plot], prof['alpha'][:n_plot], 'b-', lw=2,
+            label='Graded $\\alpha(R)$')
+    ax.axhline(alpha_unif, color='r', ls='--', lw=1.5,
+               label=f'Ungraded $\\alpha$ = {alpha_unif:.3f}')
+    ax.set_xlabel('$R$ (m)')
+    ax.set_ylabel('$\\alpha$ (conductor fraction)')
+    ax.set_title(f'Conductor fraction profile — $B_{{max}}$ = {B_max:.0f} T')
+    ax.legend()
+    ax.set_ylim([0, 1])
+    ax.grid(True, alpha=0.3)
+    fig.suptitle(
+        f'$R_0$={R0}, $a$={a}, $b$={b} m, '
+        f'$\\sigma_{{lim}}$={sigma_TF/1e6:.0f} MPa, '
+        f'$J_{{max}}$={J_max_TF/1e6:.0f} A/mm², $n$={n}',
+        fontsize=9, y=0.01)
+    fig.tight_layout(rect=[0, 0.03, 1, 1])
+    _save_or_show(fig, save_dir, "TF_grading_alpha_profile")
 
 
 def plot_CS_thickness_vs_flux(
@@ -1022,14 +1208,14 @@ def plot_CS_thickness_vs_flux(
     R0_cs: float = 9.0,
     B_TF: float = 13.0,
     B_max_CS: float = 50.0,
-    sigma_CS: float = 300e6,
-    J_wost_CS: float = 30e6,
+    sigma_CS: float = 600e6,
+    J_wost_CS: float = 85e6,
     T_He: float = 4.75,
     kappa_cs: float = 1.7,
     N_sub: int = 6,
     tau_h: float = 5.0,
     psi_max: float = 500.0,
-    n_psi: int = 30,
+    n_psi: int = 80,
     cfg=None,
     save_dir: str | None = None,
 ) -> None:
@@ -1039,20 +1225,36 @@ def plot_CS_thickness_vs_flux(
     configuration types (Wedging, Bucking, Plug).
 
     For the Wedging configuration, a MADE benchmark scatter dataset
-    (Sarasola et al. 2023, EU-DEMO parametric study) is overlaid on the
-    thickness panel.
+    (Sarasola et al. 2020, Fig. 2, HTS UCD at σ_h = 300 MPa) is overlaid
+    on the thickness panel.
 
-    Default parameters correspond to the EU-DEMO simplified scan geometry
-    (Sarasola et al. 2023):
-      a_cs=3 m, b_cs=1.2 m, c_cs=2 m, R0=9 m, J=30 MA/m², σ=300 MPa.
+    Default parameters reproduce the Sarasola 2020 benchmark geometry
+    (EU-DEMO baseline 2018, R_o = 2.7 m, H = 17.92 m):
+
+      Geometry: a_cs=3 m, b_cs=1.2 m, c_cs=2 m, R0=9 m, Gap=0.1 m
+        → R_CS_ext = 9 - 3 - 1.2 - 2 - 0.1 = 2.7 m
+
+      Stress:  σ_CS = 600 MPa.  D0FUS applies fatigue_CS = 2 internally
+        → σ_eff = 300 MPa as the fig.2 source
+
+      J_wost = 85 MA/m², derived from Sarasola 2020 Sec. II-B:
+        j_Cu   = 120 A/mm² = 120 MA/m²
+        f_void = 0.10                     (Just He pipe)
+        f_In = 0.10                       (Insulation)
+        f_Cu/NonCu = 0.85 ?               (Pit Viper like)
+        → J_wost = j_Cu × f_void × f_In × f_Cu = 85 MA/m²
+
+      H_CS = 17.92 m forced via cfg.H_CS override (baseline 2018 allocation,
+        Sec. II-A).  The default formula H = 2(κa + b + 1) gives 14.6 m,
+        which underestimates the actual CS height by 20%.
 
     Parameters
     ----------
-    a_cs, b_cs, c_cs : float  CS bore radius, TF inboard edge, plasma minor radius [m].
+    a_cs, b_cs, c_cs : float  Plasma minor radius, inboard build, TF thickness [m].
     R0_cs            : float  Major radius [m].
     B_TF, B_max_CS   : float  TF peak field and CS maximum allowable field [T].
-    sigma_CS         : float  Allowable CS hoop stress [Pa].
-    J_wost_CS        : float  CS conductor worst-case current density [A/m²].
+    sigma_CS         : float  CS yield strength [Pa] (halved by fatigue_CS = 2).
+    J_wost_CS        : float  CS cable-space current density [A/m²].
     T_He             : float  Helium operating temperature [K].
     kappa_cs         : float  Plasma elongation [-].
     N_sub, tau_h     : int, float  Quench protection subdivisions and hold time.
@@ -1062,14 +1264,26 @@ def plot_CS_thickness_vs_flux(
 
     References
     ----------
-    Sarasola et al., IEEE Trans. Appl. Supercond. 33, 1-5 (2023) — EU-DEMO CS
-      parametric study; MADE code reference data.
+    Sarasola et al., IEEE Trans. Appl. Supercond. 30(4), 4200705 (2020)
+      — Fig. 2: HTS UCD flux vs R_i at R_o = 2.7 m; MADE reference data.
+    Sarasola et al., IEEE Trans. Appl. Supercond. 33(5), 4201205 (2023)
+      — EU-DEMO CS parametric studies (extended analysis).
     """
     if cfg is None:
         cfg = DEFAULT_CONFIG
 
-    # MADE reference data — Sarasola et al. (2023), extracted from Fig. 4
-    # (CS winding-pack width vs total flux swing, Wedging configuration)
+    # Force CS height to baseline 2018 value (Sarasola 2020, Sec. II-A).
+    # The default formula H = 2(κa + b + 1) gives 14.6 m, which is 19%
+    # below the actual 17.92 m allocation and would bias the comparison.
+    cfg.H_CS = 17.92
+    # Flux convention: ψ_premag is evaluated at R_e in the paper, not at
+    # R0.  No return-flux correction needed for this benchmark.
+    cfg.cs_return_flux_correction = False
+
+    # MADE reference data — Sarasola et al. (2020), IEEE TAS 30(4), Fig. 2
+    # HTS uniform-current-density CS, R_o = 2.7 m, σ_h ≈ 300 MPa curve.
+    # ψ_premag values are multiplied by 2 for the full symmetric swing
+    # convention used internally by D0FUS.
     made_thickness = np.array([1.3, 1.2, 1.1, 1.0, 0.9, 0.8, 0.7, 0.6, 0.5])
     made_flux      = np.array([209, 209, 208, 205, 200, 192, 185, 177, 161]) * 2
 
@@ -1111,7 +1325,7 @@ def plot_CS_thickness_vs_flux(
             if conf == "Wedging" and quantity == "thickness":
                 ax.scatter(made_flux, made_thickness,
                            color="black", marker="x", s=60, zorder=5,
-                           label="MADE (Sarasola 2023)")
+                           label="MADE (Sarasola 2020)")
 
             ax.set_xlabel(r"$\Psi_{\rm plateau}$ [Wb]", fontsize=12)
             ax.set_ylabel(ylabel, fontsize=12)
@@ -1121,8 +1335,9 @@ def plot_CS_thickness_vs_flux(
 
         plt.suptitle(
             f"CS coil sizing — {conf} configuration\n"
-            f"(R₀ = {R0_cs} m, σ_max = {sigma_CS/1e6:.0f} MPa, "
-            f"J = {J_wost_CS/1e6:.0f} MA/m²)",
+            f"(R₀ = {R0_cs} m, H = 17.92 m, "
+            f"σ_eff = {sigma_CS/2e6:.0f} MPa, "
+            f"J_wost = {J_wost_CS/1e6:.0f} MA/m²)",
             fontsize=12, fontweight="bold"
         )
         plt.tight_layout()
@@ -1884,7 +2099,7 @@ _MACHINE_DB = {
     "ITER":    {"R0": 6.20, "a": 2.00, "kappa": 1.85, "delta": 0.33, "color": "#EE6677"},
     "EU-DEMO": {"R0": 9.00, "a": 2.90, "kappa": 1.65, "delta": 0.33, "color": "#228833"},
     "STEP":    {"R0": 4.30, "a": 2.40, "kappa": 3.00, "delta": 0.55, "color": "#CCBB44"},
-    "ARC":     {"R0": 3.30, "a": 1.13, "kappa": 1.84, "delta": 0.33, "color": "#AA3377"},
+    "ARC":     {"R0": 3.30, "a": 1.10, "kappa": 1.84, "delta": 0.33, "color": "#AA3377"},
     "SPARC":   {"R0": 1.85, "a": 0.57, "kappa": 1.97, "delta": 0.54, "color": "#66CCEE"},
 }
 
@@ -2011,7 +2226,7 @@ def plot_cross_section_comparison(
     | ITER     | 6.20 | 2.00 | 1.85  | 0.33 | Shimada et al., NF 47 S1 (2007)  |
     | EU-DEMO  | 9.00 | 2.90 | 1.65  | 0.33 | Federici et al., NF 58 (2018)    |
     | STEP     | 4.30 | 2.40 | 3.00  | 0.55 | Wilson et al., NF 60 (2020)      |
-    | ARC      | 3.30 | 1.13 | 1.84  | 0.33 | Sorbom et al., FED 100 (2015)    |
+    | ARC      | 3.30 | 1.10 | 1.84  | 0.33 | Sorbom et al., FED 100 (2015)    |
     | SPARC    | 1.85 | 0.57 | 1.97  | 0.54 | Creely et al., JPP 86 (2020)     |
     +----------+------+------+-------+------+----------------------------------+
 
@@ -2693,9 +2908,6 @@ def plot_run(
 
     print("Done.")
 
-
-
-
 # =============================================================================
 # 7. CIRCE stress-model validation
 # =============================================================================
@@ -2799,8 +3011,8 @@ def plot_CIRCE_stress_validation(
 def plot_TF_benchmark_table(cfg=None, save_dir=None) -> None:
     """
     Display a TF coil benchmark table comparing D0FUS thickness predictions
-    against published reference values for ITER, EU-DEMO, JT-60SA, EAST,
-    ARC, and SPARC.
+    against published reference values for ITER, EU-DEMO 2017, JT-60SA,
+    EAST, ARC, and SPARC.
 
     The table is rendered as a matplotlib figure (colour-coded header) so it
     can be saved to a file alongside the other run figures.
@@ -2812,38 +3024,140 @@ def plot_TF_benchmark_table(cfg=None, save_dir=None) -> None:
 
     References
     ----------
-    Sborchia et al., IEEE Trans. Appl. Supercond. 18, 463 (2008) — ITER TF.
-    Federici et al., Nucl. Fusion 64, 036025 (2024) — EU-DEMO.
-    Creely et al., J. Plasma Phys. 86, 865860502 (2020) — SPARC.
+    ITER:
+        Mitchell et al., IEEE TAS 18(2), 435 (2008).
+        Sborchia et al., IEEE TAS 18(2), 463 (2008).
+        ITER DDD 1.1 (Magnet).
+    EU-DEMO 2017:
+        PROCESS DEMO1_Reference_Design_2017, Kovari et al., FED 104, 9 (2016).
+        Federici et al., NF 64, 036025 (2024).
+    JT-60SA:
+        Shirai et al., NF 57, 102002 (2017).
+        Tsuchiya et al., IEEE TAS 18(2), 208 (2008).
+        Muzzi et al., IEEE TAS 21(3), 1063 (2011).
+        Di Pietro et al., FED 89, 2128 (2014).
+    EAST:
+        Weng et al., FED 81, 1589 (2007).
+        Wan et al., IAEA FEC 2006, FT/P7-11.
+        Wu, Y. et al., FED 65, 331 (2003).
+    ARC:
+        Sorbom et al., FED 100, 378 (2015).
+    SPARC:
+        Creely et al., J. Plasma Phys. 86(5), 865860502 (2020).
+        Hartwig et al., IEEE TAS (arXiv:2308.12301, 2023).
     """
     if cfg is None:
         cfg = DEFAULT_CONFIG
 
+    # -----------------------------------------------------------------
+    # Machine parameters — sourced March 2026
+    #
+    # ITER:
+    #   Mitchell et al. (2008), IEEE TAS 18(2), 435 — Table I, VI.
+    #   Sborchia et al. (2008), IEEE TAS 18(2), 463 — Table I, Fig. 2.
+    #   Libeyre et al. (2009), FED 84, 1188 — CS outer radius.
+    #   ITER DDD 1.1 (Magnet) for σ, c_BP, Gap.
+    #   b = 1.104 m derived self-consistently from R_CS_out = 2.096 m
+    #       (Libeyre 2009), Gap_CS-TF = 0.10 m (DDD), c_TF = 0.90 m (DDD):
+    #       b = R0 - a - (R_CS_out + Gap + c) = 6.20 - 2.00 - 3.096 = 1.104.
+    #
+    # EU-DEMO 2017:
+    #   PROCESS DEMO1_Reference_Design_2017_March_EU_2NDSKT_v1_0.
+    #   bore = 2.365 m, ohcth = 0.802 m, R_CS_out = 3.167 m.
+    #   B_max_CS = 11.35 T (bmaxoh0, BOP).
+    #   σ_CS = 600 MPa in PROCESS (alstroh). NOTE: this PROCESS run
+    #   did not account for fatigue; in a real design the allowable
+    #   stress would be lower (~330 MPa with Paris law, as for ITER).
+    #   We keep 600 MPa here to be consistent with the PROCESS run
+    #   being benchmarked. J_wost = coheof/(1-oh_steel) ≈ 60 MA/m².
+    #   Gap_eff = precomp + gapoh = 0.056 + 0.050 = 0.106 m.
+    #   b = 1.820 m (self-consistent with PROCESS radial build).
+    #   Ψ_CS = 360 Wb (BOBOZ, Auclair 2025), full swing at R0 = 8.938 m.
+    #   Cross-checked against PROCESS: BOBOZ Ψ_bore = 376 Wb matches
+    #   PROCESS CS BOP = 182 Wb × 2 = 364 Wb (3% agreement).
+    #   With return flux correction (f_corr ≈ 1.41), D0FUS internally
+    #   sizes the CS for Ψ_solenoid = 360 × 1.41 = 509 Wb, reproducing
+    #   the former Ψ = 500 Wb input and giving d = 0.792 m (−1.3%).
+    # -----------------------------------------------------------------
+    # JT-60SA:
+    #   Yoshida et al. (2010), JPFR Series 9, 214 — Table 4 (final design):
+    #       Rc = 0.824 m, dR = 0.340 m, dZ = 1.585 m, 549 turns/module,
+    #       I = 20 kA, B_max = 8.9 T. R_CS_in = 0.654 m, R_CS_out = 0.994 m.
+    #   Yoshida et al. (2008), IEEE TAS 18(2), 441 — Table III (pre re-baseline).
+    #   Tsuchiya et al. (2008), IEEE TAS 18(2), 208 — σ_y(316LN, 4K) = 820 MPa,
+    #       Sm = 2/3 × 820 = 547 MPa (ASME); gap CS-TF = 15 mm.
+    #   Ψ_CS = 27.5 Wb, computed with BOBOZ (Auclair 2025) using the
+    #       Yoshida 2010 CS geometry (4 modules, ~20 mm inter-module gap,
+    #       all at +20 kA). Ψ is the full swing (2 × Ψ_one_dir) evaluated
+    #       at R0 = 2.96 m, same method and convention as the ITER CS
+    #       benchmark (BOBOZ ITER test case, Auclair 2025: 252 Wb total,
+    #       111 Wb PF, 141 Wb CS).
+    #       Published total swing (CS+EF) = 40 Wb (Yoshida 2008, 2010);
+    #       EF contribution = 40 − 27.5 = 12.5 Wb (31%), consistent with
+    #       ITER (~44%) and EU-DEMO (~30%).
+    #   D0FUS result: d = 0.174 m, B = 5.3 T (−49% vs d_ref = 0.340 m).
+    #   The underprediction is larger than for ITER/EU-DEMO because the
+    #   JT-60SA CS is winding-limited (549 turns of 27.9 mm conductor
+    #   set the radial thickness), not stress-limited. D0FUS optimises
+    #   for stress and therefore undersizes. Same effect as EAST.
+    #   The CS sizing remains extremely sensitive to flux: +5 Wb would
+    #   bring Δ to ~−20%.
+    #   b = 0.361 m, Gap = 0.015 m (Tsuchiya 2008, self-consistent).
+    #
+    # EAST:
+    #   Wu Weiyue et al. (2003), IEEE 0-7803-7908-X — PF system design:
+    #       6 CS coils (3 symmetric pairs), NbTi CICC 20.4×20.4 mm,
+    #       7 radial × 20 axial = 140 turns/module, I = 14.5 kA.
+    #       ID = 1.1 m → R_CS_in = 0.55 m, dR = 0.16 m → R_CS_out = 0.71 m.
+    #       H_module = 0.45 m. B_max = 4.5 T. Peak stress ~300 MPa.
+    #   Weng et al. (2001), FED 58-59, 827 — overview, B0 = 3.5 T.
+    #   Wan et al. (2002), IAEA FT/P2-03 — R0 = 1.75 m, total ~10 V·s.
+    #   Ψ_CS = 8.5 Wb, computed with BOBOZ (Auclair 2025) using the
+    #       Wu 2003 CS geometry (6 modules, ~10 mm gaps, all at +14.5 kA).
+    #       Ψ is the full swing evaluated at R0 = 1.85 m.
+    #       Published total (CS+PF) ≈ 10 Wb; PF = 1.5 Wb (15%).
+    #   Gap = 0.29 m: the CS outer radius (0.71 m) is much smaller than
+    #       the TF bore (~1.0 m), leaving ~0.29 m of void. This is set
+    #       as Gap in D0FUS to place the CS at the correct radius.
+    #   D0FUS result: d = 0.089 m (−44% vs d_ref = 0.16 m). The CS is
+    #       winding-limited (7 radial conductor turns set the thickness),
+    #       not stress-limited. D0FUS optimises for stress and therefore
+    #       undersizes. This is a known limitation for small, low-field CS.
+    #
+    # SPARC:
+    #   Creely et al. (2020), J. Plasma Phys. 86(5), 865860502.
+    #   Hartwig et al. (2023), IEEE TAS (arXiv:2308.12301) — TFMC
+    #       20.1 T, 40.5 kA, T_op = 20 K.
+    #
+    # ARC:
+    #   Sorbom et al. (2015), FED 100, 378 — Table 1, Table 3.
+    # -----------------------------------------------------------------
+
     machines_TF = {
-        "ITER":    {"a": 2.00, "b": 1.2,  "R0": 6.20, "σ": 660e6,  "T_op": 4.2,
+        "ITER":    {"a": 2.00, "b": 1.104,"R0": 6.20, "σ": 660e6,  "T_op": 4.2,
                     "B_max": 11.8, "n_TF": 1,   "sc": "Nb3Sn", "config": "Wedging",
                     "κ": 1.7,  "I_cond": 68e3, "V_max": 10e3, "N_sub": 9,
                     "tau_h": 2.0,  "J_wost": 35e6},
-        "EU-DEMO": {"a": 3.0,  "b": 1.80, "R0": 9.0,  "σ": 660e6,  "T_op": 4.2,
-                    "B_max": 13.0, "n_TF": 0.5, "sc": "Nb3Sn", "config": "Wedging",
-                    "κ": 1.7,  "I_cond": 80e3, "V_max": 10e3, "N_sub": 8,
-                    "tau_h": 2.0,  "J_wost": 35e6},
-        "JT60-SA": {"a": 1.18, "b": 0.3,  "R0": 2.96, "σ": 660e6,  "T_op": 4.2,
+        "EU-DEMO": {"a": 2.883,"b": 1.821,"R0": 8.938,"σ": 600e6,  "T_op": 4.75,
+                    "B_max": 10.61,"n_TF": 0.5, "sc": "Nb3Sn", "config": "Wedging",
+                    "κ": 1.65, "I_cond": 90e3, "V_max": 8.6e3,"N_sub": 8,
+                    "tau_h": 2.0,  "J_wost": 30e6},
+        "JT60-SA": {"a": 1.18, "b": 0.36, "R0": 2.96, "σ": 547e6,  "T_op": 4.5,
                     "B_max":  5.65, "n_TF": 1,   "sc": "NbTi",  "config": "Wedging",
-                    "κ": 1.8,  "I_cond": 25.7e3,"V_max": 5e3,  "N_sub": 9,
-                    "tau_h": 1.0,  "J_wost": 65e6},
-        "EAST":    {"a": 0.45, "b": 0.4,  "R0": 1.85, "σ": 660e6,  "T_op": 3.7,
+                    "κ": 1.95, "I_cond": 25.7e3,"V_max": 2.8e3,"N_sub": 3,
+                    "tau_h": 1.0,  "J_wost": 20e6},
+        "EAST":    {"a": 0.45, "b": 0.15, "R0": 1.85, "σ": 660e6,  "T_op": 4.5,
                     "B_max":  5.8,  "n_TF": 1,   "sc": "NbTi",  "config": "Wedging",
-                    "κ": 1.9,  "I_cond": 14.5e3,"V_max": 5e3,  "N_sub": 8,
-                    "tau_h": 1.0,  "J_wost": 50e6},
-        "ARC":     {"a": 1.07, "b": 0.9,  "R0": 3.30, "σ": 1000e6, "T_op": 20.0,
+                    "κ": 1.9,  "I_cond": 14.3e3,"V_max": 5e3,  "N_sub": 4,
+                    "tau_h": 1.0,  "J_wost": 30e6},
+        "ARC":     {"a": 1.10, "b": 0.89, "R0": 3.30, "σ": 1000e6, "T_op": 20.0,
                     "B_max": 23.0,  "n_TF": 1,   "sc": "REBCO", "config": "Plug",
-                    "κ": 1.8,  "I_cond": 50e3, "V_max": 10e3, "N_sub": 9,
-                    "tau_h": 20,   "J_wost": 150e6},
+                    "κ": 1.84, "I_cond": 50e3, "V_max": 10e3, "N_sub": 6,
+                    "tau_h": 20,   "J_wost": 120e6},
         "SPARC":   {"a": 0.57, "b": 0.18, "R0": 1.85, "σ": 1000e6, "T_op": 20.0,
                     "B_max": 20.0,  "n_TF": 1,   "sc": "REBCO", "config": "Bucking",
-                    "κ": 1.75, "I_cond": 50e3, "V_max": 10e3, "N_sub": 9,
-                    "tau_h": 20,   "J_wost": 150e6},
+                    "κ": 1.75, "I_cond": 40.5e3,"V_max": 10e3, "N_sub": 4,
+                    "tau_h": 20,   "J_wost": 120e6},
     }
 
     def _clean(val):
@@ -2932,6 +3246,8 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
     Display a CS coil benchmark table (Academic, D0FUS, CIRCE models) for
     ITER, EU-DEMO, JT-60SA, EAST, ARC, and SPARC.
 
+    IMPORTANT: cfg.cs_axial_stress must be True for meaningful results.
+
     Parameters
     ----------
     cfg      : config object (DEFAULT_CONFIG if None).
@@ -2939,37 +3255,129 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
 
     References
     ----------
-    Shimada et al., Nucl. Fusion 47, S1 (2007) — ITER CS.
-    Sarasola et al., IEEE Trans. Appl. Supercond. 33, 1-5 (2023) — EU-DEMO CS.
+    ITER CS:
+        Libeyre et al., FED 84, 1188 (2009) — Table 1.
+        Coatanéa et al., FED 86, 1418 (2011) — protection, E = 6 GJ.
+        Auclair (2025), CEA-IRFM note — BOBOZ ITER flux decomposition.
+    EU-DEMO CS:
+        Sarasola et al., IEEE TAS 30(4) (2020).
     """
     if cfg is None:
         cfg = DEFAULT_CONFIG
 
+    # -----------------------------------------------------------------
+    # CS machine parameters — sourced March 2026
+    #
+    # NOTE: cs_axial_stress MUST be True (cfg.cs_axial_stress = True)
+    # for the CS benchmark.
+    #
+    # ── Flux convention ──
+    # Ψplateau is the CS flux the plasma needs (at R0).
+    # For LTS machines (ITER, EU-DEMO, JT-60SA, EAST):
+    #   Ψ_plasma computed with BOBOZ (Auclair 2025) in full symmetric
+    #   swing at R0. Return flux correction (cs_return_flux_correction)
+    #   internally multiplies by f_corr = Ψ(R_e)/Ψ(R0) > 1 (Derby &
+    #   Olbert 2010, AJP 78(3)). H_CS override ensures correct f_corr.
+    # For HTS machines (SPARC, ARC):
+    #   Ψ_CS = 0.7 × Ψ_total (published CS+PF flux, ~30% PF fraction).
+    #   Return flux correction OFF (Ψ passed directly as CS flux).
+    #
+    # ── Stress convention ──
+    # σ_CS = 2/3 × Sy (monotonic yield at 4K). D0FUS applies
+    # fatigue_CS = 2 internally, giving σ_eff = σ_CS / 2 ≈ fatigue
+    # allowable. Verified against Sarasola 2020 Fig. 3 for ITER
+    # (JK2LB, 60k cycles: σ_fatigue ≈ 330 ≈ 667/2).
+    #
+    # ── H_CS override ──
+    # The formula H = 2(κa + b + 1) is inaccurate for machines
+    # where the CS extends beyond the plasma (ITER: -15%) or is
+    # shorter than expected (EAST: +46%). H_CS override provides
+    # the real CS height, critical for the return flux correction.
+    #
+    # ── Benchmark results (d_ref in parentheses) ──
+    # ITER:    d = 0.741 m (0.754, -1.7%), B = 12.2 T (13, -6%)
+    # EU-DEMO: d = 0.792 m (0.802, -1.3%), B = 10.5 T (11.35, -8%)
+    # JT-60SA: d = 0.280 m (0.340, -18%), B = 7.7 T (8.9, -14%)
+    # EAST:    d = 0.136 m (0.160, -15%), B = 4.8 T (4.5, +7%)
+    # SPARC:   TBD (J_wost updated to 120 MA/m², re-run required)
+    # ARC:     TBD (J_wost updated to 120 MA/m², a_cs corrected to 1.10)
+    #
+    # ITER:
+    #   Libeyre et al. (2009), FED 84, 1188 — Table 1.
+    #   Coatanéa et al. (2011), FED 86, 1418 — E = 6 GJ, τ = 7.5 s.
+    #   R_CS_in = 1.342 m, R_CS_out = 2.096 m, d_ref = 0.754 m.
+    #   B_max = 13 T (@ 40 kA, premagnetization). H_CS = 12.96 m.
+    #   σ = 667 MPa = 2/3 × Sy(JK2LB, 4K) = 2/3 × 1000 MPa.
+    #     Sy source: JAEA qualification (2015), IOP MSE 102, 012002.
+    #     σ_eff = 667/2 = 333 ≈ 330 MPa fatigue (Sarasola 2020 Fig. 3).
+    #   J_wost = 45 MA/m² (JAEA conduit 51.3 mm, I=45 kA, A_cable=979 mm²).
+    #   Ψ_CS = 178 Wb (BOBOZ full swing at R0, Auclair 2025).
+    #   b = 1.104 m (from R_CS_out=2.096, Gap=0.10, c=0.90).
+    #
+    # EU-DEMO 2017:
+    #   PROCESS DEMO1_Reference_Design_2017_March.
+    #   bore = 2.365 m, ohcth = 0.802 m, R_CS_out = 3.167 m.
+    #   B_max = 11.35 T (bmaxoh0, BOP). H_CS = 15.15 m (formula exact).
+    #   σ = 600 MPa (PROCESS alstroh ≈ 2/3 × Sy(316LN, 4K) ≈ 2/3 × 900).
+    #   J_wost = 60 MA/m² (coheof/(1-oh_steel)).
+    #   Ψ_CS = 360 Wb (BOBOZ full swing at R0).
+    #   Gap_eff = precomp + gapoh = 0.056 + 0.050 = 0.106 m.
+    #
+    # JT-60SA:
+    #   Yoshida et al. (2010), JPFR Series 9, 214 — Table 4.
+    #   Rc = 0.824 m, dR = 0.340 m, H = 6.34 m. σ = 2/3 × 820 = 547.
+    #   Tsuchiya et al. (2008), IEEE TAS 18(2), 208 — σ_y(316LN, 4K)=820.
+    #   Ψ_CS = 27.5 Wb (BOBOZ at R0). Gap = 0.015 m.
+    #
+    # EAST:
+    #   Wu et al. (2003), FED 65, 331. Weng et al. (2007), FED 81, 1589.
+    #   6 modules, ID=1.1 m, dR=0.16 m, H_CS=2.75 m. σ = 547 (316LN).
+    #   Ψ_CS = 8.5 Wb (BOBOZ at R0). Gap = 0.29 m (CS far from TF).
+    #
+    # SPARC:
+    #   Creely et al. (2020), J. Plasma Phys. 86(5), 865860502, Table 1.
+    #   Ψ_total = 42 Wb (CS+PF). Ψ_CS ≈ 0.7 × 42 = 29.4 Wb.
+    #   d_ref ≈ 0.25 m (CSMC geometry / Creely Fig. 2).
+    #   σ = 1000 MPa = 2/3 × Sy(N50H, 4K) = 2/3 × 1500.
+    #     Wang et al. (2024), Cryogenics 139, 103836.
+    #   J_wost = 120 MA/m² (PIT VIPER REBCO, Sanabria 2024 SUST Table 1:
+    #     J_eng = 113 MA/m² at peak field; 120 accounts for non-steel fraction).
+    #   Config: Bucking. T_op = 20 K.
+    #
+    # ARC:
+    #   Sorbom et al. (2015), FED 100, 378 — Table 1, Table 3, Fig. 2.
+    #   R0 = 3.3 m, a = 1.1 m (abstract + Table 1).
+    #   Ψ_total = 32 Wb (CS+PF, Table 3). Ψ_CS ≈ 0.7 × 32 = 22.4 Wb.
+    #   d_ref = 0.25 m (Fig. 2 radial build). B_CS = 13 T (Table 3).
+    #   σ = 1000 MPa (N50H). J_wost = 120 MA/m² (VIPER REBCO).
+    #   Config: Plug (demountable). T_op = 20 K.
+    # -----------------------------------------------------------------
+
     machines = {
-        "ITER":    {"Ψplateau": 230,  "a_cs": 2.00, "b_cs": 1.25, "c_cs": 0.90,
-                    "R0_cs": 6.20, "B_TF": 11.8, "B_cs": 13,   "σ_CS": 330e6,
+        "ITER":    {"Ψplateau": 178,  "a_cs": 2.00, "b_cs": 1.104,"c_cs": 0.90,
+                    "R0_cs": 6.20, "B_TF": 11.8, "B_cs": 13,   "σ_CS": 667e6,
                     "config": "Wedging", "SupraChoice": "Nb3Sn", "T_CS": 4.2,
-                    "kappa": 1.7, "J_wost": 45e6},
-        "EU-DEMO": {"Ψplateau": 600,  "a_cs": 2.92, "b_cs": 1.80, "c_cs": 1.19,
-                    "R0_cs": 9.07, "B_TF": 13,   "B_cs": 13.5, "σ_CS": 330e6,
-                    "config": "Wedging", "SupraChoice": "Nb3Sn", "T_CS": 4.2,
-                    "kappa": 1.65, "J_wost": 45e6},
-        "JT60-SA": {"Ψplateau":  40,  "a_cs": 1.18, "b_cs": 0.27, "c_cs": 0.45,
-                    "R0_cs": 2.96, "B_TF":  5.65, "B_cs":  8.9, "σ_CS": 330e6,
-                    "config": "Wedging", "SupraChoice": "Nb3Sn", "T_CS": 4.2,
-                    "kappa": 1.87, "J_wost": 45e6},
-        "EAST":    {"Ψplateau":  10,  "a_cs": 0.45, "b_cs": 0.4,  "c_cs": 0.25,
-                    "R0_cs": 1.85, "B_TF":  7.2,  "B_cs":  4.7, "σ_CS": 330e6,
-                    "config": "Wedging", "SupraChoice": "NbTi",  "T_CS": 4.2,
-                    "kappa": 1.9,  "J_wost": 45e6},
-        "ARC":     {"Ψplateau":  32,  "a_cs": 1.07, "b_cs": 0.89, "c_cs": 0.64,
-                    "R0_cs": 3.30, "B_TF": 23,   "B_cs": 12.9, "σ_CS": 1000e6,
+                    "kappa": 1.7, "J_wost": 45e6, "H_CS": 12.96},
+        "EU-DEMO": {"Ψplateau": 360,  "a_cs": 2.883,"b_cs": 1.820,"c_cs": 0.962,
+                    "R0_cs": 8.938,"B_TF": 10.61,"B_cs": 11.35,"σ_CS": 600e6,
+                    "config": "Wedging", "SupraChoice": "Nb3Sn", "T_CS": 4.75,
+                    "kappa": 1.65, "J_wost": 60e6, "Gap": 0.106, "H_CS": 15.15},
+        "JT60-SA": {"Ψplateau":  27.5,"a_cs": 1.18, "b_cs": 0.361,"c_cs": 0.410,
+                    "R0_cs": 2.96, "B_TF":  5.65, "B_cs":  8.9, "σ_CS": 547e6,
+                    "config": "Wedging", "SupraChoice": "Nb3Sn", "T_CS": 4.5,
+                    "kappa": 1.95, "J_wost": 45e6, "Gap": 0.015, "H_CS": 6.34},
+        "EAST":    {"Ψplateau": 8.5, "a_cs": 0.45, "b_cs": 0.15, "c_cs": 0.25,
+                    "R0_cs": 1.85, "B_TF":  5.8,  "B_cs":  4.5, "σ_CS": 547e6,
+                    "config": "Wedging", "SupraChoice": "NbTi",  "T_CS": 4.5,
+                    "kappa": 1.9,  "J_wost": 45e6, "Gap": 0.29, "H_CS": 2.75},
+        "ARC":     {"Ψplateau":  22.4,"a_cs": 1.10, "b_cs": 0.89, "c_cs": 0.64,
+                    "R0_cs": 3.30, "B_TF": 23,   "B_cs": 13,   "σ_CS": 1000e6,
                     "config": "Plug",    "SupraChoice": "REBCO",  "T_CS": 20,
-                    "kappa": 1.8,  "J_wost": 150e6},
-        "SPARC":   {"Ψplateau":  42,  "a_cs": 0.57, "b_cs": 0.18, "c_cs": 0.35,
-                    "R0_cs": 1.85, "B_TF": 20,   "B_cs": 25,   "σ_CS": 1000e6,
+                    "kappa": 1.84,  "J_wost": 120e6},
+        "SPARC":   {"Ψplateau":  29.4,"a_cs": 0.57, "b_cs": 0.18, "c_cs": 0.35,
+                    "R0_cs": 1.85, "B_TF": 20,   "B_cs": None, "σ_CS": 1000e6,
                     "config": "Bucking", "SupraChoice": "REBCO",  "T_CS": 20,
-                    "kappa": 1.75, "J_wost": 150e6},
+                    "kappa": 1.97, "J_wost": 120e6},
     }
 
     def _clean(val):
@@ -3002,6 +3410,14 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
             B_TF  = p["B_TF"]
             # "Supra_Choice" key absent in dict → always "Manual" (consistent with original)
             Supra = p.get("Supra_Choice", "Manual")
+
+            # Override Gap and H_CS if specified per machine
+            cfg.Gap = p.get("Gap", 0.10)
+            cfg.H_CS = p.get("H_CS", None)
+
+            # HTS machines: correction OFF (Ψ is already CS flux)
+            # LTS machines: correction ON (Ψ is plasma flux at R0)
+            cfg.cs_return_flux_correction = ("H_CS" in p)
 
             res = model_func(0, 0, psi, 0, a, b, c, R0, B_TF, 25, sigma,
                              Supra, J_cs, T_He, conf, kap, 6, 5, cfg)

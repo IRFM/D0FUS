@@ -255,7 +255,7 @@ OUTPUT_REGISTRY = {
         name='BCS',
         label='$B_{CS}$',
         unit='T',
-        levels=(0, 25, 1),
+        levels=(0, 30, 2),
         fmt='%d',
         use_radial_mask=True,
         category='magnetic',
@@ -837,13 +837,13 @@ OUTPUT_REGISTRY = {
     ),
     'q_limit': OutputParameter(
         name='q_limit',
-        label='$q_{lim}/q_*$',
+        label='$q_{lim}/q_{kink}$',
         unit='',
         levels=(0.5, 2, 0.1),
         fmt='%.2f',
         use_radial_mask=False,
         category='limits',
-        description='Safety factor limit fraction'
+        description='Safety factor limit fraction (q* or q95)'
     ),
     'radial_build': OutputParameter(
         name='radial_build',
@@ -1143,7 +1143,7 @@ INPUT_PARAMETER_REGISTRY = {
 
     # ── 7. MHD stability limits ───────────────────────────────────────────────
     'q_limit': InputParameter(
-        name='q_limit', display_name='Kink safety factor lower limit (q* > q_limit)',
+        name='q_limit', display_name='Kink safety factor lower limit (q_kink > q_limit)',
         unit='', min_val=2.0, max_val=3.5, n_default=10, tick_step=0.5),
     'Greenwald_limit': InputParameter(
         name='Greenwald_limit', display_name='Greenwald density fraction limit',
@@ -1418,7 +1418,7 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True):
                 results = run(config, verbose=0)
                 
                 # ===========================================================
-                # Unpack the full run() return tuple (v3 — 93 outputs)
+                # Unpack the full run() return tuple (v3 — 99 outputs)
                 #
                 # Index  Variable                     Note
                 # -----  --------                     ----
@@ -1478,6 +1478,10 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True):
                 #  80–82 I_LH, I_EC, I_NBI
                 #  83–88 f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF
                 #  89–94 f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS
+                #  95    beta_fast_alpha   Fast-ion beta
+                #  96    betaN_total       Total normalised beta (thermal + fast)
+                #  97    tau_sd_alpha      Alpha slowing-down time [s]
+                #  98    W_fast_alpha      Fast-ion stored energy [J]
                 # ===========================================================
                 (B0, B_CS, B_pol,
                  tauE, W_th,
@@ -1502,7 +1506,8 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True):
                  P_LH, P_EC, P_NBI, P_ICR,
                  I_LH, I_EC, I_NBI,
                  f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF,
-                 f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS) = results
+                 f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS,
+                 beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha) = results
                 
                 # ── Plasma stability limits ──────────────────────────────
                 betaN_limit_value = config.betaN_limit
@@ -1512,7 +1517,11 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True):
                 # n_condition must compare nbar_line (not nbar_vol) to n_G.
                 n_condition    = nbar_line / nG      if nG > 0       else np.nan
                 beta_condition = betaN / betaN_limit_value
-                q_condition    = q_limit_value / qstar
+
+                # Kink limit: compare q_limit against q* or q95
+                # depending on config.kink_parameter.
+                _q_kink = q95 if config.kink_parameter == 'q95' else qstar
+                q_condition    = q_limit_value / _q_kink
                 
                 max_limit = max(n_condition, beta_condition, q_condition)
 
@@ -1805,7 +1814,8 @@ def plot_generic_contours(ax, matrix, param_key,
 
 def plot_scan_results(outputs, param1_values, param2_values,
                       param1_name, param2_name, config, output_dir,
-                      iso_param_1=None, iso_param_2=None):
+                      iso_param_1=None, iso_param_2=None,
+                      clip_to_viable=True):
     """
     Generate scan visualization with two user-selectable iso-contour parameters.
 
@@ -1820,6 +1830,14 @@ def plot_scan_results(outputs, param1_values, param2_values,
     output_dir    : str or None   Unused, kept for API compatibility.
     iso_param_1   : str or None   Pre-selected first iso-contour parameter.
     iso_param_2   : str or None   Pre-selected second iso-contour parameter.
+    clip_to_viable : bool
+        If True (default), iso-contour quantities are restricted to the
+        viable design region where both the radial build converges AND all
+        plasma stability limits are satisfied.  The boundary curves
+        themselves (white and black solid lines) are always drawn on the
+        full domain since they define the viable region's edges.
+        If False, iso-contour 1 is masked to the radial-build-valid region
+        only, and iso-contour 2 is unmasked.
 
     Returns
     -------
@@ -1865,17 +1883,22 @@ def plot_scan_results(outputs, param1_values, param2_values,
     # so param1 increases upward — no manual [::-1] inversion needed.
     radial_build = outputs['radial_build']
     
-    # Get iso-contour matrices with fixed masking behavior:
-    #   - iso_param_1 (black): ALWAYS masked to radial build valid region
-    #   - iso_param_2 (white): ALWAYS on full figure (no mask)
-    iso_matrix_1 = outputs.get_masked(iso_param_1, outputs['radial_build'])
-    iso_matrix_2 = outputs[iso_param_2]
-    
     # Limit matrices for colored background
     density_lim = outputs['density_limit'].copy()
     beta_lim = outputs['beta_limit'].copy()
     q_lim = outputs['q_limit'].copy()
     limits_all = outputs['limits']
+    
+    # Get iso-contour matrices with masking behavior controlled by clip_to_viable:
+    #   clip_to_viable=True  → both masked to full viable zone (RB valid AND plasma ≤ 1)
+    #   clip_to_viable=False → iso_param_1 masked to RB valid, iso_param_2 unmasked
+    if clip_to_viable:
+        _viable = ~np.isnan(radial_build) & (limits_all <= 1.0)
+        iso_matrix_1 = np.where(_viable, outputs[iso_param_1], np.nan)
+        iso_matrix_2 = np.where(_viable, outputs[iso_param_2], np.nan)
+    else:
+        iso_matrix_1 = outputs.get_masked(iso_param_1, outputs['radial_build'])
+        iso_matrix_2 = outputs[iso_param_2]
     
     # Set NaN where not the dominant limit
     conditions = np.array([density_lim, beta_lim, q_lim])
@@ -1915,13 +1938,13 @@ def plot_scan_results(outputs, param1_values, param2_values,
                        interpolation='nearest', norm=Normalize(vmin=min_val, vmax=max_val),
                        extent=extent, origin='lower')
     
-    # Plasma stability boundary (limit = 1)
+    # Plasma stability boundary (limit = 1) — always drawn on full data
     linewidth = 2.5
     ax.contour(X, Y, limits_all, levels=[1.0], colors='white', linewidths=linewidth)
     white_boundary = mlines.Line2D([], [], color='white', linewidth=linewidth,
                                    label='Plasma stability boundary')
     
-    # Radial build boundary
+    # Radial build boundary — always drawn on full data
     filled_matrix = np.where(np.isnan(radial_build), -1, 1)
     ax.contour(X, Y, filled_matrix, levels=[0], linewidths=linewidth, colors='black')
     black_boundary = mlines.Line2D([], [], color='black', linewidth=linewidth,
@@ -1933,10 +1956,20 @@ def plot_scan_results(outputs, param1_values, param2_values,
     ax.set_xlabel(label_param2, fontsize=24)
     ax.set_ylabel(label_param1, fontsize=24)
     
-    # ── Axis ticks — let matplotlib place them at exact physical values ─
-    from matplotlib.ticker import MaxNLocator
-    ax.xaxis.set_major_locator(MaxNLocator(nbins=8, steps=[1, 2, 2.5, 5, 10]))
-    ax.yaxis.set_major_locator(MaxNLocator(nbins=10, steps=[1, 2, 2.5, 5, 10]))
+    # ── Axis ticks — use registry tick_step when available ─────────────
+    from matplotlib.ticker import MaxNLocator, MultipleLocator, FormatStrFormatter
+    _entry_x = INPUT_PARAMETER_REGISTRY.get(param2_name)
+    _entry_y = INPUT_PARAMETER_REGISTRY.get(param1_name)
+    if _entry_x and _entry_x.tick_step:
+        ax.xaxis.set_major_locator(MultipleLocator(_entry_x.tick_step))
+    else:
+        ax.xaxis.set_major_locator(MaxNLocator(nbins=8, steps=[1, 2, 2.5, 5, 10]))
+    if _entry_y and _entry_y.tick_step:
+        ax.yaxis.set_major_locator(MultipleLocator(_entry_y.tick_step))
+    else:
+        ax.yaxis.set_major_locator(MaxNLocator(nbins=10, steps=[1, 2, 2.5, 5, 10]))
+    ax.xaxis.set_major_formatter(FormatStrFormatter('%.1f'))
+    ax.yaxis.set_major_formatter(FormatStrFormatter('%.1f'))
     ax.tick_params(labelsize=font_legend, axis='x', rotation=45)
     ax.tick_params(labelsize=font_legend, axis='y')
     
@@ -1950,7 +1983,9 @@ def plot_scan_results(outputs, param1_values, param2_values,
                  ha='right', va='center', fontsize=font_other)
     cax2.annotate(r'$\beta_N/\beta_{lim}$', xy=(-0.01, 0.5), xycoords='axes fraction',
                  ha='right', va='center', fontsize=font_other)
-    cax3.annotate('$q_{lim}/q_*$', xy=(-0.01, 0.5), xycoords='axes fraction',
+    _q_cbar_label = ('$q_{lim}/q_{95}$' if config.kink_parameter == 'q95'
+                      else '$q_{lim}/q_*$')
+    cax3.annotate(_q_cbar_label, xy=(-0.01, 0.5), xycoords='axes fraction',
                  ha='right', va='center', fontsize=font_other)
     
     cbar_density = plt.colorbar(im_density, cax=cax1, orientation='horizontal')
@@ -2062,7 +2097,7 @@ def save_scan_results(fig, outputs, param1_values, param2_values,
 
 def main(input_file=None, auto_plot=False,
          iso_param_1=None, iso_param_2=None,
-         compute_re=True):
+         compute_re=True, clip_to_viable=True):
     """
     Main execution function for scans.
 
@@ -2075,6 +2110,12 @@ def main(input_file=None, auto_plot=False,
     compute_re   : bool           If True (default), compute runaway electron indicators.
                                   Set to False to speed up large scans.
                                   Can also be overridden by ``compute_re = 0`` in the input file.
+    clip_to_viable : bool         If True (default), iso-contours are restricted to
+                                  the viable design region (radial build valid AND
+                                  plasma stable).  Boundary curves are always shown.
+                                  Set to False to revert to legacy masking behavior.
+                                  Can also be overridden by ``clip_to_viable = 0`` in the
+                                  input file.
     """
     
     input_file_path = input_file
@@ -2099,7 +2140,8 @@ def main(input_file=None, auto_plot=False,
     # Load scan and fixed parameters (for grid definition and display)
     scan_params, fixed_params = load_scan_parameters(input_file)
 
-    # Allow input file to override compute_re flag (e.g. "compute_re = 0")
+    # Allow input file to override boolean flags
+    # (e.g. "compute_re = 0", "clip_to_viable = false")
     _TRUTHY = {'1', 'true', 'yes', 'on'}
     _FALSY  = {'0', 'false', 'no', 'off'}
     try:
@@ -2109,12 +2151,18 @@ def main(input_file=None, auto_plot=False,
                 if not _line or '=' not in _line:
                     continue
                 _k, _, _v = _line.partition('=')
-                if _k.strip().lower() == 'compute_re':
-                    _v = _v.strip().lower()
+                _k = _k.strip().lower()
+                _v = _v.strip().lower()
+                if _k == 'compute_re':
                     if _v in _TRUTHY:
                         compute_re = True
                     elif _v in _FALSY:
                         compute_re = False
+                elif _k == 'clip_to_viable':
+                    if _v in _TRUTHY:
+                        clip_to_viable = True
+                    elif _v in _FALSY:
+                        clip_to_viable = False
     except OSError:
         pass
     
@@ -2147,12 +2195,14 @@ def main(input_file=None, auto_plot=False,
         if auto_plot and iso_param_1 and iso_param_2:
             fig, ax, iso_used_1, iso_used_2 = plot_scan_results(
                 outputs, param1_values, param2_values, param1_name, param2_name,
-                base_config, None, iso_param_1, iso_param_2
+                base_config, None, iso_param_1, iso_param_2,
+                clip_to_viable=clip_to_viable
             )
         else:
             fig, ax, iso_used_1, iso_used_2 = plot_scan_results(
                 outputs, param1_values, param2_values, param1_name, param2_name,
-                base_config, None
+                base_config, None,
+                clip_to_viable=clip_to_viable
             )
         
         # Save results

@@ -169,6 +169,11 @@ _IDX = {
     'f_void_CS':  92,
     'f_He_CS':    93,
     'f_In_CS':    94,
+    # ── Fast-alpha outputs ──────────────────────────────────────────────
+    'beta_fast_alpha': 95,
+    'betaN_total':     96,
+    'tau_sd_alpha':    97,
+    'W_fast_alpha':    98,
 }
 
 #%% Global Variables (default values)
@@ -222,7 +227,7 @@ def to_serializable(x):
 
 #%% Constraint Handling
 
-def compute_stability_penalty(nbar_line, nG, betaT, betaN, qstar,
+def compute_stability_penalty(nbar_line, nG, betaT, betaN, q_kink,
                                q_min=DEFAULT_CONFIG.q_limit,
                                penalty_step=2.0,
                                penalty_slope=20.0,
@@ -276,10 +281,12 @@ def compute_stability_penalty(nbar_line, nG, betaT, betaN, qstar,
         Toroidal beta (fraction; multiply by 100 for %).
     betaN : float
         Normalized beta limit [% m T / MA].
-    qstar : float
-        Kink safety factor.
+    q_kink : float
+        Kink safety factor — either q* or q95 depending on
+        config.kink_parameter (selected upstream by the caller).
     q_min : float
-        Minimum safety factor.
+        Minimum safety factor threshold (must match the convention
+        used for q_kink: ~2–2.5 for q*, ~3–3.5 for q95).
     penalty_step : float
         Discontinuity cost at the stability boundary.  A value of 2.0
         means the fitness is multiplied by ≥ 3 for any violation.
@@ -324,17 +331,17 @@ def compute_stability_penalty(nbar_line, nG, betaT, betaN, qstar,
             margin_used = (beta_ratio - (1.0 - margin_width)) / margin_width
             penalty_terms.append(margin_amplitude * margin_used ** 3)
     
-    # Kink safety factor: qstar > q_min
-    if qstar < q_min:
-        deficit = (q_min - qstar) / q_min
+    # Kink safety factor: q_kink > q_min  (q_kink = q* or q95)
+    if q_kink < q_min:
+        deficit = (q_min - q_kink) / q_min
         penalty = penalty_step + penalty_slope * deficit ** 2
         penalty_terms.append(penalty)
-        violations['qstar'] = {
-            'value': float(qstar), 'limit': float(q_min),
-            'ratio': float(qstar / q_min)
+        violations['q_kink'] = {
+            'value': float(q_kink), 'limit': float(q_min),
+            'ratio': float(q_kink / q_min)
         }
-    elif qstar < q_min * (1.0 + margin_width):
-        margin = (qstar - q_min) / (q_min * margin_width)
+    elif q_kink < q_min * (1.0 + margin_width):
+        margin = (q_kink - q_min) / (q_min * margin_width)
         penalty_terms.append(margin_amplitude * (1 - margin) ** 3)
     
     total_penalty = 1.0 + sum(penalty_terms)
@@ -343,7 +350,7 @@ def compute_stability_penalty(nbar_line, nG, betaT, betaN, qstar,
     return is_stable, total_penalty, violations
 
 
-def check_radial_build(cost, r_d, c_TF, d_CS, qstar, betaT, nbar_line):
+def check_radial_build(cost, r_d, c_TF, d_CS, q_kink, betaT, nbar_line):
     """
     Check radial build validity for a candidate design.
 
@@ -353,7 +360,7 @@ def check_radial_build(cost, r_d, c_TF, d_CS, qstar, betaT, nbar_line):
     r_d       : float  Innermost radial build radius R0 - a - b - c - d [m].
     c_TF      : float  TF inboard radial thickness [m].
     d_CS      : float  CS radial thickness [m].
-    qstar     : float  Kink safety factor.
+    q_kink    : float  Kink safety factor (q* or q95, see kink_parameter).
     betaT     : float  Toroidal beta (fraction).
     nbar_line : float  Line-averaged density [10²⁰ m⁻³].
 
@@ -365,7 +372,7 @@ def check_radial_build(cost, r_d, c_TF, d_CS, qstar, betaT, nbar_line):
     """
     # All key scalars must be finite and non-negative
     for name, val in [('cost', cost), ('r_d', r_d), ('c_TF', c_TF),
-                      ('d_CS', d_CS), ('qstar', qstar), ('betaT', betaT),
+                      ('d_CS', d_CS), ('q_kink', q_kink), ('betaT', betaT),
                       ('nbar_line', nbar_line)]:
         if val is None:
             return False, f"{name} is None"
@@ -437,13 +444,19 @@ def evaluate_individual(individual, verbose=False):
         betaN     = _safe_real(output[_IDX['betaN']])
         betaT     = _safe_real(output[_IDX['betaT']])
         qstar     = _safe_real(output[_IDX['qstar']])
+        q95       = _safe_real(output[_IDX['q95']])
         R0_abcd   = _safe_real(output[_IDX['r_d']])
         c_TF      = _safe_real(output[_IDX['c']])
         d_CS      = _safe_real(output[_IDX['d']])
 
+        # Select kink parameter (q* or q95) for stability checks
+        _kink_param = static_inputs.get('kink_parameter',
+                                         DEFAULT_CONFIG.kink_parameter)
+        q_kink = q95 if _kink_param == 'q95' else qstar
+
         # ── Radial build validity check ──────────────────────────────────
         is_valid, reason = check_radial_build(
-            cost, R0_abcd, c_TF, d_CS, qstar, betaT, nbar_line)
+            cost, R0_abcd, c_TF, d_CS, q_kink, betaT, nbar_line)
         if not is_valid:
             if verbose:
                 print(f"  [PENALTY] radial build: {reason}")
@@ -454,7 +467,7 @@ def evaluate_individual(individual, verbose=False):
         # ── Stability penalty ────────────────────────────────────────────
         q_lim = static_inputs.get('q_limit', DEFAULT_CONFIG.q_limit)
         is_stable, penalty_multiplier, violations = compute_stability_penalty(
-            nbar_line, nG, betaT, betaN, qstar,
+            nbar_line, nG, betaT, betaN, q_kink,
             q_min=q_lim
         )
 
@@ -1040,6 +1053,7 @@ def run_genetic_optimization(input_file,
     betaN     = final_output[_IDX['betaN']]
     betaT     = final_output[_IDX['betaT']]
     qstar     = final_output[_IDX['qstar']]
+    q95_val   = final_output[_IDX['q95']]
     cost      = final_output[_IDX['cost']]
     Q         = final_output[_IDX['Q']]
     P_elec    = final_output[_IDX['P_elec']]
@@ -1048,8 +1062,16 @@ def run_genetic_optimization(input_file,
     r_d       = final_output[_IDX['r_d']]
     Ip        = final_output[_IDX['Ip']]
 
+    # Select kink parameter for final reporting (consistent with GA evaluation)
+    _kink_param = static_inputs.get('kink_parameter',
+                                     DEFAULT_CONFIG.kink_parameter)
+    q_kink = q95_val if _kink_param == 'q95' else qstar
+    _q_label = 'q95' if _kink_param == 'q95' else 'q*'
+
     # Check stability (using line-averaged density for Greenwald comparison)
-    is_stable, _, violations = compute_stability_penalty(nbar_line, nG, betaT, betaN, qstar)
+    q_lim = static_inputs.get('q_limit', DEFAULT_CONFIG.q_limit)
+    is_stable, _, violations = compute_stability_penalty(
+        nbar_line, nG, betaT, betaN, q_kink, q_min=q_lim)
     
     # betaT is fraction, convert to % for display
     betaT_percent = betaT * 100
@@ -1097,12 +1119,12 @@ def run_genetic_optimization(input_file,
     print(f"    n_line/nG: {nbar_line/nG:.3f} ({(1-nbar_line/nG)*100:+.1f}% margin)")
     print(f"    betaT/betaN: {betaT_percent/betaN:.3f} ({(1-betaT_percent/betaN)*100:+.1f}% margin)")
     q_lim = static_inputs.get('q_limit', DEFAULT_CONFIG.q_limit)
-    print(f"    q*/q_limit: {qstar/q_lim:.3f} ({(qstar/q_lim-1)*100:+.1f}% margin)")
+    print(f"    {_q_label}/q_limit: {q_kink/q_lim:.3f} ({(q_kink/q_lim-1)*100:+.1f}% margin)")
     print(f"    c_TF: {c_TF:.3f} m   d_CS: {d_CS:.3f} m   r_d: {r_d:.3f} m")
 
     # Radial build sanity check on final design
     _rb_ok, _rb_reason = check_radial_build(
-        cost, r_d, c_TF, d_CS, qstar, betaT, nbar_line)
+        cost, r_d, c_TF, d_CS, q_kink, betaT, nbar_line)
     if not _rb_ok:
         print(f"\n  WARNING: Best design fails radial build check: {_rb_reason}")
     
@@ -1148,7 +1170,8 @@ def run_genetic_optimization(input_file,
         "is_buildable": _rb_ok,
         "stability_margins": {
             "n_line_over_nG": to_serializable(nbar_line/nG),
-            "qstar_over_qlim": to_serializable(qstar/q_lim),
+            "q_kink_over_qlim": to_serializable(q_kink/q_lim),
+            "kink_parameter": _kink_param,
             "betaT_over_betaN": to_serializable(betaT_percent/betaN) if betaN > 0 else None
         },
         "radial_build": {

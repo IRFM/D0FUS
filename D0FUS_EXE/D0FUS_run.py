@@ -212,11 +212,11 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     J_wost_Manual             = config.J_wost_Manual
     coef_inboard_tension      = config.coef_inboard_tension
     F_CClamp                  = config.F_CClamp
-    n_TF                      = config.n_TF
+    n_shape_TF                = config.n_shape_TF
     c_BP                      = config.c_BP
+    TF_grading                = config.TF_grading
     Gap                       = config.Gap
-    n_CS                      = config.n_CS
-    cs_axial_stress           = config.cs_axial_stress
+    n_shape_CS                = config.n_shape_CS
     N_sub_CS                  = config.N_sub_CS
     T_helium                  = config.T_helium
     Marge_T_He                = config.Marge_T_He
@@ -1617,8 +1617,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     elif Radial_build_model in ("D0FUS", "CIRCE"):
         (c, c_WP_TF, c_Nose_TF,
          σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF) = f_TF_D0FUS(
-            a, b, R0, σ_TF, J_max_TF_conducteur, Bmax_TF, Choice_Buck_Wedg, omega_TF, n_TF,
-            c_BP, coef_inboard_tension, F_CClamp)
+            a, b, R0, σ_TF, J_max_TF_conducteur, Bmax_TF, Choice_Buck_Wedg, omega_TF, n_shape_TF,
+            c_BP, coef_inboard_tension, F_CClamp, TF_grading)
 
     else:
         raise ValueError(
@@ -1662,6 +1662,17 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # Total inductive flux swing provided by the CS
     # ΨCS = Breakdown + Ramp-up + Flat-top − External PF contribution
     ΨCS = ΨPI + ΨRampUp + Ψplateau - ΨPF
+
+    # Finite-solenoid return flux correction (Derby & Olbert 2010, AJP 78(3);
+    # Callaghan & Maslen 1960, NASA TN D-465).  Controlled by
+    # config.cs_return_flux_correction (default True, disabled in some benchmarks).
+    if getattr(config, 'cs_return_flux_correction', True):
+        _gap_cs = Gap if Choice_Buck_Wedg == 'Wedging' else 0.0
+        _RCS_ext_cs = R0 - a - b - c - _gap_cs
+        _H_CS_over = getattr(config, 'H_CS', None)
+        _H_CS_cs = _H_CS_over if (_H_CS_over is not None and _H_CS_over > 0) else 2 * (κ * a + b + 1)
+        if _RCS_ext_cs > 0:
+            ΨCS *= f_return_flux_correction(_RCS_ext_cs, _H_CS_cs, R0)
 
     # ── CS coil current density (cable-level fractions) ──────────────────────
     # The CS solver computes J_wost and Steel_fraction internally, but does not
@@ -1776,13 +1787,14 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
      *_rest) = results
 
     # ── Cable-level fractions (explicit positions in the new tuple layout) ─────
-    # Expected *_rest layout (29 values):
+    # Expected *_rest layout (33 values):
     #   [0:7]   ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS, Vloop, li
     #   [7:10]  eta_LH, eta_EC, eta_NBI
     #   [10:14] P_LH, P_EC, P_NBI, P_ICR
     #   [14:17] I_LH, I_EC, I_NBI
     #   [17:23] f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF
     #   [23:29] f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS
+    #   [29:33] beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha
     if len(_rest) >= 29:
         _f_sc_TF      = _rest[17]
         _f_cu_TF      = _rest[18]
@@ -1866,7 +1878,7 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         # is consistent with the ripple model: r2 = R0 + a + b + Delta_TF.
         Delta_TF = float(Delta_TF)
     except Exception:
-        N_TF     = int(config.n_TF)   # Fall back to config hint
+        N_TF     = 16                 # Conservative default: 16 TF coils
         Delta_TF = 0.0                # Conservative default: no extra clearance
 
     # ── Safe float extraction (guard against NaN in radial build) ─────────────
@@ -1927,9 +1939,9 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         "e_blanket":   getattr(config, 'e_blanket', 0.45),
         "e_shield":    getattr(config, 'e_shield',  0.50),
         # Conductor cable fractions (wost = without steel) — TF
-        # n_TF, n_CS: steel asymmetry parameter δ_S1/δ_S2 (1 = square jacket)
-        "n_TF":        config.n_TF,
-        "n_CS":        config.n_CS,
+        # n_shape_TF, n_shape_CS: steel asymmetry parameter δ_S1/δ_S2 (1 = square jacket)
+        "n_shape_TF":  config.n_shape_TF,
+        "n_shape_CS":  config.n_shape_CS,
         "Supra_choice": config.Supra_choice,
         "Steel_fraction_TF": _f(_sf_TF, 0.50),
         "f_sc_TF":      _f(_f_sc_TF, np.nan),
@@ -2027,7 +2039,7 @@ def save_run_output(config: GlobalConfig,
         N_TF_disp    = int(_N_TF_disp)
         Delta_TF_disp = float(_Delta_TF_disp)
     except Exception:
-        N_TF_disp    = int(config.n_TF)
+        N_TF_disp    = 16
         Delta_TF_disp = 0.0
 
     # ── Magnetic stored energy and ampere-turns (display only) ────────────
