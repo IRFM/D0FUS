@@ -172,6 +172,11 @@ class GlobalConfig:
     Ce        : float = 0.30     # Ejima constant (resistive ramp-up flux) [-]
                                  # Ψ_res = Ce * μ0 * R0 * Ip
                                  # Typical: ITER 0.45, EU-DEMO 0.30, CFETR 0.30
+    f_heat_ramp : float = 0.0   # Fraction of current ramp-up driven non-inductively
+                                 # by auxiliary heating/CD systems [-].
+                                 # Reduces the CS volt-second requirement:
+                                 #   Ψ_RampUp_eff = (1 - f_heat_ramp) × Ψ_RampUp
+                                 # Typical near-term reactor scenarios: 0.0 – 0.5.
     eta_model : str   = 'redl'   # Plasma resistivity model for R_eff and li
                                  # 'old' | 'spitzer' | 'sauter' | 'redl' (recommended)
                                  # Plasma initiation flux: Ψ_PI = 2π * R0 * E_BD

@@ -763,7 +763,7 @@ def plot_He_fraction(
 
 def plot_Jc_scaling(
     B_min: float = 0.5,
-    B_max: float = 25.0,
+    B_max: float = 45.0,
     T_op: float = 4.2,
     f_non_Cu_LTS: float = 0.50,
     f_non_Cu_HTS: float = 0.60,
@@ -793,7 +793,7 @@ def plot_Jc_scaling(
     J_Nb3Sn = J_non_Cu_Nb3Sn(B_vals, T_op, Eps=-0.003) * f_non_Cu_LTS / 1e6
     J_REBCO = J_non_Cu_REBCO(B_vals, T_op, Tet=0) * f_non_Cu_HTS / 1e6
 
-    fig, ax = plt.subplots(figsize=(6, 5))
+    fig, ax = plt.subplots(figsize=(7, 5))
     ax.plot(B_vals, J_NbTi,  lw=2, color="#A06AB4", label="NbTi strand")
     ax.plot(B_vals, J_Nb3Sn, lw=2, color="#E06C75", label="Nb₃Sn strand")
     ax.plot(B_vals, J_REBCO, lw=2, color="#D4B000", label="REBCO tape")
@@ -1076,7 +1076,7 @@ def plot_TF_grading_thickness_vs_field(
         if np.isfinite(rg[0]):
             c_g[i] = rg[0] * 100
 
-    fig, ax = plt.subplots(figsize=(7, 5))
+    fig, ax = plt.subplots(figsize=(5, 5))
     ax.plot(B_scan, c_u, 'r-o', ms=3, lw=1.8, label='Ungraded')
     ax.plot(B_scan, c_g, 'b-s', ms=3, lw=1.8, label='Graded')
     ax.set_xlabel('$B_{max}$ (T)')
@@ -1127,7 +1127,7 @@ def plot_TF_grading_reduction(
 
     reduction = (1 - c_g / c_u) * 100
 
-    fig, ax = plt.subplots(figsize=(7, 5))
+    fig, ax = plt.subplots(figsize=(5, 5))
     ax.plot(B_scan, reduction, '-^', ms=4, lw=1.8, color='#2ca02c')
     ax.set_xlabel('$B_{max}$ (T)')
     ax.set_ylabel('Reduction (%)')
@@ -2722,8 +2722,11 @@ def plot_all(
       ── Transport & current      [12–14]
       ── Radiation & impurities   [15–17]
       ── Superconductor eng.      [18–20]
-      ── Coil sizing & mechanics  [21–26]
-      ── Machine comparison       [27]
+      ── Coil sizing & mechanics  [21–29]
+          · TF grading            [21–23]
+          · CS / CIRCE / geometry [24–27]
+          · Benchmarks            [28–29]
+      ── Machine comparison       [30]
 
     Parameters
     ----------
@@ -2733,7 +2736,7 @@ def plot_all(
         Pass ``None`` to display each figure interactively.
     cfg      : config object (DEFAULT_CONFIG if None).
     """
-    N = 27
+    N = 30
 
     def _p(i, label):
         print(f"  [{i:2d}/{N}] {label}")
@@ -2810,26 +2813,36 @@ def plot_all(
     _p(20, "TF thickness vs peak field")
     plot_TF_thickness_vs_field(cfg=cfg, save_dir=save_dir)
 
-    _p(21, "CS thickness vs flux swing")
+    # ── TF winding pack grading ───────────────────────────────────────
+    _p(21, "TF grading — WP thickness vs B_max (graded vs ungraded)")
+    plot_TF_grading_thickness_vs_field(cfg=cfg, save_dir=save_dir)
+
+    _p(22, "TF grading — WP thickness reduction from grading (%)")
+    plot_TF_grading_reduction(cfg=cfg, save_dir=save_dir)
+
+    _p(23, "TF grading — conductor fraction α(R) profile")
+    plot_TF_grading_alpha_profile(cfg=cfg, save_dir=save_dir)
+
+    _p(24, "CS thickness vs flux swing")
     plot_CS_thickness_vs_flux(cfg=cfg, save_dir=save_dir)
 
-    _p(22, "CIRCE stress-model validation")
+    _p(25, "CIRCE stress-model validation")
     plot_CIRCE_stress_validation(save_dir=save_dir)
 
-    _p(23, "TF coil side view")
+    _p(26, "TF coil side view")
     plot_TF_side_view(run, save_dir=save_dir)
 
-    _p(24, "CS cross-section")
+    _p(27, "CS cross-section")
     plot_CS_cross_section(run, save_dir=save_dir)
 
     # ── Benchmarks & machine comparison ───────────────────────────────
-    _p(25, "TF benchmark table")
+    _p(28, "TF benchmark table")
     plot_TF_benchmark_table(cfg=cfg, save_dir=save_dir)
 
-    _p(26, "CS benchmark table")
+    _p(29, "CS benchmark table")
     plot_CS_benchmark_table(cfg=cfg, save_dir=save_dir)
 
-    _p(27, "Tokamak LCFS comparison")
+    _p(30, "Tokamak LCFS comparison")
     plot_cross_section_comparison(run=run, save_dir=save_dir)
 
     print("Done.")

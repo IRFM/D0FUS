@@ -8,6 +8,8 @@ Adapted to the GlobalConfig / dc_replace architecture of D0FUS_run (v2).
 #%% Imports
 import sys
 import os
+import warnings
+import multiprocessing
 import numpy as np
 import json
 from datetime import datetime
@@ -420,19 +422,14 @@ def evaluate_individual(individual, verbose=False):
     The fitness objective is read from ``static_inputs['fitness_objective']``
     (default: 'volume').  See VALID_FITNESS_OBJECTIVES for options.
     """
-    import warnings
-
     try:
         param_dict = {k: individual[i] for i, k in enumerate(param_keys)}
-        # GA-optimised values override static defaults (not the reverse!)
-        all_params  = {**static_inputs, **param_dict}
+        all_params = {**static_inputs, **param_dict}
 
-        # Build an immutable GlobalConfig, filtering out non-field keys
+        # Build an immutable GlobalConfig, filtering out non-field keys.
         config = GlobalConfig(**{k: v for k, v in all_params.items()
                                   if k in GlobalConfig.__dataclass_fields__})
 
-        # Suppress numpy warnings: unphysical parameter combinations
-        # routinely produce sqrt(negative), 0/0, overflow — all expected.
         with np.errstate(all='ignore'), warnings.catch_warnings():
             warnings.simplefilter('ignore')
             output = run(config, verbose=0)
@@ -449,9 +446,8 @@ def evaluate_individual(individual, verbose=False):
         c_TF      = _safe_real(output[_IDX['c']])
         d_CS      = _safe_real(output[_IDX['d']])
 
-        # Select kink parameter (q* or q95) for stability checks
-        _kink_param = static_inputs.get('kink_parameter',
-                                         DEFAULT_CONFIG.kink_parameter)
+        # Select kink parameter (q* or q95) for stability checks.
+        _kink_param = static_inputs.get('kink_parameter', DEFAULT_CONFIG.kink_parameter)
         q_kink = q95 if _kink_param == 'q95' else qstar
 
         # ── Radial build validity check ──────────────────────────────────
@@ -654,7 +650,7 @@ def load_input_file(input_file):
     print(f"\n Optimization parameters: {len(param_keys)}")
     for key, (lo, hi) in opt_ranges.items():
         print(f"    {key}: [{lo}, {hi}]")
-    
+
     return opt_ranges, static_inputs, param_keys
 
 #%% Genetic Algorithm with Enhanced Exploration
@@ -756,13 +752,51 @@ def inject_diverse_individuals(pop, n_inject, opt_ranges, param_keys):
     return pop
 
 
-def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb, 
-                          patience=20, verbose=True):
+def _pool_initializer(static_inputs_, param_keys_, opt_ranges_):
     """
-    Run GA with enhanced exploration and diversity maintenance
+    Re-populate module-level globals in each worker process.
+
+    Required on Windows/macOS (spawn start method) where worker processes
+    start fresh and do not inherit the parent's global state.
+    On Linux (fork), this is a no-op since globals are already inherited.
+    """
+    global static_inputs, param_keys, opt_ranges
+    static_inputs = static_inputs_
+    param_keys    = param_keys_
+    opt_ranges    = opt_ranges_
+
+
+def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
+                          patience=20, verbose=True, n_workers=1):
+    """
+    Run GA with enhanced exploration and diversity maintenance.
+
+    Parameters
+    ----------
+    pop_size, n_generations, cxpb, mutpb, patience, verbose : see caller.
+    n_workers : int
+        Number of parallel worker processes for fitness evaluation.
+        1 (default) → sequential map (original behaviour).
+        N > 1       → multiprocessing.Pool with N workers.
+        Works on Linux (fork) and macOS/Windows (spawn) alike, because
+        _pool_initializer re-populates the required globals in each worker.
     """
     global current_generation
-    
+
+    # ── Optional parallel map via multiprocessing.Pool ────────────────────────
+    _pool = None
+    if n_workers > 1:
+        _pool = multiprocessing.Pool(
+            processes=n_workers,
+            initializer=_pool_initializer,
+            initargs=(static_inputs, param_keys, opt_ranges),
+        )
+        toolbox.register("map", _pool.map)
+        if verbose:
+            print(f"  Parallel fitness evaluation: {n_workers} workers")
+    else:
+        toolbox.register("map", map)   # built-in sequential map
+
     pop = toolbox.population(n=pop_size)
     hof = tools.HallOfFame(10)
     
@@ -909,6 +943,11 @@ def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
             print(f"\n Converged at generation {gen}")
             break
     
+    # ── Shut down worker pool cleanly ─────────────────────────────────────────
+    if _pool is not None:
+        _pool.close()
+        _pool.join()
+
     return hof[0], logbook, hof
 
 #%% Plotting
@@ -968,10 +1007,11 @@ def run_genetic_optimization(input_file,
                              population_size=200,
                              generations=50,
                              crossover_rate=0.7,
-                             mutation_rate=0.3,  # Higher for exploration
+                             mutation_rate=0.3,
                              patience=20,
                              seed=None,
-                             verbose=True):
+                             verbose=True,
+                             n_workers=1):
     """
     Main optimization function
     """
@@ -1025,9 +1065,14 @@ def run_genetic_optimization(input_file,
     setup_toolbox(opt_ranges, param_keys, generations)
     
     # Run optimization
+    # Override n_workers from input file if provided
+    if 'n_workers' in static_inputs:
+        n_workers = max(1, int(static_inputs.pop('n_workers')))
+        print(f"  [input file] n_workers           = {n_workers}")
+
     best, logbook, hof = run_genetic_algorithm(
         population_size, generations, crossover_rate, mutation_rate,
-        patience, verbose
+        patience, verbose, n_workers=n_workers
     )
     
     # Results

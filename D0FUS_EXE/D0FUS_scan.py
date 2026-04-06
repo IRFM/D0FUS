@@ -10,7 +10,14 @@ Adapted to the GlobalConfig / dc_replace architecture of D0FUS_run (v2).
 #%% Imports
 import sys
 import os
+import warnings
 from dataclasses import replace as dc_replace, asdict
+
+# joblib is always installed in Spyder/scientific Python environments.
+# It uses loky+cloudpickle internally, which serializes functions by bytecode
+# rather than by module reference — making parallel execution robust to module
+# reloads within the same session (e.g. repeated %runfile in Spyder/IPython).
+from joblib import Parallel, delayed
 
 # Add parent directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -1351,7 +1358,101 @@ def display_input_parameters():
 
 #%% Core Scan Function
 
-def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True):
+def _run_scan_point(args):
+    """
+    Worker for parallel 2-D scan — all dependencies imported locally.
+
+    Using only local imports prevents cloudpickle from serializing the scan
+    module's global namespace.  When D0FUS.py is run via %runfile in Spyder,
+    that namespace is polluted with scipy symbols (erfc, etc.) that are bound
+    to __main__, causing AttributeError in loky worker processes whose __main__
+    is the frozen bootstrapper.
+
+    The config is received as a plain dict and reconstructed into a GlobalConfig
+    inside the worker.  Plain dicts with scalar values are always picklable,
+    regardless of how the parent process imported the GlobalConfig class.
+
+    Parameters
+    ----------
+    args : tuple  (y, x, config_dict, compute_re)
+        y, x        : int   Grid indices.
+        config_dict : dict  GlobalConfig fields as a plain Python dict.
+        compute_re  : bool  Whether to compute RE indicators.
+
+    Returns
+    -------
+    tuple : (y, x, results_tuple, re_dict, exc_str)
+    """
+    import os, sys, warnings
+    import numpy as np
+
+    # Make the D0FUS package importable in the worker process.
+    _parent = os.path.normpath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+    if _parent not in sys.path:
+        sys.path.insert(0, _parent)
+
+    y, x, config_dict, compute_re = args
+
+    # Reconstruct GlobalConfig from the plain dict.
+    from D0FUS_BIB.D0FUS_parameterization import GlobalConfig
+    config = GlobalConfig(**config_dict)
+
+    try:
+        from D0FUS_EXE.D0FUS_run import run
+        with np.errstate(all='ignore'), warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            results = run(config, verbose=0)
+    except Exception as exc:
+        return (y, x, None, None, str(exc))
+
+    re_dict = None
+    if compute_re:
+        try:
+            from D0FUS_BIB.D0FUS_physical_functions import compute_RE_indicators
+            from D0FUS_EXE.D0FUS_run import _PROFILE_PRESETS
+
+            if config.Plasma_profiles == 'Manual':
+                nu_n       = config.nu_n_manual
+                nu_T       = config.nu_T_manual
+                rho_ped    = config.rho_ped
+                n_ped_frac = config.n_ped_frac
+                T_ped_frac = config.T_ped_frac
+            else:
+                _pp        = _PROFILE_PRESETS.get(config.Plasma_profiles,
+                                                   _PROFILE_PRESETS['H'])
+                nu_n       = _pp['nu_n'];       nu_T       = _pp['nu_T']
+                rho_ped    = _pp['rho_ped'];    n_ped_frac = _pp['n_ped_frac']
+                T_ped_frac = _pp['T_ped_frac']
+
+            nbar   = results[12]
+            Volume = results[6]
+            Ip     = results[8]
+            κ      = results[62]
+            li_sc  = results[72]
+
+            re_dict = compute_RE_indicators(
+                Ip=Ip, nbar=nbar, Tbar=config.Tbar,
+                a=config.a, R0=config.R0, κ=κ,
+                Z_eff=config.Zeff, li=li_sc,
+                nu_n=nu_n, nu_T=nu_T,
+                rho_ped=rho_ped, n_ped_frac=n_ped_frac,
+                T_ped_frac=T_ped_frac,
+                Te_final_eV=config.Te_final_eV,
+                tau_TQ=config.tau_TQ,
+                V=Volume,
+                N_rho=30,
+                n_times=100,
+                pellet_dilution=config.pellet_dilution,
+            )
+        except Exception:
+            pass
+
+    return (y, x, results, re_dict, None)
+
+
+def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
+                    n_workers=None):
     """
     Perform generic 2D scan over any two parameters.
 
@@ -1372,6 +1473,14 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True):
         point after the main physics chain.  Uses reduced resolution
         (N_rho=30, n_times=100) to limit overhead.  Disable for large scans
         (>30×30 points) or when RE quantities are not needed.
+    n_workers : int or None, optional
+        Number of parallel worker processes.
+        None (default) → use all logical CPUs (os.cpu_count()).
+        1              → sequential execution.
+        N              → use exactly N worker processes.
+        Uses loky (cloudpickle-based) when available — works on all
+        platforms including Windows without any special guards.
+        joblib handles all platforms including Windows without restart.
 
     Returns
     -------
@@ -1394,8 +1503,7 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True):
     print(f"  {param1_name}: [{param1_min}, {param1_max}] with {param1_n} points")
     print(f"  {param2_name}: [{param2_min}, {param2_max}] with {param2_n} points")
     print(f"  Total calculations: {param1_n * param2_n}")
-    print(f"  Runaway electron indicators: {'enabled (N_rho=30, n_times=100)' if compute_re else 'disabled'}\n")
-    
+
     # Initialize outputs container
     outputs = ScanOutputs(shape=(param1_n, param2_n))
 
@@ -1404,313 +1512,214 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True):
                        if k in GlobalConfig.__dataclass_fields__}
     base = dc_replace(base_config, **fixed_overrides) if fixed_overrides else base_config
     
-    # Scanning loop
-    for y, param1_val in enumerate(tqdm(param1_values, desc=f'Scanning {param1_name}')):
-        for x, param2_val in enumerate(param2_values):
+    # ── Resolve number of workers ─────────────────────────────────────────────
+    # n_workers=None  → auto (all logical CPUs)
+    # n_workers=1     → sequential
+    _n_cpu = os.cpu_count() or 1
+    n_workers = n_workers if n_workers is not None else _n_cpu
+    n_workers = max(1, int(n_workers))
 
-            # ── Build per-point config via dc_replace (immutable) ─────────
-            point_overrides = {param1_name: param1_val,
-                               param2_name: param2_val}
-            config = dc_replace(base, **point_overrides)
+    _mode = f"parallel — {n_workers}/{_n_cpu} CPUs (joblib/loky)" if n_workers > 1 else "sequential"
+    print(f"\n  Workers: {n_workers} ({_mode})")
 
+    # ── Build flat job list (one entry per grid point) ────────────────────────
+    # Configs are converted to plain dicts (asdict) — scalar values only,
+    # no GlobalConfig class reference needed in the pickled payload.
+    jobs = []
+    for y, p1 in enumerate(param1_values):
+        for x, p2 in enumerate(param2_values):
+            cfg = dc_replace(base, **{param1_name: p1, param2_name: p2})
+            jobs.append((y, x, asdict(cfg), compute_re))
+
+    # ── Execute jobs ──────────────────────────────────────────────────────────
+    if n_workers == 1:
+        results_list = [_run_scan_point(job)
+                        for job in tqdm(jobs, desc=f'Scanning {param1_name}/{param2_name}')]
+    else:
+        # loky (via joblib) uses cloudpickle — robust to module reloads.
+        # The dict-based cache in D0FUS_radial_build_functions is picklable,
+        # unlike the former @lru_cache wrapper which failed after %runfile.
+        results_list = Parallel(n_jobs=n_workers, backend='loky', verbose=0)(
+            delayed(_run_scan_point)(job)
+            for job in tqdm(jobs, desc=f'Scanning {param1_name}/{param2_name}')
+        )
+
+    # ── Process results in order (joblib preserves submission order) ──────────
+    for job_args, (y, x, res, re_dict, exc) in zip(jobs, results_list):
+        _, _, config_dict, _ = job_args
+        config = GlobalConfig(**config_dict)   # reconstruct for Sheffield model
+
+        if res is None:
+            outputs.fill_nan(y, x)
+            if y < 2 and x < 2:
+                print(f"\n  Debug: Error at index ({y},{x}): {exc}")
+            continue
+
+        # ===========================================================
+        # Unpack the full run() return tuple (v3 — 99 outputs)
+        # ===========================================================
+        (B0, B_CS, B_pol,
+         tauE, W_th,
+         Q, Volume, Surface,
+         Ip, Ib, I_CD, I_Ohm,
+         nbar, nbar_line, nG, pbar,
+         betaN, betaT, betaP,
+         qstar, q95,
+         P_CD, P_sep, P_Thresh, eta_CD, P_elec, P_wallplug,
+         cost, P_Brem, P_syn, P_line, P_line_core,
+         heat, heat_par, heat_pol, lambda_q, q_target,
+         P_wall_H, P_wall_L,
+         Gamma_n,
+         f_alpha, tau_alpha,
+         J_TF, J_CS,
+         c, c_WP_TF, c_Nose_TF, σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF,
+         d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS_out, J_CS_out,
+         r_minor, r_sep, r_c, r_d,
+         κ, κ_95, δ, δ_95,
+         ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS, Vloop_sc, li_sc,
+         eta_LH, eta_EC, eta_NBI,
+         P_LH, P_EC, P_NBI, P_ICR,
+         I_LH, I_EC, I_NBI,
+         f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF,
+         f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS,
+         beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha) = res
+
+        # ── Plasma stability limits ──────────────────────────────────
+        betaN_limit_value = config.betaN_limit
+        q_limit_value     = config.q_limit
+
+        n_condition    = nbar_line / nG      if nG > 0       else np.nan
+        beta_condition = betaN / betaN_limit_value
+        _q_kink        = q95 if config.kink_parameter == 'q95' else qstar
+        q_condition    = q_limit_value / _q_kink
+        max_limit      = max(n_condition, beta_condition, q_condition)
+
+        # ── Sheffield cost model (post-convergence) ──────────────────
+        _COE_val = np.nan
+        _C_invest_val = np.nan
+        if config.cost_model != 'None' and np.isfinite(cost):
             try:
-                # Run calculation (silent: verbose=0 to avoid flooding output)
-                results = run(config, verbose=0)
-                
-                # ===========================================================
-                # Unpack the full run() return tuple (v3 — 99 outputs)
-                #
-                # Index  Variable                     Note
-                # -----  --------                     ----
-                #   0    B0                            On-axis toroidal field [T]
-                #   1    B_CS                          Central solenoid peak field [T]
-                #   2    B_pol                         Poloidal field at LCFS [T]
-                #   3    tauE                          Energy confinement time [s]
-                #   4    W_th                          Thermal stored energy [J]  ← raw J
-                #   5    Q                             Fusion gain
-                #   6    Volume                        Plasma volume [m³]
-                #   7    Surface                       First wall surface [m²]
-                #   8    Ip                            Plasma current [MA]
-                #   9    Ib                            Bootstrap current [MA]
-                #  10    I_CD                          Non-inductive driven current [MA]
-                #  11    I_Ohm                         Ohmic current [MA]
-                #  12    nbar                          Volume-averaged density [10²⁰ m⁻³]
-                #  13    nbar_line                     Line-averaged density [10²⁰ m⁻³]
-                #  14    nG                            Greenwald density limit [10²⁰ m⁻³]
-                #  15    pbar                          Volume-averaged pressure [MPa]
-                #  16    betaN                         Normalized beta [% m T / MA]
-                #  17    betaT                         Toroidal beta (fraction)
-                #  18    betaP                         Poloidal beta
-                #  19    qstar                         Kink safety factor
-                #  20    q95                           Safety factor at 95% flux
-                #  21    P_CD                          CD + heating power [MW]
-                #  22    P_sep                         Power across separatrix [MW]
-                #  23    P_Thresh                      L-H threshold power [MW]
-                #  24    eta_CD                        Effective CD efficiency
-                #  25    P_elec                        Net electric power [MW]
-                #  26    P_wallplug                    Wall-plug power [MW]
-                #  27    cost                          Machine cost proxy [m³]
-                #  28    P_Brem                        Bremsstrahlung [MW]
-                #  29    P_syn                         Synchrotron [MW]
-                #  30    P_line                        Total line radiation [MW]
-                #  31    P_line_core                   Core line radiation [MW]
-                #  32    heat                          P_sep/R0 [MW/m]
-                #  33    heat_par                      P_sep·B0/R0 [MW·T/m]
-                #  34    heat_pol                      P_sep·B0/(q95·R0·A) [MW·T/m]
-                #  35    lambda_q                      Eich SOL width [m]
-                #  36    q_target                      Peak divertor heat flux [MW/m²]
-                #  37    P_wall_H                      First-wall load H-mode [MW/m²]
-                #  38    P_wall_L                      First-wall load L-mode [MW/m²]
-                #  39    Gamma_n                       Neutron wall loading [MW/m²]
-                #  40    f_alpha                       Helium ash fraction
-                #  41    tau_alpha                     Alpha confinement time [s]
-                #  42    J_TF                          TF cable current density [A/m²]
-                #  43    J_CS                          CS cable current density [A/m²]
-                #  44–50 TF radial build + stresses
-                #  51–57 CS radial build + stresses
-                #  58–61 r_minor, r_sep, r_c, r_d
-                #  62–65 κ, κ_95, δ, δ_95
-                #  66–70 ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS
-                #  71    Vloop (steady-state loop voltage [V])
-                #  72    li    (internal inductance li(3) [-])
-                #  73–75 eta_LH, eta_EC, eta_NBI
-                #  76–79 P_LH, P_EC, P_NBI, P_ICR
-                #  80–82 I_LH, I_EC, I_NBI
-                #  83–88 f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF
-                #  89–94 f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS
-                #  95    beta_fast_alpha   Fast-ion beta
-                #  96    betaN_total       Total normalised beta (thermal + fast)
-                #  97    tau_sd_alpha      Alpha slowing-down time [s]
-                #  98    W_fast_alpha      Fast-ion stored energy [J]
-                # ===========================================================
-                (B0, B_CS, B_pol,
-                 tauE, W_th,
-                 Q, Volume, Surface,
-                 Ip, Ib, I_CD, I_Ohm,
-                 nbar, nbar_line, nG, pbar,
-                 betaN, betaT, betaP,
-                 qstar, q95,
-                 P_CD, P_sep, P_Thresh, eta_CD, P_elec, P_wallplug,
-                 cost, P_Brem, P_syn, P_line, P_line_core,
-                 heat, heat_par, heat_pol, lambda_q, q_target,
-                 P_wall_H, P_wall_L,
-                 Gamma_n,
-                 f_alpha, tau_alpha,
-                 J_TF, J_CS,
-                 c, c_WP_TF, c_Nose_TF, σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF,
-                 d, σ_z_CS, σ_theta_CS, σ_r_CS, Steel_fraction_CS, B_CS_out, J_CS_out,
-                 r_minor, r_sep, r_c, r_d,
-                 κ, κ_95, δ, δ_95,
-                 ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS, Vloop_sc, li_sc,
-                 eta_LH, eta_EC, eta_NBI,
-                 P_LH, P_EC, P_NBI, P_ICR,
-                 I_LH, I_EC, I_NBI,
-                 f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF,
-                 f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS,
-                 beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha) = results
-                
-                # ── Plasma stability limits ──────────────────────────────
-                betaN_limit_value = config.betaN_limit
-                q_limit_value     = config.q_limit
-
-                # Greenwald limit is defined in line-averaged density:
-                # n_condition must compare nbar_line (not nbar_vol) to n_G.
-                n_condition    = nbar_line / nG      if nG > 0       else np.nan
-                beta_condition = betaN / betaN_limit_value
-
-                # Kink limit: compare q_limit against q* or q95
-                # depending on config.kink_parameter.
-                _q_kink = q95 if config.kink_parameter == 'q95' else qstar
-                q_condition    = q_limit_value / _q_kink
-                
-                max_limit = max(n_condition, beta_condition, q_condition)
-
-                # ── Sheffield cost model (post-convergence) ───────────
-                _COE_val = np.nan
-                _C_invest_val = np.nan
-                if config.cost_model != 'None' and np.isfinite(cost):
-                    try:
-                        P_th_scan = config.P_fus * config.M_blanket + P_CD
-                        (V_BB_s, V_TF_s, V_CS_s, V_FI_s) = f_volume(
-                            config.a, config.b, c, d, config.R0, κ)
-                        _cres = f_costs_Sheffield(
-                            discount_rate=config.discount_rate,
-                            contingency=config.contingency,
-                            T_life=config.T_life,
-                            T_build=config.T_build,
-                            P_t=P_th_scan,
-                            P_e=max(P_elec, 1.0),
-                            P_aux=P_CD,
-                            Gamma_n=Gamma_n,
-                            Util_factor=config.Util_factor,
-                            Dwell_factor=config.Dwell_factor,
-                            dt_rep=config.dt_rep,
-                            V_FI=V_FI_s,
-                            V_pc=V_TF_s + V_CS_s,
-                            V_sg=V_BB_s,
-                            V_bl=V_BB_s,
-                            S_tt=0.1 * Surface,
-                            Supra_cost_factor=config.Supra_cost_factor,
-                        )
-                        _COE_val = _cres[3]
-                        _C_invest_val = _cres[2] * 1e-3  # M EUR -> B EUR
-                    except Exception:
-                        pass
-
-                # Store all results using set_point
-                outputs.set_point(y, x,
-                    # Performance
-                    Q=Q,
-                    P_fus=config.P_fus,
-                    P_elec=P_elec,
-                    Cost=cost,
-                    COE=_COE_val,
-                    C_invest=_C_invest_val,
-                    
-                    # Plasma parameters
-                    Ip=Ip,
-                    Ib=Ib,
-                    I_CD=I_CD,
-                    I_Ohm=I_Ohm,
-                    n=nbar_line,         # Line-averaged density (consistent with scaling law label)
-                    nbar_vol=nbar,       # Volume-averaged density
-                    pbar=pbar,
-                    beta_N=betaN,
-                    beta_T=betaT,
-                    beta_P=betaP,
-                    q95=q95,
-                    qstar=qstar,
-                    tauE=tauE,
-                    W_th=W_th * 1e-6,   # [J] → [MJ]  (registry unit is MJ)
-                    f_bs=Ib/Ip * 100 if Ip > 0 else 0,
-                    f_alpha=f_alpha * 100,
-                    tau_alpha=tau_alpha,
-                    
-                    # Magnetic field
-                    B0=B0,
-                    BCS=B_CS,
-                    B_pol=B_pol,
-                    J_TF=J_TF * 1e-6,   # [A/m²] → [A/mm²]
-                    J_CS=J_CS * 1e-6,   # [A/m²] → [A/mm²]
-                    PsiCS=ΨCS,
-                    
-                    # Power & heat
-                    Heat=heat,
+                P_th_scan = config.P_fus * config.M_blanket + P_CD
+                (V_BB_s, V_TF_s, V_CS_s, V_FI_s) = f_volume(
+                    config.a, config.b, c, d, config.R0, κ)
+                _cres = f_costs_Sheffield(
+                    discount_rate=config.discount_rate,
+                    contingency=config.contingency,
+                    T_life=config.T_life,
+                    T_build=config.T_build,
+                    P_t=P_th_scan,
+                    P_e=max(P_elec, 1.0),
+                    P_aux=P_CD,
                     Gamma_n=Gamma_n,
-                    P_CD=P_CD,
-                    P_sep=P_sep,
-                    P_Thresh=P_Thresh,
-                    L_H=P_sep / P_Thresh if P_Thresh > 0 else np.nan,
-                    P_Brem=P_Brem,
-                    P_syn=P_syn,
-                    P_line=P_line,
-                    P_wallplug=P_wallplug,
-                    q_target=q_target,
-                    lambda_q=lambda_q * 1000 if lambda_q else np.nan,  # [m] → [mm]
-                    
-                    # Per-source CD
-                    eta_LH=eta_LH,
-                    eta_EC=eta_EC,
-                    eta_NBI=eta_NBI,
-                    
-                    # Geometry
-                    c=r_sep - r_c if not np.isnan(r_c) else np.nan,
-                    d=r_c - r_d   if not np.isnan(r_d) else np.nan,
-                    r_minor=r_minor,
-                    kappa=κ,
-                    kappa_95=κ_95,
-                    delta=δ,
-                    Volume=Volume,
-                    Surface=Surface,
-                    A=config.R0 / config.a if config.a > 0 else np.nan,
-                    
-                    # Structural
-                    sigma_TF=max(abs(σ_z_TF), abs(σ_theta_TF), abs(σ_r_TF)) if σ_z_TF else np.nan,
-                    sigma_CS=max(abs(σ_z_CS), abs(σ_theta_CS), abs(σ_r_CS)) if σ_z_CS else np.nan,
-                    Steel_fraction_TF=Steel_fraction_TF * 100 if Steel_fraction_TF else np.nan,
-                    Steel_fraction_CS=Steel_fraction_CS * 100 if Steel_fraction_CS else np.nan,
-                    f_sc_TF=f_sc_TF * 100 if np.isfinite(f_sc_TF) else np.nan,
-                    f_He_TF=f_He_TF * 100 if np.isfinite(f_He_TF) else np.nan,
-                    f_sc_CS=f_sc_CS * 100 if np.isfinite(f_sc_CS) else np.nan,
-                    f_He_CS=f_He_CS * 100 if np.isfinite(f_He_CS) else np.nan,
-                    
-                    # Limits
-                    limits=max_limit,
-                    density_limit=n_condition,
-                    beta_limit=beta_condition,
-                    q_limit=q_condition,
+                    Util_factor=config.Util_factor,
+                    Dwell_factor=config.Dwell_factor,
+                    dt_rep=config.dt_rep,
+                    V_FI=V_FI_s,
+                    V_pc=V_TF_s + V_CS_s,
+                    V_sg=V_BB_s,
+                    V_bl=V_BB_s,
+                    S_tt=0.1 * Surface,
+                    Supra_cost_factor=config.Supra_cost_factor,
                 )
-                
-                # Combined TF + CS thickness
-                c_val = r_sep - r_c if not np.isnan(r_c) else np.nan
-                d_val = r_c  - r_d  if not np.isnan(r_d) else np.nan
-                outputs['c_d'][y, x] = (c_val + d_val
-                                        if not (np.isnan(c_val) or np.isnan(d_val))
-                                        else np.nan)
-                
-                # Check radial build validity
-                if not np.isnan(r_d) and max_limit < 1 and r_d > 0:
-                    outputs['radial_build'][y, x] = config.R0
-                else:
-                    outputs['radial_build'][y, x] = np.nan
+                _COE_val      = _cres[3]
+                _C_invest_val = _cres[2] * 1e-3  # M EUR → B EUR
+            except Exception:
+                pass
 
-                # ── Runaway electron indicators ──────────────────────────────
-                # Computed from the converged plasma state using the hot-tail
-                # seed model (Smith 2008) + avalanche amplification (Breizman
-                # 2019). Uses li from the run() output tuple (self-consistent).
-                # N_rho and n_times are reduced from defaults for scan performance.
-                if compute_re:
-                    # Resolve profile peaking factors — mirrors the _PROFILE_PRESETS
-                    # logic in run() so that nu_T, nu_n, rho_ped, n_ped_frac, and
-                    # T_ped_frac are defined for the RE indicator calls below.
-                    # Without this block these names are undefined → NameError.
-                    if config.Plasma_profiles == 'Manual':
-                        nu_n       = config.nu_n_manual
-                        nu_T       = config.nu_T_manual
-                        rho_ped    = config.rho_ped
-                        n_ped_frac = config.n_ped_frac
-                        T_ped_frac = config.T_ped_frac
-                    else:
-                        _pp        = _PROFILE_PRESETS.get(config.Plasma_profiles,
-                                                           _PROFILE_PRESETS['H'])
-                        nu_n       = _pp['nu_n'];       nu_T       = _pp['nu_T']
-                        rho_ped    = _pp['rho_ped'];    n_ped_frac = _pp['n_ped_frac']
-                        T_ped_frac = _pp['T_ped_frac']
+        # ── Store all results ────────────────────────────────────────
+        outputs.set_point(y, x,
+            Q=Q,
+            P_fus=config.P_fus,
+            P_elec=P_elec,
+            Cost=cost,
+            COE=_COE_val,
+            C_invest=_C_invest_val,
+            Ip=Ip,
+            Ib=Ib,
+            I_CD=I_CD,
+            I_Ohm=I_Ohm,
+            n=nbar_line,
+            nbar_vol=nbar,
+            pbar=pbar,
+            beta_N=betaN,
+            beta_T=betaT,
+            beta_P=betaP,
+            q95=q95,
+            qstar=qstar,
+            tauE=tauE,
+            W_th=W_th * 1e-6,
+            f_bs=Ib/Ip * 100 if Ip > 0 else 0,
+            f_alpha=f_alpha * 100,
+            tau_alpha=tau_alpha,
+            B0=B0,
+            BCS=B_CS,
+            B_pol=B_pol,
+            J_TF=J_TF * 1e-6,
+            J_CS=J_CS * 1e-6,
+            PsiCS=ΨCS,
+            Heat=heat,
+            Gamma_n=Gamma_n,
+            P_CD=P_CD,
+            P_sep=P_sep,
+            P_Thresh=P_Thresh,
+            L_H=P_sep / P_Thresh if P_Thresh > 0 else np.nan,
+            P_Brem=P_Brem,
+            P_syn=P_syn,
+            P_line=P_line,
+            P_wallplug=P_wallplug,
+            q_target=q_target,
+            lambda_q=lambda_q * 1000 if lambda_q else np.nan,
+            eta_LH=eta_LH,
+            eta_EC=eta_EC,
+            eta_NBI=eta_NBI,
+            c=r_sep - r_c if not np.isnan(r_c) else np.nan,
+            d=r_c - r_d   if not np.isnan(r_d) else np.nan,
+            r_minor=r_minor,
+            kappa=κ,
+            kappa_95=κ_95,
+            delta=δ,
+            Volume=Volume,
+            Surface=Surface,
+            A=config.R0 / config.a if config.a > 0 else np.nan,
+            sigma_TF=max(abs(σ_z_TF), abs(σ_theta_TF), abs(σ_r_TF)) if σ_z_TF else np.nan,
+            sigma_CS=max(abs(σ_z_CS), abs(σ_theta_CS), abs(σ_r_CS)) if σ_z_CS else np.nan,
+            Steel_fraction_TF=Steel_fraction_TF * 100 if Steel_fraction_TF else np.nan,
+            Steel_fraction_CS=Steel_fraction_CS * 100 if Steel_fraction_CS else np.nan,
+            f_sc_TF=f_sc_TF * 100 if np.isfinite(f_sc_TF) else np.nan,
+            f_He_TF=f_He_TF * 100 if np.isfinite(f_He_TF) else np.nan,
+            f_sc_CS=f_sc_CS * 100 if np.isfinite(f_sc_CS) else np.nan,
+            f_He_CS=f_He_CS * 100 if np.isfinite(f_He_CS) else np.nan,
+            limits=max_limit,
+            density_limit=n_condition,
+            beta_limit=beta_condition,
+            q_limit=q_condition,
+        )
 
-                    try:
-                        # li is available directly from run() output tuple
-                        # (self-consistent li(3) from f_q_profile_selfconsistent).
-                        _re = compute_RE_indicators(
-                            Ip=Ip, nbar=nbar, Tbar=config.Tbar,
-                            a=config.a, R0=config.R0, κ=κ,
-                            Z_eff=config.Zeff, li=li_sc,
-                            nu_n=nu_n, nu_T=nu_T,
-                            rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-                            T_ped_frac=T_ped_frac,
-                            Te_final_eV=config.Te_final_eV,
-                            tau_TQ=config.tau_TQ,
-                            V=Volume,
-                            N_rho=30,    # Reduced from default 50 for scan performance
-                            n_times=100, # Reduced from default 300 for scan performance
-                            pellet_dilution=config.pellet_dilution,
-                        )
-                        outputs['I_RE_seed'][y, x]  = _re['I_RE_seed'] * 1e-3        # [A] → [kA]
-                        outputs['I_RE_aval'][y, x]  = _re['I_RE_avalanche'] * 1e-6  # [A] → [MA]
-                        outputs['f_RE_Ip'][y, x]    = _re['f_RE_to_Ip']     * 100   # [-] → [%]
-                        outputs['f_RE_avg'][y, x]   = _re['f_RE_avg']
-                        outputs['f_RE_core'][y, x]  = _re['f_RE_core']
-                        outputs['E_RE_kin'][y, x]   = _re['E_RE_kin']               # [MJ]
-                        outputs['W_mag_RE'][y, x]   = _re['W_mag_RE']               # [MJ]
-                    except Exception:
-                        # RE computation is non-critical — leave as NaN on failure
-                        pass
+        # Combined TF + CS thickness
+        c_val = r_sep - r_c if not np.isnan(r_c) else np.nan
+        d_val = r_c  - r_d  if not np.isnan(r_d) else np.nan
+        outputs['c_d'][y, x] = (c_val + d_val
+                                if not (np.isnan(c_val) or np.isnan(d_val))
+                                else np.nan)
 
-            except Exception as e:
-                outputs.fill_nan(y, x)
-                if y < 2 and x < 2:
-                    print(f"\n  Debug: Error at {param1_name}={param1_val:.2f}, {param2_name}={param2_val:.2f}: {str(e)}")
-                continue
-    
+        # Radial build validity
+        if not np.isnan(r_d) and max_limit < 1 and r_d > 0:
+            outputs['radial_build'][y, x] = config.R0
+        else:
+            outputs['radial_build'][y, x] = np.nan
+
+        # ── Runaway electron indicators (computed in worker) ─────────
+        # re_dict is produced by _run_scan_point and is None when
+        # compute_re=False or when the RE calculation failed.
+        if compute_re and re_dict is not None:
+            outputs['I_RE_seed'][y, x]  = re_dict['I_RE_seed'] * 1e-3
+            outputs['I_RE_aval'][y, x]  = re_dict['I_RE_avalanche'] * 1e-6
+            outputs['f_RE_Ip'][y, x]    = re_dict['f_RE_to_Ip'] * 100
+            outputs['f_RE_avg'][y, x]   = re_dict['f_RE_avg']
+            outputs['f_RE_core'][y, x]  = re_dict['f_RE_core']
+            outputs['E_RE_kin'][y, x]   = re_dict['E_RE_kin']
+            outputs['W_mag_RE'][y, x]   = re_dict['W_mag_RE']
+
     print("\n✓ Scan calculation completed!\n")
     return outputs, param1_values, param2_values, param1_name, param2_name
 
@@ -1735,19 +1744,29 @@ def display_available_parameters():
 def get_user_plot_choice(prompt, valid_options):
     """
     Get user's choice for plotting parameter with validation.
-    
-    Args:
-        prompt: Question to display
-        valid_options: List of valid parameter names
-    
-    Returns:
-        Selected parameter name
+
+    Parameters
+    ----------
+    prompt : str
+        Question string displayed to the user.
+    valid_options : list of str
+        Valid parameter names from the output registry.
+
+    Returns
+    -------
+    str or None
+        Selected parameter name, or None if the user enters "none" to
+        suppress the iso-contour layer entirely.
     """
     while True:
         choice = input(prompt).strip()
+        # Allow explicit opt-out: typing "none" disables the iso-contour layer
+        if choice.lower() == "none":
+            return "none"
         if choice in valid_options:
             return choice
-        print(f"  Invalid choice '{choice}'. Please choose from the available parameters.")
+        print(f"  Invalid choice '{choice}'. "
+              f"Please choose from the available parameters, or type 'none' to skip.")
         print(f"  Hint: {', '.join(valid_options[:10])}...")
 
 
@@ -1869,8 +1888,16 @@ def plot_scan_results(outputs, param1_values, param2_values,
             all_plottable
         )
     
-    print(f"\n  Plotting: iso_1={iso_param_1}, iso_2={iso_param_2}")
-    
+    # Normalize sentinel: the string "none" (case-insensitive) means
+    # "no iso-contour requested" — convert to Python None so all downstream
+    # guards only need to check `is not None`.
+    if isinstance(iso_param_1, str) and iso_param_1.lower() == "none":
+        iso_param_1 = None
+    if isinstance(iso_param_2, str) and iso_param_2.lower() == "none":
+        iso_param_2 = None
+
+    print(f"\n  Plotting: iso_1={iso_param_1 or 'none'}, iso_2={iso_param_2 or 'none'}")
+
     # Font sizes
     font_iso_1 = 22      # Black iso-contours
     font_iso_2 = 22      # White iso-contours
@@ -1892,13 +1919,18 @@ def plot_scan_results(outputs, param1_values, param2_values,
     # Get iso-contour matrices with masking behavior controlled by clip_to_viable:
     #   clip_to_viable=True  → both masked to full viable zone (RB valid AND plasma ≤ 1)
     #   clip_to_viable=False → iso_param_1 masked to RB valid, iso_param_2 unmasked
+    # When a parameter is None the corresponding layer is suppressed entirely.
     if clip_to_viable:
         _viable = ~np.isnan(radial_build) & (limits_all <= 1.0)
-        iso_matrix_1 = np.where(_viable, outputs[iso_param_1], np.nan)
-        iso_matrix_2 = np.where(_viable, outputs[iso_param_2], np.nan)
+        iso_matrix_1 = (np.where(_viable, outputs[iso_param_1], np.nan)
+                        if iso_param_1 is not None else None)
+        iso_matrix_2 = (np.where(_viable, outputs[iso_param_2], np.nan)
+                        if iso_param_2 is not None else None)
     else:
-        iso_matrix_1 = outputs.get_masked(iso_param_1, outputs['radial_build'])
-        iso_matrix_2 = outputs[iso_param_2]
+        iso_matrix_1 = (outputs.get_masked(iso_param_1, outputs['radial_build'])
+                        if iso_param_1 is not None else None)
+        iso_matrix_2 = (outputs[iso_param_2]
+                        if iso_param_2 is not None else None)
     
     # Set NaN where not the dominant limit
     conditions = np.array([density_lim, beta_lim, q_lim])
@@ -2001,17 +2033,23 @@ def plot_scan_results(outputs, param1_values, param2_values,
     for cax in [cax1, cax2, cax3]:
         cax.axvline(x=1, color='white', linewidth=2.5)
     
-    # Plot ISO-CONTOUR 1 (black dashed)
-    iso_legend_1 = plot_generic_contours(ax, iso_matrix_1, iso_param_1,
-                                         color='black', linestyle='dashed',
-                                         linewidth=linewidth, fontsize=font_iso_1,
-                                         X=X, Y=Y)
-    
-    # Plot ISO-CONTOUR 2 (white dashed)
-    iso_legend_2 = plot_generic_contours(ax, iso_matrix_2, iso_param_2,
-                                         color='white', linestyle='dashed',
-                                         linewidth=linewidth, fontsize=font_iso_2,
-                                         X=X, Y=Y)
+    # Plot ISO-CONTOUR 1 (black dashed) — skipped when iso_param_1 is None
+    iso_legend_1 = (
+        plot_generic_contours(ax, iso_matrix_1, iso_param_1,
+                              color='black', linestyle='dashed',
+                              linewidth=linewidth, fontsize=font_iso_1,
+                              X=X, Y=Y)
+        if iso_param_1 is not None else None
+    )
+
+    # Plot ISO-CONTOUR 2 (white dashed) — skipped when iso_param_2 is None
+    iso_legend_2 = (
+        plot_generic_contours(ax, iso_matrix_2, iso_param_2,
+                              color='white', linestyle='dashed',
+                              linewidth=linewidth, fontsize=font_iso_2,
+                              X=X, Y=Y)
+        if iso_param_2 is not None else None
+    )
     
     # Build legend
     legend_handles = [white_boundary, black_boundary]
@@ -2072,8 +2110,10 @@ def save_scan_results(fig, outputs, param1_values, param2_values,
             f.write(f"iso_param_1 = {iso_param_1}  # Black dashed lines\n")
             f.write(f"iso_param_2 = {iso_param_2}  # White dashed lines\n")
     
-    # Save figure
-    fig_filename = f"scan_map_{param1_name}_{param2_name}_{iso_param_1}_{iso_param_2}.png"
+    # Save figure — use "none" as filename token when a layer is suppressed
+    _iso1_tag = iso_param_1 if iso_param_1 is not None else "none"
+    _iso2_tag = iso_param_2 if iso_param_2 is not None else "none"
+    fig_filename = f"scan_map_{param1_name}_{param2_name}_{_iso1_tag}_{_iso2_tag}.png"
     fig_path = os.path.join(output_path, fig_filename)
     fig.savefig(fig_path, dpi=300, bbox_inches='tight')
     
@@ -2097,7 +2137,7 @@ def save_scan_results(fig, outputs, param1_values, param2_values,
 
 def main(input_file=None, auto_plot=False,
          iso_param_1=None, iso_param_2=None,
-         compute_re=True, clip_to_viable=True):
+         compute_re=True, clip_to_viable=True, n_workers=None):
     """
     Main execution function for scans.
 
@@ -2171,28 +2211,18 @@ def main(input_file=None, auto_plot=False,
     print("Starting D0FUS 2D parameter scan...")
     print("="*73)
     print(f"\nScan parameters:")
-    for param_name, min_val, max_val, n_points in scan_params:
-        entry = INPUT_PARAMETER_REGISTRY.get(param_name)
-        unit_str = f" [{entry.unit}]" if (entry and entry.unit) else ""
-        desc_str = f"  ({entry.display_name})" if entry else ""
-        print(f"  {param_name}: [{min_val}, {max_val}]{unit_str} × {n_points} pts{desc_str}")
-    
-    print(f"\nFixed parameters:")
-    for key, value in list(fixed_params.items())[:6]:
-        entry = INPUT_PARAMETER_REGISTRY.get(key)
-        unit_str = f" [{entry.unit}]" if (entry and entry.unit) else ""
-        print(f"  {key} = {value}{unit_str}")
-    if len(fixed_params) > 6:
-        print(f"  ... and {len(fixed_params) - 6} more")
     
     try:
         # Perform scan
         outputs, param1_values, param2_values, param1_name, param2_name = generic_2D_scan(
-            scan_params, fixed_params, base_config, compute_re=compute_re
+            scan_params, fixed_params, base_config, compute_re=compute_re,
+            n_workers=n_workers
         )
         
-        # Plot results
-        if auto_plot and iso_param_1 and iso_param_2:
+        # Plot results.
+        # auto_plot=True with both params explicitly set (including "none")
+        # bypasses the interactive prompt entirely.
+        if auto_plot and (iso_param_1 is not None or iso_param_2 is not None):
             fig, ax, iso_used_1, iso_used_2 = plot_scan_results(
                 outputs, param1_values, param2_values, param1_name, param2_name,
                 base_config, None, iso_param_1, iso_param_2,

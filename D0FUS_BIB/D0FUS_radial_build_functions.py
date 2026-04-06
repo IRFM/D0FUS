@@ -1753,7 +1753,13 @@ def _compute_cable_current_density_core(
     }
 
 
-@lru_cache(maxsize=2000)
+
+# Plain dict cache replacing @lru_cache — a dict is always picklable by
+# cloudpickle, unlike lru_cache wrappers whose identity changes on module
+# reload (which caused PicklingError in joblib parallel scans).
+_cable_density_cache: dict = {}
+_cable_density_stats = {'hits': 0, 'misses': 0}
+
 def _cached_cable_current_density(
     sc_type: str,
     B_peak_rounded: float,
@@ -1845,7 +1851,14 @@ def _cached_cable_current_density(
     - Rounding is applied to continuous variables to increase cache hits
     - String and integer parameters are used directly
     """
-    return _compute_cable_current_density_core(
+    key = (sc_type, B_peak_rounded, T_op, E_mag_rounded, I_cond, V_max, N_sub,
+           tau_h, f_He_pipe, f_void, f_In, T_hotspot, RRR, Marge_T_He,
+           Marge_T_Nb3Sn, Marge_T_NbTi, Marge_T_REBCO, Eps, Tet, J_wost_Manual)
+    if key in _cable_density_cache:
+        _cable_density_stats['hits'] += 1
+        return _cable_density_cache[key]
+    _cable_density_stats['misses'] += 1
+    result = _compute_cable_current_density_core(
         sc_type=sc_type,
         B_peak=B_peak_rounded,
         T_op=T_op,
@@ -1867,6 +1880,8 @@ def _cached_cable_current_density(
         Tet=Tet,
         J_wost_Manual=J_wost_Manual if J_wost_Manual > 0 else None,
     )
+    _cable_density_cache[key] = result
+    return result
 
 
 def calculate_cable_current_density(
@@ -2065,7 +2080,9 @@ def clear_cable_cache():
     
     The cache will automatically rebuild as new calculations are performed.
     """
-    _cached_cable_current_density.cache_clear()
+    _cable_density_cache.clear()
+    _cable_density_stats['hits'] = 0
+    _cable_density_stats['misses'] = 0
 
 
 def get_cache_stats():
@@ -2091,12 +2108,11 @@ def get_cache_stats():
     For optimization studies with >10,000 evaluations, cache hit rates
     above 95% are typical and can reduce computation time by 10-30x.
     """
-    info = _cached_cable_current_density.cache_info()
-    total = info.hits + info.misses
+    total = _cable_density_stats['hits'] + _cable_density_stats['misses']
     return {
-        'hits': info.hits,
-        'misses': info.misses,
-        'hit_rate': info.hits / total if total > 0 else 0
+        'hits':     _cable_density_stats['hits'],
+        'misses':   _cable_density_stats['misses'],
+        'hit_rate': _cable_density_stats['hits'] / total if total > 0 else 0
     }
 
 #%% Without Steel current density test
