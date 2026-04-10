@@ -36,6 +36,8 @@ else:
     
     # Suppress numpy divide/invalid warnings — these are handled via NaN returns
     warnings.filterwarnings('ignore', category=RuntimeWarning)
+
+from scipy.special import ellipk, ellipe
     
 #%% ========================================================================
 # MODULE-LEVEL UTILITIES
@@ -74,13 +76,221 @@ def gamma_func(alpha_val, n_val):
     return val
 
 
+# ── TF winding pack grading helpers ──────────────────────────────────
+
+def _build_gamma_inverse_table(n_val, n_pts=2000):
+    """
+    Pre-compute lookup table for fast inversion of γ(α, n).
+
+    γ is monotonically decreasing in α: α=0 → γ≈1, α→1 → γ→0.
+    Table sorted by increasing γ for use with np.interp.
+
+    Parameters
+    ----------
+    n_val : float
+        Conductor geometry factor (same as in gamma_func).
+    n_pts : int
+        Number of tabulation points.
+
+    Returns
+    -------
+    gamma_tab : ndarray   γ values, sorted ascending.
+    alpha_tab : ndarray   Corresponding α values.
+    """
+    alpha_arr = np.linspace(0.002, 0.998, n_pts)
+    gamma_arr = np.array([gamma_func(a, n_val) for a in alpha_arr])
+    valid = np.isfinite(gamma_arr) & (gamma_arr > 0) & (gamma_arr < 1)
+    alpha_arr = alpha_arr[valid]
+    gamma_arr = gamma_arr[valid]
+    idx = np.argsort(gamma_arr)
+    return gamma_arr[idx], alpha_arr[idx]
+
+
+def _invert_gamma(gamma_target, gamma_tab, alpha_tab, alpha_min=0.01):
+    """
+    Find α such that γ(α, n) = gamma_target via table interpolation.
+
+    Parameters
+    ----------
+    gamma_target : float    Desired γ value.
+    gamma_tab, alpha_tab : ndarray   From _build_gamma_inverse_table.
+    alpha_min : float       Hard lower bound on α.
+
+    Returns
+    -------
+    alpha : float    Conductor fraction satisfying γ(α,n) ≈ gamma_target.
+    """
+    if gamma_target <= gamma_tab[0]:
+        return 0.999
+    if gamma_target >= gamma_tab[-1]:
+        return alpha_min
+    alpha = float(np.interp(gamma_target, gamma_tab, alpha_tab))
+    return max(alpha, alpha_min)
+
+
+# Module-level storage for the last graded WP profile (used by diagnostic plots)
+_last_graded_profile = {}
+
+
+def _solve_graded_wp(R_ext, B_max, J_max, sigma_max, omega, n, ln_term,
+                     dR=5e-4, alpha_min=0.01, max_iter=60, tol=1e-4):
+    """
+    Graded TF winding pack: α(R) varies to saturate Tresca everywhere.
+
+    Integrates from R_ext inward using cylindrical Ampere's law.
+    σ_z is self-consistent via Picard iteration.
+
+    After convergence, the last profile (R, α arrays and σ_z) is stored
+    in the module-level dict _last_graded_profile for diagnostic plotting.
+
+    Parameters
+    ----------
+    R_ext : float       WP outer radius (= R_0 - a - b) [m].
+    B_max : float       Peak toroidal field at R_ext [T].
+    J_max : float       Engineering current density (non-steel) [A/m²].
+    sigma_max : float   Allowable Tresca stress [Pa].
+    omega : float       Fraction of vertical tension on inboard leg [-].
+    n : float           Conductor geometry factor for γ(α, n).
+    ln_term : float     ln((R_0 + a + b) / R_ext).
+    dR : float          Radial integration step [m].
+    alpha_min : float   Minimum conductor fraction [-].
+    max_iter : int      Maximum Picard iterations for σ_z.
+    tol : float         Relative convergence tolerance on σ_z.
+
+    Returns
+    -------
+    c_WP : float            Winding pack thickness [m].
+    sigma_r_peak : float    Peak radial stress (at bore) [Pa].
+    sigma_z : float         Converged vertical stress [Pa].
+    sigma_theta : float     Hoop stress [Pa] (= 0).
+    Steel_fraction : float  Area-weighted average ⟨1 − α⟩ [-].
+    """
+    gamma_tab, alpha_tab = _build_gamma_inverse_table(n)
+
+    def sigma_z_fn(R_sep, f_steel):
+        denom = R_ext**2 - R_sep**2
+        if denom <= 0 or f_steel <= 0:
+            return 0.0
+        return (omega / f_steel) * B_max**2 * R_ext**2 \
+               / (2 * μ0 * denom) * ln_term
+
+    def integrate(sigma_z):
+        sigma_r_budget = sigma_max - sigma_z
+        if sigma_r_budget <= 0:
+            return None
+
+        R   = R_ext
+        NI  = B_max * 2 * np.pi * R_ext / μ0
+        B   = B_max
+        sigma_r = 0.0
+
+        R_list     = [R]
+        alpha_list = []
+        sr_list    = [sigma_r]
+
+        while NI > 0 and R > dR:
+            gamma_target = sigma_r / sigma_r_budget
+            if gamma_target >= 1.0:
+                return None
+            alpha_val = _invert_gamma(gamma_target, gamma_tab, alpha_tab,
+                                      alpha_min)
+            alpha_list.append(alpha_val)
+
+            dNI = alpha_val * J_max * 2 * np.pi * R * dR
+            if dNI > NI:
+                dR_last = NI / (alpha_val * J_max * 2 * np.pi * R)
+                dNI = NI
+                R_new = R - dR_last
+            else:
+                R_new = R - dR
+
+            NI_new = NI - dNI
+            if R_new <= 0:
+                R_new = 1e-4
+                NI_new = 0.0
+
+            B_new = μ0 * NI_new / (2 * np.pi * R_new) if R_new > 0 else 0.0
+
+            dR_eff = R - R_new
+            sigma_r_new = sigma_r + alpha_val * J_max \
+                          * 0.5 * (B + B_new) * dR_eff
+
+            R   = R_new
+            NI  = NI_new
+            B   = B_new
+            sigma_r = sigma_r_new
+
+            R_list.append(R)
+            sr_list.append(sigma_r)
+            if NI <= 0:
+                break
+
+        if len(alpha_list) == 0:
+            return None
+
+        R_sep = R_list[-1]
+
+        # Area-weighted average steel fraction
+        R_arr     = np.array(R_list)
+        alpha_arr = np.array(alpha_list)
+        n_seg     = min(len(R_arr) - 1, len(alpha_arr))
+        R_mid     = 0.5 * (R_arr[:n_seg] + R_arr[1:n_seg + 1])
+        dR_seg    = np.abs(np.diff(R_arr[:n_seg + 1]))
+        alpha_seg = alpha_arr[:n_seg]
+        denom_area = R_ext**2 - R_sep**2
+        f_steel = np.sum((1 - alpha_seg) * 2 * R_mid * dR_seg) \
+                  / denom_area if denom_area > 0 else 0.5
+
+        return {'R_sep': R_sep, 'delta_R': R_ext - R_sep,
+                'sigma_r_peak': sr_list[-1], 'f_steel': f_steel,
+                'R': np.array(R_list), 'alpha': np.array(alpha_list)}
+
+    # Initial σ_z guess
+    dR_guess = B_max / (0.3 * μ0 * J_max)
+    R_sep_guess = max(R_ext - dR_guess, 0.05)
+    sigma_z = sigma_z_fn(R_sep_guess, 0.7)
+
+    # Picard iteration
+    result = None
+    for it in range(max_iter):
+        result = integrate(sigma_z)
+        if result is None:
+            return np.nan, np.nan, np.nan, np.nan, np.nan
+        R_sep_new = result['R_sep']
+        if R_sep_new <= 0:
+            return np.nan, np.nan, np.nan, np.nan, np.nan
+        sigma_z_new = sigma_z_fn(R_sep_new, result['f_steel'])
+        if abs(sigma_z_new - sigma_z) / max(abs(sigma_z), 1e6) < tol:
+            sigma_z = sigma_z_new
+            break
+        sigma_z = 0.5 * sigma_z + 0.5 * sigma_z_new
+
+    # Final integration with converged σ_z
+    result = integrate(sigma_z)
+    if result is None:
+        return np.nan, np.nan, np.nan, np.nan, np.nan
+
+    # Store profile for diagnostic plots (mutate in place for importers)
+    _last_graded_profile.clear()
+    _last_graded_profile.update({
+        'R': result['R'], 'alpha': result['alpha'], 'sigma_z': sigma_z})
+
+    return (result['delta_R'], result['sigma_r_peak'],
+            sigma_z, 0.0, result['f_steel'])
+
+
 def _find_bracket(residual_fn, d_lo, d_hi, n_pts):
     """
-    Log-spaced probe for root bracketing on a potentially partial domain.
+    Hybrid log+linear probe for root bracketing on a potentially partial domain.
 
-    Scans n_pts log-spaced points in [d_lo, d_hi] and returns brackets
-    for (i) the first nan→finite transition, and (ii) the first sign
-    change of residual_fn.
+    Scans a hybrid grid (2/3 log-spaced over full range + 1/3 linearly-spaced
+    in the upper 60% of the range) and returns ALL nan→finite transitions and
+    ALL sign changes of residual_fn.
+
+    The hybrid grid addresses the failure mode where large-d solutions (thick
+    LTS windings) fall between consecutive log-spaced points whose spacing
+    exceeds 0.5 m.  The linear overlay in the upper portion of the range
+    guarantees sub-0.3 m spacing there, at negligible extra cost (+5–7 pts).
 
     Parameters
     ----------
@@ -89,28 +299,42 @@ def _find_bracket(residual_fn, d_lo, d_hi, n_pts):
     d_lo, d_hi : float
         Search domain bounds (must satisfy d_lo < d_hi, both > 0).
     n_pts : int
-        Number of probe points.
+        Target number of probe points (actual count may differ slightly
+        after deduplication of log and linear grids).
 
     Returns
     -------
-    nan_to_finite : tuple(float, float) or None
-        Bracket (d_left, d_right) around the first nan→finite transition.
-    sign_change : tuple(float, float) or None
-        Bracket (d_left, d_right) around the first sign change.
+    nan_transitions : list of (float, float)
+        All brackets (d_left, d_right) around nan→finite transitions,
+        ordered by increasing d_left.
+    sign_changes : list of (float, float)
+        All brackets (d_left, d_right) around sign changes,
+        ordered by increasing d_left.
     """
-    d_vals = np.logspace(np.log10(d_lo), np.log10(d_hi), n_pts)
+    # Hybrid grid: 2/3 log-spaced (resolution at small d for thin HTS WP)
+    # + 1/3 linear in the upper 60% (fills gaps at large d for thick LTS WP)
+    if n_pts >= 8:
+        n_log = max(n_pts * 2 // 3, 5)
+        n_lin = n_pts - n_log
+        d_log = np.logspace(np.log10(d_lo), np.log10(d_hi), n_log)
+        d_lin = np.linspace(d_hi * 0.4, d_hi, n_lin + 2)[1:-1]
+        d_vals = np.unique(np.sort(np.concatenate([d_log, d_lin])))
+    else:
+        d_vals = np.logspace(np.log10(d_lo), np.log10(d_hi), n_pts)
+
     y_vals = np.array([residual_fn(d) for d in d_vals])
-    nan_to_finite = None
-    sign_change   = None
-    for i in range(1, n_pts):
+
+    nan_transitions = []
+    sign_changes    = []
+    for i in range(1, len(d_vals)):
         fp, fc = y_vals[i - 1], y_vals[i]
         finite_p, finite_c = np.isfinite(fp), np.isfinite(fc)
-        if not finite_p and finite_c and nan_to_finite is None:
-            nan_to_finite = (d_vals[i - 1], d_vals[i])
+        if not finite_p and finite_c:
+            nan_transitions.append((d_vals[i - 1], d_vals[i]))
         if finite_p and finite_c and fp * fc < 0:
-            sign_change = (d_vals[i - 1], d_vals[i])
-            break
-    return nan_to_finite, sign_change
+            sign_changes.append((d_vals[i - 1], d_vals[i]))
+
+    return nan_transitions, sign_changes
 
 
 def _bisect_valid_boundary(residual_fn, lo, hi, n_iter=25, tol=1e-6):
@@ -147,6 +371,117 @@ def _bisect_valid_boundary(residual_fn, lo, hi, n_iter=25, tol=1e-6):
     return hi
 
 
+def _adaptive_root_search(residual_fn, d_lo, d_hi,
+                          n_probe_1=20, n_probe_2=25,
+                          select='smallest', brentq_xtol=1e-4):
+    """
+    Adaptive 3-pass root search for residual functions with partial NaN domains.
+
+    Factorises the search pattern shared by Winding_Pack_D0FUS, f_CS_D0FUS,
+    and f_CS_CIRCE.  Handles non-monotone residuals (e.g. CIRCE where the
+    Tresca maximum can jump between bore and outer radius) by collecting
+    ALL sign-change brackets and returning the root selected by ``select``.
+
+    Algorithm
+    ---------
+    Pass 1 — Hybrid probe (n_probe_1 pts) over [d_lo, d_hi]:
+        Collects all nan→finite transitions and sign-change brackets.
+
+    Pass 2 — Adaptive refinement (triggered only if Pass 1 finds no bracket):
+        For each nan→finite transition detected in Pass 1:
+            a. Bisect to pin d_min_valid (~25 bisection steps).
+            b. Fine hybrid probe (n_probe_2 pts) on [d_min_valid, d_hi].
+            c. Accumulate any new sign-change brackets.
+        Handles islands where the entire valid domain fits between two
+        consecutive Pass 1 points (the primary failure mode at high field).
+
+    Pass 3 — brentq on every bracket; return best root per ``select``.
+
+    Worst-case evaluation budget: n_probe_1 + 25 + n_probe_2 + 15 ~ 85.
+    Typical (Pass 1 succeeds): n_probe_1 + 15 ~ 35.
+
+    Parameters
+    ----------
+    residual_fn : callable
+        Scalar function f(d) → float or NaN.
+    d_lo, d_hi : float
+        Search domain bounds (both > 0, d_lo < d_hi).
+    n_probe_1 : int
+        Number of probe points for Pass 1 (default: 20).
+    n_probe_2 : int
+        Number of probe points for Pass 2 per nan transition (default: 25).
+    select : str
+        Root selection: 'smallest' (default — thinnest feasible WP/CS)
+        or 'largest'.
+    brentq_xtol : float
+        Absolute tolerance for brentq [m] (default: 1e-4 = 0.1 mm).
+
+    Returns
+    -------
+    d_root : float
+        Root of residual_fn, or NaN if no root exists in [d_lo, d_hi].
+    """
+    if d_lo >= d_hi:
+        return np.nan
+
+    # ── Pass 1: coarse hybrid probe ──────────────────────────────────
+    nan_transitions, sign_changes = _find_bracket(
+        residual_fn, d_lo, d_hi, n_probe_1)
+
+    # ── Pass 2: adaptive refinement (only if no bracket from Pass 1) ─
+    if not sign_changes:
+        if not nan_transitions:
+            # Residual is NaN everywhere in [d_lo, d_hi]:
+            # no valid operating point exists (B > B_max_CS or J_wost = 0
+            # for all thicknesses).
+            return np.nan
+
+        # Probe each nan→finite transition: the root may sit in a narrow
+        # valid island that Pass 1 straddled entirely.
+        for nt_lo, nt_hi in nan_transitions:
+            d_min_valid = _bisect_valid_boundary(residual_fn, nt_lo, nt_hi)
+            if d_min_valid >= d_hi:
+                continue
+            _, new_scs = _find_bracket(
+                residual_fn, d_min_valid, d_hi, n_probe_2)
+            sign_changes.extend(new_scs)
+
+        if not sign_changes:
+            # No sign change found even after refinement.  Two sub-cases:
+            #
+            # (a) Residual < 0 everywhere in the valid domain:
+            #     stress constraint is satisfied for ALL valid d.
+            #     Return the thinnest valid winding pack (d_min_valid).
+            #     This can happen for conservative σ_CS with high-Jc HTS.
+            #
+            # (b) Residual > 0 everywhere: stress limit exceeded for all d.
+            #     Design is infeasible → return NaN.
+            if select == 'smallest' and nan_transitions:
+                d_boundary = _bisect_valid_boundary(
+                    residual_fn,
+                    nan_transitions[0][0],
+                    nan_transitions[0][1])
+                y_boundary = residual_fn(d_boundary)
+                if np.isfinite(y_boundary) and y_boundary < 0:
+                    return d_boundary
+            return np.nan
+
+    # ── Pass 3: brentq on every bracket, collect all roots ───────────
+    roots = []
+    for lo, hi in sign_changes:
+        try:
+            d_root = brentq(residual_fn, lo, hi,
+                            xtol=brentq_xtol, full_output=False)
+            roots.append(d_root)
+        except ValueError:
+            continue
+
+    if not roots:
+        return np.nan
+
+    return min(roots) if select == 'smallest' else max(roots)
+
+
 def _unpack_CS_config(config):
     """
     Extract CS-relevant parameters from GlobalConfig.
@@ -159,7 +494,7 @@ def _unpack_CS_config(config):
     dict
         Keys: Gap, I_cond, V_max, f_He_pipe, f_void, f_In,
         T_hotspot, RRR, Marge_T_He, Marge_T_Nb3Sn, Marge_T_NbTi,
-        Marge_T_REBCO, Eps, Tet, n_CS.
+        Marge_T_REBCO, Eps, Tet, n_shape_CS.
     """
     return dict(
         Gap            = config.Gap,
@@ -176,7 +511,7 @@ def _unpack_CS_config(config):
         Marge_T_REBCO  = config.Marge_T_REBCO,
         Eps            = config.Eps,
         Tet            = config.Tet,
-        n_CS           = config.n_CS,
+        n_shape_CS     = config.n_shape_CS,
         # Fatigue knockdown factor and operation mode — consumed by
         # the stress residual / f_sigma_diff closures in each CS solver.
         fatigue_CS     = config.fatigue_CS,
@@ -731,7 +1066,7 @@ def _J_REBCO_Senatore2024(B, T, Tet=0, dataset='Fujikura_2019'):
 if __name__ == "__main__":
     # Superconductor Jc scaling laws: NbTi, Nb3Sn, REBCO — MAGLAB benchmark
     import D0FUS_BIB.D0FUS_figures as figs
-    figs.plot_Jc_scaling(T_op=4.2)
+    figs.plot_Jc_scaling()
 
 #%% Print
         
@@ -929,10 +1264,6 @@ def calculate_E_mag_CS(B_max, r_in_CS, r_out_CS, H_CS):
 
     The total stored energy (bore + winding) is computed analytically:
         E_mag = (π H B_max² / μ₀) × [r_in²/2 + r_out×d/3 - d²/4]
-
-    This replaces the previous approximation E = 0.95²×B_max²/(2μ₀) × V_annulus,
-    which had geometry-dependent errors of -88% to +34% because it ignored the
-    bore energy and assumed a fixed ⟨B²⟩/B_max² ratio independent of r_in/r_out.
 
     Parameters
     ----------
@@ -1422,7 +1753,13 @@ def _compute_cable_current_density_core(
     }
 
 
-@lru_cache(maxsize=2000)
+
+# Plain dict cache replacing @lru_cache — a dict is always picklable by
+# cloudpickle, unlike lru_cache wrappers whose identity changes on module
+# reload (which caused PicklingError in joblib parallel scans).
+_cable_density_cache: dict = {}
+_cable_density_stats = {'hits': 0, 'misses': 0}
+
 def _cached_cable_current_density(
     sc_type: str,
     B_peak_rounded: float,
@@ -1514,7 +1851,14 @@ def _cached_cable_current_density(
     - Rounding is applied to continuous variables to increase cache hits
     - String and integer parameters are used directly
     """
-    return _compute_cable_current_density_core(
+    key = (sc_type, B_peak_rounded, T_op, E_mag_rounded, I_cond, V_max, N_sub,
+           tau_h, f_He_pipe, f_void, f_In, T_hotspot, RRR, Marge_T_He,
+           Marge_T_Nb3Sn, Marge_T_NbTi, Marge_T_REBCO, Eps, Tet, J_wost_Manual)
+    if key in _cable_density_cache:
+        _cable_density_stats['hits'] += 1
+        return _cable_density_cache[key]
+    _cable_density_stats['misses'] += 1
+    result = _compute_cable_current_density_core(
         sc_type=sc_type,
         B_peak=B_peak_rounded,
         T_op=T_op,
@@ -1536,6 +1880,8 @@ def _cached_cable_current_density(
         Tet=Tet,
         J_wost_Manual=J_wost_Manual if J_wost_Manual > 0 else None,
     )
+    _cable_density_cache[key] = result
+    return result
 
 
 def calculate_cable_current_density(
@@ -1734,7 +2080,9 @@ def clear_cable_cache():
     
     The cache will automatically rebuild as new calculations are performed.
     """
-    _cached_cable_current_density.cache_clear()
+    _cable_density_cache.clear()
+    _cable_density_stats['hits'] = 0
+    _cable_density_stats['misses'] = 0
 
 
 def get_cache_stats():
@@ -1760,12 +2108,11 @@ def get_cache_stats():
     For optimization studies with >10,000 evaluations, cache hit rates
     above 95% are typical and can reduce computation time by 10-30x.
     """
-    info = _cached_cable_current_density.cache_info()
-    total = info.hits + info.misses
+    total = _cable_density_stats['hits'] + _cable_density_stats['misses']
     return {
-        'hits': info.hits,
-        'misses': info.misses,
-        'hit_rate': info.hits / total if total > 0 else 0
+        'hits':     _cable_density_stats['hits'],
+        'misses':   _cable_density_stats['misses'],
+        'hit_rate': _cable_density_stats['hits'] / total if total > 0 else 0
     }
 
 #%% Without Steel current density test
@@ -2058,8 +2405,7 @@ if __name__ == "__main__":
 if __name__ == "__main__":
     # Worst-case cable current density vs field under quench protection
     import D0FUS_BIB.D0FUS_figures as figs
-    figs.plot_cable_current_density(
-        E_mag=6e9, I_cond=45e3, V_max=10e3, N_sub=6, tau_h=0.5, cfg=cfg)
+    figs.plot_cable_current_density(cfg=cfg)
 
 #%% Print
         
@@ -2837,13 +3183,20 @@ def f_TF_academic(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg,
     
 #%% D0FUS model
 
-def Winding_Pack_D0FUS(R_0, a, b, sigma_max, J_max, B_max, omega, n):
+def Winding_Pack_D0FUS(R_0, a, b, sigma_max, J_max, B_max, omega, n,
+                       grading=False):
     
     """
     Computes the winding pack thickness and stress ratio under Tresca criterion.
     
-    Uses a log-spaced adaptive bracket search followed by brentq root-finding.
-    Typical call budget: ~30 residual evaluations (vs ~1000 for linear scan).
+    When grading=False (default):
+        Uniform α. Log-spaced adaptive bracket search + brentq root-finding.
+        Tresca is satisfied at the most loaded point only.
+    
+    When grading=True:
+        Radially varying α(R). Tresca is saturated at every radius.
+        Uses inward radial integration with self-consistent σ_z (Picard).
+        Typically reduces c_WP by 8 to 25% depending on B_max.
     
     Args:
         R_0: Major radius [m]
@@ -2854,8 +3207,10 @@ def Winding_Pack_D0FUS(R_0, a, b, sigma_max, J_max, B_max, omega, n):
         B_max: Peak magnetic field [T]
         omega: Scaling factor for axial load [dimensionless].
             Fraction of total vertical tension borne by the inboard leg.
-            Typical: 0.4–0.6 depending on coil shape and support structure.
+            Typical: 0.4-0.6 depending on coil shape and support structure.
         n: Geometric factor for gamma (steel area fraction) [dimensionless]
+        grading: bool, optional
+            If True, use radially graded α(R) model. Default: False.
     
     Returns:
         winding_pack_thickness: R_ext - R_sep [m]
@@ -2863,6 +3218,7 @@ def Winding_Pack_D0FUS(R_0, a, b, sigma_max, J_max, B_max, omega, n):
         sigma_z: Axial stress at solution [Pa]
         sigma_theta: Hoop stress at solution [Pa]
         Steel_fraction: 1 - alpha (structural fraction) [-]
+            For graded: area-weighted average ⟨1 - α⟩.
     
     Limitations:
         The axial stress σ_z accounts for the vertical component of the
@@ -2893,6 +3249,12 @@ def Winding_Pack_D0FUS(R_0, a, b, sigma_max, J_max, B_max, omega, n):
         return np.nan, np.nan, np.nan, np.nan, np.nan
         # raise ValueError("Invalid logarithmic term: ensure R_0 + a + b > R_0 - a - b")
 
+    # Graded branch: delegate to radial integration solver
+    if grading:
+        return _solve_graded_wp(R_ext, B_max, J_max, sigma_max,
+                                omega, n, ln_term)
+
+    # Ungraded branch: analytical α, brentq root-finding (original model)
     def alpha(R_sep):
         denom = R_ext**2 - R_sep**2
         if denom <= 0:
@@ -2922,27 +3284,13 @@ def Winding_Pack_D0FUS(R_0, a, b, sigma_max, J_max, B_max, omega, n):
 
     # === Root search ===
     # Search variable: WP thickness d = R_ext - R_sep (not R_sep directly).
-    #
-    # This is critical for the log-spaced strategy: the root can be at
-    # small d (thin HTS WP, d ~ few cm) or large d (thick LTS WP, d ~ 1 m).
-    # Log spacing in d gives resolution at both extremes.
-    # Searching in R_sep would concentrate points near R_sep ~ 0 (solid
-    # cylinder, physically irrelevant) and miss the root near R_sep ~ R_ext.
-    #
-    # The residual is monotone decreasing in d: larger d → thicker WP →
-    # higher stress → positive residual at small d, negative at large d.
-    #
-    # Adaptive bracket search (same strategy as f_CS_D0FUS):
-    #   Pass 1: coarse log-spaced probe (N_PROBE_1 pts, full range)
-    #   Pass 2: if needed, bisect nan/finite boundary + fine probe
-    #   Pass 3: brentq on the tight bracket
-    #
-    # Typical call budget: ~30 evaluations (vs ~1000 for the old linear scan).
+    # Hybrid log+linear probing with exhaustive bracket collection handles
+    # both thin HTS (d ~ cm) and thick LTS (d ~ m) solutions, including
+    # narrow valid islands at high field that pure log spacing can miss.
+    # Typical call budget: ~35 evaluations (Pass 1 success) to ~85 (worst case).
 
     R_sep_solution = None
 
-    N_PROBE_1 = 15
-    N_PROBE_2 = 20
     d_lo = 1e-3                # Minimum WP thickness [m]
     d_hi = R_ext - 1e-3        # Maximum WP thickness (nearly solid cylinder)
 
@@ -2953,26 +3301,15 @@ def Winding_Pack_D0FUS(R_0, a, b, sigma_max, J_max, B_max, omega, n):
         """Tresca residual as a function of WP thickness d = R_ext - R_sep."""
         return tresca_residual(R_ext - d)
 
-    # Pass 1: coarse log-spaced probe
-    nan_to_finite, sign_change = _find_bracket(residual_vs_d, d_lo, d_hi, N_PROBE_1)
+    d_solution = _adaptive_root_search(
+        residual_vs_d, d_lo, d_hi,
+        n_probe_1=20, n_probe_2=25,
+        select='smallest')
 
-    # Pass 2: adaptive refinement if Pass 1 did not find a sign change
-    if sign_change is None:
-        if nan_to_finite is None:
-            return np.nan, np.nan, np.nan, np.nan, np.nan
-        d_min_valid = _bisect_valid_boundary(residual_vs_d, nan_to_finite[0], nan_to_finite[1])
-        if d_min_valid >= d_hi:
-            return np.nan, np.nan, np.nan, np.nan, np.nan
-        _, sign_change = _find_bracket(residual_vs_d, d_min_valid, d_hi, N_PROBE_2)
-        if sign_change is None:
-            return np.nan, np.nan, np.nan, np.nan, np.nan
-
-    # Pass 3: brentq on tight bracket
-    try:
-        d_solution = brentq(residual_vs_d, sign_change[0], sign_change[1])
-        R_sep_solution = R_ext - d_solution
-    except ValueError:
+    if np.isnan(d_solution):
         return np.nan, np.nan, np.nan, np.nan, np.nan
+
+    R_sep_solution = R_ext - d_solution
 
     # === Final stress calculation ===
     a_val = alpha(R_sep_solution)
@@ -3055,7 +3392,7 @@ def Nose_D0FUS(R_ext_Nose, sigma_max, omega, B_max, R_0, a, b,
     return Ri
 
 def f_TF_D0FUS(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n,
-               c_BP, coef_inboard_tension, F_CClamp):
+               c_BP, coef_inboard_tension, F_CClamp, TF_grading=False):
     
     """
     Calculate the thickness of the TF coil using a 2 layer thick cylinder model 
@@ -3064,14 +3401,24 @@ def f_TF_D0FUS(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n,
     a : Minor radius (m)
     b : 1rst Wall + Breeding Blanket + Neutron Shield + Gaps (m)
     R0 : Major radius (m)
-    B0 : Central magnetic field (m)
-    σ_TF : Yield strength of the TF steel (MPa)
-    μ0 : Magnetic permeability of free space
+    σ_TF : Yield strength of the TF steel (Pa)
     J_max_TF : Maximum current density of the chosen Supra + Cu + He (A/m²)
     B_max_TF : Maximum magnetic field (T)
+    Choice_Buck_Wedg : Mechanical configuration ('Bucking', 'Wedging', 'Plug')
+    omega : Fraction of vertical tension on inboard leg [-]
+    n : Conductor geometry factor for γ(α, n) [-]
+    c_BP : Backplate thickness (m)
+    coef_inboard_tension : Inboard tension correction [-]
+    F_CClamp : Clamping force [N]
+    TF_grading : bool, optional
+        If True, use radially graded α(R) in the WP. Default: False.
 
     Returns:
-    c : TF width
+    c : TF total inboard radial thickness [m]
+    c_WP : Winding pack thickness [m]
+    c_Nose : Nose thickness [m]
+    σ_z, σ_theta, σ_r : Stress components [Pa]
+    Steel_fraction : Average structural fraction [-]
     
     """
     
@@ -3079,7 +3426,7 @@ def f_TF_D0FUS(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n,
     
     if Choice_Buck_Wedg == "Wedging":
         
-        c_WP, σ_r, σ_z, σ_theta, Steel_fraction  = Winding_Pack_D0FUS( R0, a, b, σ_TF, J_max_TF, B_max_TF, omega, n)
+        c_WP, σ_r, σ_z, σ_theta, Steel_fraction  = Winding_Pack_D0FUS( R0, a, b, σ_TF, J_max_TF, B_max_TF, omega, n, grading=TF_grading)
         
         # Vérification que c_WP est valide
         if c_WP is None or np.isnan(c_WP) or c_WP < 0:
@@ -3107,7 +3454,7 @@ def f_TF_D0FUS(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n,
     
     elif Choice_Buck_Wedg == "Bucking" or Choice_Buck_Wedg == "Plug":
         
-        c_WP, σ_r, σ_z, σ_theta, Steel_fraction = Winding_Pack_D0FUS(R0, a, b, σ_TF, J_max_TF, B_max_TF, omega, n)
+        c_WP, σ_r, σ_z, σ_theta, Steel_fraction = Winding_Pack_D0FUS(R0, a, b, σ_TF, J_max_TF, B_max_TF, omega, n, grading=TF_grading)
         
         c = c_WP
         c_Nose = 0
@@ -3132,10 +3479,22 @@ if __name__ == "__main__":
 #%% TF plot
     
 if __name__ == "__main__":
-    # TF winding-pack thickness vs B_max — Academic vs D0FUS, EU-DEMO geometry
+    # TF winding-pack thickness vs B_max — Academic vs D0FUS
+    # No explicit parameters: uses plot_TF_thickness_vs_field defaults
+    # (Giannini 2023: a=2.0, b=2.7, R0=9.0, σ_TF=867 MPa, J=60 MA/m²)
     import D0FUS_BIB.D0FUS_figures as figs
-    figs.plot_TF_thickness_vs_field(
-        a=3.0, b=1.7, R0=9.0, sigma_TF=860e6, J_max_TF=50e6, cfg=cfg)
+    figs.plot_TF_thickness_vs_field(cfg=cfg)
+
+#%% TF Grading
+
+if __name__ == "__main__":
+    print("##################################################### TF Grading ##########################################################")
+    # TF winding-pack grading: thickness, reduction, and α(R) profile
+    # No explicit parameters: uses figures.py defaults
+    import D0FUS_BIB.D0FUS_figures as figs
+    figs.plot_TF_grading_thickness_vs_field(cfg=cfg)
+    figs.plot_TF_grading_reduction(cfg=cfg)
+    figs.plot_TF_grading_alpha_profile(cfg=cfg)
 
 #%% Print
         
@@ -3151,7 +3510,7 @@ if __name__ == "__main__":
 if __name__ == "__main__":
     # Plasma resistivity: Wesson / Spitzer / Sauter / Redl — ITER-like parameters
     import D0FUS_BIB.D0FUS_figures as figs
-    figs.plot_resistivity_models(ne=1e20, Z_eff=1.7, R0=6.2, a=2.0)
+    figs.plot_resistivity_models()
     
 #%% Magnetic flux calculation
 
@@ -3545,18 +3904,112 @@ if __name__ == "__main__":
 # =============================================================================
 
 
-def _CS_geometry_init(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, κ,
-                      Choice_Buck_Wedg, Gap):
+def f_return_flux_correction(R_e, H_CS, R0, R_i=None):
     """
-    Common geometry initialization for CS models (ACAD and D0FUS).
+    Finite-solenoid return flux correction factor f_corr > 1.
 
-    Computes the CS outer radius RCS_ext (depends on mechanical configuration),
-    the total flux requirement ΨCS, and the CS height H_CS.
+    A finite-length solenoid has a return field B_z < 0 outside its
+    winding (div B = 0 requires the field lines to close through the
+    exterior).  This reduces the net poloidal flux linking the plasma
+    at R0 compared to the total flux through the CS cross-section.
+    The CS must therefore produce more flux than the plasma requires:
+
+        Ψ_CS_solenoid = f_corr × Ψ_plasma,    f_corr = Ψ(R_e) / Ψ(R0).
+
+    The correction depends only on geometry (R_e/R0, H/R_e); it is
+    independent of the current density.  It is evaluated via
+    Gauss-Legendre quadrature (20 × 40 nodes) over the solenoid
+    cross-section using the exact elliptic integral kernel for A_phi
+    of a current loop (Callaghan & Maslen 1960).
+
+    Cross-checked against BOBOZ on ITER,
+    EU-DEMO, JT-60SA and EAST: agreement < 1% on all four machines.
+
+    Parameters
+    ----------
+    R_e : float
+        CS outer radius [m].
+    H_CS : float
+        CS total height [m].
+    R0 : float
+        Plasma major radius [m].
+    R_i : float, optional
+        CS inner radius [m].  If None, estimated as 0.3 × R_e.
+
+    Returns
+    -------
+    f_corr : float
+        Correction factor Ψ(R_e) / Ψ(R0), >= 1.  Typical values
+        1.3 (ITER, JT-60SA) to 1.5 (EAST).
+
+    References
+    ----------
+    Derby N. & Olbert S., Am. J. Phys. 78(3), 229-235 (2010).
+    Callaghan E.E. & Maslen S.H., NASA Technical Note D-465 (1960).
+    """
+    if R_i is None:
+        R_i = max(0.3 * R_e, 0.01)
+    if R_e <= R_i or H_CS <= 0 or R0 <= R_e:
+        return 1.0
+
+    h = H_CS / 2.0
+
+    # Gauss-Legendre quadrature nodes and weights
+    n_r, n_z = 20, 40
+    r_pts, r_wts = np.polynomial.legendre.leggauss(n_r)
+    z_pts, z_wts = np.polynomial.legendre.leggauss(n_z)
+
+    # Map to integration domains [R_i, R_e] and [-h, +h]
+    r_mid, r_half = (R_e + R_i) / 2.0, (R_e - R_i) / 2.0
+    a_vals = r_mid + r_half * r_pts      # source radii
+    z_vals = h * z_pts                    # source heights
+
+    def _Aphi_ratio(R_obs):
+        """Weighted A_phi integral at R_obs (arbitrary normalisation)."""
+        total = 0.0
+        for ir in range(n_r):
+            a = a_vals[ir]
+            for iz in range(n_z):
+                z = z_vals[iz]
+                denom = (a + R_obs)**2 + z**2
+                k2 = 4.0 * a * R_obs / denom
+                if k2 >= 1.0:
+                    k2 = 1.0 - 1e-14
+                if k2 < 1e-15:
+                    continue
+                K_val = ellipk(k2)
+                E_val = ellipe(k2)
+                sk2 = np.sqrt(k2)
+                kernel = ((2.0 - k2) * K_val - 2.0 * E_val) / (2.0 * sk2)
+                total += r_wts[ir] * z_wts[iz] * np.sqrt(a / R_obs) * kernel
+        # Jacobian factors from quadrature domain mapping
+        return total * r_half * h
+
+    # Ψ(R) = 2πR × A_phi(R); the ratio cancels prefactors
+    Psi_Re = R_e * _Aphi_ratio(R_e)
+    Psi_R0 = R0  * _Aphi_ratio(R0)
+
+    if abs(Psi_R0) < 1e-20:
+        return 1.0
+    return max(Psi_Re / Psi_R0, 1.0)
+
+
+def _CS_geometry_init(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, κ,
+                      Choice_Buck_Wedg, Gap, config=None):
+    """
+    Common geometry initialization for CS models (ACAD, D0FUS, CIRCE).
+
+    Computes the CS outer radius, total flux requirement, and height.
+
+    When config.cs_return_flux_correction is True, the plasma flux
+    demand (ΨPI + ΨRampUp + Ψplateau - ΨPF, evaluated at R0) is
+    multiplied by f_corr > 1 to account for the return field of the
+    finite-length CS solenoid.  See f_return_flux_correction() for details.
 
     Parameters
     ----------
     ΨPI, ΨRampUp, Ψplateau, ΨPF : float
-        Flux components [Wb].
+        Flux components [Wb] (plasma convention, at R0).
     a, b, c, R0 : float
         Radial build geometry [m].
     κ : float
@@ -3565,15 +4018,23 @@ def _CS_geometry_init(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, κ,
         Mechanical configuration: 'Bucking', 'Wedging', or 'Plug'.
     Gap : float
         Radial gap between TF and CS [m], used only for 'Wedging'.
+    config : GlobalConfig or None
+        If provided, cs_return_flux_correction and H_CS override are read from it.
 
     Returns
     -------
     RCS_ext : float or None
         CS outer radius [m].  None if invalid geometry.
     ΨCS : float
-        Required CS flux swing [Wb].
+        Required CS flux swing [Wb] (solenoid convention, at R_e).
     H_CS : float
         CS total height [m].
+
+    References
+    ----------
+    Derby N. & Olbert S., Am. J. Phys. 78(3), 229-235 (2010).
+    Callaghan E.E. & Maslen S.H., NASA Technical Note D-465 (1960).
+    Auclair T. (2025), BOBOZ validation note, CEA-IRFM.
     """
     if Choice_Buck_Wedg in ('Bucking', 'Plug'):
         RCS_ext = R0 - a - b - c
@@ -3586,7 +4047,22 @@ def _CS_geometry_init(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, κ,
         return None, np.nan, np.nan
 
     ΨCS = ΨPI + ΨRampUp + Ψplateau - ΨPF
-    H_CS = 2 * (κ * a + b + 1)
+
+    # CS height: use override if provided, otherwise default formula
+    H_CS_override = getattr(config, 'H_CS', None) if config is not None else None
+    if H_CS_override is not None and H_CS_override > 0:
+        H_CS = H_CS_override
+    else:
+        H_CS = 2 * (κ * a + b + 1)
+
+    # Finite-solenoid return flux correction (Derby & Olbert 2010, AJP 78(3);
+    # Callaghan & Maslen 1960, NASA TN D-465).
+    # Enabled by default. Benchmark scripts may disable via dynamic attribute
+    # cfg.cs_return_flux_correction = False when Ψ is already CS flux.
+    # Validated against BOBOZ (Auclair 2025) on ITER, EU-DEMO, JT-60SA, EAST (<1%).
+    if config is not None and getattr(config, 'cs_return_flux_correction', True):
+        f_corr = f_return_flux_correction(RCS_ext, H_CS, R0)
+        ΨCS *= f_corr
 
     return RCS_ext, ΨCS, H_CS
 
@@ -3594,9 +4070,16 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
               Supra_choice_CS, Jc_manual, T_Helium, Choice_Buck_Wedg, κ, N_sub_CS, tau_h,
               config: GlobalConfig):
     """
-    Calculate the Central Solenoid (CS) thickness using thin-layer approximation 
-    and a 2-cylinder model (superconductor + steel structure).
+    Calculate the Central Solenoid (CS) thickness using the thin-solenoid 
+    approximation and a 2-layer model (superconductor + steel structure).
     
+    Flux inversion uses the exact thick-solenoid integral:
+        Ψ = (2/3) π μ₀ J (R_e³ − R_i³)
+    Peak field from Ampere's law (exact for uniform-J solenoid):
+        B_CS = μ₀ J_wost (R_ext − R_int)
+    
+    Iteration on J_wost(B_CS, E_mag) since B_CS and E_mag depend on R_int.
+
     Parameters
     ----------
     ΨPI : float
@@ -3646,7 +4129,7 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     config : GlobalConfig
         Global design configuration. Used to access: Gap, I_cond, V_max,
         f_He_pipe, f_void, f_In, T_hotspot, RRR, Marge_T_He, Marge_T_Nb3Sn,
-        Marge_T_NbTi, Marge_T_REBCO, Eps, Tet, n_CS.
+        Marge_T_NbTi, Marge_T_REBCO, Eps, Tet, n_shape_CS.
     """
     
     # ------------------------------------------------------------------
@@ -3658,7 +4141,7 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     T_hotspot, RRR       = _c['T_hotspot'], _c['RRR']
     Marge_T_He, Marge_T_Nb3Sn = _c['Marge_T_He'], _c['Marge_T_Nb3Sn']
     Marge_T_NbTi, Marge_T_REBCO = _c['Marge_T_NbTi'], _c['Marge_T_REBCO']
-    Eps, Tet, n_CS       = _c['Eps'], _c['Tet'], _c['n_CS']
+    Eps, Tet, n_shape_CS       = _c['Eps'], _c['Tet'], _c['n_shape_CS']
     fatigue_CS     = _c['fatigue_CS']
     Operation_mode = _c['Operation_mode']
     debug = False
@@ -3666,7 +4149,8 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
 
     # Common geometry (shared with f_CS_D0FUS via _CS_geometry_init)
     RCS_ext, ΨCS, H_CS = _CS_geometry_init(
-        ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, κ, Choice_Buck_Wedg, Gap)
+        ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, κ, Choice_Buck_Wedg, Gap,
+        config=config)
     if RCS_ext is None:
         return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
@@ -3674,25 +4158,30 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     
     # ------------------------------------------------------------------
     # STEP 1: Determine B_CS, J_max_CS, and d_SU with self-consistent
-    #         iteration on RCS_int (fixes the R_int = 0.5*R_ext assumption)
+    #         iteration on RCS_int.
+    #
+    #   Flux integral (exact for uniform-J thick solenoid):
+    #     ΨCS = (2/3)π μ₀ J (R_e³ − R_i³)
+    #   Inversion:
+    #     R_i³ = R_e³ − 3 ΨCS / (2π μ₀ J)
+    #
+    #   Peak field (Ampere's law, exact):
+    #     B_CS = μ₀ J (R_e − R_i) = μ₀ J d
+    #
+    #   The iteration is on J_wost(B_CS, E_mag) since both B_CS and E_mag
+    #   depend on R_int, which depends on J_wost.
     # ------------------------------------------------------------------
     
-    # Thin cylinder approximation for B_CS used throughout the iteration.
-    # Known limitation: B_CS_thin = Ψ/(πRe²) can overestimate the true
-    # thick-solenoid B_CS by up to ~50% for wide WP (d ~ Re).  Since J_c
-    # decreases with B, the J_wost evaluated at B_CS_thin is lower than
-    # at the true B_CS → the converged d_SU is larger than strictly needed.
-    # This makes the ACAD model conservative (overestimates WP thickness).
-    # The D0FUS model avoids this by evaluating B_CS from the geometry at
-    # each solver evaluation.
-    B_CS_thin = ΨCS / (np.pi * RCS_ext**2)
+    # Conservative B estimate for Jc evaluation (overestimates B by up to
+    # ~50% for wide WP → J_wost conservative → d_SU is an upper bound).
+    # The true B_CS = μ₀Jd is computed after convergence.
+    B_CS_est = ΨCS / (np.pi * RCS_ext**2)
     
     if debug:
-        print(f"[STEP 1] Thin cylinder B_CS estimate: {B_CS_thin:.2f} T")
+        print(f"[STEP 1] Conservative B_CS estimate for Jc: {B_CS_est:.2f} T")
     
     # --- Analytical initial estimate for RCS_int ---
-    # Thin-shell: d ≈ Ψ / (2π R_ext B_CS)  →  R_int ≈ R_ext - d
-    d_est = ΨCS / (2 * np.pi * RCS_ext * B_CS_thin)
+    d_est = ΨCS / (2 * np.pi * RCS_ext * B_CS_est)
     RCS_int = max(0.1 * RCS_ext, RCS_ext - d_est)
     
     # --- Iterative convergence loop ---
@@ -3701,16 +4190,16 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     
     for i_iter in range(max_iter_CS):
         # Magnetic energy with current R_int estimate
-        E_mag_CS = calculate_E_mag_CS(B_CS_thin, RCS_int, RCS_ext, H_CS)
+        E_mag_CS = calculate_E_mag_CS(B_CS_est, RCS_int, RCS_ext, H_CS)
         
         # Cable current density (cached → cheap on repeated calls)
         result_J = calculate_cable_current_density(
-            sc_type=Supra_choice_CS, B_peak=B_CS_thin, T_op=T_Helium,
+            sc_type=Supra_choice_CS, B_peak=B_CS_est, T_op=T_Helium,
             E_mag=E_mag_CS, I_cond=I_cond, V_max=V_max, N_sub=N_sub_CS,
-            tau_h=tau_h, f_He_pipe=f_He_pipe, f_void=f_void, f_In=f_In, T_hotspot=T_hotspot,
-            RRR=RRR, Marge_T_He=Marge_T_He, Marge_T_Nb3Sn=Marge_T_Nb3Sn,
-            Marge_T_NbTi=Marge_T_NbTi, Marge_T_REBCO=Marge_T_REBCO,
-            Eps=Eps, Tet=Tet,
+            tau_h=tau_h, f_He_pipe=f_He_pipe, f_void=f_void, f_In=f_In,
+            T_hotspot=T_hotspot, RRR=RRR, Marge_T_He=Marge_T_He,
+            Marge_T_Nb3Sn=Marge_T_Nb3Sn, Marge_T_NbTi=Marge_T_NbTi,
+            Marge_T_REBCO=Marge_T_REBCO, Eps=Eps, Tet=Tet,
             J_wost_Manual=Jc_manual if Supra_choice_CS == 'Manual' else None)
         J_max_CS = result_J['J_wost']
         
@@ -3755,8 +4244,8 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
             print(f"[STEP 1] Invalid d_SU: {d_SU:.4f} m")
         return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
     
-    # Recompute B_CS with thick solenoid formula (consistent with converged geometry)
-    B_CS = 3 * ΨCS / (2 * np.pi * (RCS_ext**2 + RCS_ext * RCS_sep + RCS_sep**2))
+    # Peak field from Ampere's law: B = μ₀ J d  (exact for uniform-J solenoid)
+    B_CS = μ0 * J_max_CS * d_SU
     
     if B_CS > B_max_CS:
         if debug:
@@ -3917,7 +4406,7 @@ def f_sigma_z_CS_axial(J_smear, R_i, R_e, h):
 
     To convert smeared stress to steel stress:
         sigma_z_steel = sigma_z_smear / gamma
-    where gamma = gamma_func(alpha, n_CS), n_CS being the conductor shape
+    where gamma = gamma_func(alpha, n_shape_CS), n_shape_CS being the conductor shape
     factor (1 = square jacket, 0 = optimal).
 
     Parameters
@@ -4008,7 +4497,7 @@ def f_CS_D0FUS(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
     config : GlobalConfig
         Global design configuration. Used to access: Gap, I_cond, V_max,
         f_He_pipe, f_void, f_In, T_hotspot, RRR, Marge_T_He, Marge_T_Nb3Sn,
-        Marge_T_NbTi, Marge_T_REBCO, Eps, Tet, n_CS.
+        Marge_T_NbTi, Marge_T_REBCO, Eps, Tet, n_shape_CS.
     """
     
     # ------------------------------------------------------------------
@@ -4020,7 +4509,7 @@ def f_CS_D0FUS(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
     T_hotspot, RRR       = _c['T_hotspot'], _c['RRR']
     Marge_T_He, Marge_T_Nb3Sn = _c['Marge_T_He'], _c['Marge_T_Nb3Sn']
     Marge_T_NbTi, Marge_T_REBCO = _c['Marge_T_NbTi'], _c['Marge_T_REBCO']
-    Eps, Tet, n_CS       = _c['Eps'], _c['Tet'], _c['n_CS']
+    Eps, Tet, n_shape_CS       = _c['Eps'], _c['Tet'], _c['n_shape_CS']
     fatigue_CS     = _c['fatigue_CS']
     Operation_mode = _c['Operation_mode']
     debug = False
@@ -4028,7 +4517,8 @@ def f_CS_D0FUS(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
 
     # Common geometry (shared with f_CS_ACAD via _CS_geometry_init)
     RCS_ext, ΨCS, H_CS = _CS_geometry_init(
-        ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, κ, Choice_Buck_Wedg, Gap)
+        ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, κ, Choice_Buck_Wedg, Gap,
+        config=config)
     if RCS_ext is None:
         return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
@@ -4072,21 +4562,15 @@ def f_CS_D0FUS(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
         if abs(denom_stress) < 1e-30:
             return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
-        gamma_val = gamma_func(alpha, n_CS)
+        gamma_val = gamma_func(alpha, n_shape_CS)
         if np.isnan(gamma_val):
             return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
         # Axial smeared stress at the midplane (compressive, < 0).
-        # Controlled by config.cs_axial_stress (default False = disabled).
-        # When disabled, sigma_z = 0 in all Tresca evaluations.
-        _cs_axial_on = getattr(config, 'cs_axial_stress', False)
-        if _cs_axial_on:
-            J_smear   = J_max_CS * alpha
-            σ_z_smear = f_sigma_z_CS_axial(J_smear, RCS_int, RCS_ext, H_CS / 2.0)
-            σ_z_steel = σ_z_smear / gamma_val                       # Peak steel axial stress [Pa]
-        else:
-            σ_z_smear = 0.0
-            σ_z_steel = 0.0
+        # Always enabled — fringe-field axial stress is part of the physical model.
+        J_smear   = J_max_CS * alpha
+        σ_z_smear = f_sigma_z_CS_axial(J_smear, RCS_int, RCS_ext, H_CS / 2.0)
+        σ_z_steel = σ_z_smear / gamma_val                       # Peak steel axial stress [Pa]
 
         def tresca(s_t, s_r, s_z):
             """Tresca equivalent stress: max principal stress difference [Pa]."""
@@ -4171,131 +4655,35 @@ def f_CS_D0FUS(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
         return Sigma_CS - σ_eff
     
     # ------------------------------------------------------------------
-    # Root-finding — monotone-aware adaptive solver
+    # Root-finding — adaptive multi-bracket solver
     # ------------------------------------------------------------------
-    # f_sigma_diff(d) is strictly monotone decreasing on its valid domain
-    # [d_min_valid, RCS_ext - Tol_CS], so at most one root exists.
-    #
-    # Physical basis: increasing d → lower B_CS → higher J_max (SC at
-    # lower field) → lower alpha → lower Sigma_CS (see analysis notes).
-    #
-    # Two-pass adaptive strategy:
-    #
-    #   Pass 1 — coarse log-spaced probe (N_PROBE_1 = 15 pts, full range):
-    #     Detects the nan→finite transition and/or a sign-change bracket.
-    #     Log spacing gives simultaneous resolution near d→0 (compact HTS,
-    #     d* ~ mm) and near d→RCS_ext (large LTS, d* ~ metres).
-    #
-    #   Pass 2 — adaptive refinement (triggered only if Pass 1 fails):
-    #     a. Binary search on nan/finite boundary → pins d_min_valid (~20).
-    #     b. Second log-spaced probe on [d_min_valid, RCS_ext - Tol_CS]
-    #        with N_PROBE_2 = 20 pts → catches extreme cases where the root
-    #        sits in a very narrow window just above d_min_valid (ultra-thin
-    #        HTS CS) or just below d_hi (very large LTS CS, far from a
-    #        solid cylinder). Direct bracket on the whole range gives brentq
-    #        too wide an interval in these cases; the finer probe narrows it.
-    #
-    #   Pass 3 — brentq on the bracketed interval (~15 calls).
-    #
-    # Worst-case call budget: 15 + 20 + 20 + 15 = ~70 evaluations.
-    # Typical (Pass 1 succeeds): ~30 evaluations.
+    # Uses _adaptive_root_search: hybrid log+linear probing with exhaustive
+    # bracket collection.  Handles non-monotone residuals (CIRCE) and narrow
+    # valid islands at high field that the previous single-bracket approach
+    # could miss.  Typical call budget: ~35 (Pass 1 success) to ~85 (worst).
     # ------------------------------------------------------------------
 
-    N_PROBE_1 = 15   # Coarse probe: full domain [Tol_CS, RCS_ext - Tol_CS]
-    N_PROBE_2 = 20   # Fine probe:   adaptive sub-domain [d_min_valid, d_hi]
+    d_lo = Tol_CS + 1e-6
+    d_hi = RCS_ext - Tol_CS
 
-    def find_d_solution():
+    if d_lo >= d_hi:
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
-        d_lo = Tol_CS + 1e-6   # Strict lower bound (never a valid solenoid at d→0)
-        d_hi = RCS_ext - Tol_CS
+    d_sol = _adaptive_root_search(
+        f_sigma_diff, d_lo, d_hi,
+        n_probe_1=20, n_probe_2=25,
+        select='smallest')
 
-        if d_lo >= d_hi:
-            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+    if np.isnan(d_sol):
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
-        # ── Pass 1: coarse log-spaced probe ──────────────────────────────
-        nan_to_finite, sign_change = _find_bracket(f_sigma_diff, d_lo, d_hi, N_PROBE_1)
+    # Recover full output at solution
+    Sigma_CS, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = d_to_solve(d_sol)
 
-        if debug:
-            print(f'[SEARCH P1] d in [{d_lo:.5f}, {d_hi:.4f}] m, '
-                  f'{N_PROBE_1} pts')
-            print(f'[SEARCH P1] nan→finite: {nan_to_finite}, '
-                  f'sign-change: {sign_change}')
+    if not np.isfinite(Sigma_CS):
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
-        # ── Pass 2: adaptive refinement (only if Pass 1 insufficient) ────
-        if sign_change is None:
-
-            if nan_to_finite is None:
-                # f_sigma_diff is nan everywhere: domain is entirely infeasible
-                # (B_CS > B_max_CS for all d, or no SC operating point).
-                if debug:
-                    print("[SEARCH P2] No finite region found — design infeasible.")
-                return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
-
-            # Pin d_min_valid via bisection on the nan/finite boundary.
-            d_min_valid = _bisect_valid_boundary(
-                f_sigma_diff, nan_to_finite[0], nan_to_finite[1])
-
-            if debug:
-                print(f'[SEARCH P2] d_min_valid = {d_min_valid:.6f} m  '
-                      f'(bisection from {nan_to_finite})')
-
-            # Finer log-spaced probe on the valid sub-domain.
-            # This handles the two extreme failure modes of Pass 1:
-            #   (a) Root is in a very narrow window just above d_min_valid
-            #       (ultra-thin HTS CS): log spacing from d_min_valid is
-            #       much denser than from d_lo = Tol_CS.
-            #   (b) Root is very close to d_hi (large LTS CS, nearly a
-            #       solid cylinder is excluded geometrically): the valid
-            #       domain's upper extent is well-sampled by log spacing
-            #       anchored at d_min_valid.
-            d_lo2 = d_min_valid
-            d_hi2 = d_hi
-            if d_lo2 >= d_hi2:
-                if debug:
-                    print("[SEARCH P2] d_min_valid >= d_hi: design infeasible.")
-                return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
-
-            _, sign_change = _find_bracket(f_sigma_diff, d_lo2, d_hi2, N_PROBE_2)
-
-            if debug:
-                print(f'[SEARCH P2] fine probe [{d_lo2:.6f}, {d_hi2:.4f}] m, '
-                      f'{N_PROBE_2} pts → sign-change: {sign_change}')
-
-            if sign_change is None:
-                # No sign change after fine probe: stress constraint cannot
-                # be satisfied within the geometrically valid domain.
-                if debug:
-                    print("[SEARCH P2] No root found — stress limit "
-                          "not reachable in valid domain.")
-                return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
-
-        # ── Pass 3: brentq on the tight bracket ──────────────────────────
-        try:
-            d_sol = brentq(f_sigma_diff,
-                           sign_change[0], sign_change[1],
-                           xtol=1e-4, full_output=False)
-        except ValueError:
-            if debug:
-                print(f"[SEARCH P3] brentq failed on bracket {sign_change}.")
-            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
-
-        # ── Recover full output at solution ───────────────────────────────
-        Sigma_CS, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = \
-            d_to_solve(d_sol)
-
-        if not np.isfinite(Sigma_CS):
-            if debug:
-                print(f"[SEARCH P3] d_to_solve nan at d_sol={d_sol:.5f} m.")
-            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
-
-        if debug:
-            print(f"[SEARCH P3] Solution: d={d_sol:.5f} m, "
-                  f"B_CS={B_CS:.2f} T, Sigma_CS={Sigma_CS/1e6:.1f} MPa")
-
-        return d_sol, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS
-
-    # Execute search
-    d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = find_d_solution()
+    d = d_sol
 
     return d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS
 
@@ -4358,7 +4746,7 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
     config : GlobalConfig
         Global design configuration. Used to access: Gap, I_cond, V_max,
         f_He_pipe, f_void, f_In, T_hotspot, RRR, Marge_T_He, Marge_T_Nb3Sn,
-        Marge_T_NbTi, Marge_T_REBCO, Eps, Tet, n_CS.
+        Marge_T_NbTi, Marge_T_REBCO, Eps, Tet, n_shape_CS.
     """
     
     # ------------------------------------------------------------------
@@ -4370,7 +4758,7 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
     T_hotspot, RRR       = _c['T_hotspot'], _c['RRR']
     Marge_T_He, Marge_T_Nb3Sn = _c['Marge_T_He'], _c['Marge_T_Nb3Sn']
     Marge_T_NbTi, Marge_T_REBCO = _c['Marge_T_NbTi'], _c['Marge_T_REBCO']
-    Eps, Tet, n_CS       = _c['Eps'], _c['Tet'], _c['n_CS']
+    Eps, Tet, n_shape_CS       = _c['Eps'], _c['Tet'], _c['n_shape_CS']
     fatigue_CS     = _c['fatigue_CS']
     Operation_mode = _c['Operation_mode']
     Young_modul_Steel = config.Young_modul_Steel
@@ -4380,7 +4768,8 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
 
     # Common geometry (shared with f_CS_ACAD, f_CS_D0FUS via _CS_geometry_init)
     RCS_ext, ΨCS, H_CS = _CS_geometry_init(
-        ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, κ, Choice_Buck_Wedg, Gap)
+        ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, κ, Choice_Buck_Wedg, Gap,
+        config=config)
     if RCS_ext is None:
         return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
     
@@ -4426,21 +4815,15 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
         E_arr      = np.array([Young_modul_Steel])
         config_arr = np.array([0])
 
-        gamma_val = gamma_func(alpha, n_CS)
+        gamma_val = gamma_func(alpha, n_shape_CS)
         if np.isnan(gamma_val):
             return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
         # Axial smeared stress at the midplane (compressive, < 0).
-        # Controlled by config.cs_axial_stress (default False = disabled).
-        # When disabled, sigma_z = 0 in all Tresca evaluations.
-        _cs_axial_on = getattr(config, 'cs_axial_stress', False)
-        if _cs_axial_on:
-            J_smear   = J_max_CS * alpha
-            σ_z_smear = f_sigma_z_CS_axial(J_smear, RCS_int, RCS_ext, H_CS / 2.0)
-            σ_z_steel = σ_z_smear / gamma_val                       # Peak steel axial stress [Pa]
-        else:
-            σ_z_smear = 0.0
-            σ_z_steel = 0.0
+        # Always enabled — fringe-field axial stress is part of the physical model.
+        J_smear   = J_max_CS * alpha
+        σ_z_smear = f_sigma_z_CS_axial(J_smear, RCS_int, RCS_ext, H_CS / 2.0)
+        σ_z_steel = σ_z_smear / gamma_val                       # Peak steel axial stress [Pa]
 
         scale_tr = 1.0 / (1.0 - alpha)   # Hoop/radial smeared → steel (volume average)
         scale_z  = 1.0 / gamma_val        # Axial smeared → steel (minimum ligament)
@@ -4492,7 +4875,16 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
             tresca_strong = tresca_radial(SigT_S, SigR_S, 0.0, scale_tr, scale_z)
 
             Sigma_CS = max(tresca_light, tresca_strong)
-            σ_theta  = float(np.max(np.abs(SigT_L))) * scale_tr
+            # Inner-radius signed hoop stress: preserves sign so that the
+            # fatigue knockdown in f_sigma_diff fires only when the light
+            # case genuinely produces tensile hoop (σ_θ > 0).  The previous
+            # np.max(np.abs(...)) always returned a positive value, making
+            # _light_governs erroneously True even when P_TF dominates and
+            # the hoop is compressive — this inflated the required thickness
+            # by applying the fatigue penalty to the strong (compressive)
+            # case.  Fixed: use SigT_L[0] (inner radius, where σ_r = 0 and
+            # σ_θ is maximum in magnitude) with its physical sign.
+            σ_theta  = float(SigT_L[0]) * scale_tr
             σ_r      = float(np.max(np.abs(SigR_L))) * scale_tr
             σ_z      = σ_z_steel
 
@@ -4503,7 +4895,10 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
             SigR_W, SigT_W, _, _, _ = F_CIRCE0D(
                 disR, R_arr, J_w, B_w, 0, 0, E_arr, nu_Steel, config_arr)
             Sigma_CS = tresca_radial(SigT_W, SigR_W, σ_z_smear, scale_tr, scale_z)
-            σ_theta  = float(np.max(np.abs(SigT_W))) * scale_tr
+            # Inner-radius signed hoop stress (consistent with Bucking fix).
+            # In Wedging σ_θ is always tensile (no TF back-pressure), so
+            # this change has no functional impact — only sign consistency.
+            σ_theta  = float(SigT_W[0]) * scale_tr
             σ_r      = float(np.max(np.abs(SigR_W))) * scale_tr
             σ_z      = σ_z_steel
 
@@ -4524,14 +4919,15 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
                 tresca_strong = tresca_radial(SigT_S, SigR_S, 0.0, scale_tr, scale_z)
 
                 Sigma_CS = max(tresca_light, tresca_strong)
-                σ_theta  = float(np.max(np.abs(SigT_L))) * scale_tr
+                # Inner-radius signed hoop stress (same fix as Bucking).
+                σ_theta  = float(SigT_L[0]) * scale_tr
                 σ_r      = float(np.max(np.abs(SigR_L))) * scale_tr
                 σ_z      = σ_z_steel
 
             elif abs(P_CS - P_TF) <= abs(P_TF):
                 # Plug-dominated: J → 0, dominant stress is radial, σ_z = 0.
                 # Hoop/radial scaled by 1/gamma_val (TF plug geometry).
-                gamma_val_plug = gamma_func(alpha, n_CS)
+                gamma_val_plug = gamma_func(alpha, n_shape_CS)
                 J_plug = np.array([0.0])
                 B_plug = np.array([0.0])
                 SigR_P, SigT_P, _, _, _ = F_CIRCE0D(
@@ -4578,86 +4974,36 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
         return Sigma_CS - σ_eff
     
     # ------------------------------------------------------------------
-    # Root-finding — monotone-aware adaptive solver (see f_CS_D0FUS for
-    # full rationale and algorithm description).
+    # Root-finding — adaptive multi-bracket solver
+    # ------------------------------------------------------------------
+    # Uses _adaptive_root_search: hybrid log+linear probing with exhaustive
+    # bracket collection.  Critical for CIRCE where the Tresca maximum can
+    # jump between bore and outer radius, making the residual potentially
+    # non-monotone and creating multiple roots.  The solver returns the
+    # smallest valid d (thinnest feasible CS winding pack).
     # ------------------------------------------------------------------
 
-    N_PROBE_1 = 15   # Coarse probe: full domain [Tol_CS, RCS_ext - Tol_CS]
-    N_PROBE_2 = 20   # Fine probe:   adaptive sub-domain [d_min_valid, d_hi]
+    d_lo = Tol_CS + 1e-6
+    d_hi = RCS_ext - Tol_CS
 
-    def find_d_solution():
+    if d_lo >= d_hi:
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
-        d_lo = Tol_CS + 1e-6
-        d_hi = RCS_ext - Tol_CS
+    d_sol = _adaptive_root_search(
+        f_sigma_diff, d_lo, d_hi,
+        n_probe_1=20, n_probe_2=25,
+        select='smallest')
 
-        if d_lo >= d_hi:
-            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+    if np.isnan(d_sol):
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
-        # Pass 1: coarse log-spaced probe over full domain.
-        nan_to_finite, sign_change = _find_bracket(f_sigma_diff, d_lo, d_hi, N_PROBE_1)
+    # Recover full output at solution
+    Sigma_CS, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = d_to_solve(d_sol)
 
-        if debug:
-            print(f'[SEARCH P1] d in [{d_lo:.5f}, {d_hi:.4f}] m, '
-                  f'{N_PROBE_1} pts')
-            print(f'[SEARCH P1] nan→finite: {nan_to_finite}, '
-                  f'sign-change: {sign_change}')
+    if not np.isfinite(Sigma_CS):
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
-        # Pass 2: adaptive refinement if Pass 1 did not bracket root.
-        if sign_change is None:
-
-            if nan_to_finite is None:
-                if debug:
-                    print("[SEARCH P2] No finite region — design infeasible.")
-                return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
-
-            # Pin d_min_valid and re-probe on [d_min_valid, d_hi].
-            d_min_valid = _bisect_valid_boundary(
-                f_sigma_diff, nan_to_finite[0], nan_to_finite[1])
-
-            if debug:
-                print(f'[SEARCH P2] d_min_valid = {d_min_valid:.6f} m')
-
-            d_lo2, d_hi2 = d_min_valid, d_hi
-            if d_lo2 >= d_hi2:
-                return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
-
-            _, sign_change = _find_bracket(f_sigma_diff, d_lo2, d_hi2, N_PROBE_2)
-
-            if debug:
-                print(f'[SEARCH P2] fine probe → sign-change: {sign_change}')
-
-            if sign_change is None:
-                if debug:
-                    print("[SEARCH P2] No root — stress limit not reachable.")
-                return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
-
-        # Pass 3: brentq on the tight bracket.
-        try:
-            d_sol = brentq(f_sigma_diff,
-                           sign_change[0], sign_change[1],
-                           xtol=1e-4, full_output=False)
-        except ValueError:
-            if debug:
-                print(f"[SEARCH P3] brentq failed on bracket {sign_change}.")
-            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
-
-        # Recover full output at solution.
-        Sigma_CS, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = \
-            d_to_solve(d_sol)
-
-        if not np.isfinite(Sigma_CS):
-            if debug:
-                print(f"[SEARCH P3] d_to_solve nan at d_sol={d_sol:.5f} m.")
-            return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
-
-        if debug:
-            print(f"[SEARCH P3] Solution: d={d_sol:.5f} m, "
-                  f"B_CS={B_CS:.2f} T, Sigma_CS={Sigma_CS/1e6:.1f} MPa")
-
-        return d_sol, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS
-    
-    # Execute search
-    d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = find_d_solution()
+    d = d_sol
 
     return d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS
 
@@ -4672,10 +5018,10 @@ if __name__ == "__main__":
 
 if __name__ == "__main__":
     # CS winding-pack thickness and B_CS vs volt-second — Academic/D0FUS/CIRCE
+    # No explicit parameters: uses plot_CS_thickness_vs_flux defaults
+    # (Sarasola 2020: a=3, b=1.2, c=2, R0=9, σ_CS=600 MPa, J=85 MA/m²)
     import D0FUS_BIB.D0FUS_figures as figs
-    figs.plot_CS_thickness_vs_flux(
-        a_cs=3.0, b_cs=1.2, c_cs=2.0, R0_cs=9.0,
-        B_TF=13.0, sigma_CS=300e6, J_wost_CS=30e6, cfg=cfg)
+    figs.plot_CS_thickness_vs_flux(cfg=cfg)
 
 #%% Note:
 # CIRCE TF double cylindre en wedging ? multi cylindre for grading ?

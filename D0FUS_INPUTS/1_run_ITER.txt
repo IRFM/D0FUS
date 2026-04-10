@@ -225,10 +225,7 @@ E_phi_BD  = 0.3                 # Breakdown toroidal E-field [V/m]
                                 # → 0.3 V/m sufficient (EC-assisted pre-ionisation).
 
 t_BD      = 0.5                 # Breakdown duration [s]
-
-C_PF      = 0.95                # PF flux coefficient [-]
-                                # ITER PF system optimised; close to theoretical max.
-                                # [Casper14]: PF coils well within limits at 15 MA.
+f_heat_ramp = 0.2               # 20% du ramp-up assisté par NBI/ECCD (ITER : ~33 MW NBI disponibles)
 
 # ── 6. Structural materials ──────────────────────────────────────────────────
 
