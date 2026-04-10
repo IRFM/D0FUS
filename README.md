@@ -8,6 +8,18 @@
 
 **D0FUS** (Design 0-dimensional for Fusion Systems) is a Python tokamak systems code for fast 0D/1D design-space exploration, covering plasma physics, superconducting magnet engineering, and techno-economic assessment. It is developed at CEA-IRFM.
 
+The codebase weighs about 18 000 lines of pure Python distributed across five functional modules and a visualisation library, totalling 235 documented functions.
+
+---
+
+## Highlights
+
+- **Pure Python**, NumPy/SciPy only. No compilation, no Makefile, runs in Spyder, Jupyter or as a batch job.
+- **Two fidelity levels** (Academic and Refined) selectable through a single `GlobalConfig` field, sharing the same interface and solver.
+- **Three execution modes** (RUN, SCAN, OPTIMIZATION) auto-detected from the input file syntax.
+- **Library mode**: every physical and engineering function is callable in isolation, outside the solver loop.
+- **Distinctive engineering features**: radially graded TF coils, REBCO Jc scaling laws, three TF mechanical configurations (bucking, wedging, plug).
+
 ---
 
 ## Installation
@@ -118,7 +130,7 @@ D0FUS/
 │   ├── D0FUS_radial_build_functions.py     # Engineering (TF/CS/CICC/quench)
 │   ├── D0FUS_cost_functions.py             # Techno-economic models (Sheffield, Whyte)
 │   ├── D0FUS_cost_data.py                  # Reference cost data and currency conversions
-│   └── D0FUS_figures.py                    # Full figure catalogue (27+ figures)
+│   └── D0FUS_figures.py                    # Full figure catalogue (32 plot functions)
 │
 ├── D0FUS_INPUTS/                       # Input parameter files
 │   ├── 1_run_ITER.txt                      # ITER Q=10 reference case (RUN mode)
@@ -144,7 +156,7 @@ D0FUS/
 
 ## Execution Modes
 
-D0FUS detects the execution mode from the input file format:
+D0FUS detects the execution mode from the input file syntax:
 
 | Mode | Purpose | Input format | Parameters |
 |------|---------|--------------|------------|
@@ -152,11 +164,58 @@ D0FUS detects the execution mode from the input file format:
 | **SCAN** | 2D parameter space | `R0 = [3, 9, 25]` | Exactly 2 parameters with `[min, max, n_points]` |
 | **OPTIMIZATION** | Genetic algorithm cost minimisation | `R0 = [3, 9]` | 2+ parameters with `[min, max]` |
 
-**RUN mode** evaluates a single tokamak configuration and outputs all plasma parameters, magnetic fields, power balance, radial build, cost of electricity, and RE indicators.
+**RUN mode** evaluates a single tokamak configuration and returns **99 scalar outputs grouped into 8 families** (plasma parameters, magnetic fields, power balance, radial build, current profile, techno-economics, RE indicators, diagnostics). Because several physical quantities are mutually coupled, a convergence loop is unavoidable: in pulsed mode the solver reduces to a scalar root-finding on the helium ash fraction $f_\alpha$, solved in 8 to 12 iterations by Brent's method; in steady-state mode the auxiliary power becomes $P_\mathrm{aux} = P_\mathrm{fus}/Q$ and the system becomes two-dimensional, solved by Powell's hybrid method on $(f_\alpha, Q)$. Post-convergence calculations cover TF mechanical sizing, magnetic flux budget and CS sizing, divertor heat loads, L-H power threshold, the techno-economic assessment, and runaway electron diagnostics.
 
-**SCAN mode** generates 2D maps over two parameters, visualising feasibility regions bounded by stability limits (Greenwald, Troyon, kink) and engineering constraints. Iso-contours of any output quantity registered in `OUTPUT_REGISTRY` can be overlaid.
+**SCAN mode** generates 2D maps over two parameters, visualising feasibility regions bounded by stability limits (Greenwald, Troyon, kink) and engineering constraints. Iso-contours of any output quantity registered in `OUTPUT_REGISTRY` can be overlaid. Grid points are independent and evaluated in parallel across all available CPU cores using `joblib` with the `loky` backend.
 
-**OPTIMIZATION mode** uses a DEAP genetic algorithm to find the configuration minimising cost (COE by default) while satisfying all physics and engineering constraints. The budget ceiling `C_invest_max` is enforced via an exponential penalty.
+**OPTIMIZATION mode** uses a DEAP genetic algorithm to navigate the design space adaptively, concentrating evaluations in the most promising regions. Four fitness objectives are available:
+
+| Objective | Goal |
+|-----------|------|
+| `COE` (default) | Minimise the levelised cost of electricity |
+| `C_invest` | Minimise capital cost |
+| `P_elec` | Maximise net electric power |
+| `volume` | Minimise the volume normalised to fusion power (geometry-based proxy) |
+
+Constraints (Greenwald, normalised beta, kink safety factor, optional capital cost ceiling) are enforced via soft penalties: a design that just barely fails one of the limits stays in the running, which helps the search converge toward the feasible boundary rather than fleeing it.
+
+### Two fidelity levels
+
+Most physics and engineering models are available at two fidelity levels, selectable through a single `GlobalConfig` field. Both share the same interface, the same `GlobalConfig` object, the same solver infrastructure, and have comparable execution times.
+
+| Model | Academic | Refined |
+|-------|----------|---------|
+| Plasma geometry | Elliptical torus, $\delta = 0$ | Miller flux surfaces, $\kappa(\rho)$, $\delta(\rho)$ |
+| Volume element | $V' = 4\pi^2 R_0 a^2 \kappa \rho$ | Numerical Jacobian on $(N_\rho \times N_\theta)$ grid |
+| Bootstrap current | Segal | Redl (2021) |
+| $q(\rho)$ profile | Assumed parabolic | Self-consistent (Picard iteration) |
+| TF stress model | Thin-cylinder, two-layer | Thick-cylinder, composite CICC |
+| CS stress model | Hoop stress only | Hoop + axial fringe-field stress |
+| Resistivity | Spitzer (classical) | Sauter / Redl (neoclassical) |
+
+### Library mode
+
+Every function in `D0FUS_BIB` can be called in isolation, outside the solver loop. This makes the code equally useful as a library for standalone analyses and as an integrated systems code:
+
+```python
+from D0FUS_BIB.D0FUS_radial_build_functions import J_non_Cu_REBCO
+
+Jc = J_non_Cu_REBCO(B=20, T=4.2)  # A/m^2, at 20 T and 4.2 K
+```
+
+Comparing two bootstrap models, evaluating a critical current density at a specific field and temperature, or registering a new scaling law all reduce to writing or calling one function with the standard signature.
+
+### Execution time
+
+On a modern 14-core laptop:
+
+| Mode | Configuration | Wall time |
+|------|---------------|-----------|
+| RUN | Single design point | ~200 ms |
+| SCAN | 50 × 50 grid (2500 points, parallel) | ~25 s |
+| OPTIMIZATION | 50 individuals × 10 generations | ~2 min 30 s |
+
+These execution times make interactive design-space exploration entirely feasible without access to a computing cluster.
 
 ---
 
@@ -164,13 +223,15 @@ D0FUS detects the execution mode from the input file format:
 
 ### Parameter Handling
 
-All parameters have physically motivated default values (DEMO-class baseline). When an input file is provided, only the specified parameters are overwritten. This allows minimal input files:
+All user-adjustable parameters are gathered into a single typed dataclass `GlobalConfig` (**115 fields organised into 15 categories**), each with a physically motivated default value inspired by ITER and EU-DEMO. When an input file is provided, only the specified parameters are overwritten, so a complete tokamak calculation can be set up in a few lines:
 
 ```ini
 R0 = 7
 Bmax_TF = 14
 Supra_choice = REBCO
 ```
+
+All unspecified parameters silently take their default values.
 
 ### Parameter Reference
 
@@ -199,7 +260,7 @@ Options for `Option_Kappa`: `Wenninger`, `Stambaugh`, `Freidberg`, `Manual`.
 | Parameter | Description | Unit | Default | Options |
 |-----------|-------------|------|---------|---------|
 | `Supra_choice` | Superconductor material | — | `Nb3Sn` | `NbTi`, `Nb3Sn`, `REBCO` |
-| `Radial_build_model` | Stress model | — | `D0FUS` | `academic`, `D0FUS`, `CIRCE` |
+| `Radial_build_model` | Stress model | — | `Refined` | `Academic`, `Refined`, `CIRCE` |
 | `Choice_Buck_Wedg` | TF mechanical configuration | — | `Wedging` | `Plug`, `Bucking`, `Wedging` |
 | `Chosen_Steel` | Structural steel grade | — | `316L` | `316L`, `N50H`, `JK2LB`, `Manual` |
 
@@ -219,7 +280,7 @@ Options for `Option_Kappa`: `Wenninger`, `Stambaugh`, `Freidberg`, `Manual`.
 | `Bootstrap_choice` | Bootstrap current model | — | `Redl` | `Freidberg`, `Segal`, `Sauter`, `Redl` |
 | `Option_q95` | q₉₅ formula | — | `Sauter` | `Sauter`, `ITER_1989` |
 | `L_H_Scaling_choice` | L-H threshold scaling | — | `New_Ip` | `Martin`, `New_S`, `New_Ip` |
-| `Plasma_geometry` | Volume integral geometry | — | `Academic` | `Academic`, `D0FUS` |
+| `Plasma_geometry` | Volume integral geometry | — | `Refined` | `Academic`, `Refined` |
 | `Zeff` | Effective plasma charge | — | 2.0 | |
 | `impurity_species` | Impurity species (radiation) | — | `''` | `W`, `Ar`, `Ne`, `C`, `N`, `Kr` |
 | `f_imp_core` | Impurity concentration n_imp/n_e | — | `''` | |
@@ -303,7 +364,7 @@ See `D0FUS_INPUTS/3_genetic_ITER.txt` for a complete example.
 | `generations` | Maximum generations | 100 |
 | `crossover_rate` | Crossover probability | 0.7 |
 | `mutation_rate` | Mutation probability | 0.2 |
-| `fitness_objective` | Quantity to minimise | `COE` |
+| `fitness_objective` | Quantity to optimise | `COE` |
 
 ---
 
@@ -314,7 +375,7 @@ See `D0FUS_INPUTS/3_genetic_ITER.txt` for a complete example.
 ```
 D0FUS_OUTPUTS/Run_D0FUS_YYYYMMDD_HHMMSS/
 ├── input_parameters.txt        # Copy of input configuration
-├── output_results.txt          # Complete calculation results
+├── output_results.txt          # Complete calculation results (99 scalars, 8 families)
 └── figures/                    # 10 run-specific PNG figures (150 dpi)
     ├── 01_cross_section.png
     ├── 02_miller_surfaces.png
@@ -361,7 +422,7 @@ D0FUS_OUTPUTS/Scan_D0FUS_YYYYMMDD_HHMMSS/
 ```
 D0FUS_OUTPUTS/Genetic_D0FUS_YYYYMMDD_HHMMSS/
 ├── optimization_config.txt     # Bounds, algorithm settings
-├── optimization_results.txt    # Best solution, COE, C_invest
+├── optimization_results.txt    # Best solution, COE, C_invest, Hall of Fame
 └── convergence_plot.png        # Fitness evolution over generations
 ```
 
@@ -369,7 +430,7 @@ D0FUS_OUTPUTS/Genetic_D0FUS_YYYYMMDD_HHMMSS/
 
 ## Figures Catalogue
 
-`plot_run()` generates 10 run-specific figures. `plot_all()` generates the full 27-figure catalogue, including:
+`plot_run()` generates 10 run-specific figures. `plot_all()` generates the full 32-figure catalogue, including:
 
 | Group | Figures |
 |-------|---------|
@@ -379,7 +440,6 @@ D0FUS_OUTPUTS/Genetic_D0FUS_YYYYMMDD_HHMMSS/
 | Current & q | q(ρ) with j_Ohm/j_CD/j_bs decomposition |
 | Magnets | Jc(B,T) scaling (NbTi/Nb₃Sn/REBCO), TF thickness vs B_max, CS thickness vs flux swing |
 | Engineering drawings | Princeton-D TF side view, CS cross-section, CICC cross-section (hex-packed strands) |
-| Benchmarks | TF coil benchmark table, CS benchmark table, CIRCE0D stress validation |
 
 ---
 
@@ -392,9 +452,9 @@ D0FUS supports two plasma geometry models, selected via `Plasma_geometry`:
 | Model | Description | When to use |
 |-------|-------------|-------------|
 | `Academic` | Cylindrical-torus approximation, uniform κ and δ | Large parameter scans, fast runs |
-| `D0FUS` | Full Miller flux-surface parameterisation (Miller et al. 1998) with PCHIP κ(ρ) and δ(ρ) profiles | Single-point analysis, triangularity effects (δ > 0.3) |
+| `Refined` | Full Miller flux-surface parameterisation (Miller et al. 1998) with PCHIP κ(ρ) and δ(ρ) profiles | Single-point analysis, triangularity effects (δ > 0.3) |
 
-The Miller model computes V′(ρ) numerically from the Jacobian of the (R, Z) flux-surface coordinates, with κ(0) = 1 and δ(0) = 0 enforced on-axis (Ball & Parra 2015). Volume integrals (P_fus, ⟨nT⟩, W_th, P_rad, bootstrap current) are weighted by V′(ρ)/V when in `D0FUS` mode.
+The Miller model computes V′(ρ) numerically from the Jacobian of the (R, Z) flux-surface coordinates, with κ(0) = 1 and δ(0) = 0 enforced on-axis (Ball & Parra 2015). Volume integrals (P_fus, ⟨nT⟩, W_th, P_rad, bootstrap current) are weighted by V′(ρ)/V when in `Refined` mode.
 
 ### Safety Factor Profile
 
@@ -417,9 +477,9 @@ Four models are supported via `Bootstrap_choice`:
 | Model | Reference | Recommended use |
 |-------|-----------|-----------------|
 | `Freidberg` | Freidberg (2007) | Quick estimates |
-| `Segal` | Segal (1993) | Alternative analytical |
+| `Segal` | Segal (1993) | Academic fidelity default |
 | `Sauter` | Sauter et al., PoP 6 (1999) | Full neoclassical, all collisionality regimes |
-| `Redl` | Redl et al., PoP 28 (2021) | Default, improved high-ν* accuracy |
+| `Redl` | Redl et al., PoP 28 (2021) | Refined fidelity default, improved high-ν* accuracy |
 
 ### Confinement Scaling Laws
 
@@ -445,7 +505,7 @@ Outputs include I_RE_seed, I_RE_aval, f_RE/Ip, and kinetic energy E_RE_kin. Thes
 
 ### Radial Build
 
-The TF coil inboard leg is shaped as a Princeton-D contour (Gralnick & Tenney 1976). Conductor sizing follows a three-level helium fraction hierarchy distinguishing the cooling pipe (`f_He_pipe`), interstitial void (`f_void`, LTS only), and active SC fraction. Three structural models are available via `Radial_build_model`: a simplified analytical model (`academic`), the D0FUS stress model (`D0FUS`), and the multi-layer CIRCE0D solver (`CIRCE`).
+The TF coil inboard leg is shaped as a Princeton-D contour (Gralnick & Tenney 1976). Conductor sizing follows a three-level helium fraction hierarchy distinguishing the cooling pipe (`f_He_pipe`), interstitial void (`f_void`, LTS only), and active SC fraction. Three structural models are available via `Radial_build_model`: a simplified analytical model (`Academic`), the D0FUS stress model (`Refined`), and the multi-layer CIRCE0D solver (`CIRCE`). Three TF mechanical configurations are supported via `Choice_Buck_Wedg` (bucking, wedging, plug), and the TF winding pack can be radially graded with $\alpha(R)$ profiles obtained by inward integration with Picard iteration.
 
 ### Superconductor
 
@@ -453,13 +513,7 @@ Critical current density scaling laws are implemented for NbTi, Nb₃Sn (ITER st
 
 ### Techno-Economic Model
 
-Capital investment and COE are computed using the Sheffield & Milora (2016) volume-based cost scaling (2010 USD, converted to 2025 EUR). Component costs cover the SC coil set, blanket, shield, auxiliary heating, heat transfer system, balance of plant, buildings, and annual O&M. A simplified surface-proportional model (Whyte 2024) is also available for cross-checks.
-
----
-
-## Benchmarks and Validation
-
-The primary benchmark case is ITER Q=10 (Ip = 15 MA, B0 = 5.3 T, R0 = 6.2 m, P_fus = 500 MW), provided as `D0FUS_INPUTS/1_run_ITER.txt`. The main plasma and engineering quantities are recovered to the correct order of magnitude; detailed quantitative agreement is still being refined.
+Capital investment and COE are computed using the Sheffield & Milora (2016) volume-based cost scaling (2010 USD, converted to 2025 EUR). Component costs cover the SC coil set, blanket, shield, auxiliary heating, heat transfer system, balance of plant, buildings, and annual O&M. A simplified surface-proportional model (Whyte 2024) is also available for cross-checks. The cost calculation is performed after convergence and does not feed back into the physics.
 
 ---
 

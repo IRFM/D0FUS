@@ -254,8 +254,6 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     rho_NBI                   = config.rho_NBI
     A_beam                    = config.A_beam
     E_beam_keV                = config.E_beam_keV
-    C_EC                      = config.C_EC
-    C_NBI                     = config.C_NBI
     Plasma_geometry           = config.Plasma_geometry
     M_blanket                 = config.M_blanket
 
@@ -570,6 +568,9 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         _dbg_counter[0] += 1
         _dbg = (verbose >= 2 and _dbg_counter[0] <= _dbg_limit[0])
 
+        # Expose f_alpha to the CD dispatcher (used by f_etaCD_NBI_physics)
+        config._f_alpha = f_alpha
+
         # Volume-averaged density and pressure
         nbar_loc = f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, κ,
                           rho_ped=rho_ped, n_ped_frac=n_ped_frac,
@@ -714,18 +715,21 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             # Pulsed mode: P_CD is fixed by the input source powers.
             if CD_source == 'Multi':
                 P_CD_loc    = P_LH + P_ECRH + P_NBI + P_ICRH
-                eta_LH_loc  = f_etaCD_LH(
-                    a, R0, B0_solution, nbar_loc, Tbar, nu_n, nu_T,
-                    Z_eff=Zeff,
+                eta_LH_loc  = f_etaCD_LH_physics(Tbar, Zeff)
+                eta_EC_loc  = f_etaCD_EC_physics(
+                    a, R0, Tbar, nbar_loc, Zeff, nu_T, nu_n,
+                    rho_EC,
+                    theta_EC_pol_deg=config.theta_EC_pol_deg,
                     rho_ped=rho_ped, n_ped_frac=n_ped_frac,
                     T_ped_frac=T_ped_frac)
-                eta_EC_loc  = f_etaCD_EC(
-                    a, R0, Tbar, nbar_loc, Zeff, nu_T, nu_n,
-                    rho_EC, C_EC, rho_ped, n_ped_frac, T_ped_frac)
-                eta_NBI_loc = f_etaCD_NBI(
+                eta_NBI_loc = f_etaCD_NBI_physics(
                     A_beam, E_beam_keV,
                     a, R0, Tbar, nbar_loc, Zeff, nu_T, nu_n,
-                    rho_NBI, C_NBI, rho_ped, n_ped_frac, T_ped_frac)
+                    rho_NBI,
+                    f_alpha=f_alpha,
+                    angle_NBI_deg=config.angle_NBI_deg,
+                    rho_ped=rho_ped, n_ped_frac=n_ped_frac,
+                    T_ped_frac=T_ped_frac)
                 I_CD_loc = (f_I_CD(R0, nbar_loc, eta_LH_loc,  P_LH)
                           + f_I_CD(R0, nbar_loc, eta_EC_loc,  P_ECRH)
                           + f_I_CD(R0, nbar_loc, eta_NBI_loc, P_NBI))
@@ -1470,18 +1474,20 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
 
     # Current drive and power balance
     # ── Individual CD efficiencies (computed once, reused in breakdown) ────────
-    eta_LH_solution  = f_etaCD_LH(a, R0, B0_solution, nbar_solution, Tbar,
-                                   nu_n, nu_T,
-                                   Z_eff=Zeff,
+    eta_LH_solution  = f_etaCD_LH_physics(Tbar, Zeff)
+    eta_EC_solution  = f_etaCD_EC_physics(a, R0, Tbar, nbar_solution, Zeff, nu_T, nu_n,
+                                   rho_EC,
+                                   theta_EC_pol_deg=config.theta_EC_pol_deg,
                                    rho_ped=rho_ped, n_ped_frac=n_ped_frac,
                                    T_ped_frac=T_ped_frac)
-    eta_EC_solution  = f_etaCD_EC(a, R0, Tbar, nbar_solution, Zeff, nu_T, nu_n,
-                                   rho_EC, C_EC,
-                                   rho_ped, n_ped_frac, T_ped_frac)
-    eta_NBI_solution = f_etaCD_NBI(A_beam, E_beam_keV,
-                                    a, R0, Tbar, nbar_solution, Zeff, nu_T, nu_n,
-                                    rho_NBI, C_NBI,
-                                    rho_ped, n_ped_frac, T_ped_frac)
+    eta_NBI_solution = f_etaCD_NBI_physics(
+        A_beam, E_beam_keV,
+        a, R0, Tbar, nbar_solution, Zeff, nu_T, nu_n,
+        rho_NBI,
+        f_alpha=f_alpha_solution,
+        angle_NBI_deg=config.angle_NBI_deg,
+        rho_ped=rho_ped, n_ped_frac=n_ped_frac,
+        T_ped_frac=T_ped_frac)
 
     if Operation_mode == 'Steady-State':
         # Steady-State: γ_eff is needed to invert I_CD → P_CD.

@@ -272,12 +272,17 @@ class GlobalConfig:
     f_heat_ICR : float = 0.25   # Heating fraction allocated to ICRH [-]
     # ECCD deposition and injection parameters
     rho_EC : float = 0.3      # Normalised deposition radius [-]
-    C_EC   : float = 0.32     # Pre-factor (O-mode, tangential; calibrate vs TRAVIS/TORBEAM)
+    theta_EC_pol_deg : float = 0.0  # Poloidal angle of EC deposition [deg]
+                                    # 0 = outboard midplane (LFS, conservative)
+                                    # 90 = top of plasma
+                                    # 180 = inboard midplane (HFS, best for CD)
     # NBCD deposition and beam parameters
     rho_NBI    : float = 0.3      # Normalised deposition radius [-]
     A_beam     : int   = 2        # Beam ion mass number: 1 = H, 2 = D, 3 = T
     E_beam_keV : float = 500.0    # Beam injection energy [keV]
-    C_NBI      : float = 0.19     # Pre-factor (tangential co-injection; Cordey 1982)
+    angle_NBI_deg : float = 20.0  # NBI injection angle from tangential [deg]
+                                  # 0 = fully tangential, 90 = perpendicular
+                                  # cos(angle) = v_par / v_birth  (ITER ~ 20 deg)
 
     # ── 12. Plasma-facing components ─────────────────────────────────────────
     theta_deg : float = 2.7      # Divertor strike-point grazing angle [deg]

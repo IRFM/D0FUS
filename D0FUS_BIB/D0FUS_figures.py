@@ -744,7 +744,7 @@ def plot_He_fraction(
     ax.plot(C_arr, fa_ITER_ped, "b--", lw=1.4, label="ITER — D0FUS H-mode pedestal")
     ax.plot(C_arr, fa_DEMO,     "r-",  lw=1.8, label="EU-DEMO — academic")
     ax.axvline(C_Alpha, color="k", lw=0.9, ls=":", label=f"$C_\\alpha$ = {C_Alpha:.0f}")
-    ax.axhspan(5, 10, color="grey", alpha=0.12, label="ITER target 5–10 %")
+    ax.axhspan(4, 6, color="grey", alpha=0.12, label="ITER target 5 %")
     ax.set_xlabel(r"Removal efficiency $C_\alpha = \tau_\alpha / \tau_E$", fontsize=11)
     ax.set_ylabel(r"Helium ash fraction $f_\alpha$ [%]", fontsize=11)
     ax.set_title("He ash fraction — academic vs D0FUS H-mode pedestal", fontsize=10)
