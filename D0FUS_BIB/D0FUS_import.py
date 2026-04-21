@@ -33,11 +33,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import sympy as sp
+from typing import List, Tuple
+from dataclasses import dataclass
 
 #%% Scipy - Optimization and Numerical Methods
 
 from scipy.integrate import quad, solve_ivp, IntegrationWarning
-from scipy.interpolate import interp1d, griddata
+from scipy.interpolate import interp1d, griddata, PchipInterpolator
 from scipy.optimize import (
     basinhopping,
     bisect,
@@ -54,6 +56,9 @@ from scipy.optimize import (
 from scipy.signal import find_peaks
 from scipy.special import erfc
 
+import matplotlib.cm as cm
+from scipy.interpolate import PchipInterpolator
+
 #%% Visualization Libraries
 
 import matplotlib.pyplot as plt
@@ -61,7 +66,6 @@ import matplotlib.colors as mcolors
 import matplotlib.lines as mlines
 import matplotlib.patches as mpatches
 import matplotlib.cm as cm
-from scipy.interpolate import PchipInterpolator
 from matplotlib.colors import Normalize
 from matplotlib.gridspec import GridSpec
 from matplotlib.patches import Circle, Rectangle, Patch

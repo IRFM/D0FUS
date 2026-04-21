@@ -32,11 +32,11 @@ and must never be modified by the user.
 
 # ── Fundamental constants ──────────────────────────────────────────────────────
 E_ELEM  = 1.602176634e-19    # Elementary charge [C]         (CODATA 2018)
-M_E     = 9.10938370e-31     # Electron mass [kg]             (CODATA 2018)
+M_E     = 9.10938370e-31     # Electron mass [kg]            (CODATA 2018)
 M_I     = 2 * 1.6726e-27     # Ion mass (deuterium) [kg]
 μ0      = 4.0 * np.pi * 1e-7 # Vacuum permeability [H/m]
-EPS_0   = 8.854187817e-12    # Vacuum permittivity [F/m]      (CODATA 2018)
-C_LIGHT = 2.99792458e8       # Speed of light [m/s]           (CODATA 2018)
+EPS_0   = 8.854187817e-12    # Vacuum permittivity [F/m]     (CODATA 2018)
+C_LIGHT = 2.99792458e8       # Speed of light [m/s]          (CODATA 2018)
 
 # ── Fusion reaction energetics ─────────────────────────────────────────────────
 E_ALPHA = 3.5168e6  * E_ELEM   # Alpha particle energy [J]
@@ -114,9 +114,9 @@ class GlobalConfig:
 
     Scaling_Law        : str   = 'IPB98(y,2)'   # Energy confinement scaling law
     L_H_Scaling_choice : str   = 'New_Ip'       # L-H threshold scaling: 'Martin', 'New_S', 'New_Ip'
-    Bootstrap_choice    : str   = 'Redl'        # Bootstrap current model ['Freidberg', 'Segal', 'Sauter', 'Redl']
-    trapped_fraction_model : str = 'Sauter2002' # 'Sauter2002' (standard, NEOS/JINTRAC/CRONOS)
-                                                # 'ASTRA' (Fable, used by PROCESS/ASTRA; ~7% lower f_t)
+    Bootstrap_choice    : str   = 'Redl'        # Bootstrap current model 'Freidberg', 'Segal', 'Sauter', 'Redl'
+    trapped_fraction_model : str = 'Sauter2002' # 'Sauter2002' (standard, NEOS/JINTRAC)
+                                                # 'ASTRA' (Fable, used by PROCESS/ASTRA)
 
     # q₉₅ formula selector:
     #   'Sauter'    — uses LCFS values (κ_edge, δ_edge). Sauter, FED 112 (2016) Eq. 30.
@@ -172,11 +172,10 @@ class GlobalConfig:
     Ce        : float = 0.30     # Ejima constant (resistive ramp-up flux) [-]
                                  # Ψ_res = Ce * μ0 * R0 * Ip
                                  # Typical: ITER 0.45, EU-DEMO 0.30, CFETR 0.30
-    f_heat_ramp : float = 0.0   # Fraction of current ramp-up driven non-inductively
+    f_heat_ramp : float = 0.0    # Fraction of current ramp-up driven non-inductively
                                  # by auxiliary heating/CD systems [-].
                                  # Reduces the CS volt-second requirement:
-                                 #   Ψ_RampUp_eff = (1 - f_heat_ramp) × Ψ_RampUp
-                                 # Typical near-term reactor scenarios: 0.0 – 0.5.
+                                 # Ψ_RampUp_eff = (1 - f_heat_ramp) × Ψ_RampUp
     eta_model : str   = 'redl'   # Plasma resistivity model for R_eff and li
                                  # 'old' | 'spitzer' | 'sauter' | 'redl' (recommended)
                                  # Plasma initiation flux: Ψ_PI = 2π * R0 * E_BD
@@ -201,7 +200,7 @@ class GlobalConfig:
 
     coef_inboard_tension : float = 0.5      # Inboard/outboard vertical stress ratio [-]
     F_CClamp             : float = 0.0      # C-clamp structural limit [N]
-                                            # Typical: 30e6 (DDD) to 60e6 N (Bachmann 2023, FED)
+                                            # Typical: 30e6 (DDD ITER) to 60e6 N (Bachmann 2023, FED)
     n_shape_TF           : float = 1.0      # TF conductor shape factor (1 = square, 0 = optimal) [-]
     c_BP                 : float = 0.07     # Backplate thickness [m]
     TF_grading           : bool  = False    # TF WP conductor grading: α(R) varies to saturate Tresca [-]
@@ -282,13 +281,13 @@ class GlobalConfig:
     E_beam_keV : float = 500.0    # Beam injection energy [keV]
     angle_NBI_deg : float = 20.0  # NBI injection angle from tangential [deg]
                                   # 0 = fully tangential, 90 = perpendicular
-                                  # cos(angle) = v_par / v_birth  (ITER ~ 20 deg)
+                                  # ITER reference ~ 20 deg
 
     # ── 12. Plasma-facing components ─────────────────────────────────────────
     theta_deg : float = 2.7      # Divertor strike-point grazing angle [deg]
 
     # ── 13. Maintenance constraints ──────────────────────────────────────────
-    ripple_adm : float = 0.01    # Admissible toroidal field ripple [-]  (1%)
+    ripple_adm : float = 0.01    # Admissible toroidal field ripple [-]  (default 1%)
     L_min      : float = 3.00    # Minimum toroidal maintenance access width [m]
 
     # ── 14. Disruption RE diagnostic (indicative, post-convergence) ──────────
@@ -299,7 +298,6 @@ class GlobalConfig:
 
     # ── 15. Techno-economic cost model (indicative, post-convergence) ────────
     # Model: Sheffield & Milora, Fus. Sci. Technol. 70 (2016).
-    # Set cost_model = 'None' to skip cost computation entirely.
     cost_model          : str   = 'Sheffield'  # 'Sheffield' or 'None'
     # Financial parameters (Ref: Sheffield 2016, Section III.D)
     discount_rate       : float = 0.07   # Real discount rate [-]

@@ -1,10 +1,15 @@
 # Short Term
+* Check the heating module with IRFM specialists -> Timothe
 * Check pep8 conventions -> Arthur
-* On LaTEx strings, use the string modifier "r" (e.g: r"$\alpha$") because, otherwise, "\[...]" indicates a special character in an unformatted text (currently it's a warning, but could lead to silent errors) -> Arthur will try to understand what this means
-* Regarder utilisation lettres grecques dans python et décider si on enlève les lettres grecques -> Arthur
+* Look at the use of Greek letters in Python and decide whether to remove them -> Arthur
 
 # Mid Term
-* Document the code using Sphinx ? It produces HTML documentation via formatted comments in the code (it's the most used documentation tool) -> Arthur
+* Document the code using Sphinx ? It produces HTML documentation via formatted comments in the code -> Arthur
+* Creation of an __init__.py file ? That way, it as a pure library -> Arthur
 
 # Long Term
-* It would be very nice to have an __init__.py file. That way, one could use the code as a library and not as a script. This would be an awesome thing to do because it reduces boilerplate. -> Arthur
+* Incorporate the Finn fatigue model -> Timothe , Laura ?
+* Add a test case BEST -> Timothe
+* Out of Plane study : is it possible at the system code level to approximate them ? -> Timothe , Alex , Baptiste, Laura
+* Spherical tokamak study -> Timothe
+* Proper 2 point model for Divertor study -> Eva ? Timothe
