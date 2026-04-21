@@ -2456,10 +2456,6 @@ References
 
 """
 
-import numpy as np
-from typing import List, Tuple
-from dataclasses import dataclass
-
 
 @dataclass
 class LayerResult:

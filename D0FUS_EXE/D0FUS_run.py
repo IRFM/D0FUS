@@ -30,14 +30,13 @@ from scipy.optimize import brentq
 
 #%% Profile preset table
 # ---------------------------------------------------------------------------
-# SINGLE SOURCE OF TRUTH for plasma profile peaking factors and pedestal
+# plasma profile peaking factors and pedestal
 # parameters across run(), _build_run_dict(), and save_run_output().
-# Any change to a preset value must be made here ONLY.
 #
 # Calibration references:
 #   'L'        : purely parabolic (no pedestal).
-#   'H'        : ITER CORSICA H-mode study (Doyle et al. 2007, PIPB Ch.2).
-#   'Advanced' : EU-DEMO 2017 PROCESS reference run (Franza 2019).
+#   'H'        : ITER CORSICA H-mode study (Doyle et al. 2007, PIPB Ch.2)
+#   'Advanced' : EU-DEMO 2017 PROCESS reference run
 # ---------------------------------------------------------------------------
 _PROFILE_PRESETS = {
     'L':        {'nu_n': 0.50, 'nu_T': 1.75, 'rho_ped': 1.00,
@@ -517,14 +516,14 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # recomputing them.
     _converged_chain = [None]
 
-    # ── Self-consistent q-profile cache (lagged Picard) ───────────────────
+    # ── Parametric q-profile cache (lagged evaluation) ────────────────────
     # Stores the q(ρ) dict from f_q_profile_selfconsistent computed with
-    # the previous iteration's (Ip, I_Ohm, I_CD).  Passed to
-    # f_Sauter_Ib / f_Redl_Ib so the bootstrap coefficients see a
-    # realistic q(ρ) instead of constant q₉₅.
-    # Updated lazily: only recomputed when I_Ohm changes by >10%.
+    # the previous iteration's (Ip, I_CD). Passed to f_Sauter_Ib /
+    # f_Redl_Ib so the bootstrap coefficients see a realistic q(ρ)
+    # instead of the constant q_95 fallback.
+    # Updated lazily: only recomputed when I_Ohm changes by more than 10 %.
     # On first call, q_profile=None triggers the parabolic fallback
-    # q₀ + (q₉₅−q₀)ρ² inside the bootstrap functions.
+    # q_0 + (q_95 - q_0) rho^2 inside the bootstrap functions.
     _q_profile_cache = [None]
     _q_cache_Ip      = [0.0]     # Ip [MA] at last cache update
     _q_cache_I_Ohm   = [0.0]     # I_Ohm [MA] at last cache update
@@ -748,29 +747,32 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                                 q95=q95_loc)
             Q_loc     = f_Q(P_fus, P_CD_loc, P_Ohm_loc)
 
-        # ── Self-consistent q(ρ) cache for bootstrap collisionality ──────
+        # ── Parametric q(ρ) cache for bootstrap collisionality ───────────
         #
         # WHY: The Sauter/Redl bootstrap coefficients L31, L32, L34 depend
-        #   on the electron collisionality ν*_e ∝ q(ρ).  Using a constant
-        #   q = q₉₅ overestimates ν* at mid-radius by ×2–3, reducing I_bs
-        #   by ~20%.  A self-consistent q(ρ) from Ampère's law solves this.
+        #   on the electron collisionality nu*_e ~ q(rho). Using a
+        #   constant q = q_95 overestimates nu* at mid-radius by a factor
+        #   2-3, reducing I_bs by roughly 20 %. A parametric q(rho)
+        #   derived from the PROCESS/Wesson j ~ (1-rho^2)^alpha_J form,
+        #   optionally self-consistent on alpha_J, solves this.
         #
-        # HOW: Lagged Picard with lazy update.
-        #   - f_q_profile_selfconsistent() solves j_Ohm + j_CD + j_bs → q(ρ)
-        #     via Picard iteration (~15–30 ms at reduced resolution).
+        # HOW: Lagged parametric solve with lazy update.
+        #   - f_q_profile_selfconsistent() builds q(rho) from alpha_J,
+        #     either prescribed or self-consistent on scalar alpha_J
+        #     (3 to 10 Picard iterations on one scalar).
         #   - The result is cached and reused by subsequent bootstrap calls.
         #   - The cache is refreshed when the current decomposition changes
-        #     significantly (>5% in I_Ohm or first call).
+        #     significantly (> 5 % in I_Ohm or first call).
         #   - On first call (cache=None), the bootstrap functions use a
-        #     parabolic fallback q₀ + (q₉₅−q₀)ρ² internally.
+        #     parabolic fallback q_0 + (q_95 - q_0) rho^2 internally.
         #
-        # COST: ~5–8 updates × 20 ms = 100–160 ms per design point.
-        #   Negligible for single runs.  Adds ~3 min to a 1000-pt scan.
+        # COST: ~5 to 8 updates x 20 ms = 100 to 160 ms per design point,
+        #   negligible for single runs. Adds ~3 min to a 1000-point scan.
         #
-        # ROBUSTNESS: the 1-iteration lag is benign because q(ρ) shape is
-        #   a slow function of the current decomposition.  If the Picard
-        #   fails (e.g. pathological geometry), the previous cache or the
-        #   parabolic fallback is used — the solver never sees an error.
+        # ROBUSTNESS: the one-iteration lag is benign because q(rho) is a
+        #   slow function of the current decomposition. If the solve fails
+        #   (e.g. pathological geometry), the previous cache or the
+        #   parabolic fallback is used and the outer solver sees no error.
 
         _do_q_update = False
         if np.isfinite(Ip_loc) and np.isfinite(I_Ohm_loc):
@@ -802,12 +804,10 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             try:
                 _q_profile_cache[0] = f_q_profile_selfconsistent(
                     Ip_loc,
-                    I_Ohm_loc if not ss_mode else 0.0,
                     I_CD_loc,
                     q95_loc,
                     R0, a, B0_solution, κ, nbar_loc, Tbar, Zeff,
                     nu_n, nu_T,
-                    eta_model=eta_model,
                     bootstrap_model=Bootstrap_choice,
                     trapped_fraction_model=trapped_fraction_model,
                     rho_ped=rho_ped, n_ped_frac=n_ped_frac,
@@ -1596,16 +1596,16 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     else:  # LHCD or fallback
         _rho_CD_eff, _delta_CD_eff = 0.5, 0.20
 
-    # Post-convergence Picard at moderate resolution (n_rho=80, max_iter=20).
+    # Post-convergence pass at moderate resolution (n_rho=80, max_iter=20).
     # The solver cache already provides a near-converged starting point, so
     # full defaults (n_rho=200, max_iter=50) are unnecessarily expensive here.
     # The quantities extracted (li, q0, j profiles) converge at <0.5 % error
     # between n_rho=80 and n_rho=200 for smooth tokamak current profiles.
     _q_sc = f_q_profile_selfconsistent(
-        Ip_solution, I_Ohm_solution, I_CD_solution, q95_solution,
+        Ip_solution, I_CD_solution, q95_solution,
         R0, a, B0_solution, κ, nbar_solution, Tbar, Zeff,
         nu_n, nu_T,
-        eta_model=eta_model, bootstrap_model=Bootstrap_choice,
+        bootstrap_model=Bootstrap_choice,
         trapped_fraction_model=trapped_fraction_model,
         rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
         Vprime_data=Vprime_data, kappa_95=κ_95,
@@ -2289,7 +2289,7 @@ def save_run_output(config: GlobalConfig,
         print("=== Runaway Electron Indicators (Indicative) ===", file=out)
         print("-------------------------------------------------------------------------", file=out)
         try:
-            # li is the self-consistent value from f_q_profile_selfconsistent,
+            # li is the l_i(3) value returned by f_q_profile_selfconsistent,
             # passed through the results tuple.
             RE = compute_RE_indicators(
                 Ip=Ip, nbar=nbar, Tbar=config.Tbar,
@@ -2478,15 +2478,13 @@ def _generate_run_figures(config: GlobalConfig, results: tuple,
     try:
         _Ip    = run_dict.get("Ip", 15.0)
         _q95   = run_dict.get("q95", 3.0)
-        _I_Ohm = results[11] if len(results) > 11 else _Ip * 0.5
         _I_CD  = results[10] if len(results) > 10 else 0.0
         _q_sc = f_q_profile_selfconsistent(
-            _Ip, _I_Ohm, _I_CD, _q95,
+            _Ip, _I_CD, _q95,
             config.R0, config.a, run_dict.get("B0", config.Bmax_TF),
             run_dict.get("kappa_edge", 1.7), run_dict.get("nbar", 1.0),
             config.Tbar, config.Zeff,
             run_dict["nu_n"], run_dict["nu_T"],
-            eta_model=config.eta_model,
             bootstrap_model=config.Bootstrap_choice,
             trapped_fraction_model=config.trapped_fraction_model,
             rho_ped=run_dict["rho_ped"],

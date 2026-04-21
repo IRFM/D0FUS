@@ -1815,19 +1815,18 @@ def plot_q_profile(
     save_dir: str | None = None,
 ) -> None:
     """
-    Plot the safety factor, current density, and enclosed current profiles.
+    Plot the safety factor profile q(rho).
 
-    Uses the self-consistent q-profile data from
-    f_q_profile_selfconsistent() when available in run['_q_sc'].
-    Falls back to the analytical f_q_profile() model otherwise.
+    Uses the parametric q-profile from f_q_profile_selfconsistent() when
+    available in run['_q_sc']. Falls back to the analytical f_q_profile()
+    model with a prescribed alpha_J otherwise.
 
-    When self-consistent data is present, the current density panel
-    shows the decomposition j_total = j_Ohm+CD + j_bootstrap.
-
-    Three panels:
-      (a) q(ρ) — safety factor profile with q₀ and q₉₅ markers.
-      (b) j(ρ)/j(0) — normalised current density (total + decomposition).
-      (c) I(ρ)/Ip — enclosed current fraction.
+    The current density decomposition j_total = j_Ohm + j_CD + j_bs is
+    deliberately NOT plotted. Those profiles are built inside
+    f_q_profile_selfconsistent() only to close the self-consistency loop
+    on the integral scalar l_i(3); they are not calibrated quantities
+    that downstream D0FUS modules consume. The scalars that do propagate
+    (alpha_J, q_0, l_i, f_bs) are reported in the figure title.
 
     Parameters
     ----------
@@ -1837,141 +1836,59 @@ def plot_q_profile(
 
     References
     ----------
-    Wesson, Tokamaks, 4th ed., §3.5 — cylindrical j–q Ampère relation.
-    Sauter et al., Phys. Plasmas 6 (1999) 2834 — neoclassical σ.
-    Kovari et al., Fus. Eng. Des. 89 (2014) 3054 — PROCESS §18.
+    Wesson, Tokamaks, 4th ed., sec. 3.5 - cylindrical j-q Ampere relation.
+    Uckan et al., ITER IPDG89 (1990) - j ~ (1-rho^2)^alpha_J reference.
+    Kovari et al., Fus. Eng. Des. 89 (2014) 3054 - PROCESS sec. 4.1.
     """
-    q95     = float(run["q95"])
-    Ip      = run.get("Ip", None)
-    _q_sc   = run.get("_q_sc", None)
+    q95    = float(run["q95"])
+    _q_sc  = run.get("_q_sc", None)
 
-    # ── Data source: self-consistent or analytical fallback ────────────
+    # ── Data source: parametric solve or analytical fallback ──────────
     if _q_sc is not None and 'q_arr' in _q_sc:
-        # Self-consistent path
-        rho     = _q_sc['rho']
-        q_arr   = _q_sc['q_arr']
-        j_total = _q_sc['j_total']
-        j_bs    = _q_sc['j_bs']
-        j_Ohm   = _q_sc.get('j_Ohm', _q_sc['j_non_bs'])
-        j_CD    = _q_sc.get('j_CD', np.zeros_like(rho))
-        I_enc   = _q_sc['I_enc']
-        li      = _q_sc['li']
-        n_iter  = _q_sc['n_iter']
-        has_decomposition = True
+        rho   = _q_sc['rho']
+        q_arr = _q_sc['q_arr']
+        li    = _q_sc['li']
 
-        # Normalise current profiles to j_total(0)
-        j0 = j_total[0] if j_total[0] > 0 else 1.0
-        j_norm      = j_total / j0
-        j_Ohm_norm  = j_Ohm / j0
-        j_CD_norm   = j_CD / j0
-        j_bs_norm   = j_bs / j0
-
-        # Normalise enclosed current to Ip
-        I_norm = I_enc / np.maximum(I_enc[-1], 1e-3)
-
-        suptitle_str = (
-            r"Self-consistent $q(\rho)$ from Amp"
-            + "\u00e8"
-            + r"re integration"
-            + rf"   —   $l_i(3) = {li:.2f}$,  {n_iter} iter."
-        )
+        suptitle_str = r"Safety factor profile $q(\rho)$"
     else:
         # Analytical fallback (no self-consistent data available)
         rho     = np.linspace(0.0, 0.99, n_rho)
-        alpha_J = 1.5   # IPDG89 reference for analytical fallback
+        alpha_J = 1.5    # IPDG89 reference
         q_arr   = f_q_profile(rho, q95=q95, rho95=0.95, alpha_J=alpha_J)
-        has_decomposition = False
 
-        q_edge = q_arr[-1]
-        I_norm = q_edge * rho**2 / np.maximum(q_arr, 1e-3)
-        I_norm = I_norm / np.maximum(I_norm[-1], 1e-10)
-        j_norm = np.maximum(1.0 - rho**2, 0.0)**alpha_J
-
+        # Cylindrical li estimate from the analytical form
+        q_edge   = q_arr[-1]
+        I_norm   = q_edge * rho**2 / np.maximum(q_arr, 1e-3)
+        I_norm   = I_norm / np.maximum(I_norm[-1], 1e-10)
         rho_s    = np.where(rho > 1e-8, rho, 1.0)
         li_integ = np.where(rho > 1e-8, I_norm**2 / rho_s, 0.0)
         li       = 2.0 * np.trapezoid(li_integ, rho)
 
-        suptitle_str = (
-            rf"$q(\rho)$ from $j \propto (1 - \rho^2)^{{\alpha_J}}$"
-            rf"   —   analytical fallback ($\alpha_J = 1.5$)"
-        )
+        suptitle_str = r"Safety factor profile $q(\rho)$ (analytical fallback)"
 
     # ── Figure ────────────────────────────────────────────────────────
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4.8))
-
-    # (a) q(ρ) ─────────────────────────────────────────────────────────
-    ax = axes[0]
+    fig, ax = plt.subplots(1, 1, figsize=(7, 5))
     ax.plot(rho, q_arr, "tab:blue", lw=2.2)
-    ax.axhline(1.0, color="gray", ls=":", lw=0.8, alpha=0.5)
+    ax.axhline(1.0, color="gray", ls=":",  lw=0.8, alpha=0.5)
     ax.axhline(q95, color="gray", ls="--", lw=0.8, alpha=0.5)
     ax.axvline(0.95, color="gray", ls=":", lw=0.8, alpha=0.4)
-    ax.plot(rho[0],  q_arr[0],  "o", color="tab:blue", ms=7, zorder=5)
+    ax.plot(rho[0],  q_arr[0], "o", color="tab:blue", ms=7, zorder=5)
     ax.plot(0.95, q95, "s", color="tab:red",  ms=7, zorder=5,
             label=rf"$q_{{95}} = {q95:.2f}$")
-    ax.text(0.04, 0.92,
+    ax.text(0.04, 0.95,
             rf"$q_0 = {q_arr[0]:.2f}$" + "\n"
             rf"$l_i(3) = {li:.2f}$" + "\n"
             rf"$q(1) = {q_arr[-1]:.2f}$",
-            transform=ax.transAxes, fontsize=9, va="top",
+            transform=ax.transAxes, fontsize=10, va="top",
             bbox=dict(boxstyle="round,pad=0.3", fc="lightyellow", alpha=0.85))
     ax.set_xlabel(r"$\rho$", fontsize=12)
     ax.set_ylabel(r"$q(\rho)$", fontsize=12)
-    ax.set_title("(a) Safety factor", fontsize=11)
-    ax.legend(fontsize=9, loc="lower right")
+    ax.legend(fontsize=10, loc="lower right")
     ax.set_xlim(0, 1)
     ax.set_ylim(bottom=0)
     ax.grid(True, alpha=0.25)
 
-    # (b) j(ρ)/j(0) — current density decomposition ───────────────────
-    ax = axes[1]
-    if has_decomposition:
-        ax.plot(rho, j_norm,     color="k",          lw=2.2,         label=r"$j_{total}$")
-        ax.plot(rho, j_Ohm_norm, color="tab:blue",   lw=1.5, ls="-", label=r"$j_{Ohm}$")
-        ax.plot(rho, j_CD_norm,  color="tab:red",    lw=1.5, ls="-", label=r"$j_{CD}$")
-        ax.plot(rho, j_bs_norm,  color="tab:green",  lw=1.5, ls="-", label=r"$j_{bs}$")
-        ax.legend(fontsize=8, loc="upper right")
-        # Current fraction annotation
-        _dA_fig = np.gradient(rho)
-        _dA_fig[0] = _dA_fig[1]
-        _norm = max(np.sum(j_norm * _dA_fig), 1e-10)
-        _f_Ohm = np.sum(j_Ohm_norm * _dA_fig) / _norm
-        _f_CD  = np.sum(j_CD_norm  * _dA_fig) / _norm
-        _f_bs  = np.sum(j_bs_norm  * _dA_fig) / _norm
-        ax.text(0.52, 0.92,
-                rf"$I_{{Ohm}}$: {_f_Ohm:.0%}   "
-                rf"$I_{{CD}}$: {_f_CD:.0%}   "
-                rf"$I_{{bs}}$: {_f_bs:.0%}",
-                transform=ax.transAxes, fontsize=8, ha="center", va="top",
-                bbox=dict(boxstyle="round,pad=0.3", fc="lightyellow", alpha=0.85))
-    else:
-        ax.plot(rho, j_norm, "tab:orange", lw=2.2, label=r"$j_{total}$")
-    ax.axhline(0, color="k", lw=0.5, alpha=0.3)
-    ax.set_xlabel(r"$\rho$", fontsize=12)
-    ax.set_ylabel(r"$j(\rho)\,/\,j(0)$", fontsize=12)
-    ax.set_title("(b) Current density decomposition", fontsize=11)
-    ax.set_xlim(0, 1)
-    ax.set_ylim(bottom=min(0, np.min(j_norm) * 1.1))
-    ax.grid(True, alpha=0.25)
-
-    # (c) I(ρ)/Ip ─────────────────────────────────────────────────────
-    ax = axes[2]
-    ax.plot(rho, I_norm, "tab:green", lw=2.2)
-    ax.axhline(1.0, color="gray", ls="--", lw=0.8, alpha=0.5)
-    ax.set_xlabel(r"$\rho$", fontsize=12)
-    ax.set_ylabel(r"$I(\rho)\,/\,I_p$", fontsize=12)
-    ax.set_title("(c) Enclosed current", fontsize=11)
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, 1.05)
-    ax.grid(True, alpha=0.25)
-
-    li_text = rf"$l_i = {li:.3f}$"
-    if Ip is not None:
-        li_text += rf"  ($I_p = {Ip:.1f}$ MA)"
-    ax.text(0.04, 0.92, li_text,
-            transform=ax.transAxes, fontsize=10, va="top",
-            bbox=dict(boxstyle="round,pad=0.3", fc="lightyellow", alpha=0.85))
-
-    fig.suptitle(suptitle_str, fontsize=12, y=1.01)
+    fig.suptitle(suptitle_str, fontsize=11, y=0.99)
     plt.tight_layout()
     _save_or_show(fig, save_dir, "run_q_profile")
 
