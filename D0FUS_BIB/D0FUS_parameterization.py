@@ -122,7 +122,7 @@ class GlobalConfig:
     #   'Sauter'    — uses LCFS values (κ_edge, δ_edge). Sauter, FED 112 (2016) Eq. 30.
     #   'ITER_1989' — uses ψ_N = 0.95 values (κ₉₅, δ₉₅). Uckan (1989), also Johner (2011).
     Option_q95         : str = 'Sauter'         # q₉₅ formula: 'Sauter' (default) or 'ITER_1989'
-    Option_Kappa       : str   = 'Wenninger'    # Elongation model: 'Wenninger', 'Stambaugh', 'Freidberg', 'Manual'
+    Option_Kappa       : str = 'Wenninger'    # Elongation model: 'Wenninger', 'Stambaugh', 'Freidberg', 'Manual'
     κ_manual           : float = 1.9            # Elongation (Manual mode only) [-]
 
     # ── 2b. Plasma geometry model ────────────────────────────────────────────
@@ -210,6 +210,21 @@ class GlobalConfig:
     n_shape_CS   : float = 1.0   # CS conductor shape factor (1 = square, 0 = optimal) [-]
     N_sub_CS : int   = 6         # Number of CS sub-modules [-]
     H_CS : float = None          # CS total height [m]. None = 2(κa + b + 1) (default formula)
+    f_swing_usable : float = 0.75   # Fraction of the CS bipolar swing usable for the
+                                    # inductive flux budget [-]. The CS hardware swings
+                                    # over the full bipolar range (-I_max → +I_max) and
+                                    # delivers a total flux capacity ΨCS^capacity. A
+                                    # fraction (1 - f_swing_usable) of this capacity is
+                                    # reserved for plasma control during the discharge
+                                    # (vertical stabilization, error-field correction,
+                                    # shape feedback). The plasma inductive budget is
+                                    # therefore ΨCS^plasma = f_swing_usable × ΨCS^capacity,
+                                    # equivalently the hardware capacity demand is
+                                    #   ΨCS^capacity = ΨCS^plasma / f_swing_usable.
+                                    # Default 0.75 = 25% reserve.
+                                    # Set to 1.0 to reproduce existing-machine benchmarks
+                                    # where published flux values already correspond to
+                                    # the hardware full-swing capacity.
 
     # ── 9. Superconductor operating conditions ───────────────────────────────
     T_helium  : float = 4.2     # Liquid helium bath temperature [K]

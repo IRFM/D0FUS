@@ -1653,11 +1653,10 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     #    Also returns the steady-state loop voltage (avoids redundant computation).
     # ==============================================================================
     _gap_eff = Gap if Choice_Buck_Wedg == 'Wedging' else 0.0
-    _RCS_ext = R0 - a - b - c - _gap_eff   # CS outer radius [m]
     (ΨPI, ΨRampUp, Ψplateau, ΨPF, Vloop_solution) = Magnetic_flux(
     Ip_solution, I_Ohm_solution, R0, a, κ, li_solution,
     Ce, Temps_Plateau_input,
-    config.E_BD, betaP_solution, _RCS_ext,
+    config.E_BD, betaP_solution,
     nbar_solution, Tbar, Zeff, q95_solution, nu_T, nu_n, eta_model,
     rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
     Vprime_data=Vprime_data,
@@ -1686,18 +1685,9 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
 
     # Total inductive flux swing provided by the CS
     # ΨCS = Breakdown + Ramp-up + Flat-top − External PF contribution
+    # (no geometric correction: the null-field breakdown assumption
+    # implies that Ψ at R_0 equals the infinite-solenoid Ψ at R_e.)
     ΨCS = ΨPI + ΨRampUp + Ψplateau - ΨPF
-
-    # Finite-solenoid return flux correction (Derby & Olbert 2010, AJP 78(3);
-    # Callaghan & Maslen 1960, NASA TN D-465).  Controlled by
-    # config.cs_return_flux_correction (default True, disabled in some benchmarks).
-    if getattr(config, 'cs_return_flux_correction', True):
-        _gap_cs = Gap if Choice_Buck_Wedg == 'Wedging' else 0.0
-        _RCS_ext_cs = R0 - a - b - c - _gap_cs
-        _H_CS_over = getattr(config, 'H_CS', None)
-        _H_CS_cs = _H_CS_over if (_H_CS_over is not None and _H_CS_over > 0) else 2 * (κ * a + b + 1)
-        if _RCS_ext_cs > 0:
-            ΨCS *= f_return_flux_correction(_RCS_ext_cs, _H_CS_cs, R0)
 
     # ── CS coil current density (cable-level fractions) ──────────────────────
     # The CS solver computes J_wost and Steel_fraction internally, but does not
