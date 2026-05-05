@@ -36,8 +36,6 @@ else:
     
     # Suppress numpy divide/invalid warnings — these are handled via NaN returns
     warnings.filterwarnings('ignore', category=RuntimeWarning)
-
-from scipy.special import ellipk, ellipe
     
 #%% ========================================================================
 # MODULE-LEVEL UTILITIES
@@ -494,8 +492,19 @@ def _unpack_CS_config(config):
     dict
         Keys: Gap, I_cond, V_max, f_He_pipe, f_void, f_In,
         T_hotspot, RRR, Marge_T_He, Marge_T_Nb3Sn, Marge_T_NbTi,
-        Marge_T_REBCO, Eps, Tet, n_shape_CS.
+        Marge_T_REBCO, Eps, Tet, n_shape_CS, fatigue_CS,
+        Operation_mode, f_swing_usable.
     """
+    # f_swing_usable fallback: 0.75 (25% of bipolar swing reserved for control).
+    # Used to absorb gracefully any legacy config instance that does not
+    # define the field. Set to 1.0 at the call site for benchmarks against
+    # existing machines where the published flux is already the hardware
+    # full-swing capacity.
+    f_swing_usable_val = getattr(config, 'f_swing_usable', 0.75)
+    if f_swing_usable_val is None or f_swing_usable_val <= 0 or f_swing_usable_val > 1.0:
+        raise ValueError(
+            f"GlobalConfig.f_swing_usable must lie in (0, 1], got {f_swing_usable_val}."
+        )
     return dict(
         Gap            = config.Gap,
         I_cond         = config.I_cond,
@@ -516,6 +525,10 @@ def _unpack_CS_config(config):
         # the stress residual / f_sigma_diff closures in each CS solver.
         fatigue_CS     = config.fatigue_CS,
         Operation_mode = config.Operation_mode,
+        # Fraction of the CS bipolar swing usable for the inductive
+        # flux budget. Applied in _CS_geometry_init via
+        #   ΨCS_capacity = ΨCS_plasma / f_swing_usable.
+        f_swing_usable = f_swing_usable_val,
     )
 
 
@@ -1269,8 +1282,12 @@ def calculate_E_mag_CS(B_max, r_in_CS, r_out_CS, H_CS):
     ----------
     B_max : float
         Peak magnetic field at CS inner radius [T].
-        For symmetric operation (-B_max to +B_max), this is related to the
-        total flux swing by: B_max = 3Ψ_CS / (2π(r_out² + r_out r_in + r_in²)).
+        Mapping to the CS hardware capacity demand follows the
+        full bipolar swing convention (uniform J_smear = J_max * alpha thick solenoid):
+            B_max = 3 Ψ_CS / [2 π (r_out² + r_out r_in + r_in²)]
+        where Ψ_CS is the hardware capacity demand obtained from the
+        plasma demand via Ψ_CS = Ψ_plasma / f_swing_usable
+        (see _CS_geometry_init).
     r_in_CS : float
         Inner radius of CS winding pack [m].
     r_out_CS : float
@@ -3700,25 +3717,32 @@ def f_Psi_res(R0, Ip, Ce=0.45):
     return Ce * μ0 * R0 * Ip
 
 
-def f_Psi_PF(Ip, R0, a, kappa, beta_p, li, RCS_ext):
+def f_Psi_PF(Ip, R0, a, kappa, beta_p, li):
     """
-    PF flux contribution from Shafranov equilibrium vertical field.
+    PF flux contribution from the Shafranov equilibrium vertical field.
 
     Physical model
     --------------
-    Toroidal force balance (Shafranov) requires a vertical field B_V to
-    counteract the hoop force, tyre-tube force, and 1/R field gradient:
+    Toroidal force balance (Shafranov) requires a vertical field B_V that
+    counteracts the hoop force, the tyre-tube force, and the 1/R field
+    gradient:
 
         B_V = (mu0 Ip) / (4 pi R0)
               * [beta_p + li/2 - 3/2 + ln(8 R0 / (a sqrt(kappa)))]
 
-    The flux linked to the plasma is the integral of B_V over the
-    annular area between the plasma axis and the CS outer face:
+    The flux linked to the plasma is the integral of B_V over the full
+    disk up to the magnetic axis at R_0:
 
-        Psi_PF = pi * (R0^2 - RCS_ext^2) * B_V
+        Psi_PF = pi * R0^2 * B_V
 
-    The CS bore is excluded because flux threading the solenoid is
-    already counted in Psi_CS (HELIOS convention, Johner 2011).
+    Under the null-field breakdown assumption, the PF coils are configured
+    so that the stray field of the finite-length CS is compensated over a
+    wide region around R_0 (a few mT). The flux made available to the
+    plasma at R_0 is then, to a very good approximation, equal to the
+    on-axis flux of an infinite solenoid evaluated just outside the CS
+    outer surface. The Shafranov B_V is a fully independent contribution
+    that adds linearly and is integrated over the full disk up to the
+    magnetic axis.
 
     Parameters
     ----------
@@ -3731,11 +3755,9 @@ def f_Psi_PF(Ip, R0, a, kappa, beta_p, li, RCS_ext):
     kappa : float
         Plasma elongation [-].
     beta_p : float
-        Poloidal beta [-].  Use f_beta_P() from D0FUS_physical_functions.
+        Poloidal beta [-]. Use f_beta_P() from D0FUS_physical_functions.
     li : float
         Normalised internal inductance li(3) [-].
-    RCS_ext : float
-        CS outer radius [m].
 
     Returns
     -------
@@ -3747,19 +3769,19 @@ def f_Psi_PF(Ip, R0, a, kappa, beta_p, li, RCS_ext):
     References
     ----------
     Shafranov V.D., Reviews of Plasma Physics, vol. 2 (1966).
-    Johner J., Fusion Sci. Technol. 59, 308 (2011)
-    Duchateau et al., Fusion Eng. Des. 89, 2606 (2014)
+    Albanese R. et al., Fusion Eng. Des. 122, 365 (2017).
+    Maviglia F., private communication, EUROfusion (April 2026).
     """
     a_eff = a * math.sqrt(kappa)
     B_V = (μ0 * Ip) / (4.0 * np.pi * R0) * (
         beta_p + li / 2.0 - 1.5 + math.log(8.0 * R0 / a_eff)
     )
-    Psi_PF = np.pi * (R0**2 - RCS_ext**2) * B_V
+    Psi_PF = np.pi * R0**2 * B_V
     return Psi_PF, B_V
 
 
 def Magnetic_flux(Ip, I_Ohm, R0, a, κ, li, Ce, Temps_Plateau,
-                  E_BD, beta_p, RCS_ext,
+                  E_BD, beta_p,
                   nbar, Tbar, Z_eff, q, nu_T, nu_n, eta_model,
                   rho_ped=1.0, n_ped_frac=0.0, T_ped_frac=0.0,
                   Vprime_data=None):
@@ -3797,8 +3819,6 @@ def Magnetic_flux(Ip, I_Ohm, R0, a, κ, li, Ce, Temps_Plateau,
         Breakdown calibration parameter [V.s/m].
     beta_p : float
         Poloidal beta [-]. Use f_beta_P() from D0FUS_physical_functions.
-    RCS_ext : float
-        CS outer radius [m].
     nbar : float
         Volume-averaged electron density [1e20 m^-3].
     Tbar : float
@@ -3852,7 +3872,7 @@ def Magnetic_flux(Ip, I_Ohm, R0, a, κ, li, Ce, Temps_Plateau,
     Ψplateau = Vloop * Temps_Plateau
 
     # --- 4. PF coil contribution (Shafranov vertical field) ---
-    ΨPF, _BV = f_Psi_PF(Ip_A, R0, a, κ, beta_p, li, RCS_ext)
+    ΨPF, _BV = f_Psi_PF(Ip_A, R0, a, κ, beta_p, li)
 
     return (ΨPI, ΨRampUp, Ψplateau, ΨPF, Vloop)
 
@@ -3865,11 +3885,10 @@ if __name__ == "__main__":
              Z_eff=1.7, q=3.0, nu_T=1.0, nu_n=0.1,
              I_Ohm=10.0, Ce=0.45, Temps_Plateau=400)
 
-    RCS_ext = p["R0"] - p["a"] - p["b"] - p["c"] - 0.1
     ΨPI, ΨRampUp, Ψplateau, ΨPF, Vloop = Magnetic_flux(
         p["Ip"], p["I_Ohm"], p["R0"], p["a"], p["κ"], p["Li"],
         p["Ce"], p["Temps_Plateau"],
-        E_BD=0.25, beta_p=p["beta_p"], RCS_ext=RCS_ext,
+        E_BD=0.25, beta_p=p["beta_p"],
         nbar=p["nbar"], Tbar=p["Tbar"],
         Z_eff=p["Z_eff"], q=p["q"], nu_T=p["nu_T"], nu_n=p["nu_n"],
         eta_model='redl')
@@ -3900,112 +3919,48 @@ if __name__ == "__main__":
 # =============================================================================
 
 
-def f_return_flux_correction(R_e, H_CS, R0, R_i=None):
-    """
-    Finite-solenoid return flux correction factor f_corr > 1.
-
-    A finite-length solenoid has a return field B_z < 0 outside its
-    winding (div B = 0 requires the field lines to close through the
-    exterior).  This reduces the net poloidal flux linking the plasma
-    at R0 compared to the total flux through the CS cross-section.
-    The CS must therefore produce more flux than the plasma requires:
-
-        Ψ_CS_solenoid = f_corr × Ψ_plasma,    f_corr = Ψ(R_e) / Ψ(R0).
-
-    The correction depends only on geometry (R_e/R0, H/R_e); it is
-    independent of the current density.  It is evaluated via
-    Gauss-Legendre quadrature (20 × 40 nodes) over the solenoid
-    cross-section using the exact elliptic integral kernel for A_phi
-    of a current loop (Callaghan & Maslen 1960).
-
-    Cross-checked against BOBOZ on ITER,
-    EU-DEMO, JT-60SA and EAST: agreement < 1% on all four machines.
-
-    Parameters
-    ----------
-    R_e : float
-        CS outer radius [m].
-    H_CS : float
-        CS total height [m].
-    R0 : float
-        Plasma major radius [m].
-    R_i : float, optional
-        CS inner radius [m].  If None, estimated as 0.3 × R_e.
-
-    Returns
-    -------
-    f_corr : float
-        Correction factor Ψ(R_e) / Ψ(R0), >= 1.  Typical values
-        1.3 (ITER, JT-60SA) to 1.5 (EAST).
-
-    References
-    ----------
-    Derby N. & Olbert S., Am. J. Phys. 78(3), 229-235 (2010).
-    Callaghan E.E. & Maslen S.H., NASA Technical Note D-465 (1960).
-    """
-    if R_i is None:
-        R_i = max(0.3 * R_e, 0.01)
-    if R_e <= R_i or H_CS <= 0 or R0 <= R_e:
-        return 1.0
-
-    h = H_CS / 2.0
-
-    # Gauss-Legendre quadrature nodes and weights
-    n_r, n_z = 20, 40
-    r_pts, r_wts = np.polynomial.legendre.leggauss(n_r)
-    z_pts, z_wts = np.polynomial.legendre.leggauss(n_z)
-
-    # Map to integration domains [R_i, R_e] and [-h, +h]
-    r_mid, r_half = (R_e + R_i) / 2.0, (R_e - R_i) / 2.0
-    a_vals = r_mid + r_half * r_pts      # source radii
-    z_vals = h * z_pts                    # source heights
-
-    def _Aphi_ratio(R_obs):
-        """Weighted A_phi integral at R_obs (arbitrary normalisation)."""
-        total = 0.0
-        for ir in range(n_r):
-            a = a_vals[ir]
-            for iz in range(n_z):
-                z = z_vals[iz]
-                denom = (a + R_obs)**2 + z**2
-                k2 = 4.0 * a * R_obs / denom
-                if k2 >= 1.0:
-                    k2 = 1.0 - 1e-14
-                if k2 < 1e-15:
-                    continue
-                K_val = ellipk(k2)
-                E_val = ellipe(k2)
-                sk2 = np.sqrt(k2)
-                kernel = ((2.0 - k2) * K_val - 2.0 * E_val) / (2.0 * sk2)
-                total += r_wts[ir] * z_wts[iz] * np.sqrt(a / R_obs) * kernel
-        # Jacobian factors from quadrature domain mapping
-        return total * r_half * h
-
-    # Ψ(R) = 2πR × A_phi(R); the ratio cancels prefactors
-    Psi_Re = R_e * _Aphi_ratio(R_e)
-    Psi_R0 = R0  * _Aphi_ratio(R0)
-
-    if abs(Psi_R0) < 1e-20:
-        return 1.0
-    return max(Psi_Re / Psi_R0, 1.0)
-
-
 def _CS_geometry_init(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, κ,
                       Choice_Buck_Wedg, Gap, config=None):
     """
     Common geometry initialization for CS models (ACAD, D0FUS, CIRCE).
 
-    Computes the CS outer radius, total flux requirement, and height.
+    Computes the CS outer radius, the CS hardware flux capacity demand,
+    and the CS total height.
 
-    When config.cs_return_flux_correction is True, the plasma flux
-    demand (ΨPI + ΨRampUp + Ψplateau - ΨPF, evaluated at R0) is
-    multiplied by f_corr > 1 to account for the return field of the
-    finite-length CS solenoid.  See f_return_flux_correction() for details.
+    Plasma inductive budget
+    -----------------------
+    The flux the plasma effectively consumes from the CS is
+
+        ΨCS_plasma = ΨPI + ΨRampUp + Ψplateau - ΨPF,
+
+    where ΨPF integrates the Shafranov vertical field over the full disk
+    up to R_0 (see f_Psi_PF). Under the null-field breakdown assumption
+    (PF coils compensate the CS stray field at R_0 to enable plasma
+    initiation), the flux available to the plasma at R_0 is, to a very
+    good approximation, equal to the flux of the CS evaluated just
+    outside its outer surface (infinite-solenoid value), so no geometric
+    correction factor is applied to the plasma demand itself.
+
+    Hardware capacity demand
+    ------------------------
+    The CS hardware swings over the full bipolar range -I_max → +I_max
+    and delivers a total flux capacity ΨCS_capacity. A fraction
+    (1 - f_swing_usable) of this capacity is reserved for plasma control
+    during the discharge (vertical stabilization, error-field correction,
+    shape feedback) and is not available for the inductive budget. The
+    hardware capacity that must be designed is therefore
+
+        ΨCS_capacity = ΨCS_plasma / f_swing_usable,
+
+    which is the value returned as ΨCS by this routine and consumed by
+    the downstream solvers (f_CS_ACAD, f_CS_D0FUS, f_CS_CIRCE) under the
+    full-bipolar-swing geometric formula
+        ΨCS_capacity = (2π / 3) B_CS (R_e² + R_e R_i + R_i²).
 
     Parameters
     ----------
     ΨPI, ΨRampUp, Ψplateau, ΨPF : float
-        Flux components [Wb] (plasma convention, at R0).
+        Flux components [Wb].
     a, b, c, R0 : float
         Radial build geometry [m].
     κ : float
@@ -4015,22 +3970,18 @@ def _CS_geometry_init(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, κ,
     Gap : float
         Radial gap between TF and CS [m], used only for 'Wedging'.
     config : GlobalConfig or None
-        If provided, cs_return_flux_correction and H_CS override are read from it.
+        If provided, the H_CS and f_swing_usable overrides are read
+        from it. Default f_swing_usable = 0.75 (25% control reserve).
 
     Returns
     -------
     RCS_ext : float or None
         CS outer radius [m].  None if invalid geometry.
     ΨCS : float
-        Required CS flux swing [Wb] (solenoid convention, at R_e).
+        CS hardware flux capacity demand [Wb] (= plasma demand divided
+        by f_swing_usable).
     H_CS : float
         CS total height [m].
-
-    References
-    ----------
-    Derby N. & Olbert S., Am. J. Phys. 78(3), 229-235 (2010).
-    Callaghan E.E. & Maslen S.H., NASA Technical Note D-465 (1960).
-    Auclair T. (2025), BOBOZ validation note, CEA-IRFM.
     """
     if Choice_Buck_Wedg in ('Bucking', 'Plug'):
         RCS_ext = R0 - a - b - c
@@ -4042,7 +3993,17 @@ def _CS_geometry_init(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, κ,
     if RCS_ext <= 0.0:
         return None, np.nan, np.nan
 
-    ΨCS = ΨPI + ΨRampUp + Ψplateau - ΨPF
+    # Plasma inductive flux budget consumed from the CS
+    ΨCS_plasma = ΨPI + ΨRampUp + Ψplateau - ΨPF
+
+    # Convert to hardware capacity demand by accounting for the swing
+    # fraction reserved to plasma control
+    f_swing_usable = getattr(config, 'f_swing_usable', 0.75) if config is not None else 0.75
+    if f_swing_usable is None or f_swing_usable <= 0 or f_swing_usable > 1.0:
+        raise ValueError(
+            f"GlobalConfig.f_swing_usable must lie in (0, 1], got {f_swing_usable}."
+        )
+    ΨCS = ΨCS_plasma / f_swing_usable
 
     # CS height: use override if provided, otherwise default formula
     H_CS_override = getattr(config, 'H_CS', None) if config is not None else None
@@ -4050,15 +4011,6 @@ def _CS_geometry_init(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, κ,
         H_CS = H_CS_override
     else:
         H_CS = 2 * (κ * a + b + 1)
-
-    # Finite-solenoid return flux correction (Derby & Olbert 2010, AJP 78(3);
-    # Callaghan & Maslen 1960, NASA TN D-465).
-    # Enabled by default. Benchmark scripts may disable via dynamic attribute
-    # cfg.cs_return_flux_correction = False when Ψ is already CS flux.
-    # Validated against BOBOZ (Auclair 2025) on ITER, EU-DEMO, JT-60SA, EAST (<1%).
-    if config is not None and getattr(config, 'cs_return_flux_correction', True):
-        f_corr = f_return_flux_correction(RCS_ext, H_CS, R0)
-        ΨCS *= f_corr
 
     return RCS_ext, ΨCS, H_CS
 
@@ -4071,7 +4023,7 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     
     Flux inversion uses the exact thick-solenoid integral:
         Ψ = (2/3) π μ₀ J (R_e³ − R_i³)
-    Peak field from Ampere's law (exact for uniform-J solenoid):
+    Peak field from Ampere's law (exact for uniform J_smear thick solenoid):
         B_CS = μ₀ J_wost (R_ext − R_int)
     
     Iteration on J_wost(B_CS, E_mag) since B_CS and E_mag depend on R_int.
@@ -4156,12 +4108,17 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     # STEP 1: Determine B_CS, J_max_CS, and d_SU with self-consistent
     #         iteration on RCS_int.
     #
-    #   Flux integral (exact for uniform-J thick solenoid):
-    #     ΨCS = (2/3)π μ₀ J (R_e³ − R_i³)
-    #   Inversion:
-    #     R_i³ = R_e³ − 3 ΨCS / (2π μ₀ J)
+    #   Flux integral with full bipolar swing (uniform-J_smear thick solenoid).
+    #   ΨCS here is the CS hardware capacity demand, already obtained from
+    #   the plasma demand by _CS_geometry_init via division by
+    #   f_swing_usable. The geometric mapping at peak J is
+    #     ΨCS = (2/3) π μ₀ J (R_e³ − R_i³)         [-I_max → +I_max]
+    #   (factor 2 = full bipolar, fixed convention).
     #
-    #   Peak field (Ampere's law, exact):
+    #   Inversion:
+    #     R_i³ = R_e³ − 3 ΨCS / (2 · π · μ₀ · J)
+    #
+    #   Peak field (Ampere's law, exact, unaffected by the swing factor):
     #     B_CS = μ₀ J (R_e − R_i) = μ₀ J d
     #
     #   The iteration is on J_wost(B_CS, E_mag) since both B_CS and E_mag
@@ -4205,6 +4162,7 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
             return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
         # Thick solenoid flux inversion → new R_int
+        # ΨCS = (2/3) π μ₀ J (R_e³ − R_i³)  [full bipolar swing, hardware capacity]
         RCS_sep_cubed = RCS_ext**3 - (3 * ΨCS) / (2 * np.pi * μ0 * J_max_CS)
         
         if RCS_sep_cubed <= 0:
@@ -4240,7 +4198,7 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
             print(f"[STEP 1] Invalid d_SU: {d_SU:.4f} m")
         return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
     
-    # Peak field from Ampere's law: B = μ₀ J d  (exact for uniform-J solenoid)
+    # Peak field from Ampere's law: B = μ₀ J_smear d  (exact for uniform-J_smear thick solenoid)
     B_CS = μ0 * J_max_CS * d_SU
     
     if B_CS > B_max_CS:
@@ -4520,6 +4478,13 @@ def f_CS_D0FUS(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
 
     # ------------------------------------------------------------------
     # Main solving function (uses CACHED cable current density)
+    #
+    # Peak field as a function of CS hardware capacity demand and geometry,
+    # under the full bipolar swing convention (uniform J_smear = J_max * alpha thick solenoid):
+    #   ΨCS = (2/3) π B_CS (R_e² + R_e R_i + R_i²)
+    #   ⇒ B_CS = 3 ΨCS / [2 π (R_e² + R_e R_i + R_i²)]
+    # ΨCS here is the hardware capacity demand returned by _CS_geometry_init
+    # (already includes the 1/f_swing_usable correction for the control reserve).
     # ------------------------------------------------------------------
 
     def d_to_solve(d):
@@ -4527,6 +4492,7 @@ def f_CS_D0FUS(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
             return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
         RCS_int = RCS_ext - d
+        # Peak field at the bore (full bipolar swing).
         B_CS = 3 * ΨCS / (2 * np.pi * (RCS_ext**2 + RCS_ext * RCS_int + RCS_int**2))
         E_mag_CS = calculate_E_mag_CS(B_CS, RCS_int, RCS_ext, H_CS)
         
@@ -4771,6 +4737,14 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
     
     # ------------------------------------------------------------------
     # Main solving function (uses CACHED cable current density)
+    #
+    # Peak field as a function of plasma flux demand and CS geometry, with
+    # Peak field as a function of CS hardware capacity demand and geometry,
+    # under the full bipolar swing convention (uniform J_smear = J_max * alpha thick solenoid):
+    #   ΨCS = (2/3) π B_CS (R_e² + R_e R_i + R_i²)
+    #   ⇒ B_CS = 3 ΨCS / [2 π (R_e² + R_e R_i + R_i²)]
+    # ΨCS here is the hardware capacity demand returned by _CS_geometry_init
+    # (already includes the 1/f_swing_usable correction for the control reserve).
     # ------------------------------------------------------------------
 
     def d_to_solve(d):
@@ -4779,6 +4753,7 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
             return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
         RCS_int = RCS_ext - d
+        # Peak field at the bore (full bipolar swing).
         B_CS = 3 * ΨCS / (2 * np.pi * (RCS_ext**2 + RCS_ext * RCS_int + RCS_int**2))
         E_mag_CS = calculate_E_mag_CS(B_CS, RCS_int, RCS_ext, H_CS)
         

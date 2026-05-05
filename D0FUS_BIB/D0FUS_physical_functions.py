@@ -4576,7 +4576,7 @@ def f_q_profile(rho, q95=3.0, rho95=0.95, alpha_J=1.5):
 
     where q_edge is determined by the constraint q(ρ₉₅) = q₉₅.
 
-    On axis (L'Hôpital): q(0) = q_edge / (αJ + 1).
+    On axis : q(0) = q_edge / (αJ + 1).
 
     This profile is consistent with the j-profile model used in f_Reff()
     for the loop voltage calculation. The internal inductance li(3) is
@@ -4584,34 +4584,10 @@ def f_q_profile(rho, q95=3.0, rho95=0.95, alpha_J=1.5):
     function to build the parametric q(rho) on which neoclassical
     transport coefficients are evaluated.
 
-    Choice of αJ
-    -------------
-    The current profile peaking exponent αJ is the solution of the
-    resistive current relaxation equation in the limit of a single
-    dominant diffusion eigenmode:
-
-        αJ(t) = αJ_max × [1 − exp(−t_burn / τ_R)]
-
-    where αJ_max = 3/2 × νT is the resistive equilibrium limit
-    (j_eq ∝ σ ∝ T^{3/2}, with T ∝ (1−ρ²)^νT), and τ_R = μ₀ a² / η
-    is the resistive diffusion time.  This is the exact solution of the
-    0th-order ODE for the modal amplitude; higher spatial eigenmodes
-    decay as τ_R/n² and are negligible after ~1 s.
-
-    Typical values:
-      αJ = 0.0 : flat current profile (start of burn, or full CD)
-      αJ = 1.0 : moderately peaked (ITER Q=10, t_burn ≈ 10 min)
-      αJ = 1.5 : default — intermediate between ITER and DEMO,
-                  consistent with standard sawtoothing H-mode
-                  (Uckan IPDG89, PROCESS systems code)
-      αJ = 2.5 : strongly peaked (EU-DEMO, 2h burn, νT ≈ 2.8)
-
     The internal inductance l_i increases monotonically with αJ:
         l_i(αJ=0) = 0.50, l_i(αJ=1.5) ≈ 1.08, l_i(αJ=3) ≈ 1.55.
     Computed in f_q_profile_selfconsistent() from the integral
     definition of l_i(3) (Luce 2014, ITER convention).
-    Note: the formula l_i = (αJ+1)/(2αJ+1) sometimes cited in textbooks
-    gives the WRONG direction (decreasing with αJ).  Do not use it.
 
     Parameters
     ----------
@@ -5318,7 +5294,7 @@ def f_q_profile_selfconsistent(
     Parametric safety-factor profile with optional bootstrap self-consistency.
 
     The safety-factor profile follows the standard systems-code form used in
-    PROCESS, HELIOS and SYCOMORE:
+    PROCESS:
 
         j(rho)       = j0 * (1 - rho^2)^alpha_J
         I_enc(rho)/Ip = 1 - (1 - rho^2)^(alpha_J + 1)
