@@ -87,9 +87,12 @@ L_H_Scaling_choice    = Martin       # Martin et al. (2008) L-H threshold scalin
                                      # [Kim18] §2: Martin scaling used in CORSICA
                                      # [Martin08]: Pth (n, B, S)
 
-Bootstrap_choice      = Sauter       # Sauter (1999) neoclassical bootstrap model
-                                     # [Sauter99]: standard for ITER scenario analyses
-                                     # [Kim18] uses Sauter-consistent resistivity
+Bootstrap_choice      = Sauter-Redl  # Sauter (1999/2002) structure with Redl (2021)
+                                     # refitted coefficients — improved at high
+                                     # collisionality (pedestal) and with impurities.
+                                     # [Sauter99, Redl21]: standard for modern ITER
+                                     # scenario analyses; [Kim18] uses Sauter-consistent
+                                     # resistivity.
 
 Option_Kappa          = Wenninger    # Wenninger elongation scaling (κ vs A)
                                      # Yields κ ≈ 1.85 at A = 3.1, consistent with
@@ -100,15 +103,26 @@ Option_q95            = Sauter       # Sauter (2016) q₉₅ formula with LCFS s
 
 # ── 2b. Plasma geometry model ────────────────────────────────────────────────
 
-Plasma_geometry = D0FUS              # Full Miller flux-surface integration (PCHIP κ/δ)
+Plasma_geometry = refined            # Full Miller flux-surface integration (PCHIP κ/δ)
                                      # Core flux surfaces more circular than LCFS;
                                      # captures triangularity effect on volume integrals.
-                                     # Use D0FUS for single-point analysis.
+                                     # Use 'refined' for single-point analysis.
                                      # [Shimada07] Table 2: δ_95 = 0.33, δ_sep = 0.48
-                                     # → non-trivial δ(ρ) → D0FUS mode beneficial.
+                                     # → non-trivial δ(ρ) → refined mode beneficial.
 
 N_rho_miller   = 50                 # Radial grid points for V'(ρ) numerical integration
 N_theta_miller = 50                 # Poloidal grid points
+
+# ── 2b'. q,j profile builder ────────────────────────────────────────────────
+#
+# Two strictly distinct philosophies for q(ρ) and j(ρ):
+#   - 'academic' : prescribed alpha_J, j ∝ (1 − ρ²)^alpha_J, q analytic.
+#   - 'refined'  : Picard self-consistency on q(ρ) from j_Ohm + j_CD + j_bs.
+# Refined is consistent with the H-mode pedestal profiles, the Sauter-Redl
+# bootstrap, and the Multi current-drive deposition selected below.
+
+q_profile_mode = refined             # Picard q(ρ) from physical j decomposition
+# alpha_J      = 1.5                 # Used only when q_profile_mode = 'academic'
 
 # ── 2c. Plasma profiles — ITER 15 MA ELMy H-mode ────────────────────────────
 #
@@ -238,7 +252,7 @@ fatigue_CS    = 2.0             # CS fatigue knockdown factor (Pulsed + Wedging)
 
 # ── 7. TF coil engineering ───────────────────────────────────────────────────
 
-Radial_build_model   = D0FUS    # Full D0FUS stress model (multilayer thick cylinder)
+Radial_build_model   = refined  # Full multilayer thick-cylinder stress model
 Choice_Buck_Wedg     = Wedging  # ITER TF coils are wedged inboard
                                 # [Shimada07] Fig. 1: "18, wedged" TF coils
 Supra_choice         = Nb3Sn   # TF conductor: Nb3Sn (CICC)

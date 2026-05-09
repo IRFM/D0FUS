@@ -114,7 +114,7 @@ class GlobalConfig:
 
     Scaling_Law        : str   = 'IPB98(y,2)'   # Energy confinement scaling law
     L_H_Scaling_choice : str   = 'New_Ip'       # L-H threshold scaling: 'Martin', 'New_S', 'New_Ip'
-    Bootstrap_choice    : str   = 'Redl'        # Bootstrap current model 'Freidberg', 'Segal', 'Sauter', 'Redl'
+    Bootstrap_choice    : str   = 'Sauter-Redl' # Bootstrap current model 'Segal' or 'Sauter-Redl'
     trapped_fraction_model : str = 'Sauter2002' # 'Sauter2002' (standard, NEOS/JINTRAC)
                                                 # 'ASTRA' (Fable, used by PROCESS/ASTRA)
 
@@ -125,12 +125,36 @@ class GlobalConfig:
     Option_Kappa       : str = 'Wenninger'    # Elongation model: 'Wenninger', 'Stambaugh', 'Freidberg', 'Manual'
     κ_manual           : float = 1.9            # Elongation (Manual mode only) [-]
 
+    # ── 2a. Safety factor and current density profiles ────────────────────────
+    # Two strictly distinct philosophies for q(ρ) and j(ρ):
+    #
+    #   'academic' : Parametric ansatz j(ρ) ∝ (1 − ρ²)^alpha_J (PROCESS/Uckan).
+    #                The user prescribes alpha_J as a pedagogical input.
+    #                Cylindrical Ampère then yields q(ρ) analytically with
+    #                q(ρ_95) = q95 imposed as edge normalisation.
+    #                No coupling to bootstrap, CD, or Ohmic physics.
+    #                Reference: Uckan IPDG89, Kovari Fus.Eng.Des. 89 (2014).
+    #
+    #   'refined'  : Self-consistent Picard iteration on q(ρ) itself.
+    #                The composite j_total = j_Ohm(σ_neo, T) + j_CD(deposition)
+    #                + j_bs(Sauter-Redl) is integrated through Ampère to yield
+    #                q(ρ) at every iteration; q(ρ) feeds back into σ_neo and
+    #                Sauter-Redl coefficients until convergence.
+    #                No imposed shape, no parametric exponent.  Reversed shear
+    #                allowed; q(ρ_95) ≠ q95 from f_q95 in general (the latter
+    #                is an MHD-stability scaling, not a profile constraint).
+    #
+    # alpha_J is consumed only by the 'academic' branch.  Default 1.5 follows
+    # the IPDG89 / PROCESS convention (Hender 1992) and gives l_i(3) ≈ 1.08.
+    q_profile_mode : str   = 'refined'   # 'academic' or 'refined'
+    alpha_J        : float = 1.5         # Current peaking exponent (academic mode)
+
     # ── 2b. Plasma geometry model ────────────────────────────────────────────
     # Controls volume integrals and cross-section area elements.
     # 'Academic' : Cylindrical-torus approx, V = 2π²R₀κa²
-    # 'D0FUS'    : Full Miller flux-surface parameterisation (Miller 1998).
+    # 'refined'  : Full Miller flux-surface parameterisation (Miller 1998).
     #              Numerically computed V'(ρ) with radial κ(ρ), δ(ρ) profiles.
-    Plasma_geometry : str = 'D0FUS'             # 'Academic' or 'D0FUS'
+    Plasma_geometry : str = 'refined'           # 'Academic' or 'refined'
 
     # ── 3. Plasma stability limits ───────────────────────────────────────────
     betaN_limit     : float = 2.8  # Troyon normalised beta limit [% m T/MA]
@@ -193,7 +217,7 @@ class GlobalConfig:
     fatigue_CS           : float = 2.0      # CS fatigue knockdown factor (pulsed & wedging only) [-]
 
     # ── 7. TF coil engineering ───────────────────────────────────────────────
-    Radial_build_model   : str   = 'D0FUS'   # Stress model: 'academic', 'D0FUS', 'CIRCE'
+    Radial_build_model   : str   = 'refined' # Stress model: 'academic', 'refined', 'CIRCE'
     Choice_Buck_Wedg     : str   = 'Wedging' # Mechanical config: 'Wedging', 'Bucking', 'Plug'
     Supra_choice         : str   = 'Nb3Sn'   # Superconductor: 'NbTi', 'Nb3Sn', 'REBCO', 'Manual'
     J_wost_Manual        : float = 100e6     # Engineering current density (Manual SC only) [A/m²]
@@ -331,3 +355,117 @@ class GlobalConfig:
 
 # Module-level default instance — import and reuse rather than reinstantiating
 DEFAULT_CONFIG = GlobalConfig()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Two named presets are exposed as top-level factories.  They each return a
+# fresh GlobalConfig with a coherent set of sub-mode choices.  Users obtain
+# the desired baseline with one line and may then surcharge any field by
+# composing dataclasses.replace() over the result.
+#
+#     cfg = preset_refined()
+#     cfg = replace(cfg, R0=9.0, a=2.5, Bmax_TF=12.0)
+#
+# The presets adjust only the sub-mode selectors that distinguish the two
+# philosophies; all engineering, geometric and economic defaults are
+# inherited from GlobalConfig and remain user-controllable.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Sub-modes overridden by each preset (single source of truth).
+_PRESET_ACADEMIC_SUBMODES = dict(
+    # Geometry: cylindrical-torus closed forms (no Miller, no triangularity).
+    Plasma_geometry        = 'Academic',
+    Radial_build_model     = 'academic',
+    # Profiles: L-mode parabolic shapes, no pedestal.
+    Plasma_profiles        = 'L',
+    # Bootstrap: Segal-Cerfon-Freidberg analytical fit (Nucl. Fusion 2021).
+    Bootstrap_choice       = 'Segal',
+    # Trapped fraction: simple closed-form expression (Fable / ASTRA).
+    trapped_fraction_model = 'ASTRA',
+    # Plasma current scaling: legacy Uckan (1989) shape correction.
+    Option_q95             = 'ITER_1989',
+    # Resistivity: pure Spitzer, no neoclassical trapped-particle correction.
+    eta_model              = 'spitzer',
+    # Heating and current drive: technology-agnostic figure-of-merit gamma_CD.
+    CD_source              = 'Academic',
+    # q-profile: parametric ansatz j ∝ (1 − ρ²)^alpha_J with alpha_J prescribed.
+    q_profile_mode         = 'academic',
+    alpha_J                = 1.5,
+)
+
+_PRESET_REFINED_SUBMODES = dict(
+    # Geometry: full Miller flux-surface parameterisation with PCHIP profiles.
+    Plasma_geometry        = 'refined',
+    Radial_build_model     = 'refined',
+    # Profiles: H-mode pedestal-aware shapes.
+    Plasma_profiles        = 'H',
+    # Bootstrap: Sauter (1999/2002) structure with Redl (2021) refitted
+    # coefficients — improved accuracy in the pedestal and with impurities.
+    Bootstrap_choice       = 'Sauter-Redl',
+    # Trapped fraction: Sauter (2002) numerical fit, valid for shaped flux
+    # surfaces.
+    trapped_fraction_model = 'Sauter2002',
+    # Plasma current scaling: Sauter (2016) edge-shaping formulation.
+    Option_q95             = 'Sauter',
+    # Resistivity: Sauter (1999) + Redl (2021) refitted neoclassical fit.
+    eta_model              = 'redl',
+    # Heating and current drive: physics-based combined LH/EC/NB/IC; the user
+    # selects the actual technology mix via P_LH, P_ECRH, P_NBI, P_ICRH (or
+    # f_heat_* fractions in steady-state mode).  Setting any of those to 0
+    # disables the corresponding source.
+    CD_source              = 'Multi',
+    # q-profile: Picard self-consistency on q(ρ) from j_Ohm + j_CD + j_bs.
+    # alpha_J is unused in this mode (kept at default for cross-mode symmetry).
+    q_profile_mode         = 'refined',
+)
+
+
+def preset_academic(**overrides) -> 'GlobalConfig':
+    """
+    Build a GlobalConfig configured for the pedagogical 'academic' mode.
+
+    All sub-mode selectors are set to their analytical / closed-form
+    counterparts; engineering, geometric and economic fields keep their
+    GlobalConfig defaults.  Pass keyword arguments to surcharge any field
+    after the preset has been applied.
+
+    Returns
+    -------
+    GlobalConfig
+        Fresh instance with academic sub-modes.
+
+    Examples
+    --------
+    >>> cfg = preset_academic()
+    >>> cfg = preset_academic(R0=6.2, a=2.0, Bmax_TF=11.8)
+    >>> cfg = preset_academic(eta_model='redl')   # surcharge a sub-mode
+    """
+    # Merge: overrides take precedence over the preset defaults so the user
+    # can change any single sub-mode without bypassing the preset entirely.
+    return GlobalConfig(**{**_PRESET_ACADEMIC_SUBMODES, **overrides})
+
+
+def preset_refined(**overrides) -> 'GlobalConfig':
+    """
+    Build a GlobalConfig configured for the physically detailed 'refined'
+    mode.
+
+    All sub-mode selectors are set to their best-validated physics-based
+    counterparts; engineering, geometric and economic fields keep their
+    GlobalConfig defaults.  Pass keyword arguments to surcharge any field
+    after the preset has been applied.
+
+    Returns
+    -------
+    GlobalConfig
+        Fresh instance with refined sub-modes.
+
+    Examples
+    --------
+    >>> cfg = preset_refined()
+    >>> cfg = preset_refined(R0=9.0, a=2.5, Bmax_TF=12.0, P_NBI=50.0)
+    >>> cfg = preset_refined(Bootstrap_choice='Segal')   # surcharge a sub-mode
+    """
+    # Merge: overrides take precedence over the preset defaults so the user
+    # can change any single sub-mode without bypassing the preset entirely.
+    return GlobalConfig(**{**_PRESET_REFINED_SUBMODES, **overrides})
