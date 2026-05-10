@@ -53,9 +53,9 @@ if __name__ != "__main__":
         J_non_Cu_NbTi, J_non_Cu_Nb3Sn, J_non_Cu_REBCO,
         calculate_cable_current_density,
         eta_old, eta_spitzer, eta_sauter, eta_redl,
-        f_TF_academic, f_TF_D0FUS,
-        Winding_Pack_D0FUS, gamma_func, _last_graded_profile,
-        f_CS_ACAD, f_CS_D0FUS, f_CS_CIRCE,
+        f_TF_academic, f_TF_refined,
+        Winding_Pack_refined, gamma_func, _last_graded_profile,
+        f_CS_ACAD, f_CS_refined, f_CS_CIRCE,
         F_CIRCE0D, compute_von_mises_stress,
         calculate_E_mag_TF,
     )
@@ -81,9 +81,9 @@ else:
         J_non_Cu_NbTi, J_non_Cu_Nb3Sn, J_non_Cu_REBCO,
         calculate_cable_current_density,
         eta_old, eta_spitzer, eta_sauter, eta_redl,
-        f_TF_academic, f_TF_D0FUS,
-        Winding_Pack_D0FUS, gamma_func, _last_graded_profile,
-        f_CS_ACAD, f_CS_D0FUS, f_CS_CIRCE,
+        f_TF_academic, f_TF_refined,
+        Winding_Pack_refined, gamma_func, _last_graded_profile,
+        f_CS_ACAD, f_CS_refined, f_CS_CIRCE,
         F_CIRCE0D, compute_von_mises_stress,
         calculate_E_mag_TF,
     )
@@ -193,9 +193,9 @@ def plot_shaping_profiles(
     """
     Plot radial elongation κ(ρ) and triangularity δ(ρ) profiles.
 
-    Both the 'Academic' (constant-κ, δ=0) and the 'D0FUS PCHIP' profiles are
-    shown.  For δ, both positive and negative triangularity cases are
-    superimposed.
+    Both the 'Academic' (constant-κ, δ=0) and the 'Refined smoothstep5'
+    profiles are shown.  For δ, both positive and negative triangularity
+    cases are superimposed.
 
     Parameters
     ----------
@@ -206,7 +206,8 @@ def plot_shaping_profiles(
 
     References
     ----------
-    Christiansen et al., Nucl. Fusion 32, 291 (1992) — PCHIP parameterisation.
+    Ebert & Musgrave, Texturing & Modeling: A Procedural Approach (2003) —
+        smoothstep5 polynomial.
     Ball & Parra, PPCF 57, 045006 (2015) — κ core penetration.
     """
     rho = np.linspace(1e-4, 1.0, 500)
@@ -223,7 +224,7 @@ def plot_shaping_profiles(
                label=f"Academic: κ = κ_edge = {kappa_edge}  (const)")
     ax.plot(rho, kappa_profile(rho, kappa_edge, kappa_95),
             color="tab:red", lw=2,
-            label="D0FUS: flat core at κ₉₅, edge rise (PCHIP)")
+            label="Refined: flat core at κ₉₅, edge rise (smoothstep5)")
     ax.axvline(rho_95,   color="gray", lw=1, ls="--", alpha=0.7)
     ax.axhline(kappa_95, color="gray", lw=1, ls="--", alpha=0.7)
     ax.plot(rho_95, kappa_95, "o", color="tab:red", ms=7, zorder=5,
@@ -243,10 +244,10 @@ def plot_shaping_profiles(
     ax.axhline(0, color="tab:blue", lw=2, ls="-", label="Academic: δ = 0")
     ax.plot(rho, delta_profile(rho, delta_edge, delta_95),
             color="tab:red", lw=2,
-            label=f"D0FUS PCHIP: δ_edge = +{delta_edge} (D-shape)")
+            label=f"Refined smoothstep5: δ_edge = +{delta_edge} (D-shape)")
     ax.plot(rho, delta_profile(rho, delta_edge_neg, delta_95_neg),
             color="tab:purple", lw=2,
-            label=f"D0FUS PCHIP: δ_edge = {delta_edge_neg} (neg. triang.)")
+            label=f"Refined smoothstep5: δ_edge = {delta_edge_neg} (neg. triang.)")
     ax.axvline(rho_95,   color="gray",       lw=1, ls="--", alpha=0.7)
     ax.axhline(delta_95, color="tab:red",    lw=1, ls="--", alpha=0.6)
     ax.plot(rho_95, delta_95, "o", color="tab:red", ms=7, zorder=5,
@@ -283,9 +284,9 @@ def plot_miller_surfaces(
 ) -> None:
     """
     Plot Miller flux surfaces for three geometry configurations side by side:
-      1. D0FUS PCHIP — positive triangularity
-      2. Academic      — circular (κ const, δ = 0)
-      3. D0FUS PCHIP — negative triangularity
+      1. Refined smoothstep5 — positive triangularity
+      2. Academic            — circular (κ const, δ = 0)
+      3. Refined smoothstep5 — negative triangularity
 
     Parameters
     ----------
@@ -309,15 +310,15 @@ def plot_miller_surfaces(
     colors_fs  = cm.Blues(np.linspace(0.20, 0.95, n_levels))
 
     configs = [
-        ("D0FUS",
-         f"D0FUS PCHIP — positive δ\n"
+        ("refined",
+         f"Refined smoothstep5 — positive δ\n"
          f"(κ₉₅ = {kappa_95:.3f}, δ_edge = +{delta_edge}, δ₉₅ = +{delta_95:.3f})",
          kappa_edge, delta_edge, kappa_95, delta_95),
         ("Academic",
          f"Academic  (κ = {kappa_edge} const, δ = 0)",
          kappa_edge, 0.0, kappa_95, 0.0),
-        ("D0FUS",
-         f"D0FUS PCHIP — negative δ\n"
+        ("refined",
+         f"Refined smoothstep5 — negative δ\n"
          f"(κ₉₅ = {kappa_95:.3f}, δ_edge = {delta_edge_neg}, δ₉₅ = {delta_95_neg:.3f})",
          kappa_edge, delta_edge_neg, kappa_95, delta_95_neg),
     ]
@@ -348,7 +349,7 @@ def plot_miller_surfaces(
         ax.grid(True, alpha=0.3)
 
     plt.suptitle(
-        f"Miller flux surfaces — Academic | D0FUS (+δ) | D0FUS (−δ)\n"
+        f"Miller flux surfaces — Academic | Refined (+δ) | Refined (−δ)\n"
         f"(R₀ = {R0} m, a = {a} m, κ = {kappa_edge}, |δ| = {delta_edge})",
         fontsize=12, fontweight="bold"
     )
@@ -461,7 +462,7 @@ def plot_first_wall_surface(
 ) -> None:
     """
     Compare first-wall surface area from the Academic (Ramanujan ellipse)
-    and D0FUS (Miller LCFS numerical) models.
+    and refined (Miller LCFS numerical) models.
 
     Left panel  : S vs κ  (δ fixed).
     Right panel : S vs δ  (κ fixed, including negative triangularity).
@@ -483,11 +484,11 @@ def plot_first_wall_surface(
 
     S_ac_k = [f_first_wall_surface(R0, a, k, delta_fix, "Academic")
               for k in kappa_scan]
-    S_d0_k = [f_first_wall_surface(R0, a, k, delta_fix, "D0FUS")
+    S_d0_k = [f_first_wall_surface(R0, a, k, delta_fix, "refined")
               for k in kappa_scan]
     S_ac_d = [f_first_wall_surface(R0, a, kappa_fix, d, "Academic")
               for d in delta_scan]
-    S_d0_d = [f_first_wall_surface(R0, a, kappa_fix, d, "D0FUS")
+    S_d0_d = [f_first_wall_surface(R0, a, kappa_fix, d, "refined")
               for d in delta_scan]
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
@@ -501,7 +502,7 @@ def plot_first_wall_surface(
          f"First wall surface vs δ  (κ = {kappa_fix})"),
     ]:
         ax.plot(xarr, S_ac, "b-",  lw=2, label="Academic (Ramanujan ellipse)")
-        ax.plot(xarr, S_d0, "r--", lw=2, label="D0FUS (Miller LCFS)")
+        ax.plot(xarr, S_d0, "r--", lw=2, label="Refined (Miller LCFS)")
         ax.set_xlabel(xlabel, fontsize=12)
         ax.set_ylabel("S  [m²]", fontsize=12)
         ax.set_title(title, fontsize=11)
@@ -741,13 +742,13 @@ def plot_He_fraction(
 
     fig, ax = plt.subplots(figsize=(6.5, 4.2))
     ax.plot(C_arr, fa_ITER,     "b-",  lw=1.8, label="ITER — academic (no pedestal)")
-    ax.plot(C_arr, fa_ITER_ped, "b--", lw=1.4, label="ITER — D0FUS H-mode pedestal")
+    ax.plot(C_arr, fa_ITER_ped, "b--", lw=1.4, label="ITER — Refined H-mode pedestal")
     ax.plot(C_arr, fa_DEMO,     "r-",  lw=1.8, label="EU-DEMO — academic")
     ax.axvline(C_Alpha, color="k", lw=0.9, ls=":", label=f"$C_\\alpha$ = {C_Alpha:.0f}")
     ax.axhspan(4, 6, color="grey", alpha=0.12, label="ITER target 5 %")
     ax.set_xlabel(r"Removal efficiency $C_\alpha = \tau_\alpha / \tau_E$", fontsize=11)
     ax.set_ylabel(r"Helium ash fraction $f_\alpha$ [%]", fontsize=11)
-    ax.set_title("He ash fraction — academic vs D0FUS H-mode pedestal", fontsize=10)
+    ax.set_title("He ash fraction — academic vs refined H-mode pedestal", fontsize=10)
     ax.legend(fontsize=8)
     ax.set_xlim(2, 15)
     ax.set_ylim(0, 25)
@@ -937,7 +938,7 @@ def plot_TF_thickness_vs_field(
 ) -> None:
     """
     Plot TF coil total inboard thickness vs peak magnetic field for four
-    mechanical models (Academic/D0FUS × Wedging/Bucking).
+    mechanical models (Academic/refined × Wedging/Bucking).
 
     An optional MADE benchmark scatter dataset is superimposed on the Wedging
     panel for EU-DEMO validation.
@@ -949,7 +950,7 @@ def plot_TF_thickness_vs_field(
     sigma_TF   : float  Allowable TF coil stress [Pa].
                          Default 867 MPa (SDC-IC Pm+Pb, austenitic steel at 4 K).
     J_max_TF   : float  Current density on the non-steel area [A/m²].
-                         Default 60 MA/m². The D0FUS cable model (Maddock
+                         Default 60 MA/m². The refined cable model (Maddock
                          adiabatic hotspot) predicts ~40 MA/m² for HTS at
                          20 T,
                          From Giannini 2023 Fig. 20 (validated FEM
@@ -983,11 +984,11 @@ def plot_TF_thickness_vs_field(
                                     "Bucking", cfg.coef_inboard_tension,
                                     cfg.F_CClamp)[0])
         # c_BP = 0: MADE total radial build = WP + case vault (no backplate)
-        d0_w.append(f_TF_D0FUS(a, b, R0, sigma_TF, J_max_TF, B,
+        d0_w.append(f_TF_refined(a, b, R0, sigma_TF, J_max_TF, B,
                                 "Wedging", 0.5, 1,
                                 0.0, cfg.coef_inboard_tension,
                                 cfg.F_CClamp)[0])
-        d0_b.append(f_TF_D0FUS(a, b, R0, sigma_TF, J_max_TF, B,
+        d0_b.append(f_TF_refined(a, b, R0, sigma_TF, J_max_TF, B,
                                 "Bucking", 1.0, 1,
                                 0.0, cfg.coef_inboard_tension,
                                 cfg.F_CClamp)[0])
@@ -1007,7 +1008,7 @@ def plot_TF_thickness_vs_field(
     # Wedging panel
     ax = axes[0]
     ax.plot(B_vals, acad_w, color=colors[0], lw=2, label="Academic — Wedging")
-    ax.plot(B_vals, d0_w,   color=colors[1], lw=2, label="D0FUS — Wedging")
+    ax.plot(B_vals, d0_w,   color=colors[1], lw=2, label="Refined — Wedging")
     ax.scatter(x_made, y_made, color="k", marker="x", s=80, label="MADE")
     ax.set_xlabel("Peak field B_max [T]", fontsize=12)
     ax.set_ylabel("TF total inboard thickness [m]", fontsize=12)
@@ -1018,7 +1019,7 @@ def plot_TF_thickness_vs_field(
     # Bucking panel
     ax = axes[1]
     ax.plot(B_vals, acad_b, color=colors[0], lw=2, label="Academic — Bucking")
-    ax.plot(B_vals, d0_b,   color=colors[1], lw=2, label="D0FUS — Bucking")
+    ax.plot(B_vals, d0_b,   color=colors[1], lw=2, label="Refined — Bucking")
     ax.set_xlabel("Peak field B_max [T]", fontsize=12)
     ax.set_ylabel("TF total inboard thickness [m]", fontsize=12)
     ax.set_title("Bucking configuration", fontsize=12)
@@ -1067,9 +1068,9 @@ def plot_TF_grading_thickness_vs_field(
     c_g = np.full_like(B_scan, np.nan)
 
     for i, Bm in enumerate(B_scan):
-        ru = Winding_Pack_D0FUS(R0, a, b, sigma_TF, J_max_TF, Bm,
+        ru = Winding_Pack_refined(R0, a, b, sigma_TF, J_max_TF, Bm,
                                 0.5, n, grading=False)
-        rg = Winding_Pack_D0FUS(R0, a, b, sigma_TF, J_max_TF, Bm,
+        rg = Winding_Pack_refined(R0, a, b, sigma_TF, J_max_TF, Bm,
                                 0.5, n, grading=True)
         if np.isfinite(ru[0]):
             c_u[i] = ru[0] * 100
@@ -1116,9 +1117,9 @@ def plot_TF_grading_reduction(
     c_g = np.full_like(B_scan, np.nan)
 
     for i, Bm in enumerate(B_scan):
-        ru = Winding_Pack_D0FUS(R0, a, b, sigma_TF, J_max_TF, Bm,
+        ru = Winding_Pack_refined(R0, a, b, sigma_TF, J_max_TF, Bm,
                                 0.5, n, grading=False)
-        rg = Winding_Pack_D0FUS(R0, a, b, sigma_TF, J_max_TF, Bm,
+        rg = Winding_Pack_refined(R0, a, b, sigma_TF, J_max_TF, Bm,
                                 0.5, n, grading=True)
         if np.isfinite(ru[0]):
             c_u[i] = ru[0] * 100
@@ -1164,9 +1165,9 @@ def plot_TF_grading_alpha_profile(
         cfg = DEFAULT_CONFIG
 
     # Run graded (populates _last_graded_profile) then ungraded
-    rg = Winding_Pack_D0FUS(R0, a, b, sigma_TF, J_max_TF, B_max,
+    rg = Winding_Pack_refined(R0, a, b, sigma_TF, J_max_TF, B_max,
                             0.5, n, grading=True)
-    ru = Winding_Pack_D0FUS(R0, a, b, sigma_TF, J_max_TF, B_max,
+    ru = Winding_Pack_refined(R0, a, b, sigma_TF, J_max_TF, B_max,
                             0.5, n, grading=False)
 
     if not np.isfinite(rg[0]) or not np.isfinite(ru[0]):
@@ -1221,7 +1222,7 @@ def plot_CS_thickness_vs_flux(
 ) -> None:
     """
     Plot CS coil winding-pack thickness and peak field vs volt-second budget
-    for three mechanical models (Academic, D0FUS, CIRCE) and three
+    for three mechanical models (Academic, refined, CIRCE) and three
     configuration types (Wedging, Bucking, Plug).
 
     For the Wedging configuration, a MADE benchmark scatter dataset
@@ -1234,7 +1235,7 @@ def plot_CS_thickness_vs_flux(
       Geometry: a_cs=3 m, b_cs=1.2 m, c_cs=2 m, R0=9 m, Gap=0.1 m
         → R_CS_ext = 9 - 3 - 1.2 - 2 - 0.1 = 2.7 m
 
-      Stress:  σ_CS = 600 MPa.  D0FUS applies fatigue_CS = 2 internally
+      Stress:  σ_CS = 600 MPa.  The refined model applies fatigue_CS = 2 internally
         → σ_eff = 300 MPa as the fig.2 source
 
       J_wost = 85 MA/m², derived from Sarasola 2020 Sec. II-B:
@@ -1281,7 +1282,7 @@ def plot_CS_thickness_vs_flux(
     # subtracted). The MADE reference data published by Sarasola et al.
     # corresponds to the CS hardware design output at full bipolar swing
     # (the curve is parameterised on the total volt-second capacity of
-    # the coil, not on the plasma inductive demand). To compare D0FUS to
+    # the coil, not on the plasma inductive demand). To compare the refined model to
     # MADE on the same footing, we feed the full-bipolar abscissa to the
     # solver and disable the additional 1/f_swing_usable rescaling. The
     # design-mode default (0.75 = 25% control reserve) is restored
@@ -1299,8 +1300,8 @@ def plot_CS_thickness_vs_flux(
 
     psi_values  = np.linspace(0, psi_max, n_psi)
     mech_confs  = ["Wedging", "Bucking", "Plug"]
-    model_funcs = {"Academic": f_CS_ACAD, "D0FUS": f_CS_D0FUS, "CIRCE": f_CS_CIRCE}
-    colors      = {"Academic": "blue", "D0FUS": "green", "CIRCE": "red"}
+    model_funcs = {"Academic": f_CS_ACAD, "refined": f_CS_refined, "CIRCE": f_CS_CIRCE}
+    colors      = {"Academic": "blue", "refined": "green", "CIRCE": "red"}
 
     # Storage: results[model][config] = {"thickness": [], "B": []}
     results = {m: {c: {"thickness": [], "B": []} for c in mech_confs}
@@ -1653,10 +1654,10 @@ def plot_shaping_run(
     Plot radial elongation κ(ρ) and triangularity δ(ρ) profiles for the
     geometry used in a D0FUS run.
 
-    In 'D0FUS' geometry mode, the Christiansen PCHIP parameterisation is
-    used (radially varying κ and δ with core penetration).
-    In 'Academic' mode, κ(ρ) = κ_edge = const and δ(ρ) = 0 everywhere,
-    consistent with the cylindrical-torus approximation.
+    In 'refined' geometry mode, smoothstep5 profiles are used for κ(ρ)
+    and δ(ρ) (C² continuous at rho_95, with radially varying core
+    penetration).  In 'Academic' mode, κ(ρ) = κ_edge = const and δ(ρ)
+    = 0 everywhere, consistent with the cylindrical-torus approximation.
 
     Parameters
     ----------
@@ -1666,11 +1667,12 @@ def plot_shaping_run(
 
     References
     ----------
-    Christiansen et al., Nucl. Fusion 32, 291 (1992).
+    Ebert & Musgrave, Texturing & Modeling: A Procedural Approach (2003) —
+        smoothstep5 polynomial.
     Ball & Parra, PPCF 57, 045006 (2015) — κ core penetration.
     """
     R0, a, kappa_edge, delta_edge, kappa_95, delta_95, _ = _resolve_geometry(run)
-    geom_mode = run.get("Plasma_geometry", "D0FUS")
+    geom_mode = run.get("Plasma_geometry", "refined")
     rho = np.linspace(1e-4, 1.0, n_rho)
 
     if geom_mode == "Academic":
@@ -1678,7 +1680,7 @@ def plot_shaping_run(
         kap_arr = np.full_like(rho, kappa_edge)
         del_arr = np.zeros_like(rho)
     else:
-        # D0FUS PCHIP profiles with radial variation
+        # Refined Miller smoothstep5 profiles with radial variation
         kap_arr = kappa_profile(rho, kappa_edge, kappa_95)
         del_arr = delta_profile(rho, delta_edge, delta_95)
 
@@ -1690,7 +1692,7 @@ def plot_shaping_run(
         ax.axhline(kappa_edge, color="tab:blue", lw=2.2,
                    label=f"Academic: κ = κ_edge = {kappa_edge:.3f} (const)")
     else:
-        ax.plot(rho, kap_arr, "tab:blue", lw=2.2, label="D0FUS PCHIP")
+        ax.plot(rho, kap_arr, "tab:blue", lw=2.2, label="Refined smoothstep5")
         ax.axhline(kappa_edge, color="tab:orange", lw=1.4, ls="--",
                    label=f"κ_edge = {kappa_edge:.3f}")
         ax.axhline(kappa_95,   color="tab:gray",   lw=1.0, ls=":",
@@ -1709,7 +1711,7 @@ def plot_shaping_run(
         ax.axhline(0, color="tab:blue", lw=2.2,
                    label="Academic: δ = 0 (const)")
     else:
-        ax.plot(rho, del_arr, "tab:red", lw=2.2, label="D0FUS PCHIP")
+        ax.plot(rho, del_arr, "tab:red", lw=2.2, label="Refined smoothstep5")
         ax.axhline(delta_edge, color="tab:orange", lw=1.4, ls="--",
                    label=f"δ_edge = {delta_edge:.3f}")
         ax.axhline(delta_95,   color="tab:gray",   lw=1.0, ls=":",
@@ -1723,7 +1725,7 @@ def plot_shaping_run(
     ax.grid(True, alpha=0.3)
     ax.set_xlim(0, 1)
 
-    _mode_str = "Academic" if geom_mode == "Academic" else "D0FUS PCHIP"
+    _mode_str = "Academic" if geom_mode == "Academic" else "Refined smoothstep5"
     plt.suptitle(
         f"Run shaping profiles ({_mode_str}) — R₀={R0} m, a={a} m\n"
         f"κ_edge={kappa_edge:.3f}, δ_edge={delta_edge:.3f}",
@@ -1746,8 +1748,9 @@ def plot_flux_surfaces_run(
     """
     Plot nested flux surfaces for the actual geometry of a D0FUS run.
 
-    When Plasma_geometry == 'D0FUS', surfaces follow the Miller PCHIP
-    parameterisation with radially varying κ(ρ) and δ(ρ).
+    When Plasma_geometry == 'refined', surfaces follow the Miller
+    parameterisation with radially varying κ(ρ) and δ(ρ) built from
+    smoothstep5 profiles (C² continuous at rho_95).
     When Plasma_geometry == 'Academic' (or unset), surfaces are concentric
     ellipses with constant κ = κ_edge and δ = 0, consistent with the
     cylindrical-torus approximation used in the Academic solver branch.
@@ -1767,7 +1770,7 @@ def plot_flux_surfaces_run(
     Miller et al., Phys. Plasmas 5, 973 (1998).
     """
     R0, a, kappa_edge, delta_edge, kappa_95, delta_95, _ = _resolve_geometry(run)
-    geom_mode = run.get("Plasma_geometry", "D0FUS")
+    geom_mode = run.get("Plasma_geometry", "refined")
 
     theta      = np.linspace(0, 2 * np.pi, n_theta)
     rho_levels = np.linspace(0.1, 1.0, n_levels)
@@ -1781,7 +1784,7 @@ def plot_flux_surfaces_run(
             R_surf = R0 + rho_val * a * np.cos(theta)
             Z_surf = kappa_edge * rho_val * a * np.sin(theta)
         else:
-            # D0FUS PCHIP Miller surfaces with radially varying κ(ρ), δ(ρ)
+            # Refined Miller smoothstep5 surfaces with radially varying κ(ρ), δ(ρ)
             R_surf, Z_surf = miller_RZ(rho_val, theta,
                                        R0, a, kappa_edge, delta_edge,
                                        kappa_95, delta_95)
@@ -1802,7 +1805,7 @@ def plot_flux_surfaces_run(
     if geom_mode == "Academic":
         _geom_label = "Academic (elliptic, δ = 0)"
     else:
-        _geom_label = f"D0FUS PCHIP (δ_edge = {delta_edge:.3f})"
+        _geom_label = f"Refined smoothstep5 (δ_edge = {delta_edge:.3f})"
 
     ax.set_title(
         f"Flux surfaces — {_geom_label}\n"
@@ -1827,16 +1830,16 @@ def plot_q_profile(
     """
     Plot the safety factor profile q(rho).
 
-    Uses the parametric q-profile from f_q_profile_selfconsistent() when
-    available in run['_q_sc']. Falls back to the analytical f_q_profile()
-    model with a prescribed alpha_J otherwise.
+    Picks data from run['_q_sc'], which is populated by the q,j dispatcher
+    (f_q_profile_academic or f_q_profile_refined according to
+    config.q_profile_mode).  When the dict is unavailable, falls back to
+    the analytical parametric q(rho) from f_q_profile() with alpha_J = 1.5.
 
-    The current density decomposition j_total = j_Ohm + j_CD + j_bs is
-    deliberately NOT plotted. Those profiles are built inside
-    f_q_profile_selfconsistent() only to close the self-consistency loop
-    on the integral scalar l_i(3); they are not calibrated quantities
-    that downstream D0FUS modules consume. The scalars that do propagate
-    (alpha_J, q_0, l_i, f_bs) are reported in the figure title.
+    The current density decomposition j_Ohm + j_CD + j_bs is meaningful
+    only in 'refined' mode (in 'academic' mode those components are zero
+    by construction).  The figure stays focused on q(rho) and reports the
+    integral diagnostic l_i(3) along with q_0 and either q(0.95) or the
+    imposed q95.
 
     Parameters
     ----------
@@ -1852,18 +1855,20 @@ def plot_q_profile(
     """
     q95    = float(run["q95"])
     _q_sc  = run.get("_q_sc", None)
+    q_mode = str(run.get("q_profile_mode", "refined"))   # default for legacy runs
 
-    # ── Data source: parametric solve or analytical fallback ──────────
+    # ── Data source: dispatcher solution or analytical fallback ──────────
     if _q_sc is not None and 'q_arr' in _q_sc:
         rho   = _q_sc['rho']
         q_arr = _q_sc['q_arr']
         li    = _q_sc['li']
-
-        suptitle_str = r"Safety factor profile $q(\rho)$"
+        q_at_95 = float(_q_sc.get('q_at_95', np.interp(0.95, rho, q_arr)))
+        suptitle_str = (rf"Safety factor profile $q(\rho)$  "
+                        rf"({q_mode} mode)")
     else:
-        # Analytical fallback (no self-consistent data available)
+        # Analytical fallback (no run output available — used by tests).
         rho     = np.linspace(0.0, 0.99, n_rho)
-        alpha_J = 1.5    # IPDG89 reference
+        alpha_J = float(run.get("alpha_J", 1.5))
         q_arr   = f_q_profile(rho, q95=q95, rho95=0.95, alpha_J=alpha_J)
 
         # Cylindrical li estimate from the analytical form
@@ -1874,7 +1879,9 @@ def plot_q_profile(
         li_integ = np.where(rho > 1e-8, I_norm**2 / rho_s, 0.0)
         li       = 2.0 * np.trapezoid(li_integ, rho)
 
-        suptitle_str = r"Safety factor profile $q(\rho)$ (analytical fallback)"
+        q_at_95 = float(np.interp(0.95, rho, q_arr))
+        suptitle_str = (rf"Safety factor profile $q(\rho)$  "
+                        rf"(analytical fallback, $\alpha_J = {alpha_J:.2f}$)")
 
     # ── Figure ────────────────────────────────────────────────────────
     fig, ax = plt.subplots(1, 1, figsize=(7, 5))
@@ -1883,12 +1890,23 @@ def plot_q_profile(
     ax.axhline(q95, color="gray", ls="--", lw=0.8, alpha=0.5)
     ax.axvline(0.95, color="gray", ls=":", lw=0.8, alpha=0.4)
     ax.plot(rho[0],  q_arr[0], "o", color="tab:blue", ms=7, zorder=5)
-    ax.plot(0.95, q95, "s", color="tab:red",  ms=7, zorder=5,
-            label=rf"$q_{{95}} = {q95:.2f}$")
-    ax.text(0.04, 0.95,
-            rf"$q_0 = {q_arr[0]:.2f}$" + "\n"
-            rf"$l_i(3) = {li:.2f}$" + "\n"
-            rf"$q(1) = {q_arr[-1]:.2f}$",
+    # In academic mode, q(rho_95) = q95 by construction; in refined mode,
+    # q(rho_95) generally differs and is a meaningful diagnostic.
+    if q_mode == "refined":
+        ax.plot(0.95, q_at_95, "o", color="tab:blue", ms=7, zorder=5)
+        ax.plot(0.95, q95,     "s", color="tab:red",  ms=7, zorder=5,
+                label=rf"$q_{{95}}^{{\rm scaling}} = {q95:.2f}$")
+        info_text = (rf"$q_0 = {q_arr[0]:.2f}$" + "\n"
+                     rf"$q(\rho_{{95}}) = {q_at_95:.2f}$" + "\n"
+                     rf"$l_i(3) = {li:.2f}$" + "\n"
+                     rf"$q(1) = {q_arr[-1]:.2f}$")
+    else:  # academic mode: q95 is imposed
+        ax.plot(0.95, q95, "s", color="tab:red", ms=7, zorder=5,
+                label=rf"$q_{{95}} = {q95:.2f}$ (imposed)")
+        info_text = (rf"$q_0 = {q_arr[0]:.2f}$" + "\n"
+                     rf"$l_i(3) = {li:.2f}$" + "\n"
+                     rf"$q(1) = {q_arr[-1]:.2f}$")
+    ax.text(0.04, 0.95, info_text,
             transform=ax.transAxes, fontsize=10, va="top",
             bbox=dict(boxstyle="round,pad=0.3", fc="lightyellow", alpha=0.85))
     ax.set_xlabel(r"$\rho$", fontsize=12)
@@ -3121,8 +3139,8 @@ def plot_TF_benchmark_table(cfg=None, save_dir=None) -> None:
             return f_TF_academic(a, b, R0, sigma, J_wost, B_max,
                                  conf, cfg.coef_inboard_tension, cfg.F_CClamp)
         else:
-            # f_TF_D0FUS returns same tuple layout
-            return f_TF_D0FUS(a, b, R0, sigma, J_wost, B_max,
+            # f_TF_refined returns the same tuple layout
+            return f_TF_refined(a, b, R0, sigma, J_wost, B_max,
                               conf, omega, n_frac,
                               cfg.c_BP, cfg.coef_inboard_tension, cfg.F_CClamp)
 
@@ -3133,7 +3151,7 @@ def plot_TF_benchmark_table(cfg=None, save_dir=None) -> None:
     # consistent with the CS benchmark.
     model_specs = [
         ("Academic", "#9C27B0"),
-        ("D0FUS",    "#4CAF50"),
+        ("refined",    "#4CAF50"),
     ]
 
     cols = ["Machine", "SC", "Config", "B_max [T]", "J [MA/m²]", "σ [MPa]", "c [m]"]
@@ -3428,7 +3446,7 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
     # Model definitions: (label, function, header colour)
     model_specs = [
         ("Academic", f_CS_ACAD,  "#9C27B0"),
-        ("D0FUS",    f_CS_D0FUS, "#2196F3"),
+        ("refined", f_CS_refined, "#2196F3"),
         ("CIRCE",    f_CS_CIRCE, "#F44336"),
     ]
 
@@ -3994,7 +4012,7 @@ if __name__ == "__main__":
         # Plasma geometry
         "R0":               6.2,
         "a":                2.0,
-        "Plasma_geometry": "D0FUS",
+        "Plasma_geometry": "refined",
         "kappa_edge":       1.85,
         "delta_edge":       0.33,
         "Vprime_data":      None,

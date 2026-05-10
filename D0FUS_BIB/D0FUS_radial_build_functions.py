@@ -46,7 +46,7 @@ def gamma_func(alpha_val, n_val):
     Effective steel area fraction for transverse (axial-face) loading.
 
     Derived from square-conductor geometry with n_val turns sharing
-    the inter-turn load path.  Used by TF winding pack, CS D0FUS,
+    the inter-turn load path.  Used by TF winding pack, CS refined,
     and CS CIRCE solvers.
 
     Parameters
@@ -375,7 +375,7 @@ def _adaptive_root_search(residual_fn, d_lo, d_hi,
     """
     Adaptive 3-pass root search for residual functions with partial NaN domains.
 
-    Factorises the search pattern shared by Winding_Pack_D0FUS, f_CS_D0FUS,
+    Factorises the search pattern shared by Winding_Pack_refined, f_CS_refined,
     and f_CS_CIRCE.  Handles non-monotone residuals (e.g. CIRCE where the
     Tresca maximum can jump between bore and outer radius) by collecting
     ALL sign-change brackets and returning the root selected by ``select``.
@@ -485,7 +485,7 @@ def _unpack_CS_config(config):
     Extract CS-relevant parameters from GlobalConfig.
 
     Centralises the config → local variable unpacking shared by
-    f_CS_ACAD, f_CS_D0FUS, and f_CS_CIRCE.
+    f_CS_ACAD, f_CS_refined, and f_CS_CIRCE.
 
     Returns
     -------
@@ -3194,9 +3194,9 @@ def f_TF_academic(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg,
     return c, c_WP, c_Nose, σ_z, σ_theta, σ_r, Steel_fraction
 
     
-#%% D0FUS model
+#%% Refined model
 
-def Winding_Pack_D0FUS(R_0, a, b, sigma_max, J_max, B_max, omega, n,
+def Winding_Pack_refined(R_0, a, b, sigma_max, J_max, B_max, omega, n,
                        grading=False):
     
     """
@@ -3344,7 +3344,7 @@ def Winding_Pack_D0FUS(R_0, a, b, sigma_max, J_max, B_max, omega, n,
     return winding_pack_thickness, sigma_r, sigma_z, sigma_theta, Steel_fraction
 
 
-def Nose_D0FUS(R_ext_Nose, sigma_max, omega, B_max, R_0, a, b,
+def Nose_refined(R_ext_Nose, sigma_max, omega, B_max, R_0, a, b,
                coef_inboard_tension):
     """
     Compute the inner radius of the TF nose (inner structural casing).
@@ -3353,7 +3353,7 @@ def Nose_D0FUS(R_ext_Nose, sigma_max, omega, B_max, R_0, a, b,
     the Tresca stress at Ri equals sigma_max.
 
     The caller computes the nose thickness as:
-        c_Nose = R_ext_Nose - Nose_D0FUS(R_ext_Nose, ...)
+        c_Nose = R_ext_Nose - Nose_refined(R_ext_Nose, ...)
 
     Parameters
     ----------
@@ -3404,7 +3404,7 @@ def Nose_D0FUS(R_ext_Nose, sigma_max, omega, B_max, R_0, a, b,
     
     return Ri
 
-def f_TF_D0FUS(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n,
+def f_TF_refined(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n,
                c_BP, coef_inboard_tension, F_CClamp, TF_grading=False):
     
     """
@@ -3439,13 +3439,13 @@ def f_TF_D0FUS(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n,
     
     if Choice_Buck_Wedg == "Wedging":
         
-        c_WP, σ_r, σ_z, σ_theta, Steel_fraction  = Winding_Pack_D0FUS( R0, a, b, σ_TF, J_max_TF, B_max_TF, omega, n, grading=TF_grading)
+        c_WP, σ_r, σ_z, σ_theta, Steel_fraction  = Winding_Pack_refined( R0, a, b, σ_TF, J_max_TF, B_max_TF, omega, n, grading=TF_grading)
         
         # Vérification que c_WP est valide
         if c_WP is None or np.isnan(c_WP) or c_WP < 0:
             return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
-        c_Nose = R0 - a - b - c_WP - Nose_D0FUS(R0 - a - b - c_WP, σ_TF, omega, B_max_TF, R0, a, b,
+        c_Nose = R0 - a - b - c_WP - Nose_refined(R0 - a - b - c_WP, σ_TF, omega, B_max_TF, R0, a, b,
                                           coef_inboard_tension)
 
         # Vérification que c_Nose est valide
@@ -3467,7 +3467,7 @@ def f_TF_D0FUS(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n,
     
     elif Choice_Buck_Wedg == "Bucking" or Choice_Buck_Wedg == "Plug":
         
-        c_WP, σ_r, σ_z, σ_theta, Steel_fraction = Winding_Pack_D0FUS(R0, a, b, σ_TF, J_max_TF, B_max_TF, omega, n, grading=TF_grading)
+        c_WP, σ_r, σ_z, σ_theta, Steel_fraction = Winding_Pack_refined(R0, a, b, σ_TF, J_max_TF, B_max_TF, omega, n, grading=TF_grading)
         
         c = c_WP
         c_Nose = 0
@@ -3492,7 +3492,7 @@ if __name__ == "__main__":
 #%% TF plot
     
 if __name__ == "__main__":
-    # TF winding-pack thickness vs B_max — Academic vs D0FUS
+    # TF winding-pack thickness vs B_max — Academic vs refined
     # No explicit parameters: uses plot_TF_thickness_vs_field defaults
     # (Giannini 2023: a=2.0, b=2.7, R0=9.0, σ_TF=867 MPa, J=60 MA/m²)
     import D0FUS_BIB.D0FUS_figures as figs
@@ -3609,8 +3609,9 @@ def f_Psi_ind(R0, a, kappa, li, Ip):
     -------------------
         L_int = mu0 R0 li / 2
 
-    where li = li(3) is the normalised internal inductance from
-    f_q_profile_selfconsistent().
+    where li = li(3) is the normalised internal inductance returned by
+    the q-profile dispatcher (f_q_profile_academic or f_q_profile_refined,
+    depending on config.q_profile_mode).
 
     Parameters
     ----------
@@ -3922,7 +3923,7 @@ if __name__ == "__main__":
 def _CS_geometry_init(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, κ,
                       Choice_Buck_Wedg, Gap, config=None):
     """
-    Common geometry initialization for CS models (ACAD, D0FUS, CIRCE).
+    Common geometry initialization for CS models (ACAD, refined, CIRCE).
 
     Computes the CS outer radius, the CS hardware flux capacity demand,
     and the CS total height.
@@ -3953,7 +3954,7 @@ def _CS_geometry_init(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, κ,
         ΨCS_capacity = ΨCS_plasma / f_swing_usable,
 
     which is the value returned as ΨCS by this routine and consumed by
-    the downstream solvers (f_CS_ACAD, f_CS_D0FUS, f_CS_CIRCE) under the
+    the downstream solvers (f_CS_ACAD, f_CS_refined, f_CS_CIRCE) under the
     full-bipolar-swing geometric formula
         ΨCS_capacity = (2π / 3) B_CS (R_e² + R_e R_i + R_i²).
 
@@ -4095,7 +4096,7 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     debug = False
     Tol_CS = 1e-3
 
-    # Common geometry (shared with f_CS_D0FUS via _CS_geometry_init)
+    # Common geometry (shared with f_CS_refined via _CS_geometry_init)
     RCS_ext, ΨCS, H_CS = _CS_geometry_init(
         ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, κ, Choice_Buck_Wedg, Gap,
         config=config)
@@ -4341,7 +4342,7 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     return d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS
 
 #%% ===========================================================================
-# CS D0FUS MODEL
+# CS REFINED MODEL
 # =============================================================================
 
 
@@ -4398,7 +4399,7 @@ def f_sigma_z_CS_axial(J_smear, R_i, R_e, h):
     return float(sigma_z)
 
 
-def f_CS_D0FUS(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, σ_CS,
+def f_CS_refined(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, σ_CS,
               Supra_choice_CS, Jc_manual, T_Helium, Choice_Buck_Wedg, κ, N_sub_CS, tau_h,
               config: GlobalConfig):
     """
@@ -4728,7 +4729,7 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
     debug = False
     Tol_CS = 1e-3
 
-    # Common geometry (shared with f_CS_ACAD, f_CS_D0FUS via _CS_geometry_init)
+    # Common geometry (shared with f_CS_ACAD, f_CS_refined via _CS_geometry_init)
     RCS_ext, ΨCS, H_CS = _CS_geometry_init(
         ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, κ, Choice_Buck_Wedg, Gap,
         config=config)
@@ -4988,7 +4989,7 @@ if __name__ == "__main__":
 #%% CS plot
 
 if __name__ == "__main__":
-    # CS winding-pack thickness and B_CS vs volt-second — Academic/D0FUS/CIRCE
+    # CS winding-pack thickness and B_CS vs volt-second — Academic/refined/CIRCE
     # No explicit parameters: uses plot_CS_thickness_vs_flux defaults
     # (Sarasola 2020: a=3, b=1.2, c=2, R0=9, σ_CS=600 MPa, J=85 MA/m²)
     import D0FUS_BIB.D0FUS_figures as figs

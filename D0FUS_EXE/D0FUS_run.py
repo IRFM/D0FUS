@@ -50,6 +50,40 @@ _PROFILE_PRESETS = {
 
 #%% Input file loader
 
+def _remap_legacy_value(key: str, val, verbose: int = 0):
+    """
+    Translate legacy input-file values that the refactor renamed.
+
+    Older input files used 'D0FUS' as the geometry / radial-build sub-mode
+    label and 'Sauter' / 'Redl' / 'Freidberg' as bootstrap labels.  These
+    are remapped to the new canonical values to keep legacy decks running
+    without manual edits.  A warning is printed at verbose >= 1 so the
+    user is reminded to update their files.
+    """
+    if not isinstance(val, str):
+        return val
+
+    legacy_map = {
+        # Plasma_geometry / Radial_build_model: 'D0FUS' (legacy) -> 'refined'
+        ('Plasma_geometry',    'D0FUS'):     'refined',
+        ('Radial_build_model', 'D0FUS'):     'refined',
+        # Bootstrap_choice: pure Sauter and pure Redl were merged into the
+        # composite 'Sauter-Redl' (Sauter 1999/2002 structure with Redl 2021
+        # refit).  Freidberg was removed; the closest surviving option is
+        # the Segal analytic fit.
+        ('Bootstrap_choice',   'Sauter'):    'Sauter-Redl',
+        ('Bootstrap_choice',   'Redl'):      'Sauter-Redl',
+        ('Bootstrap_choice',   'Freidberg'): 'Segal',
+    }
+    new = legacy_map.get((key, val))
+    if new is not None:
+        if verbose >= 1:
+            print(f"  [warn]   legacy value '{val}' for '{key}' "
+                  f"-> remapped to '{new}'.  Please update your input file.")
+        return new
+    return val
+
+
 def load_config_from_file(filepath: str,
                           base: GlobalConfig = None,
                           verbose: int = 0) -> GlobalConfig:
@@ -109,9 +143,9 @@ def load_config_from_file(filepath: str,
                     print(f"  [warn]   '{key}' is not a recognised GlobalConfig field — ignored")
                 continue
 
-            overrides[key] = val
+            overrides[key] = _remap_legacy_value(key, val, verbose=verbose)
             if verbose >= 2:
-                print(f"  [input]  {key} = {val}")
+                print(f"  [input]  {key} = {overrides[key]}")
 
     return dc_replace(base, **overrides)
 
@@ -189,6 +223,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     Bootstrap_choice          = config.Bootstrap_choice
     trapped_fraction_model    = config.trapped_fraction_model
     Option_q95                = config.Option_q95
+    q_profile_mode            = config.q_profile_mode
+    alpha_J                   = config.alpha_J
     Option_Kappa              = config.Option_Kappa
     κ_manual                  = config.κ_manual
     betaN_limit               = config.betaN_limit   # Used in D0FUS_scan.py check_radial_build
@@ -203,7 +239,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     eta_model                 = config.eta_model
     Chosen_Steel              = config.Chosen_Steel
     # NOTE: nu_Steel, Young_modul_Steel, Young_modul_GF are accessed directly
-    # from the config object inside f_CS_D0FUS / f_CS_CIRCE — no local alias needed.
+    # from the config object inside f_CS_refined / f_CS_CIRCE — no local alias needed.
     fatigue_CS                = config.fatigue_CS
     Radial_build_model        = config.Radial_build_model
     Choice_Buck_Wedg          = config.Choice_Buck_Wedg
@@ -264,6 +300,51 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # Value set in GlobalConfig (default 0.7, well inside pedestal top).
     rho_rad_core = config.rho_rad_core
     coreradiationfraction = config.coreradiationfraction
+
+    # ── Cross-mode consistency checks ─────────────────────────────────────────
+    # Raise warnings (verbose >= 1) when the user combines selectors that are
+    # mechanically valid but lose physical self-consistency.
+    #
+    # 1) Bootstrap_choice='Segal' + q_profile_mode='refined'
+    #    Segal-Cerfon-Freidberg is a scalar formula (no j_bs(rho)).  In refined
+    #    mode the q-profile solver internally rebuilds j_bs(rho) via
+    #    Sauter-Redl regardless of Bootstrap_choice; the integral of that
+    #    internal j_bs(rho) generally differs from the Segal scalar by 5-15%,
+    #    so the global Ip = I_Ohm + I_CD + I_bs balance becomes inconsistent.
+    #
+    # 2) CD_source='Academic' + q_profile_mode='refined'
+    #    The academic CD model returns a scalar I_CD with no deposition
+    #    information.  In refined mode this current is deposited via a
+    #    fallback Gaussian centred at rho_CD = 0.4, delta_CD = 0.15 (broad,
+    #    safe default).  Mechanically fine but the location is arbitrary; the
+    #    user is informed so they can pick a physical CD source if desired.
+    if (config.Bootstrap_choice == 'Segal'
+            and config.q_profile_mode == 'refined' and verbose >= 1):
+        print("[warn] Bootstrap_choice='Segal' with q_profile_mode='refined': "
+              "the refined solver uses Sauter-Redl internally for j_bs(rho); "
+              "the global I_bs (Segal scalar) and the integral of the internal "
+              "j_bs(rho) will differ. Use Bootstrap_choice='Sauter-Redl' for "
+              "full self-consistency.")
+    if (config.CD_source == 'Academic'
+            and config.q_profile_mode == 'refined' and verbose >= 1):
+        print("[warn] CD_source='Academic' with q_profile_mode='refined': "
+              "the academic gamma_CD model gives a scalar I_CD only; the "
+              "refined solver deposits it on a fallback Gaussian at rho=0.4, "
+              "delta=0.15.  Set CD_source to LHCD/ECCD/NBCD/Multi for a "
+              "physically motivated deposition profile.")
+
+    # ── Verbose summary of the configuration choices ──────────────────────────
+    # Emitted once at run start so the user can confirm which physics
+    # philosophy the calculation is running under.  Silent at verbose=0.
+    if verbose >= 1:
+        _alpha_J_str = (f", alpha_J={config.alpha_J}"
+                        if config.q_profile_mode == 'academic' else "")
+        print(
+            f"[run] q_profile_mode={config.q_profile_mode!r}{_alpha_J_str}, "
+            f"Plasma_geometry={config.Plasma_geometry!r}, "
+            f"Bootstrap_choice={config.Bootstrap_choice!r}, "
+            f"CD_source={config.CD_source!r}, "
+            f"eta_model={config.eta_model!r}")
 
     # ── Multi-impurity parsing ────────────────────────────────────────────────
     def _parse_impurity_list(species_raw, conc_raw):
@@ -329,7 +410,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     σ_TF = Steel(Chosen_Steel, config.σ_manual)
     σ_CS = Steel(Chosen_Steel, config.σ_manual)   # Unfatigued allowable [Pa]
     # NOTE: CS fatigue knockdown (config.fatigue_CS) is applied entirely inside
-    # the CS solver (f_CS_ACAD / f_CS_D0FUS / f_CS_CIRCE), within the stress
+    # the CS solver (f_CS_ACAD / f_CS_refined / f_CS_CIRCE), within the stress
     # residual / f_sigma_diff closure. The effective allowable σ_eff is reduced
     # by fatigue_CS only when Operation_mode == 'Pulsed' AND the light case
     # (CS own electromagnetic load dominant, sigma_theta > 0) governs — which
@@ -356,19 +437,27 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     δ             = f_Delta(κ)
     δ_95          = f_Delta_95(δ)
 
-    # Precompute Miller volume derivative V'(ρ) for D0FUS geometry mode.
+    # Precompute Miller volume derivative V'(ρ) for refined geometry mode.
     # Vprime_data = (rho_grid, Vprime, V_total) is passed to f_nbar, f_pbar,
     # and f_plasma_volume so that all volume integrals use the same shaped
     # flux-surface Jacobian.  In Academic mode, Vprime_data = None triggers
     # the fast cylindrical-torus approximation in every downstream function.
-    if Plasma_geometry == 'D0FUS':
-        # N_rho=100, N_theta=100 (down from 200×200) converges the Miller
-        # volume to <0.5 % for all tokamak-relevant shaping parameters while
-        # cutting the precomputation cost by ~4x.
+    if Plasma_geometry == 'refined':
+        # N_rho=500, N_theta=200 is the production grid.
+        # The volume V converges to better than 0.1 % already at N_rho=100,
+        # so the radial resolution is driven by dA_pol/drho near rho_95
+        # rather than by V itself: the smoothstep5 kappa(rho) and
+        # delta(rho) profiles curve sharply over [rho_95, 1], and finite-
+        # difference evaluation of the Miller Jacobian on a coarse grid
+        # (N_rho=100) would mis-resolve dA at rho=0.95 by approximately
+        # 10 %, which propagates to q(0.95).  The earlier PCHIP shaping
+        # had a slope discontinuity at rho_95 that made this resolution
+        # requirement even tighter; smoothstep5 removed the discontinuity
+        # but the fine grid is kept conservatively for the Jacobian.
         Vprime_data = precompute_Vprime(R0, a, κ, δ,
-                                        geometry_model='D0FUS',
+                                        geometry_model='refined',
                                         kappa_95=κ_95, delta_95=δ_95,
-                                        N_rho=100, N_theta=100)
+                                        N_rho=500, N_theta=200)
     else:
         Vprime_data = None
 
@@ -444,7 +533,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # if left at the default sentinel (None), auto-select based on Supra_choice.
     if f_void is None:
         f_void = 0.00 if 'REBCO' in Supra_choice else 0.33
-        # Update config so downstream functions (f_CS_D0FUS, _unpack_CS_config)
+        # Update config so downstream functions (f_CS_refined, _unpack_CS_config)
         # that read config.f_void directly also see the resolved value.
         config = dc_replace(config, f_void=f_void)
 
@@ -516,17 +605,62 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # recomputing them.
     _converged_chain = [None]
 
-    # ── Parametric q-profile cache (lagged evaluation) ────────────────────
-    # Stores the q(ρ) dict from f_q_profile_selfconsistent computed with
-    # the previous iteration's (Ip, I_CD). Passed to f_Sauter_Ib /
-    # f_Redl_Ib so the bootstrap coefficients see a realistic q(ρ)
-    # instead of the constant q_95 fallback.
-    # Updated lazily: only recomputed when I_Ohm changes by more than 10 %.
-    # On first call, q_profile=None triggers the parabolic fallback
-    # q_0 + (q_95 - q_0) rho^2 inside the bootstrap functions.
+    # ── q,j profile cache (lagged evaluation, mode-aware dispatcher) ──────
+    # Stores the q(ρ) dict from f_q_profile_academic or f_q_profile_refined
+    # (selected by config.q_profile_mode) computed with the previous
+    # iteration's (Ip, I_CD).  Passed to f_Sauter_Redl_Ib so the bootstrap
+    # coefficients see a realistic q(ρ) instead of the constant q_95 fallback.
+    # Updated lazily: only recomputed when I_Ohm or Ip changes by more than 8 %.
+    # The 'refined' branch supports warm starts via the q_init argument,
+    # which collapses subsequent iterations to a single Picard pass.
     _q_profile_cache = [None]
     _q_cache_Ip      = [0.0]     # Ip [MA] at last cache update
     _q_cache_I_Ohm   = [0.0]     # I_Ohm [MA] at last cache update
+
+    def _solve_q_profile(Ip_loc, I_CD_loc, q95_loc, B0_loc, nbar_loc,
+                         rho_CD_loc, delta_CD_loc,
+                         n_rho=60, max_iter=10, tol=5e-3, damping=0.5,
+                         q_init=None):
+        """
+        Mode-aware front end for q,j profile evaluation.
+
+        Routes to f_q_profile_academic or f_q_profile_refined according
+        to config.q_profile_mode.  Returned dict has the same key set in
+        both branches (q_arr, rho, j_total, j_Ohm, j_CD, j_bs, li, q0,
+        I_bs, f_bs, n_iter, converged, kappa_arr) so call sites are
+        agnostic to the chosen physics model.
+        """
+        if q_profile_mode == 'academic':
+            return f_q_profile_academic(
+                Ip_loc, q95_loc,
+                R0, a, κ,
+                alpha_J=alpha_J,
+                rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
+                Vprime_data=Vprime_data, kappa_95=κ_95, rho_95=0.95,
+                n_rho=n_rho)
+        elif q_profile_mode == 'refined':
+            # Pass delta and delta_95 so that the on-the-fly Lp / <1/R^2>
+            # path inside f_q_profile_refined (used when Vprime_data is
+            # missing the inv_R2 6th element) recovers the same triangularity
+            # as the main computation.  When Vprime_data is a full 6-tuple,
+            # these parameters are ignored.
+            return f_q_profile_refined(
+                Ip_loc, I_CD_loc,
+                R0, a, B0_loc, κ, nbar_loc, Tbar, Zeff,
+                nu_n, nu_T,
+                trapped_fraction_model=trapped_fraction_model,
+                eta_model=eta_model,
+                rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
+                Vprime_data=Vprime_data, kappa_95=κ_95, rho_95=0.95,
+                delta=δ, delta_95=δ_95,
+                rho_CD=rho_CD_loc, delta_CD=delta_CD_loc,
+                q_init=q_init,
+                n_rho=n_rho, max_iter=max_iter, tol=tol, damping=damping)
+        else:
+            raise ValueError(
+                f"Unknown q_profile_mode: '{q_profile_mode}'. "
+                f"Valid options: 'academic', 'refined'.")
+
 
     def _reset_dbg(limit=5):
         """Reset debug call counter for a new solver stage."""
@@ -666,27 +800,15 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         q95_loc = f_q95(B0_solution, Ip_loc, R0, a, κ, δ, κ_95, δ_95,
                         Option_q95=Option_q95)
 
-        if Bootstrap_choice in ('Sauter', 'Redl'):
-            if Bootstrap_choice == 'Sauter':
-                Ib_loc = f_Sauter_Ib(
-                    R0, a, κ, B0_solution, nbar_loc, Tbar,
-                    q95_loc, Zeff, nu_n, nu_T,
-                    rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-                    T_ped_frac=T_ped_frac,
-                    Vprime_data=Vprime_data, kappa_95=κ_95,
-                    q_profile=_q_profile_cache[0],
-                    trapped_fraction_model=trapped_fraction_model)
-            else:
-                Ib_loc = f_Redl_Ib(
-                    R0, a, κ, B0_solution, nbar_loc, Tbar,
-                    q95_loc, Zeff, nu_n, nu_T,
-                    rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-                    T_ped_frac=T_ped_frac,
-                    Vprime_data=Vprime_data, kappa_95=κ_95,
-                    q_profile=_q_profile_cache[0],
-                    trapped_fraction_model=trapped_fraction_model)
-        elif Bootstrap_choice == 'Freidberg':
-            Ib_loc = f_Freidberg_Ib(R0, a, κ, pbar_loc, Ip_loc)
+        if Bootstrap_choice == 'Sauter-Redl':
+            Ib_loc = f_Sauter_Redl_Ib(
+                R0, a, κ, B0_solution, nbar_loc, Tbar,
+                q95_loc, Zeff, nu_n, nu_T,
+                rho_ped=rho_ped, n_ped_frac=n_ped_frac,
+                T_ped_frac=T_ped_frac,
+                Vprime_data=Vprime_data, kappa_95=κ_95,
+                q_profile=_q_profile_cache[0],
+                trapped_fraction_model=trapped_fraction_model)
         elif Bootstrap_choice == 'Segal':
             Ib_loc = f_Segal_Ib(
                 nu_n, nu_T, a / R0, κ, nbar_loc, Tbar, R0, Ip_loc,
@@ -694,7 +816,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 T_ped_frac=T_ped_frac)
         else:
             raise ValueError(
-                f"Unknown Bootstrap_choice: '{Bootstrap_choice}'.")
+                f"Unknown Bootstrap_choice: '{Bootstrap_choice}'. "
+                f"Valid options: 'Segal', 'Sauter-Redl'.")
 
         # Current drive — different logic for Pulsed vs Steady-State
         if ss_mode:
@@ -747,32 +870,36 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                                 q95=q95_loc)
             Q_loc     = f_Q(P_fus, P_CD_loc, P_Ohm_loc)
 
-        # ── Parametric q(ρ) cache for bootstrap collisionality ───────────
+        # ── q,j profile cache for bootstrap collisionality ───────────────
         #
-        # WHY: The Sauter/Redl bootstrap coefficients L31, L32, L34 depend
-        #   on the electron collisionality nu*_e ~ q(rho). Using a
+        # WHY: The Sauter-Redl bootstrap coefficients L31, L32, L34 depend
+        #   on the electron collisionality nu*_e ~ q(rho).  Using a
         #   constant q = q_95 overestimates nu* at mid-radius by a factor
-        #   2-3, reducing I_bs by roughly 20 %. A parametric q(rho)
-        #   derived from the PROCESS/Wesson j ~ (1-rho^2)^alpha_J form,
-        #   optionally self-consistent on alpha_J, solves this.
+        #   2 to 3, reducing I_bs by roughly 20 %.  A radial q(rho) solves
+        #   this; the dispatcher routes between the two modes.
         #
-        # HOW: Lagged parametric solve with lazy update.
-        #   - f_q_profile_selfconsistent() builds q(rho) from alpha_J,
-        #     either prescribed or self-consistent on scalar alpha_J
-        #     (3 to 10 Picard iterations on one scalar).
-        #   - The result is cached and reused by subsequent bootstrap calls.
+        # HOW: Lagged solve with lazy update via _solve_q_profile().
+        #   - 'academic' mode : single deterministic pass, j ~ (1-rho^2)^alpha_J,
+        #                       q(rho) analytic from cylindrical Ampere.
+        #                       Cached q(rho) is still passed to the global
+        #                       Sauter-Redl call so that the global I_bs
+        #                       sees a realistic collisionality profile.
+        #   - 'refined'  mode : Picard iteration on q(rho) from the composite
+        #                       j_Ohm + j_CD + j_bs (5 to 10 iterations cold,
+        #                       1 to 2 with warm start from the cache).
         #   - The cache is refreshed when the current decomposition changes
-        #     significantly (> 5 % in I_Ohm or first call).
+        #     by more than 8 % in either I_Ohm or Ip.
         #   - On first call (cache=None), the bootstrap functions use a
         #     parabolic fallback q_0 + (q_95 - q_0) rho^2 internally.
         #
-        # COST: ~5 to 8 updates x 20 ms = 100 to 160 ms per design point,
-        #   negligible for single runs. Adds ~3 min to a 1000-point scan.
+        # COST: with vectorised eta_redl/eta_sauter, ~5 to 10 ms per
+        #   solve in refined mode (cold), ~2 ms warm; ~5 ms in academic.
+        #   Total impact on a 1000-point scan: ~10 to 30 s.
         #
         # ROBUSTNESS: the one-iteration lag is benign because q(rho) is a
-        #   slow function of the current decomposition. If the solve fails
-        #   (e.g. pathological geometry), the previous cache or the
-        #   parabolic fallback is used and the outer solver sees no error.
+        #   slow function of the current decomposition.  If the solve fails
+        #   (pathological geometry, non-convergence), the previous cache or
+        #   the parabolic fallback is used and the outer solver sees no error.
 
         _do_q_update = False
         if np.isfinite(Ip_loc) and np.isfinite(I_Ohm_loc):
@@ -792,33 +919,35 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
 
         if _do_q_update:
             # Select CD deposition parameters from the active source.
+            # The values below are used only by q_profile_mode='refined' to
+            # build j_CD(rho); academic mode ignores them (j_CD = 0).
+            #   ECCD  : narrow Gaussian at rho_EC (input)
+            #   NBCD  : medium Gaussian at rho_NBI (input)
+            #   LHCD  : broad Gaussian centred at rho = 0.5
+            #   Multi : broad fallback (current-weighted average is computed
+            #           more accurately at the post-convergence call site)
+            #   Academic / unknown : same broad fallback as Multi.  Triggers
+            #           the warning printed at the top of run() when paired
+            #           with q_profile_mode='refined'.
             if CD_source == 'ECCD':
                 _rho_CD_q, _delta_CD_q = rho_EC, 0.10
             elif CD_source == 'NBCD':
                 _rho_CD_q, _delta_CD_q = rho_NBI, 0.15
             elif CD_source == 'LHCD':
                 _rho_CD_q, _delta_CD_q = 0.5, 0.20
-            else:  # Multi or unknown — broad deposition is safe
+            else:  # Multi / Academic / unknown
                 _rho_CD_q, _delta_CD_q = 0.4, 0.15
 
             try:
-                _q_profile_cache[0] = f_q_profile_selfconsistent(
-                    Ip_loc,
-                    I_CD_loc,
-                    q95_loc,
-                    R0, a, B0_solution, κ, nbar_loc, Tbar, Zeff,
-                    nu_n, nu_T,
-                    bootstrap_model=Bootstrap_choice,
-                    trapped_fraction_model=trapped_fraction_model,
-                    rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-                    T_ped_frac=T_ped_frac,
-                    Vprime_data=Vprime_data, kappa_95=κ_95,
-                    rho_CD=_rho_CD_q, delta_CD=_delta_CD_q,
-                    n_rho=60, max_iter=10, tol=5e-3, damping=0.5)
+                _q_profile_cache[0] = _solve_q_profile(
+                    Ip_loc, I_CD_loc, q95_loc, B0_solution, nbar_loc,
+                    rho_CD_loc=_rho_CD_q, delta_CD_loc=_delta_CD_q,
+                    n_rho=60, max_iter=10, tol=5e-3, damping=0.5,
+                    q_init=_q_profile_cache[0])
                 _q_cache_I_Ohm[0] = I_Ohm_loc
                 _q_cache_Ip[0]    = Ip_loc
             except Exception:
-                pass  # keep previous cache (or None → parabolic fallback)
+                pass  # keep previous cache (or None -> parabolic fallback)
 
         if _dbg:
             print(f"    Ib={Ib_loc:.2f}, I_CD={I_CD_loc:.2f}, "
@@ -1438,7 +1567,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
 
     # Energy confinement time, plasma current, q95, bootstrap — from cache
     # (avoids recomputing f_tauE, f_Ip, f_q95, and especially the expensive
-    #  neoclassical bootstrap models f_Sauter_Ib / f_Redl_Ib which involve
+    #  neoclassical bootstrap model f_Sauter_Redl_Ib which involves
     #  radial profile integration with trapped-particle corrections).
     tauE_solution = _chain['tau_E']
     Ip_solution   = _chain['Ip']
@@ -1559,7 +1688,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # with the genetic algorithm, scan module and figures module.
     P_sep_solution      = f_P_sep(P_fus, P_CD_solution, P_rad_total_solution)
     Gamma_n_solution    = f_Gamma_n(a, P_fus, R0, κ, S_wall=Surface_solution)
-    heat_D0FUS_solution = f_heat_D0FUS(R0, P_sep_solution)
+    heat_refined_solution = f_heat_refined(R0, P_sep_solution)
     heat_par_solution   = f_heat_par(R0, B0_solution, P_sep_solution)
     heat_pol_solution   = f_heat_pol(R0, B0_solution, P_sep_solution, a, q95_solution)
     lambda_q_Eich_m, q_parallel0_Eich, q_target_Eich = f_heat_PFU_Eich(
@@ -1575,13 +1704,16 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # V_loop is now computed inside Magnetic_flux (returned as 5th element)
     # to avoid redundant neoclassical conductance integration.
 
-    # ── Self-consistent q-profile from Ampère integration ─────────────────
-    # Computes q(ρ), j(ρ), and l_i from neoclassical conductivity +
-    # bootstrap current on the converged global quantities.
-    # This replaces the former analytical f_q_profile + f_li pair.
+    # ── q,j profile on the converged global quantities ───────────────────
+    # The dispatcher routes to f_q_profile_academic or f_q_profile_refined
+    # according to config.q_profile_mode.  In academic mode this is a single
+    # deterministic pass on the parametric ansatz; in refined mode this is a
+    # final Picard pass at moderate resolution that returns li, q0, q(rho_95)
+    # and the full j-decomposition consistent with the converged Ip, I_CD.
 
-    # Effective CD deposition radius and width — weighted by per-source
-    # current when Multi-source CD is active.
+    # CD deposition (rho_CD, delta_CD) selection.  These values are passed
+    # to the dispatcher and used only by the refined branch to build the
+    # j_CD(rho) Gaussian.  Academic q-profile mode ignores them (j_CD=0).
     if CD_source == 'Multi' and I_CD_solution > 0:
         _I_sources = np.array([abs(I_LH_solution), abs(I_EC_solution), abs(I_NBI_solution)])
         _rho_sources = np.array([0.5, rho_EC, rho_NBI])
@@ -1593,25 +1725,22 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         _rho_CD_eff, _delta_CD_eff = rho_EC, 0.05
     elif CD_source == 'NBCD':
         _rho_CD_eff, _delta_CD_eff = rho_NBI, 0.15
-    else:  # LHCD or fallback
+    else:  # LHCD, Academic, or unknown — broad central deposition fallback
         _rho_CD_eff, _delta_CD_eff = 0.5, 0.20
 
     # Post-convergence pass at moderate resolution (n_rho=80, max_iter=20).
-    # The solver cache already provides a near-converged starting point, so
-    # full defaults (n_rho=200, max_iter=50) are unnecessarily expensive here.
-    # The quantities extracted (li, q0, j profiles) converge at <0.5 % error
-    # between n_rho=80 and n_rho=200 for smooth tokamak current profiles.
-    _q_sc = f_q_profile_selfconsistent(
+    # The solver cache already provides a near-converged starting point in
+    # refined mode, so full defaults (n_rho=200, max_iter=50) are
+    # unnecessarily expensive here.  The quantities extracted (li, q0, j
+    # profiles) converge at < 0.5 % error between n_rho=80 and n_rho=200 for
+    # smooth tokamak current profiles.  In academic mode max_iter and tol
+    # are ignored (deterministic single pass).
+    _q_sc = _solve_q_profile(
         Ip_solution, I_CD_solution, q95_solution,
-        R0, a, B0_solution, κ, nbar_solution, Tbar, Zeff,
-        nu_n, nu_T,
-        bootstrap_model=Bootstrap_choice,
-        trapped_fraction_model=trapped_fraction_model,
-        rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
-        Vprime_data=Vprime_data, kappa_95=κ_95,
-        rho_CD=_rho_CD_eff, delta_CD=_delta_CD_eff,
-        n_rho=80, max_iter=20, tol=1e-3,
-    )
+        B0_solution, nbar_solution,
+        rho_CD_loc=_rho_CD_eff, delta_CD_loc=_delta_CD_eff,
+        n_rho=80, max_iter=20, tol=1e-3, damping=0.5,
+        q_init=_q_profile_cache[0])
     li_solution      = _q_sc['li']
 
     # L-H power threshold — all Martin/Delabie scalings were fitted with line-averaged density
@@ -1635,16 +1764,16 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             a, b, R0, σ_TF, J_max_TF_conducteur, Bmax_TF, Choice_Buck_Wedg,
             coef_inboard_tension, F_CClamp)
 
-    elif Radial_build_model in ("D0FUS", "CIRCE"):
+    elif Radial_build_model in ("refined", "CIRCE"):
         (c, c_WP_TF, c_Nose_TF,
-         σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF) = f_TF_D0FUS(
+         σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF) = f_TF_refined(
             a, b, R0, σ_TF, J_max_TF_conducteur, Bmax_TF, Choice_Buck_Wedg, omega_TF, n_shape_TF,
             c_BP, coef_inboard_tension, F_CClamp, TF_grading)
 
     else:
         raise ValueError(
             f"Unknown radial build model: '{Radial_build_model}'. "
-            "Valid options: 'academic', 'D0FUS', 'CIRCE'."
+            "Valid options: 'academic', 'refined', 'CIRCE'."
         )
 
     # ==============================================================================
@@ -1676,9 +1805,9 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     if Radial_build_model == "academic":
         (d, σ_z_CS, σ_theta_CS, σ_r_CS,
          Steel_fraction_CS, B_CS, J_CS) = f_CS_ACAD(*cs_args)
-    elif Radial_build_model == "D0FUS":
+    elif Radial_build_model == "refined":
         (d, σ_z_CS, σ_theta_CS, σ_r_CS,
-         Steel_fraction_CS, B_CS, J_CS) = f_CS_D0FUS(*cs_args)
+         Steel_fraction_CS, B_CS, J_CS) = f_CS_refined(*cs_args)
     elif Radial_build_model == "CIRCE":
         (d, σ_z_CS, σ_theta_CS, σ_r_CS,
          Steel_fraction_CS, B_CS, J_CS) = f_CS_CIRCE(*cs_args)
@@ -1735,7 +1864,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             P_elec_solution,  P_wallplug_solution,
             cost_solution,  P_Brem_solution,  P_syn_solution,  P_line_solution,
             P_line_core_solution,
-            heat_D0FUS_solution,  heat_par_solution,  heat_pol_solution,
+            heat_refined_solution,  heat_par_solution,  heat_pol_solution,
             lambda_q_Eich_m,  q_target_Eich,
             P_1rst_wall_rad,  P_1rst_wall_div,
             Gamma_n_solution,
@@ -1853,14 +1982,14 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
 
     # ── Vprime_data (Miller geometry pre-computation, if applicable) ──────────
     Vprime_data = None
-    if (config.Plasma_geometry == 'D0FUS'
+    if (config.Plasma_geometry == 'refined'
             and np.isfinite(float(kappa_edge))
             and np.isfinite(float(delta_edge))):
         try:
             Vprime_data = precompute_Vprime(
                 config.R0, config.a,
                 float(kappa_edge), float(delta_edge),
-                geometry_model='D0FUS',
+                geometry_model='refined',
                 kappa_95=float(kappa_95),
                 delta_95=float(delta_95),
             )
@@ -1914,6 +2043,9 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         "kappa_95":        _f(kappa_95,    1.60),
         "delta_95":        _f(delta_95,    0.25),
         "Vprime_data":     Vprime_data,
+        # q,j profile philosophy (consumed by D0FUS_figures.plot_q_profile)
+        "q_profile_mode":  config.q_profile_mode,
+        "alpha_J":         config.alpha_J,
         # On-axis field and plasma current
         "B0":          _f(B0, config.Bmax_TF),
         "B_max":       config.Bmax_TF,
@@ -2115,9 +2247,9 @@ def save_run_output(config: GlobalConfig,
     else:
         nu_n = 0; nu_T = 0; rho_ped = 1.0; n_ped_frac = 0; T_ped_frac = 0
     Vprime_data = None
-    if config.Plasma_geometry == 'D0FUS' and np.isfinite(κ) and np.isfinite(δ):
+    if config.Plasma_geometry == 'refined' and np.isfinite(κ) and np.isfinite(δ):
         Vprime_data = precompute_Vprime(config.R0, config.a, κ, δ,
-                                         geometry_model='D0FUS',
+                                         geometry_model='refined',
                                          kappa_95=κ_95, delta_95=δ_95)
     rho_rad_core = config.rho_rad_core
 
@@ -2140,6 +2272,19 @@ def save_run_output(config: GlobalConfig,
 
         print("=========================================================================", file=out)
         print("=== D0FUS Calculation Results ===", file=out)
+        print("-------------------------------------------------------------------------", file=out)
+        # Configuration choices summary — listed first so every output
+        # downstream is interpretable in the right physics framework.
+        print("[I] Configuration choices",                                                                file=out)
+        print(f"[I]  ├ q_profile_mode    (q,j builder)              : {config.q_profile_mode}",            file=out)
+        if config.q_profile_mode == 'academic':
+            print(f"[I]  │   alpha_J         (PROCESS / Uckan exponent)  : {config.alpha_J}",              file=out)
+        print(f"[I]  ├ Plasma_geometry   (cross-section model)      : {config.Plasma_geometry}",            file=out)
+        print(f"[I]  ├ Plasma_profiles   (n,T radial preset)        : {config.Plasma_profiles}",            file=out)
+        print(f"[I]  ├ Bootstrap_choice  (j_bs model)               : {config.Bootstrap_choice}",           file=out)
+        print(f"[I]  ├ CD_source         (current drive scheme)     : {config.CD_source}",                  file=out)
+        print(f"[I]  ├ eta_model         (parallel resistivity)     : {config.eta_model}",                  file=out)
+        print(f"[I]  └ Option_q95        (MHD scaling for q95)      : {config.Option_q95}",                 file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[I] R0 (Major Radius)                               : {config.R0:.3f} [m]",   file=out)
         print(f"[I] a  (Minor Radius)                               : {config.a:.3f} [m]",    file=out)
@@ -2238,11 +2383,11 @@ def save_run_output(config: GlobalConfig,
         print(f"[I] t_plateau      (Flat-top duration)              : {config.Temps_Plateau_input:.3f} [s]", file=out)
         print(f"[O] tau_E          (Energy confinement time)        : {tauE:.3f} [s]",             file=out)
         print(f"[O] Ip             (Plasma current)                 : {Ip:.3f} [MA]",              file=out)
-        print(f"[O] Ib             (Bootstrap current)              : {Ib:.3f} [MA]",              file=out)
-        print(f"[O] I_CD           (Driven current)                 : {I_CD:.3f} [MA]",            file=out)
+        print(f"[O] Ib             (Bootstrap current, {config.Bootstrap_choice}) : {Ib:.3f} [MA]", file=out)
+        print(f"[O] I_CD           (Driven current, {config.CD_source}) : {I_CD:.3f} [MA]", file=out)
         print(f"[O] I_Ohm          (Ohmic current)                  : {I_Ohm:.3f} [MA]",           file=out)
         print(f"[O] f_b            (Bootstrap fraction)             : {(Ib/Ip)*100:.3f} [%]",      file=out)
-        print(f"[O] l_i(3)         (Internal inductance)            : {li_sc:.3f} [-]",           file=out)
+        print(f"[O] l_i(3)         (Internal inductance, {config.q_profile_mode}) : {li_sc:.3f} [-]", file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[I] Tbar  (Volume-averaged ion temperature)         : {config.Tbar:.3f} [keV]",    file=out)
         print(f"[O] nbar  (Volume-averaged electron density)        : {nbar:.3f} [10²⁰ m⁻³]",     file=out)
@@ -2261,7 +2406,11 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] beta_N_total (incl. fast α, Stix model)         : {betaN_total:.3f}",   file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[O] q*   (Kink safety factor)                       : {qstar:.3f}", file=out)
-        print(f"[O] q95  (Safety factor at 95% flux surface)        : {q95:.3f}",   file=out)
+        if config.q_profile_mode == 'academic':
+            _q95_note = "imposed = q(rho_95) in academic mode"
+        else:
+            _q95_note = "scaling only; profile q(rho_95) may differ (refined mode)"
+        print(f"[O] q95  (Safety factor at 95% flux surface)        : {q95:.3f}    [{_q95_note}]", file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[O] P_div    (P_α+P_CD−P_rad_tot, divertor power)   : {P_sep:.3f} [MW]",    file=out)
         print(f"[O] P_Thresh (L-H power threshold)                  : {P_Thresh:.3f} [MW]", file=out)
@@ -2279,8 +2428,9 @@ def save_run_output(config: GlobalConfig,
         print("=== Runaway Electron Indicators (Indicative) ===", file=out)
         print("-------------------------------------------------------------------------", file=out)
         try:
-            # li is the l_i(3) value returned by f_q_profile_selfconsistent,
-            # passed through the results tuple.
+            # li is the l_i(3) value returned by the q-profile dispatcher
+            # (f_q_profile_academic or f_q_profile_refined depending on
+            # config.q_profile_mode), passed through the results tuple.
             RE = compute_RE_indicators(
                 Ip=Ip, nbar=nbar, Tbar=config.Tbar,
                 a=config.a, R0=config.R0, κ=κ, Z_eff=config.Zeff, li=li_sc,
@@ -2465,24 +2615,37 @@ def _generate_run_figures(config: GlobalConfig, results: tuple,
     # ── Self-consistent q-profile for figures ─────────────────────────────────
     # Recompute using the converged global quantities stored in run_dict.
     # Cost is negligible (~50 ms) and avoids modifying the results tuple.
+    # Mode-aware dispatch on config.q_profile_mode.
     try:
         _Ip    = run_dict.get("Ip", 15.0)
         _q95   = run_dict.get("q95", 3.0)
         _I_CD  = results[10] if len(results) > 10 else 0.0
-        _q_sc = f_q_profile_selfconsistent(
-            _Ip, _I_CD, _q95,
-            config.R0, config.a, run_dict.get("B0", config.Bmax_TF),
-            run_dict.get("kappa_edge", 1.7), run_dict.get("nbar", 1.0),
-            config.Tbar, config.Zeff,
-            run_dict["nu_n"], run_dict["nu_T"],
-            bootstrap_model=config.Bootstrap_choice,
-            trapped_fraction_model=config.trapped_fraction_model,
-            rho_ped=run_dict["rho_ped"],
-            n_ped_frac=run_dict["n_ped_frac"],
-            T_ped_frac=run_dict["T_ped_frac"],
-            Vprime_data=run_dict.get("Vprime_data"),
-            rho_CD=config.rho_EC, delta_CD=0.15,
-        )
+        if config.q_profile_mode == 'academic':
+            _q_sc = f_q_profile_academic(
+                _Ip, _q95,
+                config.R0, config.a, run_dict.get("kappa_edge", 1.7),
+                alpha_J=config.alpha_J,
+                rho_ped=run_dict["rho_ped"],
+                n_ped_frac=run_dict["n_ped_frac"],
+                T_ped_frac=run_dict["T_ped_frac"],
+                Vprime_data=run_dict.get("Vprime_data"),
+                kappa_95=None, rho_95=0.95, n_rho=200)
+        else:  # 'refined'
+            _q_sc = f_q_profile_refined(
+                _Ip, _I_CD,
+                config.R0, config.a,
+                run_dict.get("B0", config.Bmax_TF),
+                run_dict.get("kappa_edge", 1.7), run_dict.get("nbar", 1.0),
+                config.Tbar, config.Zeff,
+                run_dict["nu_n"], run_dict["nu_T"],
+                trapped_fraction_model=config.trapped_fraction_model,
+                eta_model=config.eta_model,
+                rho_ped=run_dict["rho_ped"],
+                n_ped_frac=run_dict["n_ped_frac"],
+                T_ped_frac=run_dict["T_ped_frac"],
+                Vprime_data=run_dict.get("Vprime_data"),
+                rho_CD=config.rho_EC, delta_CD=0.15,
+                n_rho=120, max_iter=15, tol=1e-3, damping=0.5)
         run_dict["_q_sc"]        = _q_sc
     except Exception as _e:
         if verbose >= 1:

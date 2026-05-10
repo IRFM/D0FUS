@@ -50,15 +50,21 @@ Temps_Plateau_input   = 450        # Burn flat-top [s]
 
 Scaling_Law           = IPB98(y,2)
 L_H_Scaling_choice    = Martin
-Bootstrap_choice      = Sauter
+Bootstrap_choice      = Sauter-Redl    # Sauter (1999/2002) + Redl (2021) refit
 Option_Kappa          = Wenninger
 Option_q95            = Sauter
 
 # ── 2b. Plasma geometry ─────────────────────────────────────────────────────
 
-Plasma_geometry = D0FUS
+Plasma_geometry = refined          # Full Miller flux-surface integration (PCHIP κ/δ)
 N_rho_miller    = 50
 N_theta_miller  = 50
+
+# ── 2b'. q,j profile builder ────────────────────────────────────────────────
+# 'academic' : prescribed alpha_J, j ∝ (1 − ρ²)^alpha_J, q analytic.
+# 'refined'  : Picard self-consistency on q(ρ) from j_Ohm + j_CD + j_bs.
+q_profile_mode = refined
+# alpha_J      = 1.5               # Used only when q_profile_mode = 'academic'
 
 # ── 2c. Plasma profiles — ITER 15 MA ELMy H-mode ────────────────────────────
 
@@ -100,7 +106,7 @@ C_PF     = 0.95                    # ITER PF system optimised
 
 Chosen_Steel         = 316L
 Choice_Buck_Wedg     = Wedging
-Radial_build_model   = D0FUS
+Radial_build_model   = refined
 nu_Steel             = 0.29        # 316L Poisson's ratio
 fatigue_CS           = 2.0         # CS fatigue knockdown (Pulsed + Wedging)
 
