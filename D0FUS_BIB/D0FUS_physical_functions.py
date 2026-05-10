@@ -54,38 +54,65 @@ Geometry models
 ---------------
 'Academic'
     κ(ρ) = κ_edge = const,  δ(ρ) = 0
-    Cylindrical-torus approximation.  Consistent with PROCESS (Kovari 2014)
+    Cylindrical-torus approximation.  Consistent with PROCESS (Kovari 2014).
 
 'refined'
-    κ(ρ): flat-core PCHIP profile, κ ≈ κ₉₅ for ρ ≤ ρ₉₅, rising to κ_edge
-          in the thin edge layer [ρ₉₅, 1].  Physically motivated by Ball &
-          Parra (2015): dκ/dρ ≈ 0 in the bulk
-    δ(ρ): PCHIP profile through (0, 0), (ρ₉₅, δ₉₅), (1, δ_edge).
-          δ(0) = 0 is an exact Grad-Shafranov constraint (m=3 harmonic
-          vanishes on axis):
-          Ball & Parra confirm poor radial penetration
-          PCHIP guarantees local monotonicity and C¹ continuity while
-          passing exactly through the δ₉₅ constraint
+    Three-point smoothstep5 interpolation between (ρ=0, ρ=ρ₉₅, ρ=1) for
+    both κ(ρ) and δ(ρ):
+      κ(ρ) = κ₉₅ for ρ ≤ ρ₉₅, rising to κ_edge over [ρ₉₅, 1];
+      δ(ρ) = two-segment smoothstep5 through (0, 0), (ρ₉₅, δ₉₅), (1, δ_edge).
+    The on-axis constraint δ(0) = 0 is exact (m=3 harmonic vanishes on
+    axis); the values at ρ₉₅ are taken from empirical scalings (ITER 1989)
+    or from equilibrium reconstruction.  The smoothstep5 polynomial
+    s(t) = t³(10 − 15t + 6t²) is C² continuous at all break points and
+    removes the dA/drho step that an earlier PCHIP implementation seeded
+    into q(ρ).
 
-Physical justification
-----------------------
-The Grad-Shafranov Taylor expansion around the magnetic axis gives:
-    ψ(R,Z) ≈ A(R−R₀)² + BZ²
-The axis flux surfaces are ellipses with κ(0) = sqrt(B/A), determined
-self-consistently by the equilibrium — NOT constrained to 1.  Only
-higher-order harmonics (m ≥ 3) vanish on axis: δ(0) = 0 is exact.
-Ball & Parra (2015) show that elongation (m=2) penetrates efficiently
-(near-constant across ρ for flat current), while triangularity (m=3)
-is confined to the plasma edge.  These two results together justify:
-    — the flat-core PCHIP for κ,
-    — the strongly edge-peaked PCHIP for δ,
-    — and the Academic model as a sound first-order approximation.
+Physical grounding and limitations
+----------------------------------
+Two analytical results constrain the on-axis behaviour of the shaping
+profiles:
+
+  1. Greene & Johnson (1961) showed via Taylor expansion of ψ around the
+     magnetic axis that flux surfaces near the axis are necessarily
+     elliptical: only the m=2 harmonic survives at lowest order, while
+     all higher-order harmonics (in particular triangularity) must vanish
+     on axis.  The on-axis elongation κ(0) = sqrt(B/A) is set
+     self-consistently by the equilibrium and is NOT constrained to 1.
+
+  2. Ball & Parra (2015) extended this argument and clarified the
+     dependence on the toroidal current profile.  Among all cylindrical
+     harmonics, elongation alone can be preserved unchanged from the
+     boundary to the core, exactly so for a flat current profile.
+     Triangularity decreases monotonically from the LCFS down to
+     δ(0) = 0, and its detailed radial profile depends on j_φ(ρ).
+
+These two results fix the asymptotic behaviour at ρ = 0 but leave the
+full radial profile underdetermined.  D0FUS therefore uses the
+smoothstep5 interpolation as a pragmatic three-point convention, NOT as
+a rigorous derivation from Ball & Parra.  Two limitations follow:
+
+  (a) For strongly peaked or hollow current profiles, Ball & Parra
+      report that κ(ρ) can vary by up to 25% between the axis and the
+      LCFS — a variation the flat-core prescription does not capture.
+  (b) The inflexion of δ(ρ) at ρ₉₅ is an interpolation artefact rather
+      than a feature of the underlying equilibrium.
+
+A fully consistent treatment would couple κ(ρ) and δ(ρ) to j_φ(ρ)
+through the Grad-Shafranov equation, which is the role of equilibrium
+solvers (CHEASE, HELENA, EFIT) and is out of scope for a 0D systems
+code.  The present convention is accepted in exchange for simplicity;
+its impact on integrated quantities (plasma volume, V'(ρ)) remains
+modest because both κ(ρ) and δ(ρ) enter radial integrals weighted by ρ,
+which suppress the contribution of the inner region.
 
 References
 ----------
+Greene & Johnson, Phys. Fluids 4, 875 (1961).
 Miller et al., Phys. Plasmas 5, 973 (1998).
 Ball & Parra, PPCF 57, 035006 (2015).
-Fritsch & Carlson, SIAM J. Numer. Anal. 17, 238 (1980).
+Ebert & Musgrave, Texturing & Modeling: A Procedural Approach (2003) —
+    smoothstep5 polynomial.
 Lao et al., Fusion Sci. Technol. 48, 968 (2005).
 Kovari et al., Fusion Eng. Des. 89, 3054 (2014) — PROCESS.
 """
@@ -223,15 +250,42 @@ if __name__ == "__main__":
 
 def kappa_profile(rho, kappa_edge, kappa_95, rho_95=0.95):
     """
-    Elongation radial profile : flat core + edge rise (PCHIP).
+    Elongation radial profile : two-anchor smoothstep interpolation.
 
-    For a nearly flat toroidal current profile, Ball & Parra (2015, Figs. 3-4)
-    show dκ/dρ ≈ 0 across the bulk plasma.
+    Smoothly connects kappa_95 (interior) to kappa_edge (LCFS) over the
+    edge layer [rho_95, 1] using a quintic Hermite blend, while holding
+    kappa = kappa_95 across the bulk plasma rho <= rho_95.
 
-    Control points (PCHIP):
-        (0,    κ₉₅)    — flat core; first two nodes identical → zero slope
-        (ρ₉₅, κ₉₅)     — 95%-surface constraint
-        (1,   κ_edge)  — LCFS; steep rise confined to edge layer [ρ₉₅, 1]
+    Physical context
+    ----------------
+    Ball & Parra (2015) show that elongation is the only cylindrical
+    harmonic that can be preserved unchanged from the boundary to the
+    core, exactly so for a flat toroidal current profile (their Sec. 3
+    and Fig. 4(a-c)).  For strongly peaked or hollow current profiles,
+    however, kappa(rho) varies monotonically across the full radius and
+    can change by up to ~25% between the axis and the LCFS.  The
+    flat-core prescription used here is therefore a convention valid
+    in the limit of moderately peaked current profiles, NOT a rigorous
+    consequence of Ball & Parra: it is an interpolation between two
+    user-supplied control values (kappa_95 and kappa_edge), with
+    rho_95 acting as a third anchor rather than a physical boundary.
+
+    Numerical motivation for smoothstep5
+    ------------------------------------
+    The previous PCHIP-based implementation was C^0-only at the rho_95
+    break point: the slope jumped from 0 (flat core) to a finite
+    positive value at rho_95.  This produced a step in dA_per_drho
+    through the Miller Jacobian, which propagated to I_enc and hence
+    to a spurious bump in q(rho) for rho > rho_95.  The smoothstep5
+    polynomial s(t) = t^3 (10 - 15 t + 6 t^2) is C^2 continuous
+    (s'(0) = s'(1) = s''(0) = s''(1) = 0), removing this artefact
+    while preserving the profile values at rho = 0, rho_95, and rho = 1
+    exactly:
+
+        kappa(rho) = kappa_95               for rho <= rho_95
+        kappa(rho) = kappa_95 + (kappa_edge - kappa_95) * s(t)
+                                            for rho_95 <= rho <= 1
+        with t = (rho - rho_95) / (1 - rho_95)
 
     Parameters
     ----------
@@ -246,86 +300,89 @@ def kappa_profile(rho, kappa_edge, kappa_95, rho_95=0.95):
 
     References
     ----------
-    Ball & Parra, PPCF 57, 035006 (2015).
-    Fritsch & Carlson, SIAM J. Numer. Anal. 17, 238 (1980).
+    Ball & Parra, PPCF 57, 035006 (2015) — radial penetration of shaping.
+    Ebert & Musgrave, "Texturing & Modeling: A Procedural Approach" (2003)
+        — origin of the smoothstep5 polynomial used here.
     """
     rho = np.asarray(rho, dtype=float)
-    interp = PchipInterpolator([0.0,      rho_95,   1.0       ],
-                               [kappa_95, kappa_95, kappa_edge])
-    return interp(rho)
+    t = (rho - rho_95) / (1.0 - rho_95)
+    t = np.clip(t, 0.0, 1.0)
+    smoothstep5 = t**3 * (10.0 - 15.0*t + 6.0*t**2)
+    return kappa_95 + (kappa_edge - kappa_95) * smoothstep5
 
 
 def delta_profile(rho, delta_edge, delta_95, rho_95=0.95):
     """
-    Triangularity radial profile : edge-peaked PCHIP interpolation.
+    Triangularity radial profile : three-point smoothstep interpolation
+    through (0, rho_95, 1), C^2-continuous.
 
-    The Grad-Shafranov Taylor expansion around the magnetic axis shows
-    that all Fourier harmonics of order m ≥ 3 vanish on axis, giving the
-    exact constraint δ(0) = 0 (Freidberg 2014, §6).  Ball & Parra (2015,
-    Fig. 4) further demonstrate that higher-order harmonics penetrate poorly
-    inward for typical current profiles: triangularity is essentially confined
-    to the edge pedestal layer.
+    Physical context
+    ----------------
+    The on-axis constraint delta(0) = 0 is exact: Greene & Johnson
+    (1961) and Ball & Parra (2015) show via Taylor expansion of psi
+    around the magnetic axis that all Fourier harmonics of order
+    m >= 3 must vanish on axis.  Ball & Parra (2015, Fig. 4(d-f))
+    further show that the radial profile of triangularity decreases
+    monotonically from the LCFS down to delta(0) = 0, with the
+    detailed shape depending on the toroidal current profile.
 
-    PCHIP over three control points encodes both constraints and the
-    prescribed 95%-surface value in a single, physically consistent profile:
+    Convention used here
+    --------------------
+    A fully consistent profile would require coupling delta(rho) to
+    j_phi(rho) through the Grad-Shafranov equation.  D0FUS instead
+    uses a pragmatic interpolation between three control points:
+        (0,      0)         — exact on-axis constraint
+        (rho_95, delta_95)  — empirical 95%-surface value (e.g. ITER 1989)
+        (1,      delta_edge)— prescribed LCFS triangularity
+    The intermediate point delta_95 acts as a third interpolation
+    control rather than a physical milestone.  The inflexion of
+    delta(rho) at rho_95 is therefore an artefact of the three-point
+    interpolation, not a feature of the underlying equilibrium.
 
-        Control points:
-            (0,     0)          — exact GS on-axis constraint, δ(0) = 0
-            (ρ₉₅,  δ₉₅)         — 95%-surface value from equilibrium / scaling
-            (1,    δ_edge)      — LCFS triangularity
-
-    PCHIP (Fritsch & Carlson 1980) is preferred over a simple power-law
-    because:
-    (i)    It is C¹-continuous at all nodes
-    (ii)   PCHIP guarantees local monotonicity without any tuning,
-           preventing spurious oscillations
+    Numerical implementation
+    ------------------------
+    Each segment uses the quintic Hermite blend
+    s(t) = t^3 (10 - 15 t + 6 t^2), which is C^2 continuous with
+    s'(0) = s'(1) = s''(0) = s''(1) = 0.  This eliminates the slope
+    discontinuity at rho_95 that an earlier PCHIP implementation
+    introduced, removing the corresponding artefact in q(rho) for
+    rho > rho_95.
 
     Parameters
     ----------
     rho : float or ndarray
         Normalised radial coordinate r/a in [0, 1].
     delta_edge : float
-        Triangularity at the LCFS (ρ = 1).
+        Triangularity at the LCFS (rho = 1).  Negative values are
+        supported (negative-triangularity configurations).
     delta_95 : float
-        Triangularity at ρ₉₅.  Use f_Delta_95(delta_edge) for ITER 1989
-        scaling (δ_edge / 1.5).
-    rho_95 : float, optional
-        Normalised position of the 95% flux surface (default 0.95).
+        Triangularity at rho_95.  Use f_Delta_95(delta_edge) for the
+        ITER 1989 scaling.
+    rho_95 : float  default 0.95
 
     Returns
     -------
     delta : float or ndarray
-        Monotone profile from 0 to δ_edge + edge-peaked.
-        Works for both positive (δ_edge > 0, D-shape) and negative
-        (δ_edge < 0, reversed-D / negative triangularity) configurations.
-        The only geometric constraint is |δ_edge| < 1.
-        For δ_edge < 0, PCHIP produces a monotonically decreasing profile
-        0 → δ₉₅ → δ_edge with full monotonicity preservation (Fritsch &
-        Carlson 1980, Thm. 2.1).
 
     References
     ----------
-    Fritsch & Carlson, SIAM J. Numer. Anal. 17, 238 (1980) — PCHIP algorithm
-        and monotonicity preservation theorem.
-    Ball & Parra, PPCF 57, 035006 (2015) — radial penetration of shaping,
-        Figs. 3-4; triangularity confined to edge for flat current profiles.
-    Freidberg, Ideal MHD, Cambridge University Press (2014) — GS axis
-        constraint: m ≥ 3 harmonics vanish at the magnetic axis.
-    Lütjens et al., Comput. Phys. Commun. 97, 219 (1996) — CHEASE
-        free-boundary equilibrium code.
-    Lao et al., Fusion Sci. Technol. 48, 968 (2005) — EFIT spline
-        equilibrium reconstruction.
+    Greene & Johnson, Phys. Fluids 4, 875 (1961).
+    Ball & Parra, PPCF 57, 035006 (2015).
     """
     rho = np.asarray(rho, dtype=float)
-    interp = PchipInterpolator([0.0, rho_95,   1.0       ],
-                               [0.0, delta_95, delta_edge])
-    return interp(rho)
+    out = np.zeros_like(rho, dtype=float)
+    # Segment 1: [0, rho_95] -> smooth ramp from 0 to delta_95
+    mask1 = rho <= rho_95
+    t1 = rho[mask1] / rho_95
+    s5_1 = t1**3 * (10.0 - 15.0*t1 + 6.0*t1**2)
+    out[mask1] = delta_95 * s5_1
+    # Segment 2: [rho_95, 1] -> smooth ramp from delta_95 to delta_edge
+    mask2 = ~mask1
+    t2 = (rho[mask2] - rho_95) / (1.0 - rho_95)
+    s5_2 = t2**3 * (10.0 - 15.0*t2 + 6.0*t2**2)
+    out[mask2] = delta_95 + (delta_edge - delta_95) * s5_2
+    return out
 
-
-if __name__ == "__main__":
-    # Radial κ(ρ) and δ(ρ) profiles — ITER reference
-    import D0FUS_BIB.D0FUS_figures as figs
-    figs.plot_shaping_profiles(kappa_edge=1.85, delta_edge=0.50)
 
 def miller_RZ(rho, theta, R0, a, kappa_edge, delta_edge,
               kappa_95=None, delta_95=None, rho_95=0.95):
@@ -337,7 +394,7 @@ def miller_RZ(rho, theta, R0, a, kappa_edge, delta_edge,
 
     Shaping profiles:
       Academic : κ = κ_edge (const),  δ = 0
-      refined    : PCHIP κ (flat core) + PCHIP δ (edge-peaked)
+      refined  : smoothstep5 κ (flat core) + smoothstep5 δ (edge-peaked)
 
     No Shafranov shift (outside scope of a 0D code).
 
@@ -382,42 +439,71 @@ def precompute_Vprime(R0, a, kappa_edge, delta_edge,
                       kappa_95=None, delta_95=None, rho_95=0.95,
                       N_rho=200, N_theta=200):
     """
-    Precompute V'(ρ), dA_pol/dρ, and L_p(ρ) on a radial grid.
+    Precompute V'(rho), dA_pol/drho, L_p(rho), and <1/R^2>(rho).
 
     Called once per design point; the returned tuple is passed to all
     functions that need volume integrals, poloidal cross-section area
-    weights, or poloidal arc lengths. All three geometric quantities are
-    derived consistently:
-      'Academic' → closed-form ellipse at constant κ, no triangularity.
-      'refined'  → numerical Jacobian of the Miller parametrisation,
-                   including the full effect of κ(ρ) and δ(ρ).
+    weights, poloidal arc lengths, or the rigorous local q formula.  All
+    four geometric quantities are derived consistently:
+      'Academic' : closed-form ellipse at constant kappa, no triangularity.
+      'refined'  : numerical Jacobian of the Miller parameterisation,
+                   including the full effect of kappa(rho) and delta(rho).
+
+    The flux-surface-perimeter average <1/R^2>(rho) is computed as
+
+        <1/R^2>(rho) = (1/Lp) * oint dl_p / R^2
+
+    and is used by f_q_profile_refined to evaluate the rigorous local q
+    formula
+
+        q(rho) = F * Lp^2 * <1/R^2> / (2 pi mu0 I_enc)
+
+    derived from the axisymmetric definition q = (F/2pi) oint dl_p/(R^2 B_p)
+    under the assumption B_p ~ mu0 I_enc / Lp constant around the surface.
 
     Parameters
     ----------
     R0, a : float  [m]
     kappa_edge, delta_edge : float
     geometry_model : 'Academic' | 'refined'
-        'Academic' : ellipse at κ=κ_edge, no triangularity
-        'refined'  : Miller PCHIP profiles κ(ρ), δ(ρ); 2D Jacobian
+        'Academic' : ellipse at kappa = kappa_edge, no triangularity
+        'refined'  : Miller smoothstep5 profiles kappa(rho), delta(rho); 2D Jacobian
     kappa_95, delta_95 : float or None  (ITER 1989 defaults; refined only)
     rho_95 : float  default 0.95
-    N_rho, N_theta : int  grid resolution (refined only)
+    N_rho, N_theta : int  grid resolution
 
     Returns
     -------
-    rho_grid : ndarray  (N_rho,)
-    Vprime   : ndarray  (N_rho,)  [m³]     dV/dρ on rho_grid
-    V_total  : float              [m³]     total plasma volume
-    dA_grid  : ndarray  (N_rho,)  [m²]     dA_pol/dρ, poloidal
-                                           cross-section area element
-                                           (includes κ(ρ) and δ(ρ) in
-                                           refined mode; exact ellipse in
-                                           Academic mode).
-    Lp_grid  : ndarray  (N_rho,)  [m]      true poloidal arc length
+    rho_grid    : ndarray  (N_rho,)
+    Vprime      : ndarray  (N_rho,)  [m^3]   dV/drho on rho_grid
+    V_total     : float              [m^3]   total plasma volume
+    dA_grid     : ndarray  (N_rho,)  [m^2]   dA_pol/drho, poloidal
+                                             cross-section area element
+                                             (includes kappa(rho) and delta(rho)
+                                             in refined mode; exact ellipse in
+                                             Academic mode).
+    Lp_grid     : ndarray  (N_rho,)  [m]     true poloidal arc length
         In Academic mode, Lp_grid is the Ramanujan perimeter of the
-        elliptical flux surface (exact at constant κ, no δ).
+        elliptical flux surface (exact at constant kappa, no delta).
         In refined mode, Lp_grid is the numerical contour integral
-        including δ(ρ).
+        including delta(rho).
+    inv_R2_grid : ndarray  (N_rho,)  [m^-2]  <1/R^2>(rho), perimeter average
+        Captures the finite aspect ratio (a/R0) and triangularity effect
+        on the local safety factor.  At rho = 0, <1/R^2> = 1/R0^2 by
+        continuity; at the LCFS, it differs from 1/R0^2 by ~10-20% at
+        ITER aspect ratio.
+
+    Notes
+    -----
+    The flux-surface-perimeter average <1/R^2>(rho) is the geometric
+    average along the poloidal contour, not the Grad-Shafranov flux-
+    surface average <X> = oint X dl_p/B_p / oint dl_p/B_p.  The two
+    coincide when B_p is constant around the surface (low-beta, no
+    Shafranov shift), which is the standard 0D approximation.  Higher-
+    fidelity 1.5D codes (METIS, ASTRA) carry the full GS-weighted
+    average; the residual discrepancy is typically a few percent for
+    ITER and EU-DEMO baselines and is documented in the q-profile
+    builder docstring.
     """
     if kappa_95 is None:
         kappa_95 = f_Kappa_95(kappa_edge)
@@ -427,16 +513,34 @@ def precompute_Vprime(R0, a, kappa_edge, delta_edge,
     rho_grid = np.linspace(1e-6, 1.0, N_rho)
 
     if geometry_model == 'Academic':
-        # Closed-form ellipse at constant κ, no triangularity.
-        # All three weights are the exact analytical limits of the
-        # Miller Jacobian formulation below when δ=0 and κ'=0.
+        # Closed-form ellipse at constant kappa, no triangularity.
+        # All weights are the exact analytical limits of the Miller
+        # Jacobian formulation below when delta = 0 and kappa' = 0.
         Vprime  = 4.0 * np.pi**2 * R0 * a**2 * kappa_edge * rho_grid
         V_total = 2.0 * np.pi**2 * R0 * a**2 * kappa_edge
-        # Poloidal area element: A_pol(ρ) = π(ρa)²κ  →  dA_pol/dρ = 2πρa²κ
+        # Poloidal area element: A_pol(rho) = pi(rho a)^2 kappa
+        # => dA_pol/drho = 2 pi rho a^2 kappa
         dA_grid = 2.0 * np.pi * rho_grid * a**2 * kappa_edge
-        # Ramanujan perimeter of each elliptical flux surface (ρa, κρa)
+        # Ramanujan perimeter of each elliptical flux surface (rho a, kappa rho a)
         Lp_grid = _ramanujan_perimeter(rho_grid * a, kappa_edge * rho_grid * a)
-        return rho_grid, Vprime, V_total, dA_grid, Lp_grid
+
+        # Flux-surface-perimeter average <1/R^2>(rho), integrated numerically
+        # on a fine theta grid for each rho.  Closed form for an ellipse
+        # exists but is more cumbersome than the direct quadrature below.
+        theta = np.linspace(0.0, 2.0*np.pi, max(N_theta, 200), endpoint=False)
+        dtheta = theta[1] - theta[0]
+        inv_R2_grid = np.zeros_like(rho_grid)
+        inv_R2_grid[0] = 1.0 / R0**2     # axis limit
+        for i in range(1, len(rho_grid)):
+            r = rho_grid[i]
+            R = R0 + r * a * np.cos(theta)
+            Z = kappa_edge * r * a * np.sin(theta)
+            dRdt = -r * a * np.sin(theta)
+            dZdt =  kappa_edge * r * a * np.cos(theta)
+            ds = np.sqrt(dRdt**2 + dZdt**2) * dtheta
+            inv_R2_grid[i] = float(np.sum(ds / R**2)) / float(np.sum(ds))
+
+        return (rho_grid, Vprime, V_total, dA_grid, Lp_grid, inv_R2_grid)
 
     elif geometry_model == 'refined':
         theta  = np.linspace(0.0, 2.0*np.pi, N_theta, endpoint=False)
@@ -447,35 +551,39 @@ def precompute_Vprime(R0, a, kappa_edge, delta_edge,
         R, Z = miller_RZ(RHO, THETA, R0, a, kappa_edge, delta_edge,
                          kappa_95, delta_95, rho_95)
 
-        # Numerical 2D Jacobian |∂(R,Z)/∂(ρ,θ)| used for all three weights
+        # Numerical 2D Jacobian |d(R,Z)/d(rho,theta)|, used for V' and dA.
         dR_drho   = np.gradient(R, drho,   axis=0)
         dR_dtheta = np.gradient(R, dtheta, axis=1)
         dZ_drho   = np.gradient(Z, drho,   axis=0)
         dZ_dtheta = np.gradient(Z, dtheta, axis=1)
         jac = np.abs(dR_drho * dZ_dtheta - dR_dtheta * dZ_drho)
 
-        # Toroidal volume derivative: dV/dρ = 2π ∮ R |J2D| dθ
+        # Toroidal volume derivative: dV/drho = 2 pi oint R |J2D| dtheta
         Vprime  = np.sum(2.0 * np.pi * R * jac, axis=1) * dtheta
         V_total = float(np.trapezoid(Vprime, rho_grid))
 
-        # Poloidal cross-section area element: dA_pol/dρ = ∮ |J2D| dθ
-        # Consistent with Vprime (same Jacobian); includes κ(ρ) and δ(ρ).
-        # Replaces the ellipse approximation dA/dρ = 2πρa²κ(ρ), which
-        # misses the ρκ'/2 term at variable κ and the full effect of δ.
+        # Poloidal cross-section area element: dA_pol/drho = oint |J2D| dtheta
         dA_grid = np.sum(jac, axis=1) * dtheta
 
-        # True poloidal arc length from Miller contour.
-        # L_p(ρ) = ∮ √((∂R/∂θ)² + (∂Z/∂θ)²) dθ
-        # Accounts for both elongation κ(ρ) and triangularity δ(ρ),
-        # unlike the ellipse approximation which ignores δ.
-        arc_element = np.sqrt(dR_dtheta**2 + dZ_dtheta**2)  # (N_rho, N_theta)
-        Lp_grid = np.sum(arc_element, axis=1) * dtheta       # (N_rho,)
+        # True poloidal arc length:
+        #   L_p(rho) = oint sqrt((dR/dtheta)^2 + (dZ/dtheta)^2) dtheta
+        arc_element = np.sqrt(dR_dtheta**2 + dZ_dtheta**2)
+        Lp_grid = np.sum(arc_element, axis=1) * dtheta
 
-        return rho_grid, Vprime, V_total, dA_grid, Lp_grid
+        # Flux-surface-perimeter average <1/R^2>(rho):
+        #   <1/R^2> = (oint dl_p / R^2) / Lp
+        # Lp_grid > 0 except at rho = 0 where the contour degenerates;
+        # set the axial limit by continuity to 1/R0^2.
+        Lp_safe = np.where(Lp_grid > 1e-12, Lp_grid, 1.0)
+        inv_R2_grid = np.sum(arc_element / R**2, axis=1) * dtheta / Lp_safe
+        inv_R2_grid[Lp_grid <= 1e-12] = 1.0 / R0**2
+
+        return (rho_grid, Vprime, V_total, dA_grid, Lp_grid, inv_R2_grid)
 
     else:
         raise ValueError(f"Unknown geometry_model '{geometry_model}'. "
                          "Valid: 'Academic', 'refined'.")
+
 
 
 def interpolate_Vprime(rho, rho_grid, Vprime):
@@ -618,7 +726,7 @@ Vprime_data argument:
       Fast, analytical formulas available for parabolic profiles.
 
   refined  (Vprime_data = (rho_grid, Vprime, V_total) from precompute_Vprime())
-      Volume element: dV = V'_Miller(ρ) dρ  (full Miller geometry, PCHIP κ/δ)
+      Volume element: dV = V'_Miller(ρ) dρ  (full Miller geometry, smoothstep5 κ/δ)
       All integrals use the precomputed Jacobian; n(ρ) and T(ρ) are midplane
       radial profiles — the geometry enters only through the volume weight.
 
@@ -896,11 +1004,12 @@ def f_nbar_line(nbar_vol, nu_n, rho_ped=1.0, n_ped_frac=0.0, N=2000):
         n̄_line = ∫₀¹ n(ρ) · cos(arcsin(δ(ρ))) dρ   (refined mode)
 
     This function uses the δ = 0 approximation for both geometry modes.
-    For ITER-class δ_edge ≈ 0.5, the PCHIP δ(ρ) profile is confined to the
-    edge layer (δ ≲ 0.1 for ρ < 0.8), so the mean Jacobian correction is
-    cos(arcsin(δ_edge)) × edge-layer fraction ≈ 0.87 × 0.05 ≲ 1 % error on
-    n̄_line.  The correction grows to ~3 % only for very high triangularity
-    (δ_edge ≈ 0.8) and is negligible in all ITER/EU-DEMO relevant cases.
+    For ITER-class δ_edge ≈ 0.5, the smoothstep5 δ(ρ) profile is confined
+    to the edge layer (δ ≲ 0.1 for ρ < 0.8), so the mean Jacobian
+    correction is cos(arcsin(δ_edge)) × edge-layer fraction ≈ 0.87 × 0.05
+    ≲ 1 % error on n̄_line.  The correction grows to ~3 % only for very
+    high triangularity (δ_edge ≈ 0.8) and is negligible in all ITER /
+    EU-DEMO relevant cases.
 
     Note: elongation κ does NOT affect the midplane chord.  The horizontal
     line Z = 0 intersects the plasma at fixed ρ values independent of κ,
@@ -1562,22 +1671,21 @@ def f_beta_fast_alpha(P_alpha_MW, Te_keV, ne_20, B0, V_m3, Z_eff=1.65,
     The Stix (1972) isotropic slowing-down distribution gives the
     steady-state fast-particle energy content as:
 
-        W_fast = P_alpha * tau_se * G(v_0/v_c)
+        W_fast = P_alpha * tau_se * G_eff(E_alpha/E_c)
 
-    where tau_se is the Spitzer electron-drag time, v_0 is the alpha
-    birth velocity, v_c is the critical velocity (electron/ion drag
-    crossover), and G is a function of order 1/3.
+    where tau_se is the Spitzer electron-drag time defined via
+    dv/dt = -v/tau_se, E_alpha is the alpha birth energy, and E_c
+    is the critical velocity (electron/ion drag crossover).
+    G_eff is the dimensionless Cordey & Core (1974) energy-integral
+    function. It rises monotonically from zero to its asymptotic
+    value 1/2 as E_alpha/E_c -> infinity, taking values close to
+    0.40 for E_alpha/E_c ~ 10 (ITER and EU-DEMO operating
+    conditions). The simple textbook formula W_fast = P_alpha
+    * tau_se / 3 is an order-of-magnitude estimate, not an
+    asymptotic limit; the analytical Cordey-Core integral evaluated
+    here gives the correct value at finite E_alpha/E_c.
 
-    In the limit v_0 >> v_c (valid for 3.5 MeV alphas in reactor
-    plasmas where E_c ~ 300-500 keV), the leading-order result is:
-
-        W_fast ≈ P_alpha * tau_se / 3
-
-    This function includes the critical-energy correction via the
-    Stix integral, which adds ~30% for typical DEMO parameters.
-
-    The Spitzer electron-drag time (derived from first principles,
-    verified against NRL Plasma Formulary):
+    The Spitzer electron-drag time (NRL Plasma Formulary):
 
         tau_se [s] = 6.32e14 * A_alpha / Z_alpha^2
                      * T_e[eV]^{3/2} / (n_e[m^-3] * ln Lambda)
@@ -5013,7 +5121,8 @@ def f_Sauter_Redl_Ib(R0, a, kappa, B0, nbar, Tbar, q95, Z_eff, nu_n, nu_T, n_rho
     T_ped_frac : float  T_ped / Tbar.
     Vprime_data : tuple or None, optional
         If provided, activates refined mode: area element dA and trapped
-        fraction use the PCHIP local kappa(rho) instead of constant kappa_edge.
+        fraction use the smoothstep5 local kappa(rho) instead of constant
+        kappa_edge.
     kappa_95 : float or None, optional
         Elongation at the 95% flux surface.  Used only in refined mode.
         Defaults to f_Kappa_95(kappa) (ITER 1989 guideline: kappa_edge / 1.12).
@@ -5146,9 +5255,11 @@ def f_q_profile_refined(
         eta_model='redl',
         rho_ped=1.0, n_ped_frac=0.0, T_ped_frac=0.0,
         Vprime_data=None, kappa_95=None, rho_95=0.95,
+        delta=0.0, delta_95=None,
         rho_CD=0.3, delta_CD=0.15,
         q_init=None,
-        n_rho=200, tol=1e-3, max_iter=15, damping=0.5):
+        n_rho=200, tol=1e-3, max_iter=15, damping=0.5,
+        N_theta_inv_R2=400):
     """
     Self-consistent safety-factor and current-density profiles (Mode 'refined').
 
@@ -5158,14 +5269,27 @@ def f_q_profile_refined(
 
         j_total(rho) = j_Ohm(rho) + j_CD(rho) + j_bs(rho)
 
-    on the current q(rho), then rebuilds q(rho) from cylindrical Ampère
+    on the current q(rho), then rebuilds q(rho) from the rigorous local
+    formula
 
-        q(rho) = (2 pi rho^2 a^2 kappa(rho) B0) / (mu0 R0 I_enc(rho))
+        q(rho) = F * Lp(rho)^2 * <1/R^2>(rho) / (2 pi mu0 I_enc(rho))
 
-    where I_enc(rho) is the cumulative integral of j_total over the
-    poloidal cross-section.  No parametric ansatz is imposed; q(rho) is
-    free to develop reversed shear if the bootstrap and current-drive
-    distribution favour it.
+    derived from the axisymmetric definition
+
+        q(psi) = (F / 2 pi) * oint dl_p / (R^2 B_p)
+
+    under the single approximation B_p ~ mu0 I_enc / Lp constant around
+    the surface.  F = R B_phi ~ R0 B0 (vacuum-field, low-beta limit).
+
+    The shape factor is captured by Lp(rho) and <1/R^2>(rho), both
+    integrated on the Miller flux surface (R(rho, theta), Z(rho, theta)).
+    There is no empirical correction term: the elongation kappa(rho), the
+    triangularity delta(rho), and the finite aspect ratio epsilon = rho a/R0
+    enter automatically via the geometric weights.  In the limits
+    kappa = 1, delta = 0, epsilon -> 0 the formula reduces to the standard
+    cylindrical q = 2 pi r^2 B_phi / (mu0 R0 I_enc).  For an ellipse at
+    constant kappa with delta = 0 and epsilon -> 0, it reduces exactly to
+    the Freidberg q* = pi a^2 B0 (1+kappa^2) / (mu0 R0 Ip) at rho = 1.
 
     Component physics
     -----------------
@@ -5184,15 +5308,49 @@ def f_q_profile_refined(
     --------------
     q(rho_95) is *not* constrained to match the externally computed q95
     from f_q95.  The latter is an MHD-stability scaling (Sauter 2016,
-    Uckan 1989) that depends only on global quantities; the present
-    function returns the q(rho) that follows from the actual current
-    decomposition.  The two values differ in general by 5 to 30 %; this
-    is a diagnostic of the consistency between the global scaling and the
-    transport model, not a numerical defect.
+    Uckan 1989) fitted on full Grad-Shafranov equilibria and includes
+    Shafranov-shift and B_p-anisotropy effects that are absent here.
+    The two values typically differ by 10-20% at ITER aspect ratio; this
+    is a diagnostic of the consistency between the global scaling and
+    the geometric reconstruction, not a numerical defect.
 
     Reversed shear (q with off-axis minimum) is permitted.  q(0) below 1
-    is permitted and not corrected; the caller may apply an MHD stability
-    test downstream if needed.
+    is permitted and not corrected; in real tokamaks, sawtooth oscillations
+    redistribute current to keep q(0) ~ 1, which is not modelled in this
+    stationary 0D solver.  A 0D q(0) below 1 should be read as a signal
+    that the prescribed current-drive deposition is too off-axis for
+    sawtooth-free operation, not as a numerical bug.
+
+    Pedestal bootstrap peak
+    -----------------------
+    In H-mode operation with rho_ped close to 1, the Sauter-Redl bootstrap
+    current density develops a sharp peak in the pedestal layer (typically
+    near rho ~ rho_ped + (1 - rho_ped) / 2), where the pressure gradient
+    is maximal.  This peak is fully resolved by the dense radial grid used
+    here (n_rho points in [rho_ped, 0.99]) and produces a localised
+    minimum in q(rho) past rho_ped, followed by a recovery toward the LCFS.
+    The minimum is not an artefact: it reflects the steady-state Ampere
+    closure on the prescribed pedestal pressure profile.
+
+    Reference 1.5D codes (CORSICA, ASTRA, METIS) typically produce
+    monotonic q(rho) at the same operating point because they include
+    resistive current diffusion, which redistributes the pedestal
+    bootstrap toward the core over the resistive time scale tau_R ~
+    R0^2 / eta_neo (a few hundred seconds for ITER).  D0FUS being a
+    stationary 0D code, no time-dependent relaxation is captured: the
+    profile returned here is the instantaneous Ampere balance for the
+    prescribed pedestal at t = 0, before any resistive smoothing.  The
+    overall q(0), q(rho_95), q(1), l_i(3), and bootstrap fraction
+    integrals remain physically meaningful and benchmark against
+    transient codes within typical 0D model uncertainty (~10 %).
+
+    For applications where the pedestal q-dip is undesirable (e.g.
+    visual presentation against transient simulations), the user can
+    soften the pedestal pressure profile through input parameters
+    (T_ped_frac smaller, n_ped_frac smaller, rho_ped lower); the dip
+    flattens accordingly.  The dip cannot be eliminated by changing the
+    solver itself without modelling resistive diffusion, which is out
+    of scope for a 0D code.
 
     Parameters
     ----------
@@ -5217,17 +5375,23 @@ def f_q_profile_refined(
     rho_ped, n_ped_frac, T_ped_frac : float
         Pedestal parameters passed to f_Tprof / f_nprof.
     Vprime_data : tuple or None
-        Miller geometry data (rho_grid, Vprime, V_total, dA_grid, Lp_grid).
+        Miller geometry data.  Accepted formats:
+            6-tuple: (rho, Vprime, V_total, dA, Lp, inv_R2)  [preferred]
+            5-tuple: (rho, Vprime, V_total, dA, Lp)          [legacy]
+        When None, or when inv_R2 is missing, Lp(rho) and <1/R^2>(rho)
+        are recomputed on the fly from the Miller parameterisation using
+        the kappa, delta, kappa_95, delta_95 inputs.
     kappa_95, rho_95 : float
         95%-surface elongation and radial position.
+    delta, delta_95 : float
+        Edge and 95%-surface triangularity.  Used when Vprime_data does
+        not provide inv_R2 or Lp; ignored otherwise.
     rho_CD, delta_CD : float
         Current-drive Gaussian deposition centre and width.
     q_init : dict or None
         Optional warm start from a previous solution (must contain 'rho'
         and 'q_arr' keys).  When None, the iteration starts from a
-        parametric q with alpha_J = 1.5 and q(rho_95) = 3.0 as a generic
-        guess; this guess only affects the path to convergence, not the
-        converged solution.
+        parametric q with alpha_J = 1.5 and q(rho_95) = 3.0.
     n_rho : int
         Radial grid resolution.
     tol : float
@@ -5235,7 +5399,10 @@ def f_q_profile_refined(
     max_iter : int
         Maximum Picard iterations.
     damping : float
-        Mixing parameter for the q update: q <- damping * q_new + (1 - damping) * q.
+        Mixing parameter for the q update: q <- damping * q_new + (1-damping) * q.
+    N_theta_inv_R2 : int
+        Theta resolution for on-the-fly Lp and <1/R^2> integration when
+        Vprime_data does not provide them.  Default 400.
 
     Returns
     -------
@@ -5248,6 +5415,8 @@ def f_q_profile_refined(
         j_non_bs  : ndarray   j_Ohm + j_CD [A/m^2].
         j_bs      : ndarray   Bootstrap current density [A/m^2].
         I_enc     : ndarray   Cumulative enclosed current [A].
+        Lp_arr    : ndarray   Poloidal perimeter Lp(rho) [m].
+        inv_R2_arr: ndarray   Flux-surface-perimeter <1/R^2>(rho) [m^-2].
         li        : float     Internal inductance l_i(3) [-].
         q0        : float     Central safety factor (may be < 1).
         alpha_J   : float     NaN (no parametric exponent in this mode).
@@ -5261,7 +5430,9 @@ def f_q_profile_refined(
 
     References
     ----------
-    Wesson, Tokamaks, 4th ed. (2011) ch. 3 — cylindrical Ampere relation.
+    Wesson, Tokamaks, 4th ed. (2011) ch. 3 — q definition and cylindrical limit.
+    Freidberg, Ideal MHD (Cambridge, 2014) ch. 6 — axisymmetric q integral.
+    Miller et al., Phys. Plasmas 5 (1998) 973 — flux-surface parameterisation.
     Artaud et al., Nucl. Fusion 58 (2018) 105001 — METIS current diffusion
         philosophy: prescribed non-inductive sources, Ohmic share closes
         the balance, q(rho) reconstructed from j_total.
@@ -5277,6 +5448,8 @@ def f_q_profile_refined(
 
     if kappa_95 is None:
         kappa_95 = f_Kappa_95(kappa)
+    if delta_95 is None:
+        delta_95 = f_Delta_95(delta)
 
     use_miller = (Vprime_data is not None)
     if use_miller:
@@ -5284,40 +5457,94 @@ def f_q_profile_refined(
     else:
         kappa_arr = np.full_like(rho, kappa)
 
-    # == Poloidal area element (Miller-consistent when available) ============
+    # == Geometric weights: dA_per_drho, Lp, <1/R^2> =========================
+    # Three quantities all derived from the same Miller surfaces R(rho,theta),
+    # Z(rho,theta).  Self-consistency requires that they all come from the
+    # same source (precomputed Vprime_data, or on-the-fly).  Mixing
+    # precomputed-Lp with ellipse-dA introduces ~10 % drift in the final q
+    # at the edge.
     drho = np.zeros_like(rho)
     drho[0]    = (rho[0] + rho[1]) / 2.0
     drho[-1]   = rho[-1] - rho[-2]
     drho[1:-1] = (rho[2:] - rho[:-2]) / 2.0
-    if (Vprime_data is not None and len(Vprime_data) >= 5
-            and Vprime_data[3] is not None):
+
+    have_dA     = (Vprime_data is not None and len(Vprime_data) >= 5
+                   and Vprime_data[3] is not None)
+    have_Lp     = (Vprime_data is not None and len(Vprime_data) >= 5
+                   and Vprime_data[4] is not None)
+    have_invR2  = (Vprime_data is not None and len(Vprime_data) >= 6
+                   and Vprime_data[5] is not None)
+
+    if have_dA and have_Lp and have_invR2:
+        # Preferred path: full 6-tuple Vprime_data, all weights consistent.
         dA_per_drho = interpolate_dA(rho, Vprime_data[0], Vprime_data[3])
+        Lp_arr      = np.interp(rho, Vprime_data[0], Vprime_data[4])
+        inv_R2_arr  = np.interp(rho, Vprime_data[0], Vprime_data[5])
+        # Pass Vprime_data through to sub-functions as is.
+        Vprime_data_internal = Vprime_data
     else:
-        dA_per_drho = 2.0 * np.pi * rho * a**2 * kappa_arr
+        # On-the-fly Miller integration.  np.gradient on the Picard rho
+        # grid produces artifacts at the rho_inner/rho_core/rho_edge
+        # junctions where the spacing jumps, so we integrate on an
+        # internal uniform grid first and interpolate to the Picard
+        # grid afterwards.  Equivalent to a self-contained
+        # precompute_Vprime call but kept inside the function for the
+        # Vprime_data=None case.  The full 6-tuple is also assembled and
+        # passed downstream to the bootstrap and Ohmic sub-routines, so
+        # that all geometry-dependent integrals see the same Miller
+        # surfaces.
+        rho_uni = np.linspace(1e-6, 1.0, max(n_rho * 2, 400))
+        theta_u = np.linspace(0.0, 2.0*np.pi, N_theta_inv_R2, endpoint=False)
+        dtheta_u = theta_u[1] - theta_u[0]
+        drho_uni = rho_uni[1] - rho_uni[0]
+        RHO_u, THETA_u = np.meshgrid(rho_uni, theta_u, indexing='ij')
+        R_u, Z_u = miller_RZ(RHO_u, THETA_u, R0, a, kappa, delta,
+                             kappa_95, delta_95, rho_95)
+        dR_dt_u = np.gradient(R_u, dtheta_u, axis=1)
+        dZ_dt_u = np.gradient(Z_u, dtheta_u, axis=1)
+        dR_drho_u = np.gradient(R_u, drho_uni, axis=0)
+        dZ_drho_u = np.gradient(Z_u, drho_uni, axis=0)
+        jac_u = np.abs(dR_drho_u * dZ_dt_u - dR_dt_u * dZ_drho_u)
+        # V'(rho) = 2 pi oint R |J2D| dtheta
+        Vprime_uni = np.sum(2.0 * np.pi * R_u * jac_u, axis=1) * dtheta_u
+        V_total_uni = float(np.trapezoid(Vprime_uni, rho_uni))
+        # dA_pol/drho = oint |J2D| dtheta
+        dA_uni = np.sum(jac_u, axis=1) * dtheta_u
+        # Lp = oint sqrt((dR/dtheta)^2 + (dZ/dtheta)^2) dtheta
+        arc_u  = np.sqrt(dR_dt_u**2 + dZ_dt_u**2)
+        Lp_uni = np.sum(arc_u, axis=1) * dtheta_u
+        Lp_safe_u = np.where(Lp_uni > 1e-12, Lp_uni, 1.0)
+        invR2_uni = np.sum(arc_u / R_u**2, axis=1) * dtheta_u / Lp_safe_u
+        invR2_uni[Lp_uni <= 1e-12] = 1.0 / R0**2
+        # Interpolate to the Picard grid for local use.
+        dA_per_drho = np.interp(rho, rho_uni, dA_uni)
+        Lp_arr      = np.interp(rho, rho_uni, Lp_uni)
+        inv_R2_arr  = np.interp(rho, rho_uni, invR2_uni)
+        # Assemble a full 6-tuple Vprime_data for downstream consumers
+        # (f_Sauter_Redl_Ib, f_Tprof, f_nprof) so that they see the same
+        # Miller geometry as the q solver itself.
+        Vprime_data_internal = (rho_uni, Vprime_uni, V_total_uni,
+                                dA_uni, Lp_uni, invR2_uni)
+
     dA = dA_per_drho * drho
 
-    # == Profiles of T(rho), n(rho), epsilon(rho) ===========================
-    T_arr   = f_Tprof(Tbar, nu_T, rho, rho_ped, T_ped_frac, Vprime_data)
-    n_arr   = f_nprof(nbar, nu_n, rho, rho_ped, n_ped_frac, Vprime_data)
+    # == Volume metric for li(3) and Lp for the geometric weights ============
+    # All downstream consumers (l_i integral, T/n profiles, bootstrap) use
+    # Vprime_data_internal so that geometry is consistent whether or not
+    # the caller supplied a precomputed Vprime_data.
+    Lp_li = np.interp(rho, Vprime_data_internal[0], Vprime_data_internal[4])
+    Lp_li = np.where(rho > 1e-8, Lp_li, 1.0)
+
+    Vprime_arr = interpolate_Vprime(rho,
+                                    Vprime_data_internal[0],
+                                    Vprime_data_internal[1])
+
+    # == Profiles of T(rho), n(rho), epsilon(rho) ============================
+    T_arr   = f_Tprof(Tbar, nu_T, rho, rho_ped, T_ped_frac, Vprime_data_internal)
+    n_arr   = f_nprof(nbar, nu_n, rho, rho_ped, n_ped_frac, Vprime_data_internal)
     eps_arr = rho * a / R0
 
-    # == Geometric weights for li(3) =========================================
-    _lp_from_miller = (
-        use_miller and Vprime_data is not None
-        and len(Vprime_data) >= 5 and Vprime_data[4] is not None
-    )
-    if _lp_from_miller:
-        Lp_arr = np.interp(rho, Vprime_data[0], Vprime_data[4])
-    else:
-        Lp_arr = _ramanujan_perimeter(rho * a, kappa_arr * rho * a)
-    Lp_arr = np.where(rho > 1e-8, Lp_arr, 1.0)
-
-    if use_miller and Vprime_data is not None:
-        Vprime_arr = interpolate_Vprime(rho, Vprime_data[0], Vprime_data[1])
-    else:
-        Vprime_arr = 4.0 * np.pi**2 * R0 * a**2 * kappa_arr * rho
-
-    # == Current-drive deposition profile (Gaussian, geometric only) ========
+    # == Current-drive deposition profile (Gaussian, geometric only) =========
     j_CD_shape = np.exp(-0.5 * ((rho - rho_CD) / max(delta_CD, 0.01))**2)
     I_CD_A     = max(I_CD * 1e6, 0.0)
     jCD_dA     = float(np.sum(j_CD_shape * dA))
@@ -5327,6 +5554,7 @@ def f_q_profile_refined(
         j_CD_arr = np.zeros_like(rho)
 
     Ip_A = Ip * 1e6
+    F_vacuum = R0 * B0   # F = R B_phi ~ R0 B0 in low-beta vacuum approximation
 
     # == Initial q(rho) ======================================================
     if q_init is not None and 'rho' in q_init and 'q_arr' in q_init:
@@ -5338,49 +5566,45 @@ def f_q_profile_refined(
         q_arr = f_q_profile(rho, q95=3.0, rho95=rho_95, alpha_J=1.5)
 
     # == Helper: q(rho) from cumulative I_enc(rho) ==========================
-    # Cylindrical Ampere with linear elongation correction:
-    #     q(rho) = 2 pi rho^2 a^2 kappa(rho) B0 / (mu0 R0 I_enc(rho))
-    # This is the standard 0D systems-code form (see Wesson, Kovari, METIS).
-    # At rho -> 0 the limit form
-    #     q(0) = 2 B0 / (mu0 R0 j_total(0))
-    # is finite; the cumulative integral I_enc must therefore go to zero at
-    # rho = 0 with the right second-order behaviour for q(rho) to remain
-    # smooth near the axis.  We prepend a virtual point at rho = 0 (where
-    # the integrand 2*pi*rho*a^2*kappa*j vanishes) and use a trapezoidal
-    # rule, which keeps I_enc(rho) ~ pi*rho^2*a^2*kappa*j(0) at small rho
-    # and produces a near-axis q(rho) free of cumulative-rectangle bias.
-
-    # Pre-extend the rho grid by prepending a virtual point at rho=0.
-    # The integrand 2*pi*rho*a^2*kappa(rho)*j(rho) vanishes at rho=0
-    # (proportional to rho), so the value at the prepended point is
-    # exactly zero — no on-axis kappa or j is needed.
+    # Rigorous local q from Miller geometry:
+    #     q(rho) = F * Lp(rho)^2 * <1/R^2>(rho) / (2 pi mu0 I_enc(rho))
+    # with F = R0 B0, Lp the poloidal perimeter, <1/R^2> the perimeter
+    # average of 1/R^2.  Captures kappa, delta, and finite aspect ratio
+    # without any empirical shape factor.
     rho_ext = np.concatenate([[0.0], rho])
 
     def _cum_trap_from_zero(f_ext):
-        """
-        Trapezoidal cumulative integral of f_ext on rho_ext, evaluated at
-        the rho-grid points (rho_ext[1:]).  Pure numpy, no scipy dependency.
-        """
-        # Step contributions: 0.5 * (f[k] + f[k+1]) * (x[k+1] - x[k])
+        """Trapezoidal cumulative integral on rho_ext, evaluated at rho."""
         steps = 0.5 * (f_ext[:-1] + f_ext[1:]) * np.diff(rho_ext)
         return np.cumsum(steps)
 
     def _q_from_Ienc(j_total_arr, j_axis_for_limit):
-        # Build the integrand 2 pi rho a^2 kappa(rho) j_total(rho), prepend 0.
+        # Cumulative enclosed current via trapezoidal rule.  The integrand
+        # 2 pi rho a^2 kappa(rho) j_total vanishes at rho = 0, so the
+        # prepended virtual point at rho_ext[0] = 0 is exactly zero.
         integrand     = j_total_arr * dA_per_drho
         integrand_ext = np.concatenate([[0.0], integrand])
         I_enc_arr     = _cum_trap_from_zero(integrand_ext)
         I_safe        = np.maximum(I_enc_arr, 1.0)   # zero/negative guard
-        q_calc        = (2.0 * np.pi * rho**2 * a**2 * kappa_arr * B0
-                         / (μ0 * R0 * I_safe))
-        # Belt-and-braces: enforce the analytic on-axis limit at the first
-        # grid point where the trapezoidal estimate of I_enc is small.
+
+        # Rigorous Miller-based q formula
+        q_calc = (F_vacuum * Lp_arr**2 * inv_R2_arr
+                  / (2.0 * np.pi * μ0 * I_safe))
+
+        # On-axis analytic limit.  As rho -> 0:
+        #   I_enc       -> j(0) * pi (rho a)^2 * kappa(0)
+        #   Lp          -> 2 pi (rho a) sqrt((1 + kappa(0)^2) / 2)
+        #   <1/R^2>     -> 1/R0^2
+        # so q(0) -> (1 + kappa(0)^2) / kappa(0) * B0 / (mu0 R0 j(0)).
+        # For kappa(0) = 1 this reduces to 2 B0 / (mu0 R0 j(0)).
         if rho[0] < 0.005 and j_axis_for_limit > 0.0:
-            q_calc[0] = 2.0 * B0 / (μ0 * R0 * j_axis_for_limit)
+            k0 = float(kappa_arr[0])
+            q_calc[0] = ((1.0 + k0**2) / k0) * B0 / (μ0 * R0 * j_axis_for_limit)
         return q_calc, I_enc_arr
 
     # == Picard iteration on q(rho) =========================================
     converged = False
+    n_iter = max_iter
     for iter_idx in range(1, max_iter + 1):
         q_old = q_arr.copy()
 
@@ -5389,15 +5613,12 @@ def f_q_profile_refined(
 
         # Bootstrap on current q(rho) (collisionality and L_31, L_32, L_34
         # coefficients see the local q via nu*_e ~ q).
-        # Pass a representative q95 that matches the current edge value so
-        # that the internal eta_redl/eta_sauter calls in f_Sauter_Redl_Ib
-        # use a reasonable scalar fallback when q_dict is unavailable.
         q95_cur = float(np.interp(rho_95, rho, q_old))
         bs_res = f_Sauter_Redl_Ib(
             R0, a, kappa, B0, nbar, Tbar, q95_cur, Z_eff, nu_n, nu_T,
             n_rho=len(rho), rho_ped=rho_ped,
             n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
-            Vprime_data=Vprime_data, kappa_95=kappa_95, rho_95=rho_95,
+            Vprime_data=Vprime_data_internal, kappa_95=kappa_95, rho_95=rho_95,
             return_profile=True, q_profile=q_dict,
             trapped_fraction_model=trapped_fraction_model)
         j_bs   = np.interp(rho, bs_res['rho'], bs_res['j_bs'])
@@ -5406,17 +5627,14 @@ def f_q_profile_refined(
         # Ohmic share closes the current balance.
         I_Ohm_A = max(Ip_A - I_CD_A - I_bs_A, 0.0)
 
-        # Local conductivity sigma_neo(T, q, eps, Z_eff): the q-dependence
-        # enters through the trapped-particle correction (nu*_e ~ q).
-        # eta_redl / eta_sauter are vectorised: one call returns the full
-        # radial profile.
+        # Local conductivity sigma_neo(T, q, eps, Z_eff)
         if eta_model == 'redl':
             eta_loc = eta_redl(T_arr, n_arr * 1e20, Z_eff,
                                eps_arr, q=q_old, R0=R0)
         elif eta_model == 'sauter':
             eta_loc = eta_sauter(T_arr, n_arr * 1e20, Z_eff,
                                  eps_arr, q=q_old, R0=R0)
-        else:  # 'spitzer' or any unknown -> classical Spitzer-Härm
+        else:  # 'spitzer' or any unknown -> classical Spitzer-Harm
             eta_loc = eta_spitzer(T_arr, n_arr * 1e20, Z_eff)
         sigma_loc   = 1.0 / np.maximum(eta_loc, 1e-12)
         sigma_loc   = np.where(np.isfinite(sigma_loc) & (sigma_loc > 0.0),
@@ -5427,10 +5645,11 @@ def f_q_profile_refined(
         else:
             j_Ohm = np.zeros_like(rho)
 
-        # Composite current density and rebuild q(rho) from Ampere using
-        # a trapezoidal cumulative integration (see _q_from_Ienc).
+        # Composite current density and rebuild q(rho) from the rigorous
+        # Miller-based formula.
         j_total = j_Ohm + j_CD_arr + j_bs
-        q_new, I_enc = _q_from_Ienc(j_total, j_axis_for_limit=float(j_total[0]))
+        q_new, I_enc = _q_from_Ienc(j_total,
+                                    j_axis_for_limit=float(j_total[0]))
 
         # Damped update.
         q_damped = damping * q_new + (1.0 - damping) * q_old
@@ -5444,8 +5663,6 @@ def f_q_profile_refined(
             converged = True
             n_iter = iter_idx
             break
-    else:
-        n_iter = max_iter
 
     # == Final consistent pass on the converged q(rho) ======================
     # Re-evaluate the components without damping to return self-consistent
@@ -5456,7 +5673,7 @@ def f_q_profile_refined(
         R0, a, kappa, B0, nbar, Tbar, q95_cur, Z_eff, nu_n, nu_T,
         n_rho=len(rho), rho_ped=rho_ped,
         n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
-        Vprime_data=Vprime_data, kappa_95=kappa_95, rho_95=rho_95,
+        Vprime_data=Vprime_data_internal, kappa_95=kappa_95, rho_95=rho_95,
         return_profile=True, q_profile=q_dict_final,
         trapped_fraction_model=trapped_fraction_model)
     j_bs   = np.interp(rho, bs_res['rho'], bs_res['j_bs'])
@@ -5481,13 +5698,13 @@ def f_q_profile_refined(
         j_Ohm = np.zeros_like(rho)
 
     j_total = j_Ohm + j_CD_arr + j_bs
-    # Trapezoidal cumulative integration consistent with the Picard loop.
-    _q_unused, I_enc = _q_from_Ienc(j_total, j_axis_for_limit=float(j_total[0]))
+    _q_unused, I_enc = _q_from_Ienc(j_total,
+                                    j_axis_for_limit=float(j_total[0]))
 
     # == Internal inductance l_i(3) (Luce convention) =======================
     I_norm       = I_enc / np.maximum(I_enc[-1], 1.0)
     li_integrand = np.where(rho > 1e-8,
-                            I_norm**2 * Vprime_arr / Lp_arr**2,
+                            I_norm**2 * Vprime_arr / Lp_li**2,
                             0.0)
     li = (2.0 / R0) * np.trapezoid(li_integrand, rho)
 
@@ -5495,23 +5712,25 @@ def f_q_profile_refined(
     q_at_95 = float(np.interp(rho_95, rho, q_arr))
 
     return {
-        'q_arr':     q_arr,
-        'rho':       rho,
-        'j_total':   j_total,
-        'j_Ohm':     j_Ohm,
-        'j_CD':      j_CD_arr,
-        'j_non_bs':  j_Ohm + j_CD_arr,
-        'j_bs':      j_bs,
-        'I_enc':     I_enc,
-        'li':        li,
-        'q0':        float(q_arr[0]),
-        'alpha_J':   float('nan'),       # no parametric exponent here
-        'I_bs':      I_bs_A / 1e6,
-        'f_bs':      I_bs_A / max(Ip_A, 1.0),
-        'n_iter':    n_iter,
-        'converged': converged,
-        'kappa_arr': kappa_arr,
-        'q_at_95':   q_at_95,
+        'q_arr':      q_arr,
+        'rho':        rho,
+        'j_total':    j_total,
+        'j_Ohm':      j_Ohm,
+        'j_CD':       j_CD_arr,
+        'j_non_bs':   j_Ohm + j_CD_arr,
+        'j_bs':       j_bs,
+        'I_enc':      I_enc,
+        'Lp_arr':     Lp_arr,
+        'inv_R2_arr': inv_R2_arr,
+        'li':         li,
+        'q0':         float(q_arr[0]),
+        'alpha_J':    float('nan'),       # no parametric exponent here
+        'I_bs':       I_bs_A / 1e6,
+        'f_bs':       I_bs_A / max(Ip_A, 1.0),
+        'n_iter':     n_iter,
+        'converged':  converged,
+        'kappa_arr':  kappa_arr,
+        'q_at_95':    q_at_95,
     }
 
 
@@ -6055,9 +6274,9 @@ def f_Get_parameter_scaling_law(Scaling_Law):
     The general form (ITER Engineering Parameters convention) is:
 
         τ_E = C · R₀^α_R · ε^α_ε · κ^α_κ · (1+δ)^α_δ
-                · (10 n̄)^α_n · B₀^α_B · M^α_M · P^α_P · I_p^α_I
+                · (10 n)^α_n · B₀^α_B · M^α_M · P^α_P · I_p^α_I
 
-    with n̄ in 10²⁰ m⁻³ (factor 10 converts to 10¹⁹ m⁻³), I_p in MA, P in MW.
+    with n̄  in 10²⁰ m⁻³ (factor 10 converts to 10¹⁹ m⁻³), I_p in MA, P in MW.
 
     Parameters
     ----------

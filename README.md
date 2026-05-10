@@ -8,14 +8,14 @@
 
 **D0FUS** (Design 0-dimensional for Fusion Systems) is a Python tokamak systems code for fast 0D/1D design-space exploration, covering plasma physics, superconducting magnet engineering, and techno-economic assessment. It is developed at CEA-IRFM.
 
-The codebase weighs about 18 000 lines of pure Python distributed across five functional modules and a visualisation library, totalling 235 documented functions.
+The codebase weighs about 18 000 lines of pure Python distributed across five functional modules and a visualisation library, totalling 236 documented functions.
 
 ---
 
 ## Highlights
 
 - **Pure Python**, NumPy/SciPy only. No compilation, no Makefile, runs in Spyder, Jupyter or as a batch job.
-- **Two fidelity levels** (Academic and Refined) selectable through a single `GlobalConfig` field, sharing the same interface and solver.
+- **Two fidelity levels** (Academic and Refined) bundled by `preset_academic()` / `preset_refined()` factory functions, with each model carrying its own selector inside `GlobalConfig` for fine-grained control.
 - **Three execution modes** (RUN, SCAN, OPTIMIZATION) auto-detected from the input file syntax.
 - **Library mode**: every physical and engineering function is callable in isolation, outside the solver loop.
 - **Distinctive engineering features**: radially graded TF coils, REBCO Jc scaling laws, three TF mechanical configurations (bucking, wedging, plug).
@@ -130,7 +130,7 @@ D0FUS/
 │   ├── D0FUS_radial_build_functions.py     # Engineering (TF/CS/CICC/quench)
 │   ├── D0FUS_cost_functions.py             # Techno-economic models (Sheffield, Whyte)
 │   ├── D0FUS_cost_data.py                  # Reference cost data and currency conversions
-│   └── D0FUS_figures.py                    # Full figure catalogue (32 plot functions)
+│   └── D0FUS_figures.py                    # Full figure catalogue (42 plot functions)
 │
 ├── D0FUS_INPUTS/                       # Input parameter files
 │   ├── 1_run_ITER.txt                      # ITER Q=10 reference case (RUN mode)
@@ -181,13 +181,13 @@ Constraints (Greenwald, normalised beta, kink safety factor, optional capital co
 
 ### Two fidelity levels
 
-Most physics and engineering models are available at two fidelity levels, selectable through a single `GlobalConfig` field. Both share the same interface, the same `GlobalConfig` object, the same solver infrastructure, and have comparable execution times.
+Most physics and engineering models are available at two fidelity levels. Each model carries its own selector inside `GlobalConfig` (`Plasma_geometry`, `Radial_build_model`, `Bootstrap_choice`, `eta_model`, `q_profile_mode`, `CD_source`, etc.), so that any combination of academic and refined sub-models can be tested. Two factory functions, `preset_academic()` and `preset_refined()`, return a `GlobalConfig` with a coherent set of sub-mode choices in a single call. Both fidelity levels share the same interface, the same `GlobalConfig` object, the same solver infrastructure, and have comparable execution times.
 
 | Model | Academic | Refined |
 |-------|----------|---------|
 | Plasma geometry | Elliptical torus, $\delta = 0$ | Miller flux surfaces, $\kappa(\rho)$, $\delta(\rho)$ |
 | Volume element | $V' = 4\pi^2 R_0 a^2 \kappa \rho$ | Numerical Jacobian on $(N_\rho \times N_\theta)$ grid |
-| Bootstrap current | Segal | Redl (2021) |
+| Bootstrap current | Segal-Cerfon-Freidberg | Sauter-Redl (Sauter 1999/2002 + Redl 2021) |
 | $q(\rho)$ profile | Assumed parabolic | Self-consistent (Picard iteration) |
 | TF stress model | Thin-cylinder, two-layer | Thick-cylinder, composite CICC |
 | CS stress model | Hoop stress only | Hoop + axial fringe-field stress |
@@ -223,7 +223,7 @@ These execution times make interactive design-space exploration entirely feasibl
 
 ### Parameter Handling
 
-All user-adjustable parameters are gathered into a single typed dataclass `GlobalConfig` (**115 fields organised into 15 categories**), each with a physically motivated default value inspired by ITER and EU-DEMO. When an input file is provided, only the specified parameters are overwritten, so a complete tokamak calculation can be set up in a few lines:
+All user-adjustable parameters are gathered into a single typed dataclass `GlobalConfig` (**118 fields organised into 15 categories**), each with a physically motivated default value inspired by ITER and EU-DEMO. When an input file is provided, only the specified parameters are overwritten, so a complete tokamak calculation can be set up in a few lines:
 
 ```ini
 R0 = 7
@@ -260,9 +260,9 @@ Options for `Option_Kappa`: `Wenninger`, `Stambaugh`, `Freidberg`, `Manual`.
 | Parameter | Description | Unit | Default | Options |
 |-----------|-------------|------|---------|---------|
 | `Supra_choice` | Superconductor material | — | `Nb3Sn` | `NbTi`, `Nb3Sn`, `REBCO` |
-| `Radial_build_model` | Stress model | — | `Refined` | `Academic`, `Refined`, `CIRCE` |
+| `Radial_build_model` | Stress model | — | `refined` | `academic`, `refined`, `CIRCE` |
 | `Choice_Buck_Wedg` | TF mechanical configuration | — | `Wedging` | `Plug`, `Bucking`, `Wedging` |
-| `Chosen_Steel` | Structural steel grade | — | `316L` | `316L`, `N50H`, `JK2LB`, `Manual` |
+| `Chosen_Steel` | Structural steel grade | — | `316L` | `316L`, `N50H`, `Manual` |
 
 #### Plasma Physics
 
@@ -277,10 +277,10 @@ Options for `Option_Kappa`: `Wenninger`, `Stambaugh`, `Freidberg`, `Manual`.
 | `rho_ped` | Normalised pedestal radius | — | 1.0 | |
 | `n_ped_frac` | Pedestal density fraction n_ped/n̄ | — | 0.0 | |
 | `T_ped_frac` | Pedestal temperature fraction T_ped/T̄ | — | 0.0 | |
-| `Bootstrap_choice` | Bootstrap current model | — | `Redl` | `Freidberg`, `Segal`, `Sauter`, `Redl` |
+| `Bootstrap_choice` | Bootstrap current model | — | `Sauter-Redl` | `Sauter-Redl`, `Segal` |
 | `Option_q95` | q₉₅ formula | — | `Sauter` | `Sauter`, `ITER_1989` |
 | `L_H_Scaling_choice` | L-H threshold scaling | — | `New_Ip` | `Martin`, `New_S`, `New_Ip` |
-| `Plasma_geometry` | Volume integral geometry | — | `Refined` | `Academic`, `Refined` |
+| `Plasma_geometry` | Volume integral geometry | — | `refined` | `Academic`, `refined` |
 | `Zeff` | Effective plasma charge | — | 2.0 | |
 | `impurity_species` | Impurity species (radiation) | — | `''` | `W`, `Ar`, `Ne`, `C`, `N`, `Kr` |
 | `f_imp_core` | Impurity concentration n_imp/n_e | — | `''` | |
@@ -430,7 +430,7 @@ D0FUS_OUTPUTS/Genetic_D0FUS_YYYYMMDD_HHMMSS/
 
 ## Figures Catalogue
 
-`plot_run()` generates 10 run-specific figures. `plot_all()` generates the full 32-figure catalogue, including:
+`plot_run()` generates 10 run-specific figures. `plot_all()` generates the full 30-figure catalogue, including:
 
 | Group | Figures |
 |-------|---------|
@@ -458,10 +458,10 @@ The Miller model computes V′(ρ) numerically from the Jacobian of the (R, Z) f
 
 ### Safety Factor Profile
 
-Two q(ρ) models are available:
+Two q(ρ) models are available, selected via `q_profile_mode`:
 
-- **Analytical** (`f_q_profile`): parameterised as j(ρ) ∝ (1 − ρ²)^α_J, with α_J derived automatically from the resistive diffusion timescale τ_R.
-- **Self-consistent** (`f_q_profile_selfconsistent`): Picard iteration on j_total(ρ) = j_Ohm(ρ) + j_CD(ρ) + j_bs(ρ). Produces a decomposed current profile visualisation.
+- **Academic** (`f_q_profile_academic`, `q_profile_mode = 'academic'`): parametric ansatz j(ρ) ∝ (1 − ρ²)^α_J (PROCESS / Uckan IPDG89 convention), with α_J prescribed by the user (default `alpha_J = 1.5`, giving ℓ_i(3) ≈ 1.08). Cylindrical Ampère then yields q(ρ) analytically with q(ρ_95) = q95 imposed as edge normalisation. No coupling to bootstrap, CD, or Ohmic physics.
+- **Refined** (`f_q_profile_refined`, `q_profile_mode = 'refined'`): self-consistent Picard iteration on j_total(ρ) = j_Ohm(σ_neo, T) + j_CD + j_bs(Sauter-Redl), integrated through Ampère to yield q(ρ) at every iteration; q(ρ) feeds back into σ_neo and Sauter-Redl coefficients until convergence. Reversed shear allowed.
 
 The q₉₅ boundary value is computed via the `Option_q95` selector:
 
@@ -472,14 +472,14 @@ The q₉₅ boundary value is computed via the `Option_q95` selector:
 
 ### Bootstrap Current
 
-Four models are supported via `Bootstrap_choice`:
+Two canonical models are supported via `Bootstrap_choice`:
 
 | Model | Reference | Recommended use |
 |-------|-----------|-----------------|
-| `Freidberg` | Freidberg (2007) | Quick estimates |
-| `Segal` | Segal (1993) | Academic fidelity default |
-| `Sauter` | Sauter et al., PoP 6 (1999) | Full neoclassical, all collisionality regimes |
-| `Redl` | Redl et al., PoP 28 (2021) | Refined fidelity default, improved high-ν* accuracy |
+| `Segal` | Segal-Cerfon-Freidberg analytical fit, Nucl. Fusion (2021) | Academic fidelity default |
+| `Sauter-Redl` | Sauter et al., PoP 6 (1999) / PoP 9 (2002), refitted by Redl et al., PoP 28 (2021) | Refined fidelity default, all collisionality regimes |
+
+Legacy labels `'Sauter'`, `'Redl'`, and `'Freidberg'` from earlier versions are silently remapped (with a deprecation warning) to `'Sauter-Redl'` (first two) and `'Segal'` (last) for backward compatibility with older input files.
 
 ### Confinement Scaling Laws
 
@@ -505,7 +505,7 @@ Outputs include I_RE_seed, I_RE_aval, f_RE/Ip, and kinetic energy E_RE_kin. Thes
 
 ### Radial Build
 
-The TF coil inboard leg is shaped as a Princeton-D contour (Gralnick & Tenney 1976). Conductor sizing follows a three-level helium fraction hierarchy distinguishing the cooling pipe (`f_He_pipe`), interstitial void (`f_void`, LTS only), and active SC fraction. Three structural models are available via `Radial_build_model`: a simplified analytical model (`Academic`), the D0FUS stress model (`Refined`), and the multi-layer CIRCE0D solver (`CIRCE`). Three TF mechanical configurations are supported via `Choice_Buck_Wedg` (bucking, wedging, plug), and the TF winding pack can be radially graded with $\alpha(R)$ profiles obtained by inward integration with Picard iteration.
+The TF coil inboard leg is shaped as a Princeton-D contour (Gralnick & Tenney 1976). Conductor sizing follows a three-level helium fraction hierarchy distinguishing the cooling pipe (`f_He_pipe`), interstitial void (`f_void`, LTS only), and active SC fraction. Three structural models are available via `Radial_build_model`: a simplified analytical model (`academic`), the D0FUS stress model (`refined`), and the multi-layer CIRCE0D solver (`CIRCE`). Three TF mechanical configurations are supported via `Choice_Buck_Wedg` (bucking, wedging, plug), and the TF winding pack can be radially graded with $\alpha(R)$ profiles obtained by inward integration with Picard iteration.
 
 ### Superconductor
 

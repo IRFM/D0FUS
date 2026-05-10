@@ -193,9 +193,9 @@ def plot_shaping_profiles(
     """
     Plot radial elongation κ(ρ) and triangularity δ(ρ) profiles.
 
-    Both the 'Academic' (constant-κ, δ=0) and the 'Refined PCHIP' profiles are
-    shown.  For δ, both positive and negative triangularity cases are
-    superimposed.
+    Both the 'Academic' (constant-κ, δ=0) and the 'Refined smoothstep5'
+    profiles are shown.  For δ, both positive and negative triangularity
+    cases are superimposed.
 
     Parameters
     ----------
@@ -206,7 +206,8 @@ def plot_shaping_profiles(
 
     References
     ----------
-    Christiansen et al., Nucl. Fusion 32, 291 (1992) — PCHIP parameterisation.
+    Ebert & Musgrave, Texturing & Modeling: A Procedural Approach (2003) —
+        smoothstep5 polynomial.
     Ball & Parra, PPCF 57, 045006 (2015) — κ core penetration.
     """
     rho = np.linspace(1e-4, 1.0, 500)
@@ -223,7 +224,7 @@ def plot_shaping_profiles(
                label=f"Academic: κ = κ_edge = {kappa_edge}  (const)")
     ax.plot(rho, kappa_profile(rho, kappa_edge, kappa_95),
             color="tab:red", lw=2,
-            label="Refined: flat core at κ₉₅, edge rise (PCHIP)")
+            label="Refined: flat core at κ₉₅, edge rise (smoothstep5)")
     ax.axvline(rho_95,   color="gray", lw=1, ls="--", alpha=0.7)
     ax.axhline(kappa_95, color="gray", lw=1, ls="--", alpha=0.7)
     ax.plot(rho_95, kappa_95, "o", color="tab:red", ms=7, zorder=5,
@@ -243,10 +244,10 @@ def plot_shaping_profiles(
     ax.axhline(0, color="tab:blue", lw=2, ls="-", label="Academic: δ = 0")
     ax.plot(rho, delta_profile(rho, delta_edge, delta_95),
             color="tab:red", lw=2,
-            label=f"Refined PCHIP: δ_edge = +{delta_edge} (D-shape)")
+            label=f"Refined smoothstep5: δ_edge = +{delta_edge} (D-shape)")
     ax.plot(rho, delta_profile(rho, delta_edge_neg, delta_95_neg),
             color="tab:purple", lw=2,
-            label=f"Refined PCHIP: δ_edge = {delta_edge_neg} (neg. triang.)")
+            label=f"Refined smoothstep5: δ_edge = {delta_edge_neg} (neg. triang.)")
     ax.axvline(rho_95,   color="gray",       lw=1, ls="--", alpha=0.7)
     ax.axhline(delta_95, color="tab:red",    lw=1, ls="--", alpha=0.6)
     ax.plot(rho_95, delta_95, "o", color="tab:red", ms=7, zorder=5,
@@ -283,9 +284,9 @@ def plot_miller_surfaces(
 ) -> None:
     """
     Plot Miller flux surfaces for three geometry configurations side by side:
-      1. Refined PCHIP — positive triangularity
-      2. Academic      — circular (κ const, δ = 0)
-      3. Refined PCHIP — negative triangularity
+      1. Refined smoothstep5 — positive triangularity
+      2. Academic            — circular (κ const, δ = 0)
+      3. Refined smoothstep5 — negative triangularity
 
     Parameters
     ----------
@@ -310,14 +311,14 @@ def plot_miller_surfaces(
 
     configs = [
         ("refined",
-         f"Refined PCHIP — positive δ\n"
+         f"Refined smoothstep5 — positive δ\n"
          f"(κ₉₅ = {kappa_95:.3f}, δ_edge = +{delta_edge}, δ₉₅ = +{delta_95:.3f})",
          kappa_edge, delta_edge, kappa_95, delta_95),
         ("Academic",
          f"Academic  (κ = {kappa_edge} const, δ = 0)",
          kappa_edge, 0.0, kappa_95, 0.0),
         ("refined",
-         f"Refined PCHIP — negative δ\n"
+         f"Refined smoothstep5 — negative δ\n"
          f"(κ₉₅ = {kappa_95:.3f}, δ_edge = {delta_edge_neg}, δ₉₅ = {delta_95_neg:.3f})",
          kappa_edge, delta_edge_neg, kappa_95, delta_95_neg),
     ]
@@ -1653,10 +1654,10 @@ def plot_shaping_run(
     Plot radial elongation κ(ρ) and triangularity δ(ρ) profiles for the
     geometry used in a D0FUS run.
 
-    In 'refined' geometry mode, the Christiansen PCHIP parameterisation is
-    used (radially varying κ and δ with core penetration).
-    In 'Academic' mode, κ(ρ) = κ_edge = const and δ(ρ) = 0 everywhere,
-    consistent with the cylindrical-torus approximation.
+    In 'refined' geometry mode, smoothstep5 profiles are used for κ(ρ)
+    and δ(ρ) (C² continuous at rho_95, with radially varying core
+    penetration).  In 'Academic' mode, κ(ρ) = κ_edge = const and δ(ρ)
+    = 0 everywhere, consistent with the cylindrical-torus approximation.
 
     Parameters
     ----------
@@ -1666,7 +1667,8 @@ def plot_shaping_run(
 
     References
     ----------
-    Christiansen et al., Nucl. Fusion 32, 291 (1992).
+    Ebert & Musgrave, Texturing & Modeling: A Procedural Approach (2003) —
+        smoothstep5 polynomial.
     Ball & Parra, PPCF 57, 045006 (2015) — κ core penetration.
     """
     R0, a, kappa_edge, delta_edge, kappa_95, delta_95, _ = _resolve_geometry(run)
@@ -1678,7 +1680,7 @@ def plot_shaping_run(
         kap_arr = np.full_like(rho, kappa_edge)
         del_arr = np.zeros_like(rho)
     else:
-        # Refined Miller PCHIP profiles with radial variation
+        # Refined Miller smoothstep5 profiles with radial variation
         kap_arr = kappa_profile(rho, kappa_edge, kappa_95)
         del_arr = delta_profile(rho, delta_edge, delta_95)
 
@@ -1690,7 +1692,7 @@ def plot_shaping_run(
         ax.axhline(kappa_edge, color="tab:blue", lw=2.2,
                    label=f"Academic: κ = κ_edge = {kappa_edge:.3f} (const)")
     else:
-        ax.plot(rho, kap_arr, "tab:blue", lw=2.2, label="Refined PCHIP")
+        ax.plot(rho, kap_arr, "tab:blue", lw=2.2, label="Refined smoothstep5")
         ax.axhline(kappa_edge, color="tab:orange", lw=1.4, ls="--",
                    label=f"κ_edge = {kappa_edge:.3f}")
         ax.axhline(kappa_95,   color="tab:gray",   lw=1.0, ls=":",
@@ -1709,7 +1711,7 @@ def plot_shaping_run(
         ax.axhline(0, color="tab:blue", lw=2.2,
                    label="Academic: δ = 0 (const)")
     else:
-        ax.plot(rho, del_arr, "tab:red", lw=2.2, label="Refined PCHIP")
+        ax.plot(rho, del_arr, "tab:red", lw=2.2, label="Refined smoothstep5")
         ax.axhline(delta_edge, color="tab:orange", lw=1.4, ls="--",
                    label=f"δ_edge = {delta_edge:.3f}")
         ax.axhline(delta_95,   color="tab:gray",   lw=1.0, ls=":",
@@ -1723,7 +1725,7 @@ def plot_shaping_run(
     ax.grid(True, alpha=0.3)
     ax.set_xlim(0, 1)
 
-    _mode_str = "Academic" if geom_mode == "Academic" else "Refined PCHIP"
+    _mode_str = "Academic" if geom_mode == "Academic" else "Refined smoothstep5"
     plt.suptitle(
         f"Run shaping profiles ({_mode_str}) — R₀={R0} m, a={a} m\n"
         f"κ_edge={kappa_edge:.3f}, δ_edge={delta_edge:.3f}",
@@ -1746,8 +1748,9 @@ def plot_flux_surfaces_run(
     """
     Plot nested flux surfaces for the actual geometry of a D0FUS run.
 
-    When Plasma_geometry == 'refined', surfaces follow the Miller PCHIP
-    parameterisation with radially varying κ(ρ) and δ(ρ).
+    When Plasma_geometry == 'refined', surfaces follow the Miller
+    parameterisation with radially varying κ(ρ) and δ(ρ) built from
+    smoothstep5 profiles (C² continuous at rho_95).
     When Plasma_geometry == 'Academic' (or unset), surfaces are concentric
     ellipses with constant κ = κ_edge and δ = 0, consistent with the
     cylindrical-torus approximation used in the Academic solver branch.
@@ -1781,7 +1784,7 @@ def plot_flux_surfaces_run(
             R_surf = R0 + rho_val * a * np.cos(theta)
             Z_surf = kappa_edge * rho_val * a * np.sin(theta)
         else:
-            # Refined Miller PCHIP surfaces with radially varying κ(ρ), δ(ρ)
+            # Refined Miller smoothstep5 surfaces with radially varying κ(ρ), δ(ρ)
             R_surf, Z_surf = miller_RZ(rho_val, theta,
                                        R0, a, kappa_edge, delta_edge,
                                        kappa_95, delta_95)
@@ -1802,7 +1805,7 @@ def plot_flux_surfaces_run(
     if geom_mode == "Academic":
         _geom_label = "Academic (elliptic, δ = 0)"
     else:
-        _geom_label = f"Refined PCHIP (δ_edge = {delta_edge:.3f})"
+        _geom_label = f"Refined smoothstep5 (δ_edge = {delta_edge:.3f})"
 
     ax.set_title(
         f"Flux surfaces — {_geom_label}\n"

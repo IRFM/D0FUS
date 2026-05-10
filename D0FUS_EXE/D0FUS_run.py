@@ -443,13 +443,21 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # flux-surface Jacobian.  In Academic mode, Vprime_data = None triggers
     # the fast cylindrical-torus approximation in every downstream function.
     if Plasma_geometry == 'refined':
-        # N_rho=100, N_theta=100 (down from 200×200) converges the Miller
-        # volume to <0.5 % for all tokamak-relevant shaping parameters while
-        # cutting the precomputation cost by ~4x.
+        # N_rho=500, N_theta=200 is the production grid.
+        # The volume V converges to better than 0.1 % already at N_rho=100,
+        # so the radial resolution is driven by dA_pol/drho near rho_95
+        # rather than by V itself: the smoothstep5 kappa(rho) and
+        # delta(rho) profiles curve sharply over [rho_95, 1], and finite-
+        # difference evaluation of the Miller Jacobian on a coarse grid
+        # (N_rho=100) would mis-resolve dA at rho=0.95 by approximately
+        # 10 %, which propagates to q(0.95).  The earlier PCHIP shaping
+        # had a slope discontinuity at rho_95 that made this resolution
+        # requirement even tighter; smoothstep5 removed the discontinuity
+        # but the fine grid is kept conservatively for the Jacobian.
         Vprime_data = precompute_Vprime(R0, a, κ, δ,
                                         geometry_model='refined',
                                         kappa_95=κ_95, delta_95=δ_95,
-                                        N_rho=100, N_theta=100)
+                                        N_rho=500, N_theta=200)
     else:
         Vprime_data = None
 
@@ -631,6 +639,11 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 Vprime_data=Vprime_data, kappa_95=κ_95, rho_95=0.95,
                 n_rho=n_rho)
         elif q_profile_mode == 'refined':
+            # Pass delta and delta_95 so that the on-the-fly Lp / <1/R^2>
+            # path inside f_q_profile_refined (used when Vprime_data is
+            # missing the inv_R2 6th element) recovers the same triangularity
+            # as the main computation.  When Vprime_data is a full 6-tuple,
+            # these parameters are ignored.
             return f_q_profile_refined(
                 Ip_loc, I_CD_loc,
                 R0, a, B0_loc, κ, nbar_loc, Tbar, Zeff,
@@ -639,6 +652,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 eta_model=eta_model,
                 rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
                 Vprime_data=Vprime_data, kappa_95=κ_95, rho_95=0.95,
+                delta=δ, delta_95=δ_95,
                 rho_CD=rho_CD_loc, delta_CD=delta_CD_loc,
                 q_init=q_init,
                 n_rho=n_rho, max_iter=max_iter, tol=tol, damping=damping)

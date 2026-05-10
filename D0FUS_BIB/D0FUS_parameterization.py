@@ -394,7 +394,7 @@ _PRESET_ACADEMIC_SUBMODES = dict(
 )
 
 _PRESET_REFINED_SUBMODES = dict(
-    # Geometry: full Miller flux-surface parameterisation with PCHIP profiles.
+    # Geometry: full Miller flux-surface parameterisation with smoothstep5 profiles.
     Plasma_geometry        = 'refined',
     Radial_build_model     = 'refined',
     # Profiles: H-mode pedestal-aware shapes.
