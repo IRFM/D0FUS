@@ -39,11 +39,11 @@ from scipy.optimize import brentq
 #   'Advanced' : EU-DEMO 2017 PROCESS reference run
 # ---------------------------------------------------------------------------
 _PROFILE_PRESETS = {
-    'L':        {'nu_n': 0.50, 'nu_T': 1.75, 'rho_ped': 1.00,
+    'L':        {'nu_n': 0.50, 'nu_T': 1.00, 'rho_ped': 1.00,
                  'n_ped_frac': 0.00, 'T_ped_frac': 0.00},
     'H':        {'nu_n': 0.01, 'nu_T': 2.80, 'rho_ped': 0.95,
                  'n_ped_frac': 0.99, 'T_ped_frac': 0.55},
-    'Advanced': {'nu_n': 1.00, 'nu_T': 1.45, 'rho_ped': 0.95,
+    'EU-DEMO': {'nu_n': 1.00, 'nu_T': 1.45, 'rho_ped': 0.95,
                  'n_ped_frac': 0.78, 'T_ped_frac': 0.43},
 }
 
