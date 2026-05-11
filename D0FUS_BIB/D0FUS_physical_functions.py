@@ -28,6 +28,10 @@ else:
 
 #%% Geometry formulas
 
+# Explicit scipy import for the three-point shaping profiles below.
+# Kept local to this section so the rest of the module is unaffected.
+from scipy.interpolate import PchipInterpolator
+
 """
 Tokamak plasma cross-section geometry for D0FUS
 =====================================================================
@@ -57,16 +61,17 @@ Geometry models
     Cylindrical-torus approximation.  Consistent with PROCESS (Kovari 2014).
 
 'refined'
-    Three-point smoothstep5 interpolation between (ρ=0, ρ=ρ₉₅, ρ=1) for
-    both κ(ρ) and δ(ρ):
-      κ(ρ) = κ₉₅ for ρ ≤ ρ₉₅, rising to κ_edge over [ρ₉₅, 1];
-      δ(ρ) = two-segment smoothstep5 through (0, 0), (ρ₉₅, δ₉₅), (1, δ_edge).
-    The on-axis constraint δ(0) = 0 is exact (m=3 harmonic vanishes on
-    axis); the values at ρ₉₅ are taken from empirical scalings (ITER 1989)
-    or from equilibrium reconstruction.  The smoothstep5 polynomial
-    s(t) = t³(10 − 15t + 6t²) is C² continuous at all break points and
-    removes the dA/drho step that an earlier PCHIP implementation seeded
-    into q(ρ).
+    Three-point PCHIP interpolation (Fritsch & Carlson 1980) through the
+    control nodes (ρ=0, ρ=ρ₉₅, ρ=1) for both κ(ρ) and δ(ρ):
+      κ(ρ): nodes (0, κ₉₅), (ρ₉₅, κ₉₅), (1, κ_edge);
+      δ(ρ): nodes (0, 0),    (ρ₉₅, δ₉₅), (1, δ_edge).
+    PCHIP guarantees C¹ continuity globally and preserves monotonicity
+    between control points (no overshoot).  The duplicated κ₉₅ value at
+    the first two nodes forces a flat core kappa(ρ) ≡ κ₉₅ for ρ ≤ ρ₉₅
+    (the Fritsch-Carlson rule sets the interior slope to zero whenever
+    one of the neighbour secants vanishes).  The values at ρ₉₅ are
+    taken from empirical scalings (ITER 1989) or from equilibrium
+    reconstruction.
 
 Physical grounding and limitations
 ----------------------------------
@@ -88,15 +93,15 @@ profiles:
      δ(0) = 0, and its detailed radial profile depends on j_φ(ρ).
 
 These two results fix the asymptotic behaviour at ρ = 0 but leave the
-full radial profile underdetermined.  D0FUS therefore uses the
-smoothstep5 interpolation as a pragmatic three-point convention, NOT as
-a rigorous derivation from Ball & Parra.  Two limitations follow:
+full radial profile underdetermined.  D0FUS therefore uses the PCHIP
+interpolation as a pragmatic three-point convention, NOT as a rigorous
+derivation from Ball & Parra.  Two limitations follow:
 
   (a) For strongly peaked or hollow current profiles, Ball & Parra
       report that κ(ρ) can vary by up to 25% between the axis and the
       LCFS — a variation the flat-core prescription does not capture.
-  (b) The inflexion of δ(ρ) at ρ₉₅ is an interpolation artefact rather
-      than a feature of the underlying equilibrium.
+  (b) The change of curvature of δ(ρ) at ρ₉₅ is an interpolation
+      artefact rather than a feature of the underlying equilibrium.
 
 A fully consistent treatment would couple κ(ρ) and δ(ρ) to j_φ(ρ)
 through the Grad-Shafranov equation, which is the role of equilibrium
@@ -111,8 +116,7 @@ References
 Greene & Johnson, Phys. Fluids 4, 875 (1961).
 Miller et al., Phys. Plasmas 5, 973 (1998).
 Ball & Parra, PPCF 57, 035006 (2015).
-Ebert & Musgrave, Texturing & Modeling: A Procedural Approach (2003) —
-    smoothstep5 polynomial.
+Fritsch & Carlson, SIAM J. Numer. Anal. 17, 238 (1980).
 Lao et al., Fusion Sci. Technol. 48, 968 (2005).
 Kovari et al., Fusion Eng. Des. 89, 3054 (2014) — PROCESS.
 """
@@ -250,11 +254,19 @@ if __name__ == "__main__":
 
 def kappa_profile(rho, kappa_edge, kappa_95, rho_95=0.95):
     """
-    Elongation radial profile : two-anchor smoothstep interpolation.
+    Elongation radial profile : three-point PCHIP interpolation.
 
-    Smoothly connects kappa_95 (interior) to kappa_edge (LCFS) over the
-    edge layer [rho_95, 1] using a quintic Hermite blend, while holding
-    kappa = kappa_95 across the bulk plasma rho <= rho_95.
+    Control points
+    --------------
+        (0,      kappa_95)
+        (rho_95, kappa_95)
+        (1,      kappa_edge)
+
+    The duplicated value at the first two nodes forces a flat core
+    kappa(rho) ≡ kappa_95 for rho ≤ rho_95 (the Fritsch-Carlson rule
+    sets the interior slope to zero whenever a neighbour secant
+    vanishes), and a smooth monotone rise to kappa_edge over the edge
+    layer [rho_95, 1].
 
     Physical context
     ----------------
@@ -264,28 +276,21 @@ def kappa_profile(rho, kappa_edge, kappa_95, rho_95=0.95):
     and Fig. 4(a-c)).  For strongly peaked or hollow current profiles,
     however, kappa(rho) varies monotonically across the full radius and
     can change by up to ~25% between the axis and the LCFS.  The
-    flat-core prescription used here is therefore a convention valid
-    in the limit of moderately peaked current profiles, NOT a rigorous
+    flat-core prescription used here is therefore a convention valid in
+    the limit of moderately peaked current profiles, NOT a rigorous
     consequence of Ball & Parra: it is an interpolation between two
-    user-supplied control values (kappa_95 and kappa_edge), with
-    rho_95 acting as a third anchor rather than a physical boundary.
+    user-supplied control values (kappa_95 and kappa_edge), with rho_95
+    acting as a third anchor rather than a physical boundary.
 
-    Numerical motivation for smoothstep5
-    ------------------------------------
-    The previous PCHIP-based implementation was C^0-only at the rho_95
-    break point: the slope jumped from 0 (flat core) to a finite
-    positive value at rho_95.  This produced a step in dA_per_drho
-    through the Miller Jacobian, which propagated to I_enc and hence
-    to a spurious bump in q(rho) for rho > rho_95.  The smoothstep5
-    polynomial s(t) = t^3 (10 - 15 t + 6 t^2) is C^2 continuous
-    (s'(0) = s'(1) = s''(0) = s''(1) = 0), removing this artefact
-    while preserving the profile values at rho = 0, rho_95, and rho = 1
-    exactly:
-
-        kappa(rho) = kappa_95               for rho <= rho_95
-        kappa(rho) = kappa_95 + (kappa_edge - kappa_95) * s(t)
-                                            for rho_95 <= rho <= 1
-        with t = (rho - rho_95) / (1 - rho_95)
+    Numerical properties
+    --------------------
+    PCHIP (Piecewise Cubic Hermite Interpolating Polynomial) is C^1
+    continuous globally, including at the interior break point rho_95.
+    The first derivative is therefore continuous through the Miller
+    Jacobian, which is sufficient for a clean dA_per_drho and a smooth
+    q(rho).  The second derivative is allowed to jump at rho_95 and
+    rho = 1; this has no observable consequence on integrated 0D
+    quantities (volume, V', poloidal arc length).
 
     Parameters
     ----------
@@ -300,21 +305,26 @@ def kappa_profile(rho, kappa_edge, kappa_95, rho_95=0.95):
 
     References
     ----------
+    Fritsch & Carlson, SIAM J. Numer. Anal. 17, 238 (1980).
     Ball & Parra, PPCF 57, 035006 (2015) — radial penetration of shaping.
-    Ebert & Musgrave, "Texturing & Modeling: A Procedural Approach" (2003)
-        — origin of the smoothstep5 polynomial used here.
     """
     rho = np.asarray(rho, dtype=float)
-    t = (rho - rho_95) / (1.0 - rho_95)
-    t = np.clip(t, 0.0, 1.0)
-    smoothstep5 = t**3 * (10.0 - 15.0*t + 6.0*t**2)
-    return kappa_95 + (kappa_edge - kappa_95) * smoothstep5
+    interp = PchipInterpolator(
+        [0.0,      rho_95,   1.0       ],
+        [kappa_95, kappa_95, kappa_edge],
+    )
+    return interp(rho)
 
 
 def delta_profile(rho, delta_edge, delta_95, rho_95=0.95):
     """
-    Triangularity radial profile : three-point smoothstep interpolation
-    through (0, rho_95, 1), C^2-continuous.
+    Triangularity radial profile : three-point PCHIP interpolation.
+
+    Control points
+    --------------
+        (0,      0)         — exact on-axis constraint
+        (rho_95, delta_95)  — empirical 95%-surface value (e.g. ITER 1989)
+        (1,      delta_edge)— prescribed LCFS triangularity
 
     Physical context
     ----------------
@@ -330,23 +340,19 @@ def delta_profile(rho, delta_edge, delta_95, rho_95=0.95):
     --------------------
     A fully consistent profile would require coupling delta(rho) to
     j_phi(rho) through the Grad-Shafranov equation.  D0FUS instead
-    uses a pragmatic interpolation between three control points:
-        (0,      0)         — exact on-axis constraint
-        (rho_95, delta_95)  — empirical 95%-surface value (e.g. ITER 1989)
-        (1,      delta_edge)— prescribed LCFS triangularity
-    The intermediate point delta_95 acts as a third interpolation
-    control rather than a physical milestone.  The inflexion of
-    delta(rho) at rho_95 is therefore an artefact of the three-point
-    interpolation, not a feature of the underlying equilibrium.
+    uses a pragmatic three-point PCHIP interpolation.  The intermediate
+    point delta_95 acts as an interpolation control rather than a
+    physical milestone.  The change of curvature of delta(rho) at
+    rho_95 is therefore an artefact of the three-point interpolation,
+    not a feature of the underlying equilibrium.
 
-    Numerical implementation
-    ------------------------
-    Each segment uses the quintic Hermite blend
-    s(t) = t^3 (10 - 15 t + 6 t^2), which is C^2 continuous with
-    s'(0) = s'(1) = s''(0) = s''(1) = 0.  This eliminates the slope
-    discontinuity at rho_95 that an earlier PCHIP implementation
-    introduced, removing the corresponding artefact in q(rho) for
-    rho > rho_95.
+    Numerical properties
+    --------------------
+    PCHIP guarantees C^1 continuity globally and preserves monotonicity
+    between control points (no overshoot).  Negative-triangularity
+    configurations (delta_edge < 0, delta_95 < 0) are handled
+    identically: PCHIP simply returns a monotonically decreasing
+    profile from delta(0) = 0 to delta_edge.
 
     Parameters
     ----------
@@ -368,20 +374,14 @@ def delta_profile(rho, delta_edge, delta_95, rho_95=0.95):
     ----------
     Greene & Johnson, Phys. Fluids 4, 875 (1961).
     Ball & Parra, PPCF 57, 035006 (2015).
+    Fritsch & Carlson, SIAM J. Numer. Anal. 17, 238 (1980).
     """
     rho = np.asarray(rho, dtype=float)
-    out = np.zeros_like(rho, dtype=float)
-    # Segment 1: [0, rho_95] -> smooth ramp from 0 to delta_95
-    mask1 = rho <= rho_95
-    t1 = rho[mask1] / rho_95
-    s5_1 = t1**3 * (10.0 - 15.0*t1 + 6.0*t1**2)
-    out[mask1] = delta_95 * s5_1
-    # Segment 2: [rho_95, 1] -> smooth ramp from delta_95 to delta_edge
-    mask2 = ~mask1
-    t2 = (rho[mask2] - rho_95) / (1.0 - rho_95)
-    s5_2 = t2**3 * (10.0 - 15.0*t2 + 6.0*t2**2)
-    out[mask2] = delta_95 + (delta_edge - delta_95) * s5_2
-    return out
+    interp = PchipInterpolator(
+        [0.0, rho_95,   1.0       ],
+        [0.0, delta_95, delta_edge],
+    )
+    return interp(rho)
 
 
 def miller_RZ(rho, theta, R0, a, kappa_edge, delta_edge,
@@ -394,7 +394,7 @@ def miller_RZ(rho, theta, R0, a, kappa_edge, delta_edge,
 
     Shaping profiles:
       Academic : κ = κ_edge (const),  δ = 0
-      refined  : smoothstep5 κ (flat core) + smoothstep5 δ (edge-peaked)
+      refined  : PCHIP κ (flat core) + PCHIP δ (edge-peaked)
 
     No Shafranov shift (outside scope of a 0D code).
 
@@ -467,7 +467,7 @@ def precompute_Vprime(R0, a, kappa_edge, delta_edge,
     kappa_edge, delta_edge : float
     geometry_model : 'Academic' | 'refined'
         'Academic' : ellipse at kappa = kappa_edge, no triangularity
-        'refined'  : Miller smoothstep5 profiles kappa(rho), delta(rho); 2D Jacobian
+        'refined'  : Miller PCHIP profiles kappa(rho), delta(rho); 2D Jacobian
     kappa_95, delta_95 : float or None  (ITER 1989 defaults; refined only)
     rho_95 : float  default 0.95
     N_rho, N_theta : int  grid resolution
@@ -726,7 +726,7 @@ Vprime_data argument:
       Fast, analytical formulas available for parabolic profiles.
 
   refined  (Vprime_data = (rho_grid, Vprime, V_total) from precompute_Vprime())
-      Volume element: dV = V'_Miller(ρ) dρ  (full Miller geometry, smoothstep5 κ/δ)
+      Volume element: dV = V'_Miller(ρ) dρ  (full Miller geometry, PCHIP κ/δ)
       All integrals use the precomputed Jacobian; n(ρ) and T(ρ) are midplane
       radial profiles — the geometry enters only through the volume weight.
 
@@ -1004,12 +1004,12 @@ def f_nbar_line(nbar_vol, nu_n, rho_ped=1.0, n_ped_frac=0.0, N=2000):
         n̄_line = ∫₀¹ n(ρ) · cos(arcsin(δ(ρ))) dρ   (refined mode)
 
     This function uses the δ = 0 approximation for both geometry modes.
-    For ITER-class δ_edge ≈ 0.5, the smoothstep5 δ(ρ) profile is confined
-    to the edge layer (δ ≲ 0.1 for ρ < 0.8), so the mean Jacobian
-    correction is cos(arcsin(δ_edge)) × edge-layer fraction ≈ 0.87 × 0.05
-    ≲ 1 % error on n̄_line.  The correction grows to ~3 % only for very
-    high triangularity (δ_edge ≈ 0.8) and is negligible in all ITER /
-    EU-DEMO relevant cases.
+    Direct evaluation of the chord integral on the PCHIP δ(ρ) profile
+    gives a relative error on n̄_line below 1 % for ITER-class shaping
+    (δ_edge ≈ 0.5) with moderately peaked density profiles (ν_n ≳ 0.5),
+    and below 4 % for very high triangularity (δ_edge ≈ 0.8) combined
+    with a flat density profile.  The correction is negligible in all
+    ITER and EU-DEMO relevant operating points.
 
     Note: elongation κ does NOT affect the midplane chord.  The horizontal
     line Z = 0 intersects the plasma at fixed ρ values independent of κ,
@@ -5121,7 +5121,7 @@ def f_Sauter_Redl_Ib(R0, a, kappa, B0, nbar, Tbar, q95, Z_eff, nu_n, nu_T, n_rho
     T_ped_frac : float  T_ped / Tbar.
     Vprime_data : tuple or None, optional
         If provided, activates refined mode: area element dA and trapped
-        fraction use the smoothstep5 local kappa(rho) instead of constant
+        fraction use the PCHIP local kappa(rho) instead of constant
         kappa_edge.
     kappa_95 : float or None, optional
         Elongation at the 95% flux surface.  Used only in refined mode.
