@@ -3063,7 +3063,7 @@ if __name__ == "__main__":
 #%% Academic model
 
 def f_TF_academic(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg,
-                  coef_inboard_tension, F_CClamp):
+                  coef_inboard_tension, F_CClamp, delta_port=0.0):
     """
     Calculate the thickness of the TF coil using a 2-layer thin cylinder model.
 
@@ -3094,6 +3094,12 @@ def f_TF_academic(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg,
         Fraction of total tension carried by inboard leg [-].
     F_CClamp : float
         Clamping force subtracted from tension [N].
+    delta_port : float, optional
+        Additional radial margin between the blanket outer edge and the
+        TF outer-leg conductor [m], driven by toroidal-ripple and minimum
+        port-access constraints. Pushes R2 outward so that the F_z log
+        term ln(R2 / R1) reflects the actual outer-leg position. Default:
+        0.0 (matches the original analytic formula).
 
     Returns
     -------
@@ -3149,9 +3155,11 @@ def f_TF_academic(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg,
     # 5. Inner layer thickness c1 derived from the circular cross-section
     c_WP = R1_0 - np.sqrt(R1_0**2 - S_cond / np.pi)
 
-    # 6. Calculate new radii after adding c1
+    # 6. Calculate new radii after adding c1.
+    #    delta_port shifts R2 outward to capture the ripple and port-access
+    #    margin between the blanket outer edge and the TF outer-leg conductor.
     R1 = R1_0 - c_WP  # Effective inner radius
-    R2 = R2_0 + c_WP  # Effective outer radius
+    R2 = R2_0 + c_WP + delta_port  # Effective outer radius
 
     # 7. Vertical separating force from Maxwell stress integral through midplane:
     #    T_sep = π B0² R0² / μ0 × ln(R2/R1),  corrected by clamping and inboard fraction.
@@ -3197,20 +3205,28 @@ def f_TF_academic(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg,
 #%% Refined model
 
 def Winding_Pack_refined(R_0, a, b, sigma_max, J_max, B_max, omega, n,
-                       grading=False):
-    
+                       grading=False, delta_port=0.0):
+
     """
     Computes the winding pack thickness and stress ratio under Tresca criterion.
-    
+
     When grading=False (default):
         Uniform α. Log-spaced adaptive bracket search + brentq root-finding.
         Tresca is satisfied at the most loaded point only.
-    
+
     When grading=True:
         Radially varying α(R). Tresca is saturated at every radius.
         Uses inward radial integration with self-consistent σ_z (Picard).
         Typically reduces c_WP by 8 to 25% depending on B_max.
-    
+        A strict-refinement guarantee is enforced: the graded result is
+        compared against the ungraded analytical baseline and the smaller
+        c_WP is returned. The ungraded solver acts as a safety net when
+        the graded radial integration converges on an unphysical state
+        (e.g. NI(R) reaching R = 0 before being consumed, which would
+        otherwise propagate as c_WP ≈ R_ext, TF occupying all the
+        inboard radial budget). Grading can therefore never degrade the
+        ungraded baseline.
+
     Args:
         R_0: Major radius [m]
         a: Plasma minor radius [m]
@@ -3224,7 +3240,15 @@ def Winding_Pack_refined(R_0, a, b, sigma_max, J_max, B_max, omega, n,
         n: Geometric factor for gamma (steel area fraction) [dimensionless]
         grading: bool, optional
             If True, use radially graded α(R) model. Default: False.
-    
+        delta_port: float, optional
+            Additional radial margin between the blanket outer edge and the
+            TF outer-leg conductor [m]. Sized to satisfy a maximum toroidal
+            field ripple at the plasma edge and a minimum port-access width,
+            typically computed by Number_TF_coils(). Enters the F_z log
+            argument as ln((R_0 + a + b + delta_port) / (R_0 - a - b)),
+            increasing the predicted vertical tension. Default: 0.0
+            (matches Eq. 5 of the reference paper, slightly non-conservative).
+
     Returns:
         winding_pack_thickness: R_ext - R_sep [m]
         sigma_r: Radial stress at solution [Pa]
@@ -3232,7 +3256,7 @@ def Winding_Pack_refined(R_0, a, b, sigma_max, J_max, B_max, omega, n,
         sigma_theta: Hoop stress at solution [Pa]
         Steel_fraction: 1 - alpha (structural fraction) [-]
             For graded: area-weighted average ⟨1 - α⟩.
-    
+
     Limitations:
         The axial stress σ_z accounts for the vertical component of the
         in-plane Lorentz force (centering force), but does NOT include:
@@ -3246,7 +3270,7 @@ def Winding_Pack_refined(R_0, a, b, sigma_max, J_max, B_max, omega, n,
         These omissions make the present model slightly non-conservative
         for compact / low-A designs.
     """
-    
+
     R_ext = R_0 - a - b
 
     # Validate J_max before proceeding
@@ -3257,17 +3281,15 @@ def Winding_Pack_refined(R_0, a, b, sigma_max, J_max, B_max, omega, n,
         return np.nan, np.nan, np.nan, np.nan, np.nan
         # raise ValueError("R_ext must be positive. Check R_0, a, and b.")
 
-    ln_term = np.log((R_0 + a + b) / (R_ext))
+    ln_term = np.log((R_0 + a + b + delta_port) / (R_ext))
     if ln_term <= 0:
         return np.nan, np.nan, np.nan, np.nan, np.nan
         # raise ValueError("Invalid logarithmic term: ensure R_0 + a + b > R_0 - a - b")
 
-    # Graded branch: delegate to radial integration solver
-    if grading:
-        return _solve_graded_wp(R_ext, B_max, J_max, sigma_max,
-                                omega, n, ln_term)
-
-    # Ungraded branch: analytical α, brentq root-finding (original model)
+    # === Ungraded analytical solution ===
+    # Always computed: used directly when grading=False, and as the
+    # mandatory fallback baseline when grading=True to enforce the
+    # strict-refinement principle (see docstring).
     def alpha(R_sep):
         denom = R_ext**2 - R_sep**2
         if denom <= 0:
@@ -3302,8 +3324,6 @@ def Winding_Pack_refined(R_0, a, b, sigma_max, J_max, B_max, omega, n,
     # narrow valid islands at high field that pure log spacing can miss.
     # Typical call budget: ~35 evaluations (Pass 1 success) to ~85 (worst case).
 
-    R_sep_solution = None
-
     d_lo = 1e-3                # Minimum WP thickness [m]
     d_hi = R_ext - 1e-3        # Maximum WP thickness (nearly solid cylinder)
 
@@ -3320,32 +3340,60 @@ def Winding_Pack_refined(R_0, a, b, sigma_max, J_max, B_max, omega, n,
         select='smallest')
 
     if np.isnan(d_solution):
-        return np.nan, np.nan, np.nan, np.nan, np.nan
+        result_ungraded = (np.nan, np.nan, np.nan, np.nan, np.nan)
+    else:
+        R_sep_solution = R_ext - d_solution
 
-    R_sep_solution = R_ext - d_solution
+        # Final stress calculation for the ungraded solution
+        a_val = alpha(R_sep_solution)
+        g_val = gamma_func(a_val, n)
 
-    # === Final stress calculation ===
-    a_val = alpha(R_sep_solution)
-    g_val = gamma_func(a_val, n)
+        if np.isnan(a_val) or np.isnan(g_val):
+            result_ungraded = (np.nan, np.nan, np.nan, np.nan, np.nan)
+        else:
+            try:
+                sigma_r = B_max**2 / (2 * μ0 * g_val)
+                sigma_z = (omega / (1 - a_val)) * B_max**2 * R_ext**2 / (2 * μ0 * (R_ext**2 - R_sep_solution**2)) * ln_term
+                sigma_theta = 0
+                winding_pack_thickness = R_ext - R_sep_solution
+                Steel_fraction = (1 - a_val)
+                result_ungraded = (winding_pack_thickness, sigma_r, sigma_z,
+                                   sigma_theta, Steel_fraction)
+            except Exception:
+                result_ungraded = (np.nan, np.nan, np.nan, np.nan, np.nan)
 
-    if np.isnan(a_val) or np.isnan(g_val):
-        return np.nan, np.nan, np.nan, np.nan, np.nan
+    # Ungraded path: return immediately.
+    if not grading:
+        return result_ungraded
 
-    try:
-        sigma_r = B_max**2 / (2 * μ0 * g_val)
-        sigma_z = (omega / (1 - a_val)) * B_max**2 * R_ext**2 / (2 * μ0 * (R_ext**2 - R_sep_solution**2)) * ln_term
-        sigma_theta = 0
-    except Exception:
-        return np.nan, np.nan, np.nan, np.nan, np.nan
+    # === Graded branch with strict-refinement guarantee ===
+    # The graded radial-integration solver _solve_graded_wp can in some
+    # regimes return a converged-but-unphysical result, where the inward
+    # integration of NI(R) consumes the available radial space before
+    # depleting the ampere-turns (R reaches the cylinder centre with
+    # NI > 0). This propagates as c_WP ≈ R_ext, effectively reporting a
+    # TF that occupies all the inboard space.
+    #
+    # To prevent the graded model from ever degrading the ungraded
+    # baseline, we compute both and return the smaller c_WP. The
+    # ungraded analytical solver is robust on the same domain and acts
+    # as a safety net. Where the graded model legitimately improves the
+    # result, the gain is preserved; otherwise, the ungraded result is
+    # returned unchanged.
+    result_graded = _solve_graded_wp(R_ext, B_max, J_max, sigma_max,
+                                     omega, n, ln_term)
 
-    winding_pack_thickness = R_ext - R_sep_solution
-    Steel_fraction = (1-a_val)
+    c_ungraded = result_ungraded[0]
+    c_graded   = result_graded[0]
 
-    return winding_pack_thickness, sigma_r, sigma_z, sigma_theta, Steel_fraction
-
+    if not np.isfinite(c_graded):
+        return result_ungraded
+    if not np.isfinite(c_ungraded):
+        return result_graded
+    return result_graded if c_graded <= c_ungraded else result_ungraded
 
 def Nose_refined(R_ext_Nose, sigma_max, omega, B_max, R_0, a, b,
-               coef_inboard_tension):
+               coef_inboard_tension, delta_port=0.0):
     """
     Compute the inner radius of the TF nose (inner structural casing).
 
@@ -3376,6 +3424,11 @@ def Nose_refined(R_ext_Nose, sigma_max, omega, B_max, R_0, a, b,
     coef_inboard_tension : float
         Correction factor for inboard tension distribution [-].
         Accounts for non-uniform current distribution across the WP.
+    delta_port : float, optional
+        Additional radial margin between the blanket outer edge and the
+        TF outer-leg conductor [m], driven by toroidal-ripple and minimum
+        port-access constraints. Enters the F_z log argument as
+        ln((R_0 + a + b + delta_port) / (R_0 - a - b)). Default: 0.0.
 
     Returns
     -------
@@ -3390,8 +3443,10 @@ def Nose_refined(R_ext_Nose, sigma_max, omega, B_max, R_0, a, b,
     # at R_nose is amplified by the circumference ratio R_TF / R_nose.
     P = (B_max**2) / (2 * μ0) * (R_0 - a - b) / R_ext_Nose
     
-    # Compute the logarithmic term
-    log_term = np.log((R_0 + a + b) / (R_0 - a - b))
+    # Logarithmic term entering F_z. The numerator uses the actual TF outer-leg
+    # location (R_0 + a + b + delta_port), not just the blanket outer edge,
+    # to capture the ripple and port-access margin (see Number_TF_coils()).
+    log_term = np.log((R_0 + a + b + delta_port) / (R_0 - a - b))
     
     # Compute the full expression under the square root
     term_intermediate = (R_ext_Nose**2 / sigma_max) * (2 * P + (1 - omega) * (B_max**2 * coef_inboard_tension / μ0) * log_term)
@@ -3405,7 +3460,8 @@ def Nose_refined(R_ext_Nose, sigma_max, omega, B_max, R_0, a, b,
     return Ri
 
 def f_TF_refined(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n,
-               c_BP, coef_inboard_tension, F_CClamp, TF_grading=False):
+               c_BP, coef_inboard_tension, F_CClamp, TF_grading=False,
+               delta_port=0.0):
     
     """
     Calculate the thickness of the TF coil using a 2 layer thick cylinder model 
@@ -3425,6 +3481,14 @@ def f_TF_refined(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n
     F_CClamp : Clamping force [N]
     TF_grading : bool, optional
         If True, use radially graded α(R) in the WP. Default: False.
+    delta_port : float, optional
+        Additional radial margin between the blanket outer edge and the
+        TF outer-leg conductor [m], required to satisfy a target toroidal
+        field ripple and a minimum port-access width. Typically obtained
+        from Number_TF_coils(R0, a, b, ripple_adm, L_min). Propagated to
+        Winding_Pack_refined and Nose_refined so that F_z and σ_z are
+        evaluated with the actual outer-leg position rather than the
+        blanket outer edge. Default: 0.0 (paper convention).
 
     Returns:
     c : TF total inboard radial thickness [m]
@@ -3439,14 +3503,14 @@ def f_TF_refined(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n
     
     if Choice_Buck_Wedg == "Wedging":
         
-        c_WP, σ_r, σ_z, σ_theta, Steel_fraction  = Winding_Pack_refined( R0, a, b, σ_TF, J_max_TF, B_max_TF, omega, n, grading=TF_grading)
+        c_WP, σ_r, σ_z, σ_theta, Steel_fraction  = Winding_Pack_refined( R0, a, b, σ_TF, J_max_TF, B_max_TF, omega, n, grading=TF_grading, delta_port=delta_port)
         
         # Vérification que c_WP est valide
         if c_WP is None or np.isnan(c_WP) or c_WP < 0:
             return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
         c_Nose = R0 - a - b - c_WP - Nose_refined(R0 - a - b - c_WP, σ_TF, omega, B_max_TF, R0, a, b,
-                                          coef_inboard_tension)
+                                          coef_inboard_tension, delta_port=delta_port)
 
         # Vérification que c_Nose est valide
         if c_Nose is None or np.isnan(c_Nose) or c_Nose < 0:
@@ -3467,7 +3531,7 @@ def f_TF_refined(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n
     
     elif Choice_Buck_Wedg == "Bucking" or Choice_Buck_Wedg == "Plug":
         
-        c_WP, σ_r, σ_z, σ_theta, Steel_fraction = Winding_Pack_refined(R0, a, b, σ_TF, J_max_TF, B_max_TF, omega, n, grading=TF_grading)
+        c_WP, σ_r, σ_z, σ_theta, Steel_fraction = Winding_Pack_refined(R0, a, b, σ_TF, J_max_TF, B_max_TF, omega, n, grading=TF_grading, delta_port=delta_port)
         
         c = c_WP
         c_Nose = 0
