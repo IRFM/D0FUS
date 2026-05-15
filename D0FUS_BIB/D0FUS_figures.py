@@ -48,6 +48,7 @@ if __name__ != "__main__":
         get_Lz,
         f_He_fraction,
         f_q_profile,
+        f_sigmav,
     )
     from .D0FUS_radial_build_functions import (
         J_non_Cu_NbTi, J_non_Cu_Nb3Sn, J_non_Cu_REBCO,
@@ -76,6 +77,7 @@ else:
         get_Lz,
         f_He_fraction,
         f_q_profile,
+        f_sigmav,
     )
     from D0FUS_BIB.D0FUS_radial_build_functions import (
         J_non_Cu_NbTi, J_non_Cu_Nb3Sn, J_non_Cu_REBCO,
@@ -639,6 +641,96 @@ def plot_density_line_vol(
 # 3. Nuclear / radiation physics
 # =============================================================================
 
+def plot_DT_reactivity(
+    T_min_keV: float = 1.0,
+    T_max_keV: float = 100.0,
+    n_points: int = 600,
+    T_op_min: float = 10.0,
+    T_op_max: float = 25.0,
+    save_dir: str | None = None,
+) -> None:
+    """
+    Plot the D-T Maxwellian reactivity ⟨σv⟩(T) used by D0FUS, together with
+    the pressure-limited fusion power density metric ⟨σv⟩/T².
+
+    Left panel:
+        ⟨σv⟩(T) computed from the Bosch & Hale (1992) parameterisation,
+        with the power plant operating window [T_op_min, T_op_max] shaded
+        and the reactivity maximum marked.
+
+    Right panel:
+        Pressure-limited figure of merit ⟨σv⟩/T² (arbitrary units).
+        At fixed plasma pressure p = nT, the fuel ion density scales as
+        n ∝ 1/T, so the volumetric fusion power density p_fus ∝ n² ⟨σv⟩
+        is proportional to ⟨σv⟩/T². This identifies the optimal operating
+        temperature for a β-limited tokamak near 14 keV.
+
+    Parameters
+    ----------
+    T_min_keV, T_max_keV : float  Ion temperature scan range [keV].
+    n_points             : int    Number of temperature grid points.
+    T_op_min, T_op_max   : float  Power plant operating window bounds [keV].
+    save_dir             : str or None
+
+    References
+    ----------
+    Bosch & Hale, Nucl. Fusion 32, 611 (1992) — DT reactivity fit (Table IV).
+    Freidberg, Plasma Physics and Fusion Energy (2007) — pressure-limited optimum.
+    """
+    # Temperature grid (linear, since the operating window lies in the rapid-rise zone)
+    T_arr  = np.linspace(T_min_keV, T_max_keV, n_points)
+    sv_arr = f_sigmav(T_arr)
+
+    # Reactivity maximum
+    i_peak           = int(np.argmax(sv_arr))
+    T_peak, sv_peak  = T_arr[i_peak], sv_arr[i_peak]
+
+    # Pressure-limited metric ⟨σv⟩/T² (units arbitrary, normalised below)
+    metric           = sv_arr / T_arr**2
+    i_opt            = int(np.argmax(metric))
+    T_opt, m_opt     = T_arr[i_opt], metric[i_opt]
+
+    # --- Figure ------------------------------------------------------------
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
+
+    # Left panel: reactivity curve on log scale
+    ax = axes[0]
+    ax.semilogy(T_arr, sv_arr, color="tab:red", lw=2.0,
+                label="Bosch & Hale (1992)")
+    ax.axvspan(T_op_min, T_op_max, color="goldenrod", alpha=0.20,
+               label=f"Operating window\n{T_op_min:.0f}–{T_op_max:.0f} keV")
+    ax.axvline(T_peak, color="k", lw=1.0, ls="--",
+               label=f"peak: T = {T_peak:.0f} keV")
+    ax.set_xlabel(r"Ion temperature $T$  [keV]", fontsize=11)
+    ax.set_ylabel(r"$\langle\sigma v\rangle_{DT}$  [m$^3$ s$^{-1}$]", fontsize=11)
+    ax.set_title("D-T Maxwellian reactivity", fontsize=11)
+    ax.set_xlim(T_min_keV, T_max_keV)
+    ax.set_ylim(1e-25, 3e-21)
+    ax.grid(True, which="both", alpha=0.25)
+    ax.legend(fontsize=9, loc="lower right")
+
+    # Right panel: pressure-limited figure of merit
+    ax = axes[1]
+    ax.plot(T_arr, metric / m_opt, color="tab:blue", lw=2.0,
+            label=r"$\langle\sigma v\rangle / T^2$  (normalised)")
+    ax.axvspan(T_op_min, T_op_max, color="goldenrod", alpha=0.20,
+               label=f"Operating window\n{T_op_min:.0f}–{T_op_max:.0f} keV")
+    ax.axvline(T_opt, color="k", lw=1.0, ls="--",
+               label=f"optimum: T = {T_opt:.1f} keV")
+    ax.set_xlabel(r"Ion temperature $T$  [keV]", fontsize=11)
+    ax.set_ylabel(r"$\langle\sigma v\rangle / T^2$  [normalised]", fontsize=11)
+    ax.set_title(r"Pressure-limited fusion power figure of merit", fontsize=11)
+    ax.set_xlim(0, 50)
+    ax.set_ylim(0, 1.08)
+    ax.grid(True, alpha=0.25)
+    ax.legend(fontsize=9, loc="lower right")
+
+    plt.suptitle("Fusion reactivity and operating temperature window",
+                 fontsize=12, fontweight="bold")
+    plt.tight_layout()
+    _save_or_show(fig, save_dir, "DT_reactivity")
+
+
 def plot_Lz_cooling(
     Te_min_keV: float = 0.05,
     Te_max_keV: float = 100.0,
@@ -711,7 +803,8 @@ def plot_He_fraction(
     nbar: float = 1.0,
     Tbar: float = 8.9,
     tauE: float = 3.7,
-    C_Alpha: float = 5.0,
+    C_Alpha_ITER: float = 5.0,
+    C_Alpha_DEMO: float = 7.0,
     nu_T: float = 1.0,
     save_dir: str | None = None,
 ) -> None:
@@ -720,16 +813,25 @@ def plot_He_fraction(
     C_α = τ_α / τ_E for ITER and EU-DEMO reference parameters, comparing
     academic (no pedestal) and H-mode pedestal profile assumptions.
 
+    Two D0FUS default values for C_α are highlighted with vertical dotted
+    lines: C_α = 5 for ITER (consistent with Progress in the ITER Physics
+    Basis projections) and C_α = 7 for EU-DEMO 2017 (PROCESS reference run).
+
     Parameters
     ----------
     nbar, Tbar, tauE : float  Reference plasma parameters [10²⁰ m⁻³, keV, s].
-    C_Alpha          : float  Reference C_α value (drawn as vertical line) [-].
+    C_Alpha_ITER     : float  D0FUS default C_α for ITER (vertical line) [-].
+    C_Alpha_DEMO     : float  D0FUS default C_α for EU-DEMO 2017 (vertical line) [-].
     nu_T             : float  Temperature peaking exponent [-].
     save_dir         : str or None
 
     References
     ----------
     ITER Physics Basis, Nucl. Fusion 39, §2.4 (1999).
+    Shimada et al., Progress in the ITER Physics Basis, Ch. 1,
+        Nucl. Fusion 47, S1 (2007).
+    Kovari et al., Fus. Eng. Des. 89, 3054 (2014) — PROCESS systems code.
+    Reiter, Wolf and Kever, Nucl. Fusion 30, 2141 (1990) — ignition bound on C_α.
     """
     C_arr = np.linspace(2, 15, 150)
 
@@ -739,16 +841,22 @@ def plot_He_fraction(
                    for C in C_arr]
     fa_DEMO     = [f_He_fraction(1.2, 12.5,  4.6, C, nu_T) * 100 for C in C_arr]
 
-    fig, ax = plt.subplots(figsize=(6.5, 4.2))
-    ax.plot(C_arr, fa_ITER,     "b-",  lw=1.8, label="ITER — academic (no pedestal)")
-    ax.plot(C_arr, fa_ITER_ped, "b--", lw=1.4, label="ITER — Refined H-mode pedestal")
-    ax.plot(C_arr, fa_DEMO,     "r-",  lw=1.8, label="EU-DEMO — academic")
-    ax.axvline(C_Alpha, color="k", lw=0.9, ls=":", label=f"$C_\\alpha$ = {C_Alpha:.0f}")
-    ax.axhspan(4, 6, color="grey", alpha=0.12, label="ITER target 5 %")
-    ax.set_xlabel(r"Removal efficiency $C_\alpha = \tau_\alpha / \tau_E$", fontsize=11)
-    ax.set_ylabel(r"Helium ash fraction $f_\alpha$ [%]", fontsize=11)
-    ax.set_title("He ash fraction — academic vs refined H-mode pedestal", fontsize=10)
-    ax.legend(fontsize=8)
+    fig, ax = plt.subplots(figsize=(8.0, 5.2))
+    ax.plot(C_arr, fa_ITER,     "b-",  lw=2.0, label="ITER — academic (no pedestal)")
+    ax.plot(C_arr, fa_ITER_ped, "b--", lw=1.6, label="ITER — Refined H-mode pedestal")
+    ax.plot(C_arr, fa_DEMO,     "r-",  lw=2.0, label="EU-DEMO — academic")
+    # Two D0FUS default operating points: ITER and EU-DEMO 2017
+    ax.axvline(C_Alpha_ITER, color="tab:blue", lw=1.6, ls=":",
+               label=f"ITER default $C_\\alpha$ = {C_Alpha_ITER:.0f}")
+    ax.axvline(C_Alpha_DEMO, color="tab:red",  lw=1.6, ls=":",
+               label=f"EU-DEMO 2017 default $C_\\alpha$ = {C_Alpha_DEMO:.0f}")
+    ax.axhspan(4, 6, color="grey", alpha=0.12, label="ITER target 4–6 %")
+    ax.set_xlabel(r"Removal efficiency $C_\alpha = \tau_\alpha / \tau_E$", fontsize=14)
+    ax.set_ylabel(r"Helium ash fraction $f_\alpha$  [%]", fontsize=14)
+    ax.set_title("He ash fraction — academic vs refined H-mode pedestal",
+                 fontsize=13)
+    ax.legend(fontsize=11, loc="upper left")
+    ax.tick_params(axis="both", labelsize=12)
     ax.set_xlim(2, 15)
     ax.set_ylim(0, 25)
     ax.grid(True, alpha=0.3)
@@ -761,12 +869,84 @@ def plot_He_fraction(
 # 4. Superconductor / cable engineering
 # =============================================================================
 
+# -----------------------------------------------------------------------------
+# NHMFL engineering current density reference data (T = 4.2 K)
+# -----------------------------------------------------------------------------
+# Source: National High Magnetic Field Laboratory (NHMFL / MagLab) "Engineering
+# Current Density Plot", file Je_vs_B-041118a (updated 2021-01-04).  Values are
+# whole-strand / whole-tape engineering current density Je [A/mm²] vs applied
+# field B [T].  Only the three series directly comparable to the D0FUS strand
+# scalings (NbTi, Nb3Sn bronze, REBCO worst-orientation) are kept here.
+#
+# Per-series provenance:
+#   * REBCO B perp tape plane : SuperPower SP26, 50 µm substrate, 7.5%Zr,
+#     measured at NHMFL (Braccini, Jaroszynski, Xu) - DOI 10.1088/0953-2048/24/3/035001
+#   * Nb3Sn High Sn Bronze    : Miyazaki et al., MT-18 (IEEE TASC 14:2, 2004)
+#     DOI 10.1109/TASC.2004.830344
+#   * NbTi LHC 4.2 K          : Boutboul et al., MT-19 (IEEE TASC 16:2, 2006)
+#     DOI 10.1109/TASC.2006.870777
+_NHMFL_JE_REFERENCE = {
+    "NbTi": {
+        "label": "NbTi LHC strand",
+        "B": np.array([0.61, 0.95, 1.34, 1.68, 2.23, 3.18, 4.15, 5.12, 6.10]),
+        "Je": np.array([5106.88, 4054.15, 3180.60, 2710.23, 2217.46,
+                        1724.69, 1411.11, 1187.12, 918.34]),
+    },
+    "Nb3Sn": {
+        "label": "Nb₃Sn high-Sn bronze",
+        "B": np.array([18.00, 19.01, 20.01, 21.01, 22.02, 23.00, 24.00, 25.00]),
+        "Je": np.array([166.64, 137.81, 111.10, 84.38, 60.82, 40.08, 19.34, 8.09]),
+    },
+    "REBCO": {
+        "label": "REBCO tape, B⊥ (worst case)",
+        "B": np.array([1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0,
+                       10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 18.0,
+                       20.0, 22.0, 24.0, 25.0, 26.0, 28.0, 30.0, 31.0]),
+        "Je": np.array([3665.00, 2920.00, 2380.00, 1796.15, 1447.69, 1188.46,
+                        1034.37,  956.92,  851.83,  780.84,  720.00,  679.44,
+                         626.09,  593.24,  563.48,  535.38,  516.52,  469.56,
+                         433.08,  406.96,  391.30,  367.69,  360.00,  344.35,
+                         328.70,  322.31]),
+    },
+}
+
+
+def _overlay_nhmfl_reference(ax, color_map: dict, alpha: float = 0.30) -> None:
+    """
+    Overlay the NHMFL engineering current density reference (4.2 K) on ``ax``
+    as transparent markers connected by a thin line, color-matched per material.
+
+    Parameters
+    ----------
+    ax        : matplotlib Axes  Target axes (assumed log-y in A/mm²).
+    color_map : dict             Mapping {material_key: hex_color} for NbTi,
+                                 Nb3Sn, REBCO; the same colours used for the
+                                 D0FUS curves so the visual pairing is direct.
+    alpha     : float            Transparency for both markers and connecting
+                                 line (default 0.30, "background" appearance).
+    """
+    for key, ref in _NHMFL_JE_REFERENCE.items():
+        col = color_map.get(key, "#808080")
+        ax.plot(
+            ref["B"], ref["Je"],
+            linestyle="-", linewidth=1.0,
+            marker="o", markersize=4.5,
+            color=col, alpha=alpha,
+            zorder=1,
+        )
+    # Single neutral legend handle for the whole NHMFL reference set.
+    ax.plot([], [], linestyle="-", linewidth=1.0, marker="o", markersize=4.5,
+            color="#555555", alpha=alpha,
+            label="NHMFL strand/tape data @ 4.2 K (2011 vintage, ref.)")
+
+
 def plot_Jc_scaling(
     B_min: float = 0.5,
     B_max: float = 45.0,
     T_op: float = 4.2,
     f_non_Cu_LTS: float = 0.50,
     f_non_Cu_HTS: float = 0.60,
+    show_nhmfl_ref: bool = True,
     save_dir: str | None = None,
 ) -> None:
     """
@@ -776,29 +956,47 @@ def plot_Jc_scaling(
       * Nb₃Sn  (LTS, ITER/EU-DEMO TF/CS)
       * REBCO  (HTS, ARC / SPARC)
 
+    When ``show_nhmfl_ref`` is True, the NHMFL/MagLab experimental engineering
+    current density data at 4.2 K is overlaid as a transparent background
+    reference (color-matched markers + thin line per material).
+
     Parameters
     ----------
-    B_min, B_max : float  Field scan range [T].
-    T_op         : float  Operating temperature [K].
-    f_non_Cu_LTS : float  Non-copper fraction for LTS strands [-].
-    f_non_Cu_HTS : float  Non-copper fraction for HTS tapes [-].
-    save_dir     : str or None
+    B_min, B_max   : float  Field scan range [T].
+    T_op           : float  Operating temperature [K].
+    f_non_Cu_LTS   : float  Non-copper fraction for LTS strands [-].
+    f_non_Cu_HTS   : float  Non-copper fraction for HTS tapes [-].
+    show_nhmfl_ref : bool   Overlay NHMFL 4.2 K reference data (default True).
+    save_dir       : str or None
 
     References
     ----------
     ITER TF strand specifications; Nijhuis (2008); Fleiter & Ballarino (2014).
+    NHMFL/MagLab Engineering Current Density Plot, updated 2021-01-04.
     """
     B_vals  = np.linspace(B_min, B_max, 300)
     J_NbTi  = J_non_Cu_NbTi(B_vals, T_op)  * f_non_Cu_LTS / 1e6   # [A/mm²]
     J_Nb3Sn = J_non_Cu_Nb3Sn(B_vals, T_op, Eps=-0.003) * f_non_Cu_LTS / 1e6
     J_REBCO = J_non_Cu_REBCO(B_vals, T_op, Tet=0) * f_non_Cu_HTS / 1e6
 
+    # Colour palette shared between D0FUS curves and NHMFL reference overlay.
+    col_NbTi, col_Nb3Sn, col_REBCO = "#A06AB4", "#E06C75", "#D4B000"
+
     fig, ax = plt.subplots(figsize=(7, 5))
-    ax.plot(B_vals, J_NbTi,  lw=2, color="#A06AB4", label="NbTi strand")
-    ax.plot(B_vals, J_Nb3Sn, lw=2, color="#E06C75", label="Nb₃Sn strand")
-    ax.plot(B_vals, J_REBCO, lw=2, color="#D4B000", label="REBCO tape")
+
+    # NHMFL background reference (drawn first → lower z-order).
+    if show_nhmfl_ref:
+        _overlay_nhmfl_reference(
+            ax,
+            color_map={"NbTi": col_NbTi, "Nb3Sn": col_Nb3Sn, "REBCO": col_REBCO},
+            alpha=0.30,
+        )
+
+    ax.plot(B_vals, J_NbTi,  lw=2, color=col_NbTi,  label="NbTi strand",  zorder=3)
+    ax.plot(B_vals, J_Nb3Sn, lw=2, color=col_Nb3Sn, label="Nb₃Sn strand", zorder=3)
+    ax.plot(B_vals, J_REBCO, lw=2, color=col_REBCO, label="REBCO tape",   zorder=3)
     ax.set_xlabel("Magnetic field B [T]", fontsize=12)
-    ax.set_ylabel("Engineering current density J [A/mm²]", fontsize=12)
+    ax.set_ylabel("Strand/Tape current density [A/mm²]", fontsize=12)
     ax.set_title(f"Superconductor Jc scalings @ {T_op} K", fontsize=12)
     ax.legend(loc="upper right", fontsize=10)
     ax.grid(True, alpha=0.3)
@@ -2663,10 +2861,10 @@ def plot_all(
 
       ── Plasma shaping           [ 1– 7]
       ── Kinetic profiles         [ 8–11]
-      ── Transport & current      [12–14]
-      ── Radiation & impurities   [15–17]
-      ── Superconductor eng.      [18–20]
-      ── Coil sizing & mechanics  [21–29]
+      ── Transport & current      [12–13]
+      ── Radiation & impurities   [14–16]
+      ── Superconductor eng.      [17–19]
+      ── Coil sizing & mechanics  [20–29]
           · TF grading            [21–23]
           · CS / CIRCE / geometry [24–27]
           · Benchmarks            [28–29]
@@ -2731,6 +2929,9 @@ def plot_all(
     # ── Radiation & impurities ────────────────────────────────────────
     _p(14, "Coronal cooling coefficient L_z(T)")
     plot_Lz_cooling(save_dir=save_dir)
+
+    _p(15, "D-T reactivity ⟨σv⟩(T)")
+    plot_DT_reactivity(save_dir=save_dir)
 
     _p(16, "Helium ash fraction")
     plot_He_fraction(save_dir=save_dir)

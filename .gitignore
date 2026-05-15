@@ -24,3 +24,17 @@ build/
 *.egg-info/
 D0FUS_INPUTS/*.txt
 desktop.ini
+
+# Local inputs (not tracked)
+D0FUS_INPUTS/EU DEMO/
+D0FUS_INPUTS/Manuscript/
+D0FUS_INPUTS/Papier meca/
+D0FUS_INPUTS/SF Plant/
+D0FUS_INPUTS/VNS/
+
+# Personal notes
+GIT_cheat_sheet.txt
+Pypi_Wheel_tuto.txt
+
+# Local publication script
+publish_d0fus.sh
