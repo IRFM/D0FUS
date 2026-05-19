@@ -59,6 +59,7 @@ if __name__ != "__main__":
         f_CS_ACAD, f_CS_refined, f_CS_CIRCE,
         F_CIRCE0D, compute_von_mises_stress,
         calculate_E_mag_TF,
+        f_TF_cross_section,
     )
     from .D0FUS_parameterization import DEFAULT_CONFIG, E_ELEM
 
@@ -88,6 +89,7 @@ else:
         f_CS_ACAD, f_CS_refined, f_CS_CIRCE,
         F_CIRCE0D, compute_von_mises_stress,
         calculate_E_mag_TF,
+        f_TF_cross_section,
     )
     from D0FUS_BIB.D0FUS_parameterization import DEFAULT_CONFIG, E_ELEM
 
@@ -2428,143 +2430,9 @@ def plot_cross_section_comparison(
 # B2 — TF coil Princeton-D view (poloidal plane)
 # ---------------------------------------------------------------------------
 
-def _princeton_D_contour(
-    r1: float,
-    r2: float,
-    n_leg: int = 50,
-) -> tuple:
-    """
-    Compute a Princeton-D constant-tension coil contour in the (R, Z) plane.
-
-    The shape is obtained by numerical integration of the arc-length ODE
-    for a filamentary conductor in a 1/R toroidal field:
-
-        dR/ds     = cos(α)
-        dZ/ds     = sin(α)
-        dα/ds     = 1 / (k · R)
-
-    where  k = ½ ln(r₂ / r₁)  is the shape parameter.  Integration starts
-    at (r₂, 0) with α = π/2 (vertical upward) and proceeds until α = 3π/2
-    (vertical downward at the inboard straight-leg junction).
-
-    The full closed contour is assembled as:
-      top constant-tension arc + straight inboard leg + mirrored bottom arc.
-
-    Parameters
-    ----------
-    r1    : float  Inboard leg radial position [m].
-    r2    : float  Outboard midplane radial position [m].
-    n_leg : int    Number of discretisation points on the straight leg.
-
-    Returns
-    -------
-    R, Z : ndarray  Closed contour arrays (ready for ax.fill / ax.plot).
-
-    References
-    ----------
-    File, Stewart & Mills, IEEE TNS 18 (1971) — Princeton-D concept.
-    Gralnick & Tenney, J. Appl. Phys. 47 (1976) — Analytical solution.
-    """
-
-    k = 0.5 * np.log(r2 / r1)
-
-    def _rhs(_s, y):
-        """Arc-length ODE right-hand side."""
-        _r, _z, _alpha = y
-        return [np.cos(_alpha), np.sin(_alpha), 1.0 / (k * _r)]
-
-    # Terminal event: stop when tangent angle reaches 3π/2 (vertical downward)
-    def _evt_alpha(_s, y):
-        return y[2] - 3.0 * np.pi / 2.0
-    _evt_alpha.terminal = True
-
-    y0 = [r2, 0.0, np.pi / 2.0]
-    s_max = 30.0 * r2                  # Generous arc-length upper bound
-    sol = solve_ivp(_rhs, [0.0, s_max], y0,
-                    events=_evt_alpha,
-                    max_step=0.01 * r2,
-                    rtol=1e-10, atol=1e-12)
-
-    r_top = sol.y[0]                   # Top half: (r2, 0) → (r1, z_leg)
-    z_top = sol.y[1]
-    z_leg = z_top[-1]
-    r_leg = r_top[-1]                  # Should be ≈ r1
-
-    # Straight inboard leg (top → bottom)
-    z_leg_pts = np.linspace(z_leg, -z_leg, n_leg)
-    r_leg_pts = np.full_like(z_leg_pts, r_leg)
-
-    # Bottom half: time-reversed mirror of the top half
-    r_bot = r_top[::-1]
-    z_bot = -z_top[::-1]
-
-    # Assemble closed contour
-    R = np.concatenate([r_top, r_leg_pts[1:-1], r_bot])
-    Z = np.concatenate([z_top, z_leg_pts[1:-1], z_bot])
-    return R, Z
-
-
-def _offset_contour(R: np.ndarray, Z: np.ndarray, d: float) -> tuple:
-    """
-    Compute an inward-offset (parallel) curve at constant distance *d*.
-
-    The Princeton-D contour as assembled by ``_princeton_D_contour`` is
-    wound **clockwise** in the (R, Z) plane.  For a CW contour the
-    inward-pointing unit normal is  n = (−tZ, +tR)  where (tR, tZ) is
-    the unit tangent.
-
-    To avoid artefacts at the corners where the curved arcs meet the
-    straight inboard leg, the contour is split into three segments
-    (top arc, straight leg, bottom arc); each is offset independently
-    and then stitched back together.
-
-    Parameters
-    ----------
-    R, Z : ndarray  Original closed contour (clockwise winding).
-    d    : float    Offset distance [m].  Positive = inward.
-
-    Returns
-    -------
-    R_off, Z_off : ndarray  Offset contour arrays.
-    """
-    # --- Identify inboard straight leg (R ≈ R_min) ---
-    R_min = R.min()
-    tol = 0.01 * (R.max() - R_min)
-    leg_idx = np.where(np.abs(R - R_min) < tol)[0]
-
-    if len(leg_idx) < 2:
-        # Fallback: simple normal offset everywhere (CW convention)
-        dR = np.gradient(R); dZ = np.gradient(Z)
-        ds = np.hypot(dR, dZ); ds[ds < 1e-15] = 1e-15
-        return R - d * dZ / ds, Z + d * dR / ds
-
-    i_s = leg_idx[0]                   # First index on the straight leg
-    i_e = leg_idx[-1]                  # Last index on the straight leg
-
-    # --- Helper: offset an open arc segment (CW inward normal) ---
-    def _offset_arc(r_seg, z_seg):
-        dr = np.gradient(r_seg)
-        dz = np.gradient(z_seg)
-        ds = np.hypot(dr, dz)
-        ds[ds < 1e-15] = 1e-15
-        # CW inward normal: n = (-dz, +dr) / ds
-        return r_seg - d * dz / ds, z_seg + d * dr / ds
-
-    # Top arc:  indices [0 .. i_s]  (outboard midplane → inboard junction)
-    ro_top, zo_top = _offset_arc(R[:i_s + 1], Z[:i_s + 1])
-
-    # Straight leg:  indices [i_s .. i_e]  — inward normal is simply (+d, 0)
-    r_leg = R[i_s:i_e + 1] + d
-    z_leg = Z[i_s:i_e + 1]
-
-    # Bottom arc:  indices [i_e .. end]  (inboard junction → outboard midplane)
-    ro_bot, zo_bot = _offset_arc(R[i_e:], Z[i_e:])
-
-    # Stitch together (skip duplicate junction points)
-    R_off = np.concatenate([ro_top[:-1], r_leg, ro_bot[1:]])
-    Z_off = np.concatenate([zo_top[:-1], z_leg, zo_bot[1:]])
-
-    return R_off, Z_off
+# _princeton_D_contour and _offset_contour have been moved to
+# D0FUS_radial_build_functions.py (functions of the same name).
+# plot_TF_side_view calls f_TF_cross_section which encapsulates both.
 
 
 def plot_TF_side_view(
@@ -2604,20 +2472,15 @@ def plot_TF_side_view(
     bd         = _resolve_build(run)
 
     c_TF     = bd["c_TF"]
-    R_TF_in  = bd["R_TF_in"]          # Inboard bore face (plasma side)
-    R_TF_out = bd["R_TF_out"]         # Outboard outer face
-    R_bore   = R_TF_in - c_TF         # Inboard outer face (machine-axis side)
-    W_TF     = R_TF_out - R_bore      # Total radial width [m]
+    Delta_TF = bd["Delta_TF"]
 
-    # ── Build Princeton-D contours ──────────────────────────────────
-    R_out, Z_out = _princeton_D_contour(R_bore, R_TF_out)
+    # ── Princeton-D cross-section (from radial build) ───────────────
+    (R_bore, R_TF_out, H_TF, _A_cross, _L_turn,
+     R_out, Z_out, R_in, Z_in) = f_TF_cross_section(a, bd["b"], R0, c_TF, Delta_TF)
 
-    # Inner contour: constant-thickness offset of the outer D
-    R_in, Z_in = _offset_contour(R_out, Z_out, c_TF)
-
-    # Actual coil height from the ODE solution
-    H_TF = 2.0 * Z_out.max()
-    h    = Z_out.max()
+    R_TF_in = R_bore + c_TF       # Plasma-facing inner face (= R0 − a − b)
+    W_TF    = R_TF_out - R_bore   # Total radial width [m]
+    h       = H_TF / 2.0          # Half-height [m]
 
     # ── Black-and-white colour scheme ───────────────────────────────
     col_fill = "black"              # Light grey fill for coil body
