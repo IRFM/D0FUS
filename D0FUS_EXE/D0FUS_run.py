@@ -1534,6 +1534,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             _nan, _nan,                          # L_sc_strand_TF, L_sc_strand_CS
             _nan, _nan, _nan, _nan, _nan,        # M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF
             _nan, _nan, _nan, _nan, _nan,        # M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS
+            _nan,                                # V_blanket
         )
 
     # =========================================================================
@@ -1867,6 +1868,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
 
     # ── Single-coil TF volume via Pappus centroid theorem ─────────────────────
     V_TF_one  = f_V_TF(a, b, R0, c, int(N_TF), Delta_TF)
+    V_blanket = f_V_blanket(a, b, R0, κ, δ, Delta_TF,
+                            R_outer=_R_in, Z_outer=_Z_in)
     V_CS_geom = f_V_CS(a, b, c, d, R0, κ, Gap, Choice_Buck_Wedg)
 
     # ── Material volumes (TF: total = V_TF_one × N_TF; CS: full solenoid) ─────
@@ -1944,7 +1947,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             L_sc_strand_TF, L_sc_strand_CS,                        # 115, 116
             # ── Coil masses (indices 117–126) ──────────────────────────────────
             M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF,   # 117–121
-            M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS)    # 122–126
+            M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS,    # 122–126
+            V_blanket)                                             # 127
 
 
 #%% Output writer
@@ -2007,6 +2011,7 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
     #   [49:51] L_sc_strand_TF, L_sc_strand_CS
     #   [51:56] M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF
     #   [56:61] M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS
+    #   [61]    V_blanket
     if len(_rest) >= 29:
         _f_sc_TF      = _rest[17]
         _f_cu_TF      = _rest[18]
@@ -2034,6 +2039,7 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
             _M_cu_TF        = _rest[53];  _M_In_TF    = _rest[54];  _M_total_TF = _rest[55]
             _M_steel_CS     = _rest[56];  _M_sc_CS    = _rest[57]
             _M_cu_CS        = _rest[58];  _M_In_CS    = _rest[59];  _M_total_CS = _rest[60]
+            _V_blanket      = _rest[61] if len(_rest) >= 62 else np.nan
         else:
             (_V_TF_one, _V_CS_geom,
              _V_steel_TF, _V_sc_TF, _V_cu_TF, _V_He_TF, _V_In_TF,
@@ -2043,6 +2049,7 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
              _L_sc_strand_TF, _L_sc_strand_CS,
              _M_steel_TF, _M_sc_TF, _M_cu_TF, _M_In_TF, _M_total_TF,
              _M_steel_CS, _M_sc_CS, _M_cu_CS, _M_In_CS, _M_total_CS) = (np.nan,) * 28
+            _V_blanket = np.nan
     elif len(_rest) >= 23:
         # Intermediate format: TF fracs only
         _f_sc_TF      = _rest[17]
@@ -2060,6 +2067,7 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
          _L_sc_strand_TF, _L_sc_strand_CS,
          _M_steel_TF, _M_sc_TF, _M_cu_TF, _M_In_TF, _M_total_TF,
          _M_steel_CS, _M_sc_CS, _M_cu_CS, _M_In_CS, _M_total_CS) = (np.nan,) * 28
+        _V_blanket = np.nan
     else:
         # Old tuple format: no cable fractions
         _f_sc_TF = _f_cu_TF = _f_He_pipe_TF = _f_void_TF = _f_He_TF = _f_In_TF = np.nan
@@ -2072,6 +2080,7 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
          _L_sc_strand_TF, _L_sc_strand_CS,
          _M_steel_TF, _M_sc_TF, _M_cu_TF, _M_In_TF, _M_total_TF,
          _M_steel_CS, _M_sc_CS, _M_cu_CS, _M_In_CS, _M_total_CS) = (np.nan,) * 28
+        _V_blanket = np.nan
 
     # ── Profile peaking / pedestal parameters ─────────────────────────────────
     # Use the module-level _PROFILE_PRESETS table (single source of truth).
@@ -2215,6 +2224,7 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         # ── Coil volumes and cable inventory ─────────────────────────────────
         "V_TF_one":        _f(_V_TF_one,       np.nan),   # Single TF coil [m³]
         "V_CS_geom":       _f(_V_CS_geom,      np.nan),   # Total CS solenoid [m³]
+        "V_blanket":       _f(_V_blanket,      np.nan),   # Blanket torus [m³]
         "V_steel_TF":      _f(_V_steel_TF,     np.nan),
         "V_sc_TF":         _f(_V_sc_TF,        np.nan),
         "V_cu_TF":         _f(_V_cu_TF,        np.nan),
@@ -2321,7 +2331,8 @@ def save_run_output(config: GlobalConfig,
      n_sc_TF, n_sc_CS,
      L_sc_strand_TF, L_sc_strand_CS,
      M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF,
-     M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS) = results
+     M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS,
+     V_blanket) = results
 
     # ── Recompute N_TF for display (not stored in results tuple) ──────────
     try:
@@ -2484,6 +2495,7 @@ def save_run_output(config: GlobalConfig,
         print("-------------------------------------------------------------------------", file=out)
         print(f"[O] V_TF   (Single TF coil volume, Princeton-D)    : {V_TF_one:.4f} [m³]",  file=out)
         print(f"[O] V_CS   (Total CS solenoid volume)              : {V_CS_geom:.4f} [m³]", file=out)
+        print(f"[O] V_blanket (blanket, Miller LCFS→TF inner face) : {V_blanket:.4f} [m³]", file=out)
         print("-------------------------------------------------------------------------", file=out)
         V_TF_total = V_TF_one * N_TF_disp if np.isfinite(V_TF_one) else np.nan
         print(f"[O] TF material volumes  (total = V_TF × N_TF = {V_TF_one:.3f} × {N_TF_disp})", file=out)
