@@ -60,6 +60,7 @@ if __name__ != "__main__":
         F_CIRCE0D, compute_von_mises_stress,
         calculate_E_mag_TF,
         f_TF_cross_section,
+        _princeton_D_contour,
     )
     from .D0FUS_parameterization import DEFAULT_CONFIG, E_ELEM
 
@@ -90,6 +91,7 @@ else:
         F_CIRCE0D, compute_von_mises_stress,
         calculate_E_mag_TF,
         f_TF_cross_section,
+        _princeton_D_contour,
     )
     from D0FUS_BIB.D0FUS_parameterization import DEFAULT_CONFIG, E_ELEM
 
@@ -2561,6 +2563,351 @@ def plot_TF_side_view(
 
 
 # ---------------------------------------------------------------------------
+# B2b — Radial build assembly (CS + TF + blanket, one side, R–Z plane)
+# ---------------------------------------------------------------------------
+
+
+def plot_assembly_side_view(
+    run: dict,
+    save_dir: str | None = None,
+) -> None:
+    """
+    Combined poloidal (R-Z) side view: CS half + one TF coil + blanket.
+
+    Shows the full radial build in true proportions on a single figure:
+      - Right half of the CS solenoid (rectangle, inboard side).
+      - One Princeton-D TF coil cross-section (winding-pack annulus).
+      - Blanket (amber fill, bounded by Princeton-D outer / Miller LCFS inner).
+      - Plasma interior (light blue, bounded by the Miller LCFS).
+
+    Four dimension annotations are drawn below the figure, at a common
+    horizontal level, using the same engineering-drawing style as the
+    individual side-view figures:
+      * c_CS   — CS winding-pack radial thickness
+      * c_TF   — TF inboard leg radial thickness
+      * b_in   — blanket inboard thickness (= b)
+      * b_out  — blanket outboard thickness (= b + Delta_TF)
+
+    The total TF height H_TF is annotated on the right side of the figure.
+
+    Parameters
+    ----------
+    run      : dict   D0FUS run output including radial build keys.
+    save_dir : str or None
+    """
+    # ── Geometry ────────────────────────────────────────────────────────
+    R0         = float(run["R0"])
+    a          = float(run["a"])
+    kappa_edge = float(run.get("kappa_edge", 1.85))
+    delta_edge = float(run.get("delta_edge", 0.33))
+    bd         = _resolve_build(run)
+
+    b        = bd["b"]
+    c_TF     = bd["c_TF"]
+    Delta_TF = bd["Delta_TF"]
+    c_CS     = bd["c_CS"]
+    R_CS_int = bd["R_CS_int"]
+    R_CS_ext = bd["R_CS_ext"]
+
+    # TF Princeton-D contours
+    (R_bore, R_TF_out, H_TF, _A, _L,
+     R_tf_out, Z_tf_out,
+     R_tf_in,  Z_tf_in) = f_TF_cross_section(a, b, R0, c_TF, Delta_TF)
+    h_tf = H_TF / 2.0
+
+    # Miller LCFS
+    theta  = np.linspace(0.0, 2.0 * np.pi, 500, endpoint=False)
+    R_lcfs = R0 + a * np.cos(theta + np.arcsin(delta_edge) * np.sin(theta))
+    Z_lcfs = kappa_edge * a * np.sin(theta)
+
+    # CS height
+    H_CS = 2.0 * (kappa_edge * a + b + 1.0)
+    h_cs = H_CS / 2.0
+
+    # Key midplane radii for annotations
+    R_tf_in_ib  = R0 - a - b          # TF inner face, inboard
+    R_pl_ib     = R0 - a              # plasma inboard edge
+    R_pl_ob     = R0 + a              # plasma outboard edge
+    R_blkt_ob   = R0 + a + b + Delta_TF   # blanket outer, outboard
+    b_out       = b + Delta_TF
+    V_blkt      = float(run.get("V_blanket", float("nan")))
+
+    # ── Colours ─────────────────────────────────────────────────────────
+    col_cs_bg  = "#C8C8C8"   # CS grey envelope
+    col_cs_wp  = "#303030"   # CS winding pack
+    col_tf     = "black"     # TF body
+    col_blkt   = "#E07820"   # blanket
+    col_plasma = "#D0E8FF"   # plasma
+    col_line   = "black"
+    col_dim    = "#333333"
+
+    # ── Figure ──────────────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(12, 7))
+
+    # 1 — CS: grey envelope (R = 0 → R_CS_ext), then bore white, then WP black
+    ax.add_patch(plt.Rectangle(
+        (0, -h_cs), R_CS_ext, H_CS, fc=col_cs_bg, ec="none", zorder=2))
+    ax.add_patch(plt.Rectangle(
+        (0, -h_cs), R_CS_int, H_CS, fc="white",   ec="none", zorder=3))
+    ax.add_patch(plt.Rectangle(
+        (R_CS_int, -h_cs), c_CS, H_CS, fc=col_cs_wp, ec=col_line, lw=1.2, zorder=4))
+
+    # 2 — TF body (black), blanket (amber), plasma (light blue)
+    ax.fill(R_tf_out, Z_tf_out, fc=col_tf,     ec="none", zorder=5)
+    ax.fill(R_tf_in,  Z_tf_in,  fc=col_blkt,   ec="none", zorder=6)
+    ax.fill(R_lcfs,   Z_lcfs,   fc=col_plasma, ec="none", zorder=7)
+
+    # 3 — Contour lines
+    ax.plot(R_tf_out, Z_tf_out, color=col_line, lw=1.8, zorder=8)
+    ax.plot(R_tf_in,  Z_tf_in,  color=col_line, lw=1.0, zorder=8)
+    ax.plot(R_lcfs,   Z_lcfs,   color=col_line, lw=1.0, zorder=8)
+    for R_edge in (R_CS_int, R_CS_ext):
+        ax.plot([R_edge, R_edge], [-h_cs, h_cs], color=col_line, lw=0.8, zorder=8)
+    ax.plot([0, R_CS_ext], [-h_cs, -h_cs], color=col_line, lw=0.8, zorder=8)
+    ax.plot([0, R_CS_ext], [ h_cs,  h_cs], color=col_line, lw=0.8, zorder=8)
+
+    # 3b — Explicit white gap strip between CS outer face and TF bore.
+    # Without this, the thick border lines on both sides visually fuse and
+    # the gap disappears even when it is physically 5–10 cm wide.
+    gap_width = R_bore - R_CS_ext
+    if gap_width > 0:
+        ax.add_patch(plt.Rectangle(
+            (R_CS_ext, -h_cs), gap_width, H_CS,
+            fc="white", ec="none", zorder=9))
+
+    # 4 — Axes
+    ax.axvline(0, color=col_line, lw=0.5, ls="-.", alpha=0.5, zorder=1)
+    ax.axhline(0, color=col_line, lw=0.4, ls="-.", alpha=0.4, zorder=1)
+
+    # ── Component labels ────────────────────────────────────────────────
+    lbl = dict(ha="center", va="center", fontweight="bold", zorder=10)
+    ax.text((R_CS_int + R_CS_ext) / 2, h_cs * 0.55,
+            "CS", color="white", fontsize=9, **lbl)
+    ax.text((R_bore + R_tf_in_ib) / 2, 0,
+            "TF", color="white", fontsize=8, rotation=90, **lbl)
+    # outboard TF leg label (at midpoint of TF outboard leg, R~R_TF_out - c_TF/2)
+    ax.text(R_TF_out - c_TF * 0.5, 0,
+            "TF", color="white", fontsize=8, rotation=90, **lbl)
+    ax.text((R_tf_in_ib + R_pl_ib) / 2, h_tf * 0.45,
+            "Blanket", color="white", fontsize=7, rotation=90, **lbl)
+    ax.text(R0, 0, "Plasma", color="#1a3a60", fontsize=10, **lbl)
+
+    # ── Dimension annotations ────────────────────────────────────────────
+    arr_kw = dict(arrowstyle="<->", color=col_dim, lw=0.9, mutation_scale=10)
+    ext_kw = dict(color=col_dim, lw=0.4, ls="-", alpha=0.5)
+    lbl_kw = dict(fontsize=8.5, color=col_dim, ha="center",
+                  bbox=dict(fc="white", ec="none", alpha=1.0, pad=1.5))
+
+    # Bottom annotations — staggered levels for the narrow inboard stack
+    z_base = -max(h_tf, h_cs)
+    z_a1   = z_base - 0.50   # c_CS  (level 1)
+    z_a2   = z_base - 1.20   # b_in  (level 2)
+    z_a3   = z_base - 0.50   # b_out (level 1, right side — no overlap)
+
+    def _ann_bot(R_left, R_right, z_from, z_arr, label):
+        """Extension lines downward from z_from to z_arr, then arrow + label."""
+        ax.plot([R_left,  R_left],  [z_from, z_arr - 0.05], **ext_kw, zorder=9)
+        ax.plot([R_right, R_right], [z_from, z_arr - 0.05], **ext_kw, zorder=9)
+        ax.annotate("", xy=(R_right, z_arr), xytext=(R_left, z_arr),
+                    arrowprops=arr_kw, zorder=9)
+        ax.text((R_left + R_right) / 2, z_arr - 0.22, label, va="top", **lbl_kw)
+
+    _ann_bot(R_CS_int,   R_CS_ext,  -h_cs, z_a1, f"$c_{{CS}}$ = {c_CS:.2f} m")
+    _ann_bot(R_tf_in_ib, R_pl_ib,   -h_tf, z_a2, f"$b_{{in}}$ = {b:.2f} m")
+    _ann_bot(R_pl_ob,    R_blkt_ob, -h_tf, z_a3, f"$b_{{out}}$ = {b_out:.2f} m")
+
+    # c_TF — top annotation above the inboard TF leg
+    z_top  = h_tf + 0.40
+    ax.plot([R_bore,     R_bore],     [h_tf, z_top - 0.05], **ext_kw, zorder=9)
+    ax.plot([R_tf_in_ib, R_tf_in_ib], [h_tf, z_top - 0.05], **ext_kw, zorder=9)
+    ax.annotate("", xy=(R_tf_in_ib, z_top), xytext=(R_bore, z_top),
+                arrowprops=arr_kw, zorder=9)
+    ax.text((R_bore + R_tf_in_ib) / 2, z_top + 0.10,
+            f"$c_{{TF}}$ = {c_TF:.2f} m", va="bottom", **lbl_kw)
+
+    # H_TF on the right side of the TF outer face
+    R_vann = R_TF_out + 0.35
+    ax.plot([R_TF_out, R_vann - 0.03], [ h_tf,  h_tf], **ext_kw, zorder=9)
+    ax.plot([R_TF_out, R_vann - 0.03], [-h_tf, -h_tf], **ext_kw, zorder=9)
+    ax.annotate("", xy=(R_vann, h_tf), xytext=(R_vann, -h_tf),
+                arrowprops=arr_kw, zorder=9)
+    ax.text(R_vann + 0.18, 0,
+            f"$H_{{TF}}$ = {H_TF:.2f} m", rotation=90,
+            fontsize=9, color=col_dim, ha="center", va="center",
+            bbox=dict(fc="white", ec="none", alpha=1.0, pad=1.5))
+
+    # ── V_blanket box ────────────────────────────────────────────────────
+    if np.isfinite(V_blkt):
+        ax.text(0.97, 0.97, f"$V_{{blkt}}$ = {V_blkt:.1f} m³",
+                transform=ax.transAxes, fontsize=9, color=col_dim,
+                ha="right", va="top",
+                bbox=dict(fc="white", ec=col_dim, lw=0.6, alpha=0.9, pad=3))
+
+    # ── Axes styling ─────────────────────────────────────────────────────
+    ax.set_aspect("equal")
+    ax.set_xlabel("$R$  [m]", fontsize=11)
+    ax.set_ylabel("$Z$  [m]", fontsize=11)
+    ax.set_title(
+        "Radial build — poloidal cross-section  (CS  /  TF  /  blanket  /  plasma)",
+        fontsize=12, fontweight="bold", pad=10,
+    )
+    ax.grid(False)
+    ax.tick_params(labelsize=10, direction="in")
+    for spine in ax.spines.values():
+        spine.set_linewidth(0.8)
+
+    ax.set_xlim(-0.15, R_TF_out + 1.0)
+    ax.set_ylim(z_a2 - 0.55, z_top + 0.8)
+
+    plt.tight_layout()
+    _save_or_show(fig, save_dir, "run_assembly_side_view")
+
+
+# ---------------------------------------------------------------------------
+# B2b — Blanket side view (R–Z plane)
+# ---------------------------------------------------------------------------
+
+
+def plot_blanket_side_view(
+    run: dict,
+    save_dir: str | None = None,
+) -> None:
+    """
+    Draw the breeding blanket in the poloidal (R-Z) plane.
+
+    The blanket occupies the annular region between the plasma LCFS
+    (Miller parametrisation) and the inner face of the TF coil
+    (Princeton-D contour with r1 = R0−a−b, r2 = R0+a+b+Delta_TF).
+
+    By construction this gives an inboard radial thickness of b and an
+    outboard radial thickness of b + Delta_TF at the midplane.
+
+    Three dimension annotations are drawn:
+      * b_in    — inboard blanket thickness (= b)
+      * b_out   — outboard blanket thickness (= b + Delta_TF)
+      * H_blkt  — total blanket height (= height of TF inner face contour)
+
+    Parameters
+    ----------
+    run      : dict   D0FUS run output including radial build keys.
+    save_dir : str or None
+    """
+    # ── Extract geometry ─────────────────────────────────────────────
+    R0         = float(run["R0"])
+    a          = float(run["a"])
+    kappa_edge = float(run.get("kappa_edge", 1.85))
+    delta_edge = float(run.get("delta_edge", 0.33))
+    bd         = _resolve_build(run)
+
+    b        = bd["b"]
+    c_TF     = bd["c_TF"]
+    Delta_TF = bd["Delta_TF"]
+
+    # ── Outer boundary: actual TF inner face (consistent with f_V_blanket) ──
+    (_, _, _, _, _, _, _, R_out, Z_out) = f_TF_cross_section(a, b, R0, c_TF, Delta_TF)
+
+    # Midplane radii used for dimension annotations
+    r1_out = R0 - a - b          # inboard face of TF (= straight inboard leg ≈ R_out.min())
+    r2_out = R0 + a + b + Delta_TF  # outboard face of TF inner boundary at midplane
+
+    # ── Inner boundary: Miller LCFS ───────────────────────────────────
+    theta  = np.linspace(0.0, 2.0 * np.pi, 500, endpoint=False)
+    R_in   = R0 + a * np.cos(theta + np.arcsin(delta_edge) * np.sin(theta))
+    Z_in   = kappa_edge * a * np.sin(theta)
+
+    # ── Geometry scalars for annotations ─────────────────────────────
+    H_blkt  = 2.0 * float(Z_out.max())
+    h       = H_blkt / 2.0
+    b_out   = b + Delta_TF          # outboard thickness at midplane
+
+    V_blkt  = float(run.get("V_blanket", float("nan")))
+
+    # ── Colours ───────────────────────────────────────────────────────
+    col_blkt   = "#E07820"    # warm amber for blanket body
+    col_plasma = "#D0E8FF"    # light blue for plasma region
+    col_line   = "black"
+    col_dim    = "#333333"
+
+    # ── Figure ────────────────────────────────────────────────────────
+    fig, ax = plt.subplots(figsize=(5, 7))
+
+    # 1. Blanket body: fill outer D, then cut out plasma interior
+    ax.fill(R_out, Z_out, fc=col_blkt,   ec="none", zorder=2)
+    ax.fill(R_in,  Z_in,  fc=col_plasma, ec="none", zorder=3)
+
+    # 2. Contour outlines
+    ax.plot(R_out, Z_out, color=col_line, lw=1.8, zorder=4)
+    ax.plot(R_in,  Z_in,  color=col_line, lw=1.0, zorder=4)
+
+    # 3. Midplane axis
+    ax.axhline(0, color=col_line, lw=0.4, ls="-.", alpha=0.4, zorder=1)
+
+    # ── Dimension annotations ─────────────────────────────────────────
+    arr_kw = dict(arrowstyle="<->", color=col_dim, lw=0.9, mutation_scale=10)
+    ext_kw = dict(color=col_dim, lw=0.4, ls="-", alpha=0.5)
+    lbl_kw = dict(fontsize=9, color=col_dim, ha="center",
+                  bbox=dict(fc="white", ec="none", alpha=1.0, pad=1.5))
+
+    z_bottom = -h
+
+    # --- 1. b_in — inboard blanket thickness ---
+    z_dim = z_bottom - 0.4
+    ax.plot([r1_out, r1_out], [z_bottom, z_dim - 0.05], **ext_kw, zorder=9)
+    ax.plot([R0 - a, R0 - a], [z_bottom, z_dim - 0.05], **ext_kw, zorder=9)
+    ax.annotate("", xy=(R0 - a, z_dim), xytext=(r1_out, z_dim),
+                arrowprops=arr_kw, zorder=9)
+    ax.text((r1_out + R0 - a) / 2, z_dim - 0.25,
+            f"$b_{{in}}$ = {b:.2f} m", va="top", **lbl_kw)
+
+    # --- 2. b_out — outboard blanket thickness ---
+    z_dim2 = z_dim - 0.9
+    ax.plot([R0 - a, R0 - a], [z_dim - 0.05, z_dim2 - 0.05], **ext_kw, zorder=9)
+    ax.plot([r2_out, r2_out], [z_bottom,     z_dim2 - 0.05], **ext_kw, zorder=9)
+    ax.annotate("", xy=(r2_out, z_dim2), xytext=(R0 + a, z_dim2),
+                arrowprops=arr_kw, zorder=9)
+    ax.text((R0 + a + r2_out) / 2, z_dim2 - 0.25,
+            f"$b_{{out}}$ = {b_out:.2f} m", va="top", **lbl_kw)
+
+    # --- 3. H_blkt — total height ---
+    R_vann = r1_out - 0.35
+    ax.plot([r1_out, R_vann - 0.03], [ h,  h], **ext_kw, zorder=9)
+    ax.plot([r1_out, R_vann - 0.03], [-h, -h], **ext_kw, zorder=9)
+    ax.annotate("", xy=(R_vann, h), xytext=(R_vann, -h),
+                arrowprops=arr_kw, zorder=9)
+    ax.text(R_vann - 0.20, 0,
+            f"$H_{{blkt}}$ = {H_blkt:.2f} m", rotation=90,
+            fontsize=9, color=col_dim, ha="center", va="center",
+            bbox=dict(fc="white", ec="none", alpha=1.0, pad=1.5))
+
+    # ── Volume annotation ─────────────────────────────────────────────
+    if np.isfinite(V_blkt):
+        ax.text(0.97, 0.97, f"$V_{{blkt}}$ = {V_blkt:.1f} m³",
+                transform=ax.transAxes, fontsize=9, color=col_dim,
+                ha="right", va="top",
+                bbox=dict(fc="white", ec=col_dim, lw=0.6, alpha=0.9, pad=3))
+
+    # ── Axes styling ──────────────────────────────────────────────────
+    ax.set_aspect("equal")
+    ax.set_xlabel("$R$  [m]", fontsize=11)
+    ax.set_ylabel("$Z$  [m]", fontsize=11)
+    ax.set_title(
+        "Blanket — poloidal cross-section\n"
+        "(Miller LCFS inner  /  TF inner face outer)",
+        fontsize=11, fontweight="bold", pad=10,
+    )
+    ax.grid(False)
+    ax.tick_params(labelsize=10, direction="in")
+    for spine in ax.spines.values():
+        spine.set_linewidth(0.8)
+
+    ax.set_xlim(r1_out - 1.5, r2_out + 0.8)
+    ax.set_ylim(-h - 2.2, h + 0.8)
+
+    plt.tight_layout()
+    _save_or_show(fig, save_dir, "run_blanket_side_view")
+
+
+# ---------------------------------------------------------------------------
 # B3 — CS solenoid cross-section (R–Z plane)
 # ---------------------------------------------------------------------------
 
@@ -2591,13 +2938,14 @@ def plot_CS_cross_section(
     Sarasola et al., IEEE Trans. Appl. Supercond. 33, 1-5 (2023).
     """
 
+    a          = float(run["a"])
+    kappa_edge = float(run.get("kappa_edge", 1.85))
     bd = _resolve_build(run)
 
     R_CS_int = bd["R_CS_int"]          # Inner radius of winding pack [m]
     R_CS_ext = bd["R_CS_ext"]          # Outer radius of winding pack [m]
     c_CS     = bd["c_CS"]              # Winding-pack radial thickness [m]
-    H_TF     = bd["H_TF"]
-    H_CS     = H_TF * 0.88            # CS slightly shorter than TF [m]
+    H_CS     = 2.0 * (kappa_edge * a + bd["b"] + 1.0)
     h_cs     = H_CS / 2.0
 
     # ── Black-and-white colour scheme (matches TF side view) ────────
@@ -2741,7 +3089,7 @@ def plot_all(
         Pass ``None`` to display each figure interactively.
     cfg      : config object (DEFAULT_CONFIG if None).
     """
-    N = 30
+    N = 32
 
     def _p(i, label):
         print(f"  [{i:2d}/{N}] {label}")
@@ -2837,20 +3185,26 @@ def plot_all(
     _p(25, "CIRCE stress-model validation")
     plot_CIRCE_stress_validation(save_dir=save_dir)
 
-    _p(26, "TF coil side view")
+    _p(26, "Radial build assembly (CS / TF / blanket)")
+    plot_assembly_side_view(run, save_dir=save_dir)
+
+    _p(27, "TF coil side view")
     plot_TF_side_view(run, save_dir=save_dir)
 
-    _p(27, "CS cross-section")
+    _p(28, "Blanket side view")
+    plot_blanket_side_view(run, save_dir=save_dir)
+
+    _p(29, "CS cross-section")
     plot_CS_cross_section(run, save_dir=save_dir)
 
     # ── Benchmarks & machine comparison ───────────────────────────────
-    _p(28, "TF benchmark table")
+    _p(30, "TF benchmark table")
     plot_TF_benchmark_table(cfg=cfg, save_dir=save_dir)
 
-    _p(29, "CS benchmark table")
+    _p(31, "CS benchmark table")
     plot_CS_benchmark_table(cfg=cfg, save_dir=save_dir)
 
-    _p(30, "Tokamak LCFS comparison")
+    _p(32, "Tokamak LCFS comparison")
     plot_cross_section_comparison(run=run, save_dir=save_dir)
 
     print("Done.")
@@ -2886,7 +3240,7 @@ def plot_run(
         If provided, figures are saved as PNG files.
         Pass ``None`` to display interactively.
     """
-    N = 10
+    N = 12
 
     def _p(i, label):
         print(f"  [{i:2d}/{N}] {label}")
@@ -2915,16 +3269,22 @@ def plot_run(
     plot_radiation_profile(run, save_dir=save_dir)
 
     # ── Coils & conductors ────────────────────────────────────────────
-    _p(7, "TF coil side view")
+    _p(7, "Radial build assembly (CS / TF / blanket)")
+    plot_assembly_side_view(run, save_dir=save_dir)
+
+    _p(8, "TF coil side view")
     plot_TF_side_view(run, save_dir=save_dir)
 
-    _p(8, "CICC TF conductor")
+    _p(9, "Blanket side view")
+    plot_blanket_side_view(run, save_dir=save_dir)
+
+    _p(10, "CICC TF conductor")
     plot_CICC_cross_section(build_conductor_from_run(run, coil="TF"), save_dir=save_dir)
 
-    _p(9, "CS cross-section")
+    _p(11, "CS cross-section")
     plot_CS_cross_section(run, save_dir=save_dir)
 
-    _p(10, "CICC CS conductor")
+    _p(12, "CICC CS conductor")
     plot_CICC_cross_section(build_conductor_from_run(run, coil="CS"), save_dir=save_dir)
 
     print("Done.")
