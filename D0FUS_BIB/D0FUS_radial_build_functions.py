@@ -5214,6 +5214,68 @@ def f_V_TF(a: float, b: float, R0: float,
     return A_cross * 2.0 * np.pi * R_bore / float(N_TF)
 
 
+def _moment_area(R: np.ndarray, Z: np.ndarray) -> float:
+    """
+    Compute ∫∫_enclosed R dA for a closed contour via Green's theorem.
+
+    Exact for piecewise-linear polygons (same accuracy class as the
+    shoelace _area formula).  Orientation-independent (abs value taken).
+
+    Uses:  ∫∫ R dA = (1/6) Σ_i (Z_{i+1}−Z_i)(R_i² + R_i R_{i+1} + R_{i+1}²)
+    """
+    Rp = np.roll(R, -1)
+    Zp = np.roll(Z, -1)
+    return abs(np.sum((Zp - Z) * (R**2 + R * Rp + Rp**2))) / 6.0
+
+
+def f_V_blanket(a: float, b: float, R0: float,
+                κ: float, δ: float, Delta_TF: float,
+                N_theta: int = 500,
+                R_outer: np.ndarray | None = None,
+                Z_outer: np.ndarray | None = None) -> float:
+    """
+    Volume of the blanket (continuous torus between plasma LCFS and TF inner face).
+
+    Outer boundary: actual inner face of the TF coil (R_in/Z_in from
+                    f_TF_cross_section), passed via R_outer/Z_outer.  This is
+                    the physically correct boundary — the blanket fills exactly
+                    the cavity inside the TF winding pack.  When R_outer/Z_outer
+                    are omitted a fresh Princeton-D at r1=R0−a−b, r2=R0+a+b+Delta_TF
+                    is used instead (slightly shorter, ~23% smaller volume).
+    Inner boundary: Miller LCFS with elongation κ and triangularity δ
+                    R(θ) = R0 + a·cos(θ + arcsin(δ)·sin(θ))
+                    Z(θ) = κ·a·sin(θ)
+
+    Volume formula (exact for a body of revolution):
+        V = 2π ∫∫_cross-section R dA
+          = 2π × [_moment_area(outer) − _moment_area(inner)]
+
+    Parameters
+    ----------
+    a, b     : float          Plasma minor radius and blanket+shield thickness [m].
+    R0       : float          Major radius [m].
+    κ        : float          Plasma elongation (LCFS).
+    δ        : float          Plasma triangularity (LCFS).
+    Delta_TF : float          Outboard port-access radial clearance [m].
+    N_theta  : int            Points on the Miller LCFS contour.
+    R_outer, Z_outer : ndarray or None
+                              Pre-computed outer boundary contour (TF inner face).
+                              When provided, the Princeton-D ODE is not re-solved.
+
+    Returns
+    -------
+    V_blanket : float  Total blanket volume [m³].
+    """
+    if R_outer is None:
+        R_outer, Z_outer = _princeton_D_contour(R0 - a - b, R0 + a + b + Delta_TF)
+
+    theta = np.linspace(0.0, 2.0 * np.pi, N_theta, endpoint=False)
+    R_in  = R0 + a * np.cos(theta + np.arcsin(δ) * np.sin(theta))
+    Z_in  = κ * a * np.sin(theta)
+
+    return 2.0 * np.pi * (_moment_area(R_outer, Z_outer) - _moment_area(R_in, Z_in))
+
+
 def f_V_CS(a: float, b: float, c: float, d: float,
            R0: float, κ: float,
            Gap: float, Choice_Buck_Wedg: str) -> float:
