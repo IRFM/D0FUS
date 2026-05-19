@@ -469,3 +469,95 @@ def preset_refined(**overrides) -> 'GlobalConfig':
     # Merge: overrides take precedence over the preset defaults so the user
     # can change any single sub-mode without bypassing the preset entirely.
     return GlobalConfig(**{**_PRESET_REFINED_SUBMODES, **overrides})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Coil material volumetric mass densities [kg/m³]
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Structural steels
+# -----------------
+#   316LN  (ITER TF/CS casing, vacuum vessel) — austenitic stainless, cryogenic
+#           ρ = 7930 kg/m³.
+#           Ref: ITER DDD 1.6 (2013); Garland et al., Fusion Eng. Des. 2008.
+#
+#   N50H   (high-strength austenitic, ITER Nb3Sn conduit) — Incoloy-like
+#           ρ = 8050 kg/m³.
+#           Ref: Mitchell, Fusion Eng. Des. 75-79 (2005).
+#
+# Superconducting materials  (volume fraction in D0FUS = non-Cu SC material)
+# ---------------------------------------------------------------------------
+#   Nb3Sn  A15 compound (filaments without Cu matrix)
+#           ρ = 8600 kg/m³.
+#           Ref: Wilson, "Superconducting Magnets", Clarendon Press (1983);
+#                Larbalestier, MRS Bull. 29 (2004).
+#
+#   NbTi   alloy Ti-46.5 wt% Nb (filaments without Cu matrix)
+#           ρ = 6100 kg/m³.
+#           Ref: Iwasa, "Case Studies in Superconducting Magnets", 2nd ed.
+#                Springer (2009), Table A1.3.
+#
+#   REBCO  coated-conductor non-Cu stack (REBCO layer + buffer + Hastelloy
+#           substrate — weighted average for Fujikura / SuperPower 12 mm tape)
+#           ρ = 7800 kg/m³.
+#           Ref: Senatore et al., Supercond. Sci. Technol. 37 (2024);
+#                Fujikura HTS tape datasheet (2022).
+#
+# Copper stabiliser
+# -----------------
+#   OFHC copper (oxygen-free high-conductivity)
+#           ρ = 8960 kg/m³.
+#           Ref: ASM Handbook Vol. 2 (1990).
+#
+# Insulation
+# ----------
+#   Cryogenic glass-epoxy (GFRP, S-glass / CTD-101K binder)
+#           ρ = 1900 kg/m³.
+#           Ref: Weisend II (ed.), "Handbook of Cryogenic Engineering",
+#                Taylor & Francis (1998), p. 386;
+#                Bauer et al., Cryogenics 42 (2002).
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+COIL_MATERIAL_DENSITIES = {
+    # Structural steel — keyed by Chosen_Steel value
+    'steel': {
+        '316L':   7930.0,   # [kg/m³]  316LN austenitic stainless
+        'N50H':   8050.0,   # [kg/m³]  N50H high-strength austenitic
+        'Manual': 7930.0,   # [kg/m³]  fallback to 316LN
+    },
+    # Superconductor material (non-Cu fraction) — keyed by Supra_choice
+    'SC': {
+        'Nb3Sn':  8600.0,   # [kg/m³]  Nb3Sn A15 filament
+        'NbTi':   6100.0,   # [kg/m³]  NbTi alloy
+        'REBCO':  7800.0,   # [kg/m³]  REBCO tape non-Cu stack
+        'Manual': 8600.0,   # [kg/m³]  fallback to Nb3Sn
+    },
+    # Copper stabiliser
+    'Cu':         8960.0,   # [kg/m³]  OFHC copper
+    # Insulation (cryogenic glass-epoxy)
+    'insulation': 1900.0,   # [kg/m³]  GFRP CTD-101K
+}
+
+
+def material_rho(Chosen_Steel: str, Supra_choice: str) -> dict:
+    """
+    Return volumetric mass densities [kg/m³] for all coil materials.
+
+    Parameters
+    ----------
+    Chosen_Steel : str  Steel grade key from GlobalConfig ('316L', 'N50H', 'Manual').
+    Supra_choice : str  SC type from GlobalConfig ('Nb3Sn', 'NbTi', 'REBCO', 'Manual').
+
+    Returns
+    -------
+    dict with keys: 'steel', 'SC', 'Cu', 'insulation'  — all in [kg/m³].
+    """
+    steel_key = Chosen_Steel if Chosen_Steel in COIL_MATERIAL_DENSITIES['steel'] else 'Manual'
+    sc_key    = Supra_choice  if Supra_choice  in COIL_MATERIAL_DENSITIES['SC']    else 'Manual'
+    return {
+        'steel':       COIL_MATERIAL_DENSITIES['steel'][steel_key],
+        'SC':          COIL_MATERIAL_DENSITIES['SC'][sc_key],
+        'Cu':          COIL_MATERIAL_DENSITIES['Cu'],
+        'insulation':  COIL_MATERIAL_DENSITIES['insulation'],
+    }
