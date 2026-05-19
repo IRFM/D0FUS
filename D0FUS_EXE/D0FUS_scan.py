@@ -1556,7 +1556,7 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
             continue
 
         # ===========================================================
-        # Unpack the full run() return tuple (v3 — 99 outputs)
+        # Unpack the full run() return tuple
         # ===========================================================
         (B0, B_CS, B_pol,
          tauE, W_th,
@@ -1582,7 +1582,8 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
          I_LH, I_EC, I_NBI,
          f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF,
          f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS,
-         beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha) = res
+         beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha,
+         *_coil_extra) = res
 
         # ── Plasma stability limits ──────────────────────────────────
         betaN_limit_value = config.betaN_limit

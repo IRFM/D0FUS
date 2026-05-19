@@ -176,6 +176,36 @@ _IDX = {
     'betaN_total':     96,
     'tau_sd_alpha':    97,
     'W_fast_alpha':    98,
+    # ── Coil volumes and cable inventory ───────────────────────────────
+    'V_TF_one':       99,     # Single TF coil volume (Pappus centroid) [m³]
+    'V_CS_geom':      100,    # Total CS solenoid volume [m³]
+    'V_steel_TF':     101,    # TF steel total (all coils) [m³]
+    'V_sc_TF':        102,    # TF SC material total [m³]
+    'V_cu_TF':        103,    # TF Cu total [m³]
+    'V_He_TF':        104,    # TF He total [m³]
+    'V_In_TF':        105,    # TF insulation total [m³]
+    'V_steel_CS':     106,    # CS steel [m³]
+    'V_sc_CS':        107,    # CS SC material [m³]
+    'V_cu_CS':        108,    # CS Cu [m³]
+    'V_He_CS':        109,    # CS He [m³]
+    'V_In_CS':        110,    # CS insulation [m³]
+    'L_cable_TF':     111,    # Total TF cable conductor length [m]
+    'L_cable_CS':     112,    # Total CS cable conductor length [m]
+    'n_sc_TF':        113,    # SC strands/tapes per TF cable [-]
+    'n_sc_CS':        114,    # SC strands/tapes per CS cable [-]
+    'L_sc_strand_TF': 115,    # Total TF SC strand length [m]
+    'L_sc_strand_CS': 116,    # Total CS SC strand length [m]
+    # ── Coil masses ─────────────────────────────────────────────────────────
+    'M_steel_TF':  117,   # TF steel mass [kg]
+    'M_sc_TF':     118,   # TF SC mass [kg]
+    'M_cu_TF':     119,   # TF Cu mass [kg]
+    'M_In_TF':     120,   # TF insulation mass [kg]
+    'M_total_TF':  121,   # TF total mass [kg]
+    'M_steel_CS':  122,   # CS steel mass [kg]
+    'M_sc_CS':     123,   # CS SC mass [kg]
+    'M_cu_CS':     124,   # CS Cu mass [kg]
+    'M_In_CS':     125,   # CS insulation mass [kg]
+    'M_total_CS':  126,   # CS total mass [kg]
 }
 
 #%% Global Variables (default values)

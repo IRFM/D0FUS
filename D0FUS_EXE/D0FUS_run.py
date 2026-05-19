@@ -20,7 +20,7 @@ from dataclasses import replace as dc_replace, asdict
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # D0FUS modules
-from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG
+from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG, material_rho
 from D0FUS_BIB.D0FUS_radial_build_functions import *
 from D0FUS_BIB.D0FUS_physical_functions import *
 from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
@@ -1526,6 +1526,14 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             _nan, _nan, _nan, _nan, _nan, _nan,  # f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF
             _nan, _nan, _nan, _nan, _nan, _nan,  # f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS
             _nan, _nan, _nan, _nan,              # beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha
+            _nan, _nan,                          # V_TF_one, V_CS_geom
+            _nan, _nan, _nan, _nan, _nan,        # V_steel_TF, V_sc_TF, V_cu_TF, V_He_TF, V_In_TF
+            _nan, _nan, _nan, _nan, _nan,        # V_steel_CS, V_sc_CS, V_cu_CS, V_He_CS, V_In_CS
+            _nan, _nan,                          # L_cable_TF, L_cable_CS
+            _nan, _nan,                          # n_sc_TF, n_sc_CS
+            _nan, _nan,                          # L_sc_strand_TF, L_sc_strand_CS
+            _nan, _nan, _nan, _nan, _nan,        # M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF
+            _nan, _nan, _nan, _nan, _nan,        # M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS
         )
 
     # =========================================================================
@@ -1853,6 +1861,48 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     (V_BB, V_TF, V_CS, V_FI) = f_volume(a, b, c, d, R0, κ)
     cost_solution = (V_BB + V_TF + V_CS) / P_fus   # legacy cost proxy [m^3/MW]
 
+    # ── TF Princeton-D cross-section geometry ─────────────────────────────────
+    (R_bore_TF, _R_TF_out, _H_TF_D, _A_cross_TF, L_turn_TF,
+     _R_out, _Z_out, _R_in, _Z_in) = f_TF_cross_section(a, b, R0, c, Delta_TF)
+
+    # ── Single-coil TF volume via Pappus centroid theorem ─────────────────────
+    V_TF_one  = f_V_TF(a, b, R0, c, int(N_TF), Delta_TF)
+    V_CS_geom = f_V_CS(a, b, c, d, R0, κ, Gap, Choice_Buck_Wedg)
+
+    # ── Material volumes (TF: total = V_TF_one × N_TF; CS: full solenoid) ─────
+    (V_steel_TF, V_sc_TF, V_cu_TF, V_He_TF, V_In_TF,
+     V_steel_CS, V_sc_CS, V_cu_CS, V_He_CS, V_In_CS) = f_coil_material_volumes(
+        V_TF_one, int(N_TF),
+        Steel_fraction_TF,
+        f_sc_TF, f_cu_TF, f_He_TF, f_In_TF,
+        V_CS_geom,
+        Steel_fraction_CS,
+        f_sc_CS, f_cu_CS, f_He_CS, f_In_CS)
+
+    # ── Cable conductor lengths ───────────────────────────────────────────────
+    R_CS_ext_val = R0 - a - b - c - _gap_eff
+    L_turn_CS    = np.pi * (R_CS_ext_val + R_CS_ext_val - d)   # 2π × R_mean
+    _R_TF_in     = R0 - a - b   # plasma-facing inner face, consistent with D0FUS NI convention
+    (L_cable_TF, L_cable_CS,
+     _Nturns_TF, _Nturns_CS) = f_cable_length(
+        int(N_TF), L_turn_TF, Bmax_TF, _R_TF_in,
+        I_cond,
+        N_sub_CS, L_turn_CS, B_CS, H_TF)   # H_TF = 2(κa+b+1) = H_CS_NI
+
+    # ── Material masses ───────────────────────────────────────────────────────
+    (M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF,
+     M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS) = f_coil_masses(
+        V_steel_TF, V_sc_TF, V_cu_TF, V_In_TF,
+        V_steel_CS, V_sc_CS, V_cu_CS, V_In_CS,
+        Chosen_Steel, Supra_choice)
+
+    # ── SC strand counts and total SC strand lengths ───────────────────────────
+    (n_sc_TF, n_sc_CS,
+     L_sc_strand_TF, L_sc_strand_CS) = f_cable_strands(
+        V_sc_TF, L_cable_TF,
+        V_sc_CS, L_cable_CS,
+        Supra_choice)
+
     return (B0_solution,  B_CS,  B_pol_solution,
             tauE_solution,  W_th_solution,
             Q_solution,  Volume_solution,  Surface_solution,
@@ -1884,7 +1934,17 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             I_LH_solution,  I_EC_solution,  I_NBI_solution,
             f_sc_TF,  f_cu_TF,  f_He_pipe_TF,  f_void_TF,  f_He_TF,  f_In_TF,
             f_sc_CS,  f_cu_CS,  f_He_pipe_CS,  f_void_CS,  f_He_CS,  f_In_CS,
-            beta_fast_alpha,  betaN_total,  tau_sd_alpha,  W_fast_alpha)
+            beta_fast_alpha,  betaN_total,  tau_sd_alpha,  W_fast_alpha,
+            # ── Coil volumes and cable inventory (indices 99–116) ──────────────
+            V_TF_one,   V_CS_geom,                                 # 99, 100
+            V_steel_TF, V_sc_TF, V_cu_TF, V_He_TF, V_In_TF,      # 101–105
+            V_steel_CS, V_sc_CS, V_cu_CS, V_He_CS, V_In_CS,       # 106–110
+            L_cable_TF,     L_cable_CS,                            # 111, 112
+            n_sc_TF,        n_sc_CS,                               # 113, 114
+            L_sc_strand_TF, L_sc_strand_CS,                        # 115, 116
+            # ── Coil masses (indices 117–126) ──────────────────────────────────
+            M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF,   # 117–121
+            M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS)    # 122–126
 
 
 #%% Output writer
@@ -1931,7 +1991,7 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
      *_rest) = results
 
     # ── Cable-level fractions (explicit positions in the new tuple layout) ─────
-    # Expected *_rest layout (33 values):
+    # Expected *_rest layout (55 values):
     #   [0:7]   ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS, Vloop, li
     #   [7:10]  eta_LH, eta_EC, eta_NBI
     #   [10:14] P_LH, P_EC, P_NBI, P_ICR
@@ -1939,6 +1999,14 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
     #   [17:23] f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF
     #   [23:29] f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS
     #   [29:33] beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha
+    #   [33:35] V_TF_one, V_CS_geom
+    #   [35:40] V_steel_TF, V_sc_TF, V_cu_TF, V_He_TF, V_In_TF
+    #   [40:45] V_steel_CS, V_sc_CS, V_cu_CS, V_He_CS, V_In_CS
+    #   [45:47] L_cable_TF, L_cable_CS
+    #   [47:49] n_sc_TF, n_sc_CS
+    #   [49:51] L_sc_strand_TF, L_sc_strand_CS
+    #   [51:56] M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF
+    #   [56:61] M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS
     if len(_rest) >= 29:
         _f_sc_TF      = _rest[17]
         _f_cu_TF      = _rest[18]
@@ -1952,6 +2020,29 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         _f_void_CS    = _rest[26]
         _f_He_CS      = _rest[27]
         _f_In_CS      = _rest[28]
+        # Coil volumes and cable inventory (present when len >= 55)
+        if len(_rest) >= 61:
+            _V_TF_one       = _rest[33];  _V_CS_geom  = _rest[34]
+            _V_steel_TF     = _rest[35];  _V_sc_TF    = _rest[36]
+            _V_cu_TF        = _rest[37];  _V_He_TF    = _rest[38];  _V_In_TF = _rest[39]
+            _V_steel_CS     = _rest[40];  _V_sc_CS    = _rest[41]
+            _V_cu_CS        = _rest[42];  _V_He_CS    = _rest[43];  _V_In_CS = _rest[44]
+            _L_cable_TF     = _rest[45];  _L_cable_CS = _rest[46]
+            _n_sc_TF        = _rest[47];  _n_sc_CS    = _rest[48]
+            _L_sc_strand_TF = _rest[49];  _L_sc_strand_CS = _rest[50]
+            _M_steel_TF     = _rest[51];  _M_sc_TF    = _rest[52]
+            _M_cu_TF        = _rest[53];  _M_In_TF    = _rest[54];  _M_total_TF = _rest[55]
+            _M_steel_CS     = _rest[56];  _M_sc_CS    = _rest[57]
+            _M_cu_CS        = _rest[58];  _M_In_CS    = _rest[59];  _M_total_CS = _rest[60]
+        else:
+            (_V_TF_one, _V_CS_geom,
+             _V_steel_TF, _V_sc_TF, _V_cu_TF, _V_He_TF, _V_In_TF,
+             _V_steel_CS, _V_sc_CS, _V_cu_CS, _V_He_CS, _V_In_CS,
+             _L_cable_TF, _L_cable_CS,
+             _n_sc_TF, _n_sc_CS,
+             _L_sc_strand_TF, _L_sc_strand_CS,
+             _M_steel_TF, _M_sc_TF, _M_cu_TF, _M_In_TF, _M_total_TF,
+             _M_steel_CS, _M_sc_CS, _M_cu_CS, _M_In_CS, _M_total_CS) = (np.nan,) * 28
     elif len(_rest) >= 23:
         # Intermediate format: TF fracs only
         _f_sc_TF      = _rest[17]
@@ -1961,10 +2052,26 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         _f_He_TF      = _rest[21]
         _f_In_TF      = _rest[22]
         _f_sc_CS = _f_cu_CS = _f_He_pipe_CS = _f_void_CS = _f_He_CS = _f_In_CS = np.nan
+        (_V_TF_one, _V_CS_geom,
+         _V_steel_TF, _V_sc_TF, _V_cu_TF, _V_He_TF, _V_In_TF,
+         _V_steel_CS, _V_sc_CS, _V_cu_CS, _V_He_CS, _V_In_CS,
+         _L_cable_TF, _L_cable_CS,
+         _n_sc_TF, _n_sc_CS,
+         _L_sc_strand_TF, _L_sc_strand_CS,
+         _M_steel_TF, _M_sc_TF, _M_cu_TF, _M_In_TF, _M_total_TF,
+         _M_steel_CS, _M_sc_CS, _M_cu_CS, _M_In_CS, _M_total_CS) = (np.nan,) * 28
     else:
         # Old tuple format: no cable fractions
         _f_sc_TF = _f_cu_TF = _f_He_pipe_TF = _f_void_TF = _f_He_TF = _f_In_TF = np.nan
         _f_sc_CS = _f_cu_CS = _f_He_pipe_CS = _f_void_CS = _f_He_CS = _f_In_CS = np.nan
+        (_V_TF_one, _V_CS_geom,
+         _V_steel_TF, _V_sc_TF, _V_cu_TF, _V_He_TF, _V_In_TF,
+         _V_steel_CS, _V_sc_CS, _V_cu_CS, _V_He_CS, _V_In_CS,
+         _L_cable_TF, _L_cable_CS,
+         _n_sc_TF, _n_sc_CS,
+         _L_sc_strand_TF, _L_sc_strand_CS,
+         _M_steel_TF, _M_sc_TF, _M_cu_TF, _M_In_TF, _M_total_TF,
+         _M_steel_CS, _M_sc_CS, _M_cu_CS, _M_In_CS, _M_total_CS) = (np.nan,) * 28
 
     # ── Profile peaking / pedestal parameters ─────────────────────────────────
     # Use the module-level _PROFILE_PRESETS table (single source of truth).
@@ -2105,6 +2212,36 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         "f_void_CS":    _f(_f_void_CS, np.nan),
         "f_He_CS":      _f(_f_He_CS, np.nan),
         "f_In_CS":      _f(_f_In_CS, np.nan),
+        # ── Coil volumes and cable inventory ─────────────────────────────────
+        "V_TF_one":        _f(_V_TF_one,       np.nan),   # Single TF coil [m³]
+        "V_CS_geom":       _f(_V_CS_geom,      np.nan),   # Total CS solenoid [m³]
+        "V_steel_TF":      _f(_V_steel_TF,     np.nan),
+        "V_sc_TF":         _f(_V_sc_TF,        np.nan),
+        "V_cu_TF":         _f(_V_cu_TF,        np.nan),
+        "V_He_TF":         _f(_V_He_TF,        np.nan),
+        "V_In_TF":         _f(_V_In_TF,        np.nan),
+        "V_steel_CS":      _f(_V_steel_CS,     np.nan),
+        "V_sc_CS":         _f(_V_sc_CS,        np.nan),
+        "V_cu_CS":         _f(_V_cu_CS,        np.nan),
+        "V_He_CS":         _f(_V_He_CS,        np.nan),
+        "V_In_CS":         _f(_V_In_CS,        np.nan),
+        "L_cable_TF":      _f(_L_cable_TF,     np.nan),
+        "L_cable_CS":      _f(_L_cable_CS,     np.nan),
+        "n_sc_TF":         _f(_n_sc_TF,        np.nan),
+        "n_sc_CS":         _f(_n_sc_CS,        np.nan),
+        "L_sc_strand_TF":  _f(_L_sc_strand_TF, np.nan),
+        "L_sc_strand_CS":  _f(_L_sc_strand_CS, np.nan),
+        # ── Coil masses ─────────────────────────────────────────────────────
+        "M_steel_TF":  _f(_M_steel_TF,  np.nan),
+        "M_sc_TF":     _f(_M_sc_TF,     np.nan),
+        "M_cu_TF":     _f(_M_cu_TF,     np.nan),
+        "M_In_TF":     _f(_M_In_TF,     np.nan),
+        "M_total_TF":  _f(_M_total_TF,  np.nan),
+        "M_steel_CS":  _f(_M_steel_CS,  np.nan),
+        "M_sc_CS":     _f(_M_sc_CS,     np.nan),
+        "M_cu_CS":     _f(_M_cu_CS,     np.nan),
+        "M_In_CS":     _f(_M_In_CS,     np.nan),
+        "M_total_CS":  _f(_M_total_CS,  np.nan),
     }
 
 
@@ -2176,7 +2313,15 @@ def save_run_output(config: GlobalConfig,
      I_LH_out, I_EC_out, I_NBI_out,
      f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF,
      f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS,
-     beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha) = results
+     beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha,
+     V_TF_one, V_CS_geom,
+     V_steel_TF, V_sc_TF, V_cu_TF, V_He_TF, V_In_TF,
+     V_steel_CS, V_sc_CS, V_cu_CS, V_He_CS, V_In_CS,
+     L_cable_TF, L_cable_CS,
+     n_sc_TF, n_sc_CS,
+     L_sc_strand_TF, L_sc_strand_CS,
+     M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF,
+     M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS) = results
 
     # ── Recompute N_TF for display (not stored in results tuple) ──────────
     try:
@@ -2336,6 +2481,48 @@ def save_run_output(config: GlobalConfig,
         print(f"[O]  ├ f_void    (interstitial He void)             : {f_void_CS*100:.2f} [%]", file=out)
         print(f"[O]  ├ f_He      (total He = pipe + void)           : {f_He_CS*100:.2f} [%]", file=out)
         print(f"[O]  └ f_In      (insulation)                       : {f_In_CS*100:.2f} [%]", file=out)
+        print("-------------------------------------------------------------------------", file=out)
+        print(f"[O] V_TF   (Single TF coil volume, Princeton-D)    : {V_TF_one:.4f} [m³]",  file=out)
+        print(f"[O] V_CS   (Total CS solenoid volume)              : {V_CS_geom:.4f} [m³]", file=out)
+        print("-------------------------------------------------------------------------", file=out)
+        V_TF_total = V_TF_one * N_TF_disp if np.isfinite(V_TF_one) else np.nan
+        print(f"[O] TF material volumes  (total = V_TF × N_TF = {V_TF_one:.3f} × {N_TF_disp})", file=out)
+        print(f"[O]  ├ V_steel_TF  (structural steel)              : {V_steel_TF:.3f} [m³]", file=out)
+        print(f"[O]  ├ V_sc_TF     (superconductor)                : {V_sc_TF:.3f} [m³]",   file=out)
+        print(f"[O]  ├ V_cu_TF     (copper stabiliser)             : {V_cu_TF:.3f} [m³]",   file=out)
+        print(f"[O]  ├ V_He_TF     (helium, pipe+void)             : {V_He_TF:.3f} [m³]",   file=out)
+        print(f"[O]  └ V_In_TF     (insulation)                    : {V_In_TF:.3f} [m³]",   file=out)
+        print(f"[O] CS material volumes  (total solenoid)", file=out)
+        print(f"[O]  ├ V_steel_CS  (structural steel)              : {V_steel_CS:.3f} [m³]", file=out)
+        print(f"[O]  ├ V_sc_CS     (superconductor)                : {V_sc_CS:.3f} [m³]",   file=out)
+        print(f"[O]  ├ V_cu_CS     (copper stabiliser)             : {V_cu_CS:.3f} [m³]",   file=out)
+        print(f"[O]  ├ V_He_CS     (helium, pipe+void)             : {V_He_CS:.3f} [m³]",   file=out)
+        print(f"[O]  └ V_In_CS     (insulation)                    : {V_In_CS:.3f} [m³]",   file=out)
+        print("-------------------------------------------------------------------------", file=out)
+        print(f"[O] L_cable_TF (total cable, all TF coils)         : {L_cable_TF/1e3:.3f} [km]", file=out)
+        print(f"[O] L_cable_CS (total cable, all CS modules)       : {L_cable_CS/1e3:.3f} [km]", file=out)
+        print("-------------------------------------------------------------------------", file=out)
+        print(f"[O] SC strands per cable  ({config.Supra_choice})", file=out)
+        print(f"[O]  ├ n_sc_TF                                      : {n_sc_TF:.0f}", file=out)
+        print(f"[O]  └ n_sc_CS                                      : {n_sc_CS:.0f}", file=out)
+        print("-------------------------------------------------------------------------", file=out)
+        print(f"[O] Total SC strand length", file=out)
+        print(f"[O]  ├ L_sc_strand_TF                               : {L_sc_strand_TF/1e3:.0f} [km]", file=out)
+        print(f"[O]  └ L_sc_strand_CS                               : {L_sc_strand_CS/1e3:.0f} [km]", file=out)
+        print("-------------------------------------------------------------------------", file=out)
+        _rho = material_rho(config.Chosen_Steel, config.Supra_choice)
+        print(f"[O] TF coil masses  (total all N_TF coils, {config.Chosen_Steel} / {config.Supra_choice})", file=out)
+        print(f"[O]  ├ M_steel_TF                                   : {M_steel_TF/1e3:.1f} [t]", file=out)
+        print(f"[O]  ├ M_sc_TF                                      : {M_sc_TF/1e3:.1f} [t]",    file=out)
+        print(f"[O]  ├ M_cu_TF                                      : {M_cu_TF/1e3:.1f} [t]",    file=out)
+        print(f"[O]  ├ M_In_TF                                      : {M_In_TF/1e3:.1f} [t]",    file=out)
+        print(f"[O]  └ M_total_TF                                   : {M_total_TF/1e3:.1f} [t]",       file=out)
+        print(f"[O] CS coil masses  (total solenoid)", file=out)
+        print(f"[O]  ├ M_steel_CS                                   : {M_steel_CS/1e3:.1f} [t]", file=out)
+        print(f"[O]  ├ M_sc_CS                                      : {M_sc_CS/1e3:.1f} [t]",   file=out)
+        print(f"[O]  ├ M_cu_CS                                      : {M_cu_CS/1e3:.1f} [t]",   file=out)
+        print(f"[O]  ├ M_In_CS                                      : {M_In_CS/1e3:.1f} [t]",   file=out)
+        print(f"[O]  └ M_total_CS                                   : {M_total_CS/1e3:.1f} [t]", file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[O] Psi_PI      (Breakdown flux)                    : {ΨPI:.3f} [Wb]",      file=out)
         print(f"[O] Psi_RampUp  (Ramp-up flux)                      : {ΨRampUp:.3f} [Wb]",  file=out)
