@@ -5284,7 +5284,7 @@ def f_V_CS(a: float, b: float, c: float, d: float,
 
     Formula consistent with f_volume():
         H_CS = 2 × (κ·a + b + c)
-        V_CS = π × H_CS × (R_CS_ext² − R_CS_int²)
+        V_CS_geom = π × H_CS × (R_CS_ext² − R_CS_int²)
 
     Parameters
     ----------
@@ -5298,7 +5298,7 @@ def f_V_CS(a: float, b: float, c: float, d: float,
 
     Returns
     -------
-    V_CS : float  Total CS solenoid volume [m³].
+    V_CS_geom : float  Total CS solenoid volume [m³].
     """
     _gap_eff = Gap if Choice_Buck_Wedg == 'Wedging' else 0.0
     R_CS_ext = R0 - a - b - c - _gap_eff
@@ -5311,7 +5311,7 @@ def f_coil_material_volumes(
     V_TF_one: float, N_TF: int,
     Steel_fraction_TF: float,
     f_sc_TF: float, f_cu_TF: float, f_He_TF: float, f_In_TF: float,
-    V_CS: float,
+    V_CS_geom: float,
     Steel_fraction_CS: float,
     f_sc_CS: float, f_cu_CS: float, f_He_CS: float, f_In_CS: float,
 ) -> tuple:
@@ -5328,7 +5328,7 @@ def f_coil_material_volumes(
     N_TF              : int    Number of TF coils.
     Steel_fraction_TF : float  Steel fraction of TF winding pack [-].
     f_sc_TF … f_In_TF : float  Wost material fractions for TF.
-    V_CS              : float  Total CS solenoid volume [m³].
+    V_CS_geom         : float  Total CS solenoid volume [m³].
     Steel_fraction_CS : float  Steel fraction of CS winding pack [-].
     f_sc_CS … f_In_CS : float  Wost material fractions for CS.
 
@@ -5337,16 +5337,16 @@ def f_coil_material_volumes(
     (V_steel_TF, V_sc_TF, V_cu_TF, V_He_TF, V_In_TF,
      V_steel_CS, V_sc_CS, V_cu_CS, V_He_CS, V_In_CS)  all in [m³].
     """
-    V_TF       = V_TF_one * float(N_TF)
-    cable_TF   = V_TF * (1.0 - Steel_fraction_TF)
-    V_steel_TF = V_TF   * Steel_fraction_TF
+    V_TF_total = V_TF_one * float(N_TF)
+    cable_TF   = V_TF_total * (1.0 - Steel_fraction_TF)
+    V_steel_TF = V_TF_total * Steel_fraction_TF
     V_sc_TF    = cable_TF * f_sc_TF
     V_cu_TF    = cable_TF * f_cu_TF
     V_He_TF    = cable_TF * f_He_TF
     V_In_TF    = cable_TF * f_In_TF
 
-    cable_CS   = V_CS * (1.0 - Steel_fraction_CS)
-    V_steel_CS = V_CS   * Steel_fraction_CS
+    cable_CS   = V_CS_geom * (1.0 - Steel_fraction_CS)
+    V_steel_CS = V_CS_geom * Steel_fraction_CS
     V_sc_CS    = cable_CS * f_sc_CS
     V_cu_CS    = cable_CS * f_cu_CS
     V_He_CS    = cable_CS * f_He_CS
