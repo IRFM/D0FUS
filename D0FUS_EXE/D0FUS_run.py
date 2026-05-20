@@ -1785,6 +1785,47 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             "Valid options: 'academic', 'refined', 'CIRCE'."
         )
 
+    # ── Return nan tuple if TF radial build failed ────────────────────────────
+    _nan = np.nan
+    if not np.isfinite(c):
+        return (
+            _nan, _nan, _nan,                  # B0, B_CS, B_pol
+            _nan, _nan,                          # tauE, W_th
+            _nan, _nan, _nan,                  # Q, Volume, Surface
+            _nan, _nan, _nan, _nan,            # Ip, Ib, I_CD, I_Ohm
+            _nan, _nan, _nan, _nan,            # nbar, nbar_line, nG, pbar
+            _nan, _nan, _nan,                  # betaN, betaT, betaP
+            _nan, _nan,                          # qstar, q95
+            _nan, _nan, _nan, _nan, _nan, _nan,  # P_CD, P_sep, P_Thresh, eta_CD, P_elec, P_wallplug
+            _nan, _nan, _nan, _nan,            # cost, P_Brem, P_syn, P_line
+            _nan,                               # P_line_core
+            _nan, _nan, _nan, _nan, _nan,      # heat, heat_par, heat_pol, lambda_q, q_target
+            _nan, _nan,                          # P_wall_rad, P_wall_div
+            _nan,                               # Gamma_n
+            _nan, _nan,                          # f_alpha, tau_alpha
+            _nan, _nan,                          # J_TF, J_CS
+            _nan, _nan, _nan, _nan, _nan, _nan, _nan,  # TF radial build + stresses
+            _nan, _nan, _nan, _nan, _nan, _nan, _nan,  # CS radial build + stresses
+            _nan, _nan, _nan, _nan,            # r_minor, r_sep, r_c, r_d
+            _nan, _nan, _nan, _nan,            # κ, κ_95, δ, δ_95
+            _nan, _nan, _nan, _nan, _nan, _nan, _nan,  # ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS, Vloop, li
+            _nan, _nan, _nan,                  # eta_LH, eta_EC, eta_NBI
+            _nan, _nan, _nan, _nan,            # P_LH, P_EC, P_NBI, P_ICR
+            _nan, _nan, _nan,                  # I_LH, I_EC, I_NBI
+            _nan, _nan, _nan, _nan, _nan, _nan,  # f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF
+            _nan, _nan, _nan, _nan, _nan, _nan,  # f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS
+            _nan, _nan, _nan, _nan,              # beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha
+            _nan, _nan,                          # V_TF_one, V_CS_geom
+            _nan, _nan, _nan, _nan, _nan,        # V_steel_TF, V_sc_TF, V_cu_TF, V_He_TF, V_In_TF
+            _nan, _nan, _nan, _nan, _nan,        # V_steel_CS, V_sc_CS, V_cu_CS, V_He_CS, V_In_CS
+            _nan, _nan,                          # L_cable_TF, L_cable_CS
+            _nan, _nan,                          # n_sc_TF, n_sc_CS
+            _nan, _nan,                          # L_sc_strand_TF, L_sc_strand_CS
+            _nan, _nan, _nan, _nan, _nan,        # M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF
+            _nan, _nan, _nan, _nan, _nan,        # M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS
+            _nan,                                # V_blanket
+        )
+
     # ==============================================================================
     #    MAGNETIC FLUX REQUIREMENTS (Inductive Scenario)
     #    Volt-seconds budget for plasma initiation, ramp-up, and flat-top.
@@ -1858,19 +1899,20 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     else:
         f_sc_CS = f_cu_CS = f_He_pipe_CS = f_void_CS = f_He_CS = f_In_CS = np.nan
 
-    # Component volumes (Pappus centroid theorem, rectangular cross-sections)
-    (V_BB, V_TF, V_CS, V_FI) = f_volume(a, b, c, d, R0, κ)
-    cost_solution = (V_BB + V_TF + V_CS) / P_fus   # legacy cost proxy [m^3/MW]
-
     # ── TF Princeton-D cross-section geometry ─────────────────────────────────
     (R_bore_TF, _R_TF_out, _H_TF_D, _A_cross_TF, L_turn_TF,
      _R_out, _Z_out, _R_in, _Z_in) = f_TF_cross_section(a, b, R0, c, Delta_TF)
+
+    # Component volumes — only V_FI used; Princeton-D H_TF for the FI cylinder
+    (_, _, _, V_FI) = f_volume(a, b, c, d, R0, κ, Delta_TF, _H_TF_D)
 
     # ── Single-coil TF volume via Pappus centroid theorem ─────────────────────
     V_TF_one  = f_V_TF(a, b, R0, c, int(N_TF), Delta_TF)
     V_blanket = f_V_blanket(a, b, R0, κ, δ, Delta_TF,
                             R_outer=_R_in, Z_outer=_Z_in)
     V_CS_geom = f_V_CS(a, b, c, d, R0, κ, Gap, Choice_Buck_Wedg)
+    
+    cost_solution = (V_blanket + V_TF_one * N_TF + V_CS_geom) / P_fus   # legacy cost proxy [m^3/MW]
 
     # ── Material volumes (TF: total = V_TF_one × N_TF; CS: full solenoid) ─────
     (V_steel_TF, V_sc_TF, V_cu_TF, V_He_TF, V_In_TF,
@@ -2493,12 +2535,12 @@ def save_run_output(config: GlobalConfig,
         print(f"[O]  ├ f_He      (total He = pipe + void)           : {f_He_CS*100:.2f} [%]", file=out)
         print(f"[O]  └ f_In      (insulation)                       : {f_In_CS*100:.2f} [%]", file=out)
         print("-------------------------------------------------------------------------", file=out)
-        print(f"[O] V_TF   (Single TF coil volume, Princeton-D)    : {V_TF_one:.4f} [m³]",  file=out)
-        print(f"[O] V_CS   (Total CS solenoid volume)              : {V_CS_geom:.4f} [m³]", file=out)
+        print(f"[O] V_TF_one  (Single TF coil volume, Princeton-D) : {V_TF_one:.4f} [m³]",  file=out)
+        print(f"[O] V_CS_geom (Total CS solenoid volume)           : {V_CS_geom:.4f} [m³]", file=out)
         print(f"[O] V_blanket (blanket, Miller LCFS→TF inner face) : {V_blanket:.4f} [m³]", file=out)
         print("-------------------------------------------------------------------------", file=out)
         V_TF_total = V_TF_one * N_TF_disp if np.isfinite(V_TF_one) else np.nan
-        print(f"[O] TF material volumes  (total = V_TF × N_TF = {V_TF_one:.3f} × {N_TF_disp})", file=out)
+        print(f"[O] TF material volumes  (total = V_TF_one × N_TF = {V_TF_one:.3f} × {N_TF_disp})", file=out)
         print(f"[O]  ├ V_steel_TF  (structural steel)              : {V_steel_TF:.3f} [m³]", file=out)
         print(f"[O]  ├ V_sc_TF     (superconductor)                : {V_sc_TF:.3f} [m³]",   file=out)
         print(f"[O]  ├ V_cu_TF     (copper stabiliser)             : {V_cu_TF:.3f} [m³]",   file=out)
@@ -2575,7 +2617,7 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] P_wallplug (Wall-plug heating/CD power)         : {P_wallplug:.3f} [MW]",     file=out)
         _P_gross = config.eta_T * config.M_blanket * config.P_fus
         print(f"[O] Q_eng  (Engineering gain = P_elec / P_wallplug) : {P_elec / P_wallplug:.3f}", file=out)
-        print(f"[O] Cost   ((V_BB+V_TF+V_CS) / P_fus)               : {cost:.3f} [m³/MW]",        file=out)
+        print(f"[O] Cost   ((V_blanket+V_TF_one*N_TF+V_CS_geom) / P_fus) : {cost:.3f} [m³/MW]",    file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[I] H              (H-factor)                       : {config.H:.3f}",             file=out)
         print(f"[I] Operation mode                                  : {config.Operation_mode}",    file=out)
@@ -2670,8 +2712,10 @@ def save_run_output(config: GlobalConfig,
                 S_FW = Surface                                   # first-wall surface [m^2]
 
                 # Component volumes from D0FUS radial build
-                (V_BB_c, V_TF_c, V_CS_c, V_FI_c) = f_volume(
-                    config.a, config.b, c, d, config.R0, κ)
+                _, _, _H_TF_c, _, _, _, _, _, _ = f_TF_cross_section(
+                    config.a, config.b, config.R0, c, Delta_TF_disp)
+                (_, _, _, V_FI_c) = f_volume(
+                    config.a, config.b, c, d, config.R0, κ, Delta_TF_disp, _H_TF_c)
 
                 _res = f_costs_Sheffield(
                     discount_rate     = config.discount_rate,
@@ -2686,9 +2730,9 @@ def save_run_output(config: GlobalConfig,
                     Dwell_factor      = config.Dwell_factor,
                     dt_rep            = config.dt_rep,
                     V_FI              = V_FI_c,
-                    V_pc              = V_TF_c + V_CS_c,
-                    V_sg              = V_BB_c,
-                    V_bl              = V_BB_c,
+                    V_pc              = V_TF_one * N_TF_disp + V_CS_geom,
+                    V_sg              = V_blanket,
+                    V_bl              = V_blanket,
                     S_tt              = 0.1 * S_FW,
                     Supra_cost_factor = config.Supra_cost_factor,
                 )
@@ -2715,10 +2759,10 @@ def save_run_output(config: GlobalConfig,
                 print("-------------------------------------------------------------------------", file=out)
 
                 # Component volumes
-                print(f"[O] V_BB  (blanket + shield + VV + gaps)            : {V_BB_c:.1f} [m^3]", file=out)
-                print(f"[O] V_TF  (TF coil winding packs)                   : {V_TF_c:.1f} [m^3]", file=out)
-                print(f"[O] V_CS  (central solenoid)                        : {V_CS_c:.1f} [m^3]", file=out)
-                print(f"[O] V_FI  (fusion island envelope)                  : {V_FI_c:.1f} [m^3]", file=out)
+                print(f"[O] V_blanket (FW+BB+shield+VV+gaps, Miller)        : {V_blanket:.1f} [m^3]", file=out)
+                print(f"[O] V_TF_one*N_TF (TF winding packs, Princeton-D)   : {V_TF_one * N_TF_disp:.1f} [m^3]", file=out)
+                print(f"[O] V_CS_geom (central solenoid)                    : {V_CS_geom:.1f} [m^3]", file=out)
+                print(f"[O] V_FI      (fusion island envelope)              : {V_FI_c:.1f} [m^3]", file=out)
                 print("-------------------------------------------------------------------------", file=out)
 
                 # Availability

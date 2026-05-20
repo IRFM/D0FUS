@@ -1601,8 +1601,10 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
         if config.cost_model != 'None' and np.isfinite(cost):
             try:
                 P_th_scan = config.P_fus * config.M_blanket + P_CD
-                (V_BB_s, V_TF_s, V_CS_s, V_FI_s) = f_volume(
-                    config.a, config.b, c, d, config.R0, κ)
+                _, _, Delta_TF_s = Number_TF_coils(config.R0, config.a, config.b, config.ripple_adm, config.L_min)
+                _, _, _H_TF_s, _, _, _, _, _, _ = f_TF_cross_section(config.a, config.b, config.R0, c, Delta_TF_s)
+                (V_blanket_s, V_TF_Pappus_s, V_CS_geom_s, V_FI_s) = f_volume(
+                    config.a, config.b, c, d, config.R0, κ, Delta_TF_s, _H_TF_s)
                 _cres = f_costs_Sheffield(
                     discount_rate=config.discount_rate,
                     contingency=config.contingency,
@@ -1616,9 +1618,9 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
                     Dwell_factor=config.Dwell_factor,
                     dt_rep=config.dt_rep,
                     V_FI=V_FI_s,
-                    V_pc=V_TF_s + V_CS_s,
-                    V_sg=V_BB_s,
-                    V_bl=V_BB_s,
+                    V_pc=V_TF_Pappus_s + V_CS_geom_s,
+                    V_sg=V_blanket_s,
+                    V_bl=V_blanket_s,
                     S_tt=0.1 * Surface,
                     Supra_cost_factor=config.Supra_cost_factor,
                 )

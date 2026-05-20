@@ -37,6 +37,7 @@ except ImportError:
 # Import D0FUS modules
 from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG
 from D0FUS_BIB.D0FUS_physical_functions import f_volume
+from D0FUS_BIB.D0FUS_radial_build_functions import Number_TF_coils, f_TF_cross_section
 from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
 from D0FUS_BIB.D0FUS_cost_data import *
 from D0FUS_EXE.D0FUS_run import run, save_run_output
@@ -46,7 +47,7 @@ from D0FUS_EXE.D0FUS_run import run, save_run_output
 #
 #   'COE'      : minimise cost of electricity (Sheffield 2016)     [EUR/MWh]
 #                 with C_invest <= C_invest_max budget constraint   (DEFAULT)
-#   'volume'   : minimise (V_BB + V_TF + V_CS) / P_fus  [m^3/MW]
+#   'volume'   : minimise (V_blanket + V_TF_one*N_TF + V_CS_geom) / P_fus  [m^3/MW]
 #   'C_invest' : minimise total capital cost (Sheffield 2016)      [M EUR]
 #   'P_elec'   : maximise net electric power (minimise -P_elec)    [MW]
 #
@@ -506,7 +507,7 @@ def evaluate_individual(individual, verbose=False):
         _C_inv = np.nan
 
         if objective == 'volume':
-            # Legacy cost proxy: (V_BB + V_TF + V_CS) / P_fus [m^3/MW]
+            # Legacy cost proxy: (V_blanket + V_TF_one*N_TF + V_CS_geom) / P_fus [m^3/MW]
             raw_fitness = cost
 
         elif objective in ('COE', 'C_invest', 'P_elec'):
@@ -525,8 +526,10 @@ def evaluate_individual(individual, verbose=False):
                 return (PENALTY_VALUE,)
 
             P_th = config.P_fus * config.M_blanket + P_CD
-            (V_BB, V_TF, V_CS, V_FI) = f_volume(
-                config.a, config.b, c_TF, d_CS, config.R0, κ)
+            _, _, Delta_TF_g = Number_TF_coils(config.R0, config.a, config.b, config.ripple_adm, config.L_min)
+            _, _, _H_TF_g, _, _, _, _, _, _ = f_TF_cross_section(config.a, config.b, config.R0, c_TF, Delta_TF_g)
+            (V_blanket, V_TF_Pappus, V_CS_geom, V_FI) = f_volume(
+                config.a, config.b, c_TF, d_CS, config.R0, κ, Delta_TF_g, _H_TF_g)
 
             _cres = f_costs_Sheffield(
                 discount_rate=config.discount_rate,
@@ -541,9 +544,9 @@ def evaluate_individual(individual, verbose=False):
                 Dwell_factor=config.Dwell_factor,
                 dt_rep=config.dt_rep,
                 V_FI=V_FI,
-                V_pc=V_TF + V_CS,
-                V_sg=V_BB,
-                V_bl=V_BB,
+                V_pc=V_TF_Pappus + V_CS_geom,
+                V_sg=V_blanket,
+                V_bl=V_blanket,
                 S_tt=0.1 * Surface,
                 Supra_cost_factor=config.Supra_cost_factor,
             )
@@ -1160,8 +1163,10 @@ def run_genetic_optimization(input_file,
         Surface_best = final_output[_IDX['Surface']]
         κ_best       = final_output[_IDX['kappa']]
         P_th_best    = config.P_fus * config.M_blanket + P_CD_best
-        (V_BB_b, V_TF_b, V_CS_b, V_FI_b) = f_volume(
-            config.a, config.b, c_TF, d_CS, config.R0, κ_best)
+        _, _, Delta_TF_b = Number_TF_coils(config.R0, config.a, config.b, config.ripple_adm, config.L_min)
+        _, _, _H_TF_b, _, _, _, _, _, _ = f_TF_cross_section(config.a, config.b, config.R0, c_TF, Delta_TF_b)
+        (V_blanket_b, V_TF_Pappus_b, V_CS_geom_b, V_FI_b) = f_volume(
+            config.a, config.b, c_TF, d_CS, config.R0, κ_best, Delta_TF_b, _H_TF_b)
         _cres_best = f_costs_Sheffield(
             discount_rate=config.discount_rate, contingency=config.contingency,
             T_life=config.T_life, T_build=config.T_build,
@@ -1169,7 +1174,7 @@ def run_genetic_optimization(input_file,
             Gamma_n=Gamma_n_best,
             Util_factor=config.Util_factor, Dwell_factor=config.Dwell_factor,
             dt_rep=config.dt_rep,
-            V_FI=V_FI_b, V_pc=V_TF_b+V_CS_b, V_sg=V_BB_b, V_bl=V_BB_b,
+            V_FI=V_FI_b, V_pc=V_TF_Pappus_b+V_CS_geom_b, V_sg=V_blanket_b, V_bl=V_blanket_b,
             S_tt=0.1*Surface_best,
             Supra_cost_factor=config.Supra_cost_factor)
         _COE_best     = _cres_best[3]
