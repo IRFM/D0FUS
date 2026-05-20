@@ -6727,6 +6727,172 @@ def f_volume(a, b, c, d, R0, κ, Delta_TF, H_TF):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# COMPONENT LIFETIME & PLANT AVAILABILITY
+# ══════════════════════════════════════════════════════════════════════════════
+
+def f_blanket_lifetime_fpy(P_fus: float, A_FW: float,
+                           dpa_lim: float, C_dpa: float) -> float:
+    """
+    Blanket structural lifetime based on neutron displacement damage.
+
+    t_bl = dpa_lim * A_FW / (0.8 * C_dpa * P_fus)
+
+    Derivation: neutron wall loading q_n = 0.8*P_fus/A_FW [MW/m²];
+    dpa rate = C_dpa * q_n [dpa/fpy]; lifetime = dpa_lim / dpa_rate.
+
+    Ref: Gilbert et al. (2013), EUROfusion (2015).
+
+    Parameters
+    ----------
+    P_fus   : float  Fusion power [MW].
+    A_FW    : float  First-wall area [m²].
+    dpa_lim : float  Allowable structural damage [dpa].
+    C_dpa   : float  dpa conversion coefficient [dpa fpy⁻¹ / (MW m⁻²)].
+
+    Returns
+    -------
+    float  Blanket lifetime [fpy].
+    """
+    return dpa_lim * A_FW / (0.8 * C_dpa * P_fus)
+
+
+def f_divertor_lifetime_fpy(P_sep: float, A_div: float,
+                            epsilon_div: float, f_peak: float) -> float:
+    """
+    Divertor lifetime based on integrated heat exposure.
+
+    t_div = epsilon_div * A_div / (f_peak * P_sep)
+
+    Derivation: peak heat flux q_div = f_peak * P_sep / A_div [MW/m²];
+    integrated limit epsilon_div [MW yr/m²]; lifetime = epsilon_div / q_div.
+
+    Ref: ITER Organization (2025), CEA IRFM (2017).
+
+    Parameters
+    ----------
+    P_sep       : float  Power crossing the separatrix [MW].
+    A_div       : float  Divertor wetted area [m²].
+    epsilon_div : float  Integrated heat limit [MW yr / m²].
+    f_peak      : float  Heat flux peaking factor [-].
+
+    Returns
+    -------
+    float  Divertor lifetime [fpy].
+    """
+    if P_sep <= 0.0:
+        return np.inf
+    return epsilon_div * A_div / (f_peak * P_sep)
+
+
+def f_lifetime_to_years(t_fpy: float, Util_factor: float,
+                        Dwell_factor: float) -> float:
+    """
+    Convert a lifetime in full-power years (fpy) to calendar years.
+
+    t_yr = t_fpy / (Util_factor * Dwell_factor)
+
+    Parameters
+    ----------
+    t_fpy        : float  Lifetime [fpy].
+    Util_factor  : float  Utilisation factor [-].
+    Dwell_factor : float  Dwell factor (1.0 for steady-state) [-].
+
+    Returns
+    -------
+    float  Lifetime [calendar years].
+    """
+    return t_fpy / (Util_factor * Dwell_factor)
+
+
+def f_availability_schedule(t_life_bl_fpy: float, t_life_div_fpy: float,
+                             dt_rep_bl: float, dt_rep_div: float,
+                             Util_factor: float, Dwell_factor: float) -> tuple:
+    """
+    Effective plant availability from a two-component replacement schedule.
+
+    Blanket (bl) and divertor (div) replacements are performed in parallel
+    whenever they coincide, avoiding additive downtime.
+
+    Algorithm
+    ---------
+    Let A = longer-lived component, B = shorter-lived.
+    n = floor(t_A / t_B)  — how many B-cycles fit inside one A-cycle.
+
+    Every t_B calendar years a replacement occurs:
+      - (n−1) out of n times: only B replaced  → downtime = dt_B
+      - 1 out of n times:     both replaced    → downtime = max(dt_A, dt_B)
+
+    Effective average downtime per t_B cycle:
+        dt_eff = [(n−1)*dt_B + max(dt_A, dt_B)] / n
+
+    Availability: Av = t_B_yr / (t_B_yr + dt_eff)
+    Capacity factor: CF = Av * Util_factor * Dwell_factor
+
+    Parameters
+    ----------
+    t_life_bl_fpy  : float  Blanket lifetime [fpy].
+    t_life_div_fpy : float  Divertor lifetime [fpy].
+    dt_rep_bl      : float  Blanket replacement downtime [yr].
+    dt_rep_div     : float  Divertor replacement downtime [yr].
+    Util_factor    : float  Utilisation factor [-].
+    Dwell_factor   : float  Dwell factor [-].
+
+    Returns
+    -------
+    T_op_limit : float  Calendar years of operation per replacement cycle [yr].
+    dt_rep_eff : float  Effective average replacement downtime per cycle [yr].
+    Av         : float  Plant availability [-].
+    CF         : float  Capacity factor [-].
+    """
+    UD = Util_factor * Dwell_factor
+    t_bl_yr  = t_life_bl_fpy  / UD
+    t_div_yr = t_life_div_fpy / UD
+
+    # Identify longer (A) and shorter (B) component
+    if t_bl_yr >= t_div_yr:
+        t_A, t_B   = t_bl_yr,  t_div_yr
+        dt_A, dt_B = dt_rep_bl, dt_rep_div
+    else:
+        t_A, t_B   = t_div_yr,  t_bl_yr
+        dt_A, dt_B = dt_rep_div, dt_rep_bl
+
+    # Number of B-cycles per A-cycle (floor, never exceed lifetime)
+    n = max(1, int(t_A / t_B))
+
+    dt_rep_eff = ((n - 1) * dt_B + max(dt_A, dt_B)) / n
+    T_op_limit = t_B
+
+    Av = T_op_limit / (T_op_limit + dt_rep_eff)
+    CF = Av * UD
+    return (T_op_limit, dt_rep_eff, Av, CF)
+
+
+# ── Availability utilities (kept here for backward compatibility) ─────────────
+
+def f_pp_availability(T_op_limit: float, dt_rep: float) -> float:
+    """Plant availability from a single-component replacement cycle."""
+    return T_op_limit / (T_op_limit + dt_rep)
+
+
+def f_pp_capacity_factor(Av: float, Util_factor: float,
+                         Dwell_factor: float) -> float:
+    """CF = Av * Util_factor * Dwell_factor."""
+    return Av * Util_factor * Dwell_factor
+
+
+def f_critical_neutron_load(F_dpa: float, L_dpa: float, S: float) -> float:
+    """Critical neutron load X = L_dpa * S / F_dpa [MW yr]."""
+    return (L_dpa * S) / F_dpa
+
+
+def f_op_time_before_load_limit(X_crit_load: float, Util_factor: float,
+                                 Dwell_factor: float,
+                                 Load_nn: float) -> float:
+    """Operation time before neutron fluence limit: T = X / (Load * U * D)."""
+    return X_crit_load / (Load_nn * Util_factor * Dwell_factor)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # RUNAWAY ELECTRON INDICATORS (POST-DISRUPTION) developped by Puel Louis
 # ══════════════════════════════════════════════════════════════════════════════
 #
