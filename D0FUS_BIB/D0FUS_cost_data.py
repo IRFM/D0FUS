@@ -100,12 +100,9 @@ C_waste_sfd = 5        # Radioactive waste disposal              [$/MWh]
 
 C_fa_sfd = 7.5         # Annual fuel cost                        [2010 M$ / yr]
 
-# -- Blanket and divertor target lifetime limits (Table III) --
-# Refs: Gilbert et al., NF 57 (2017) 046015; Pitts et al., NME 20 (2019) 100696.
-
-T_load_bl_sfd      = 15       # Blanket max neutron fluence      [MW yr / m^2]
-T_load_tt_sfd      = 10       # Divertor max heat fluence        [MW yr / m^2]
-load_factor_tt_sfd = 10 / 3   # Thermal / neutron flux ratio     [-]
+# Component lifetimes are now computed by f_blanket_lifetime_fpy /
+# f_divertor_lifetime_fpy in D0FUS_physical_functions.py using parameters
+# from GlobalConfig (dpa_lim, C_dpa, epsilon_div, f_peak).
 
 # -- Heat transfer system cost scaling (Table IV) --
 # C_heat = C_ref * (P_th / P_ref)^x
