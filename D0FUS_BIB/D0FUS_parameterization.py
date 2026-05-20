@@ -346,12 +346,26 @@ class GlobalConfig:
     # Availability & capacity factor
     Util_factor         : float = 0.85   # Utilisation factor [-]
     Dwell_factor        : float = 1.0    # Dwell factor (1.0 = SS, <1 for pulsed) [-]
-    dt_rep              : float = 1.5    # Scheduled replacement downtime [yr]
     # Superconductor cost multiplier (1.5 Nb3Sn mature — 3.0 REBCO FOAK)
     Supra_cost_factor   : float = 2.0    # SC coil cost multiplier vs Cu [-]
     # Budget constraint (genetic algorithm)
     # Designs exceeding C_invest_max are penalised. Set to 1e6 to disable.
     C_invest_max        : float = 25e3   # Capital cost ceiling [M EUR]
+
+    # ── 16. Component lifetime & availability model ───────────────────────────
+    # Blanket lifetime: t_bl [fpy] = dpa_lim * A_FW / (0.8 * C_dpa * P_fus)
+    # Ref: Gilbert et al. (2013); EUROfusion (2015)
+    dpa_lim             : float = 80.0   # Blanket structural damage limit [dpa]
+    C_dpa               : float = 12.0   # dpa rate per neutron wall load [dpa fpy⁻¹ / (MW m⁻²)]
+    # Divertor lifetime: t_div [fpy] = epsilon_div * A_div / (f_peak * P_sep)
+    # A_div = f_div_area_fraction * A_FW (first-wall area)
+    # Ref: ITER Organization (2025); CEA IRFM (2017)
+    epsilon_div         : float = 50.0   # Divertor integrated heat limit [MW yr / m²]
+    f_peak              : float = 3.0    # Divertor heat flux peaking factor [-]
+    f_div_area_fraction : float = 0.05   # A_div / A_FW ratio [-]
+    # Replacement downtimes (performed in parallel if scheduled together)
+    dt_rep_bl           : float = 1.5    # Blanket replacement downtime [yr]
+    dt_rep_div          : float = 0.5    # Divertor replacement downtime [yr]
 
 # Module-level default instance — import and reuse rather than reinstantiating
 DEFAULT_CONFIG = GlobalConfig()
