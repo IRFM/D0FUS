@@ -1535,6 +1535,10 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             _nan, _nan, _nan, _nan, _nan,        # M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF
             _nan, _nan, _nan, _nan, _nan,        # M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS
             _nan,                                # V_blanket
+            _nan, _nan,                          # t_life_bl_fpy, t_life_div_fpy
+            _nan, _nan,                          # t_life_bl_yr, t_life_div_yr
+            _nan, _nan,                          # T_op_limit, dt_rep_eff
+            _nan, _nan,                          # Av, CF
         )
 
     # =========================================================================
@@ -1824,6 +1828,10 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             _nan, _nan, _nan, _nan, _nan,        # M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF
             _nan, _nan, _nan, _nan, _nan,        # M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS
             _nan,                                # V_blanket
+            _nan, _nan,                          # t_life_bl_fpy, t_life_div_fpy
+            _nan, _nan,                          # t_life_bl_yr, t_life_div_yr
+            _nan, _nan,                          # T_op_limit, dt_rep_eff
+            _nan, _nan,                          # Av, CF
         )
 
     # ==============================================================================
@@ -1948,6 +1956,22 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         V_sc_CS, L_cable_CS,
         Supra_choice)
 
+    # ── Component lifetimes and plant availability ────────────────────────────
+    A_div          = config.f_div_area_fraction * Surface_solution
+    t_life_bl_fpy  = f_blanket_lifetime_fpy(P_fus, Surface_solution,
+                                             config.dpa_lim, config.C_dpa)
+    t_life_div_fpy = f_divertor_lifetime_fpy(P_sep_solution, A_div,
+                                              config.epsilon_div, config.f_peak)
+    t_life_bl_yr   = f_lifetime_to_years(t_life_bl_fpy,
+                                          config.Util_factor, config.Dwell_factor)
+    t_life_div_yr  = f_lifetime_to_years(t_life_div_fpy,
+                                          config.Util_factor, config.Dwell_factor)
+    (T_op_limit, dt_rep_eff,
+     Av_solution, CF_solution) = f_availability_schedule(
+        t_life_bl_fpy, t_life_div_fpy,
+        config.dt_rep_bl, config.dt_rep_div,
+        config.Util_factor, config.Dwell_factor)
+
     return (B0_solution,  B_CS,  B_pol_solution,
             tauE_solution,  W_th_solution,
             Q_solution,  Volume_solution,  Surface_solution,
@@ -1990,7 +2014,12 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             # ── Coil masses (indices 117–126) ──────────────────────────────────
             M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF,   # 117–121
             M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS,    # 122–126
-            V_blanket)                                             # 127
+            V_blanket,                                             # 127
+            # ── Component lifetimes and availability (indices 128–135) ─────────
+            t_life_bl_fpy,  t_life_div_fpy,                        # 128, 129
+            t_life_bl_yr,   t_life_div_yr,                         # 130, 131
+            T_op_limit,     dt_rep_eff,                            # 132, 133
+            Av_solution,    CF_solution)                           # 134, 135
 
 
 #%% Output writer
@@ -2374,7 +2403,11 @@ def save_run_output(config: GlobalConfig,
      L_sc_strand_TF, L_sc_strand_CS,
      M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF,
      M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS,
-     V_blanket) = results
+     V_blanket,
+     t_life_bl_fpy, t_life_div_fpy,
+     t_life_bl_yr, t_life_div_yr,
+     T_op_limit, dt_rep_eff,
+     Av, CF) = results
 
     # ── Recompute N_TF for display (not stored in results tuple) ──────────
     try:
@@ -2619,6 +2652,15 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] Q_eng  (Engineering gain = P_elec / P_wallplug) : {P_elec / P_wallplug:.3f}", file=out)
         print(f"[O] Cost   ((V_blanket+V_TF_one*N_TF+V_CS_geom) / P_fus) : {cost:.3f} [m³/MW]",    file=out)
         print("-------------------------------------------------------------------------", file=out)
+        print(f"[O] t_blanket_fpy  (Blanket lifetime, dpa model)       : {t_life_bl_fpy:.3f} [fpy]", file=out)
+        print(f"[O] t_div_fpy      (Divertor lifetime, heat model)     : {t_life_div_fpy:.3f} [fpy]", file=out)
+        print(f"[O] t_blanket_yr   (Blanket lifetime, calendar)        : {t_life_bl_yr:.3f} [yr]", file=out)
+        print(f"[O] t_div_yr       (Divertor lifetime, calendar)       : {t_life_div_yr:.3f} [yr]", file=out)
+        print(f"[O] T_op_limit     (Operation per replacement cycle)   : {T_op_limit:.3f} [yr]", file=out)
+        print(f"[O] dt_rep_eff     (Effective replacement downtime)    : {dt_rep_eff:.3f} [yr]", file=out)
+        print(f"[O] Av             (Plant availability)                : {Av:.4f} [-]", file=out)
+        print(f"[O] CF             (Capacity factor)                   : {CF:.4f} [-]", file=out)
+        print("-------------------------------------------------------------------------", file=out)
         print(f"[I] H              (H-factor)                       : {config.H:.3f}",             file=out)
         print(f"[I] Operation mode                                  : {config.Operation_mode}",    file=out)
         print(f"[I] t_plateau      (Flat-top duration)              : {config.Temps_Plateau_input:.3f} [s]", file=out)
@@ -2718,22 +2760,23 @@ def save_run_output(config: GlobalConfig,
                     config.a, config.b, c, d, config.R0, κ, Delta_TF_disp, _H_TF_c)
 
                 _res = f_costs_Sheffield(
-                    discount_rate     = config.discount_rate,
-                    contingency       = config.contingency,
-                    T_life            = config.T_life,
-                    T_build           = config.T_build,
-                    P_t               = P_th,
-                    P_e               = P_e,
-                    P_aux             = P_CD,
-                    Gamma_n           = Gamma_n,
-                    Util_factor       = config.Util_factor,
-                    Dwell_factor      = config.Dwell_factor,
-                    dt_rep            = config.dt_rep,
-                    V_FI              = V_FI_c,
-                    V_pc              = V_TF_one * N_TF_disp + V_CS_geom,
-                    V_sg              = V_blanket,
-                    V_bl              = V_blanket,
-                    S_tt              = 0.1 * S_FW,
+                    discount_rate  = config.discount_rate,
+                    contingency    = config.contingency,
+                    T_life         = config.T_life,
+                    T_build        = config.T_build,
+                    P_t            = P_th,
+                    P_e            = P_e,
+                    P_aux          = P_CD,
+                    Gamma_n        = Gamma_n,
+                    T_op_limit     = T_op_limit,
+                    CF             = CF,
+                    t_life_bl_yr   = t_life_bl_yr,
+                    t_life_div_yr  = t_life_div_yr,
+                    V_FI           = V_FI_c,
+                    V_pc           = V_TF_one * N_TF_disp + V_CS_geom,
+                    V_sg           = V_blanket,
+                    V_bl           = V_blanket,
+                    S_tt           = 0.1 * S_FW,
                     Supra_cost_factor = config.Supra_cost_factor,
                 )
                 (T_op_limit, CF, C_invest, COE,
@@ -2749,7 +2792,8 @@ def save_run_output(config: GlobalConfig,
                       f"  Supra_cost={config.Supra_cost_factor:.1f}x", file=out)
                 print(f"[I] Util={config.Util_factor:.2f}"
                       f"  Dwell={config.Dwell_factor:.2f}"
-                      f"  dt_rep={config.dt_rep:.1f}yr", file=out)
+                      f"  dt_rep_bl={config.dt_rep_bl:.1f}yr"
+                      f"  dt_rep_div={config.dt_rep_div:.1f}yr", file=out)
                 print("-------------------------------------------------------------------------", file=out)
 
                 # Derived inputs from D0FUS

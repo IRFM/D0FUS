@@ -179,7 +179,7 @@ _IDX = {
     'W_fast_alpha':    98,
     # ── Coil volumes and cable inventory ───────────────────────────────
     'V_TF_one':       99,     # Single TF coil volume (Pappus centroid) [m³]
-    'V_CS_geom':      100,    # Total CS solenoid volume [m³]
+    'V_CS_geom':      100,   # Total CS solenoid volume [m³]
     'V_steel_TF':     101,    # TF steel total (all coils) [m³]
     'V_sc_TF':        102,    # TF SC material total [m³]
     'V_cu_TF':        103,    # TF Cu total [m³]
@@ -207,6 +207,17 @@ _IDX = {
     'M_cu_CS':     124,   # CS Cu mass [kg]
     'M_In_CS':     125,   # CS insulation mass [kg]
     'M_total_CS':  126,   # CS total mass [kg]
+    # ── Blanket volume ───────────────────────────────────────────────────────
+    'V_blanket':       127,  # Blanket volume (Miller LCFS → TF) [m³]
+    # ── Component lifetimes and availability ─────────────────────────────────
+    't_life_bl_fpy':   128,  # Blanket lifetime [fpy]
+    't_life_div_fpy':  129,  # Divertor lifetime [fpy]
+    't_life_bl_yr':    130,  # Blanket lifetime [yr]
+    't_life_div_yr':   131,  # Divertor lifetime [yr]
+    'T_op_limit':      132,  # Operation per replacement cycle [yr]
+    'dt_rep_eff':      133,  # Effective replacement downtime [yr]
+    'Av':              134,  # Plant availability [-]
+    'CF':              135,  # Capacity factor [-]
 }
 
 #%% Global Variables (default values)
@@ -525,7 +536,11 @@ def evaluate_individual(individual, verbose=False):
                           f"Surface={Surface:.4g} kappa={κ:.4g}")
                 return (PENALTY_VALUE,)
 
-            P_th = config.P_fus * config.M_blanket + P_CD
+            P_th         = config.P_fus * config.M_blanket + P_CD
+            T_op_limit_g = _safe_real(output[_IDX['T_op_limit']])
+            CF_g         = _safe_real(output[_IDX['CF']])
+            t_bl_yr_g    = _safe_real(output[_IDX['t_life_bl_yr']])
+            t_div_yr_g   = _safe_real(output[_IDX['t_life_div_yr']])
             _, _, Delta_TF_g = Number_TF_coils(config.R0, config.a, config.b, config.ripple_adm, config.L_min)
             _, _, _H_TF_g, _, _, _, _, _, _ = f_TF_cross_section(config.a, config.b, config.R0, c_TF, Delta_TF_g)
             (V_blanket, V_TF_Pappus, V_CS_geom, V_FI) = f_volume(
@@ -540,9 +555,10 @@ def evaluate_individual(individual, verbose=False):
                 P_e=max(P_elec, 1.0),
                 P_aux=P_CD,
                 Gamma_n=Gamma_n,
-                Util_factor=config.Util_factor,
-                Dwell_factor=config.Dwell_factor,
-                dt_rep=config.dt_rep,
+                T_op_limit=T_op_limit_g,
+                CF=CF_g,
+                t_life_bl_yr=t_bl_yr_g,
+                t_life_div_yr=t_div_yr_g,
                 V_FI=V_FI,
                 V_pc=V_TF_Pappus + V_CS_geom,
                 V_sg=V_blanket,
@@ -1158,11 +1174,15 @@ def run_genetic_optimization(input_file,
     _COE_best = np.nan
     _C_invest_best = np.nan
     try:
-        P_CD_best    = final_output[_IDX['P_CD']]
-        Gamma_n_best = final_output[_IDX['Gamma_n']]
-        Surface_best = final_output[_IDX['Surface']]
-        κ_best       = final_output[_IDX['kappa']]
-        P_th_best    = config.P_fus * config.M_blanket + P_CD_best
+        P_CD_best      = final_output[_IDX['P_CD']]
+        Gamma_n_best   = final_output[_IDX['Gamma_n']]
+        Surface_best   = final_output[_IDX['Surface']]
+        κ_best         = final_output[_IDX['kappa']]
+        T_op_limit_b   = final_output[_IDX['T_op_limit']]
+        CF_b           = final_output[_IDX['CF']]
+        t_bl_yr_b      = final_output[_IDX['t_life_bl_yr']]
+        t_div_yr_b     = final_output[_IDX['t_life_div_yr']]
+        P_th_best      = config.P_fus * config.M_blanket + P_CD_best
         _, _, Delta_TF_b = Number_TF_coils(config.R0, config.a, config.b, config.ripple_adm, config.L_min)
         _, _, _H_TF_b, _, _, _, _, _, _ = f_TF_cross_section(config.a, config.b, config.R0, c_TF, Delta_TF_b)
         (V_blanket_b, V_TF_Pappus_b, V_CS_geom_b, V_FI_b) = f_volume(
@@ -1172,8 +1192,8 @@ def run_genetic_optimization(input_file,
             T_life=config.T_life, T_build=config.T_build,
             P_t=P_th_best, P_e=max(P_elec, 1.0), P_aux=P_CD_best,
             Gamma_n=Gamma_n_best,
-            Util_factor=config.Util_factor, Dwell_factor=config.Dwell_factor,
-            dt_rep=config.dt_rep,
+            T_op_limit=T_op_limit_b, CF=CF_b,
+            t_life_bl_yr=t_bl_yr_b, t_life_div_yr=t_div_yr_b,
             V_FI=V_FI_b, V_pc=V_TF_Pappus_b+V_CS_geom_b, V_sg=V_blanket_b, V_bl=V_blanket_b,
             S_tt=0.1*Surface_best,
             Supra_cost_factor=config.Supra_cost_factor)
