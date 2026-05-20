@@ -864,6 +864,144 @@ OUTPUT_REGISTRY = {
     ),
 
     # -------------------------------------------------------------------------
+    # BLANKET & COIL MASSES
+    # -------------------------------------------------------------------------
+    'V_blanket': OutputParameter(
+        name='V_blanket',
+        label='$V_{\\mathrm{bl}}$',
+        unit='m³',
+        levels=(0, 2000, 100),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='Blanket volume (Miller LCFS → TF inner face)'
+    ),
+    'M_total_TF': OutputParameter(
+        name='M_total_TF',
+        label='$M_{\\mathrm{TF}}^{\\mathrm{tot}}$',
+        unit='t',
+        levels=(0, 5000, 250),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='Total TF coil mass (all coils, all materials)'
+    ),
+    'M_sc_TF': OutputParameter(
+        name='M_sc_TF',
+        label='$M_{\\mathrm{TF}}^{\\mathrm{SC}}$',
+        unit='t',
+        levels=(0, 500, 25),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='TF superconductor mass (all coils)'
+    ),
+    'M_steel_TF': OutputParameter(
+        name='M_steel_TF',
+        label='$M_{\\mathrm{TF}}^{\\mathrm{steel}}$',
+        unit='t',
+        levels=(0, 3000, 200),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='TF structural steel mass (all coils)'
+    ),
+    'M_cu_TF': OutputParameter(
+        name='M_cu_TF',
+        label='$M_{\\mathrm{TF}}^{\\mathrm{Cu}}$',
+        unit='t',
+        levels=(0, 500, 25),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='TF copper stabiliser mass (all coils)'
+    ),
+    'M_total_CS': OutputParameter(
+        name='M_total_CS',
+        label='$M_{\\mathrm{CS}}^{\\mathrm{tot}}$',
+        unit='t',
+        levels=(0, 1000, 50),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='Total CS mass'
+    ),
+    'M_sc_CS': OutputParameter(
+        name='M_sc_CS',
+        label='$M_{\\mathrm{CS}}^{\\mathrm{SC}}$',
+        unit='t',
+        levels=(0, 200, 20),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='CS superconductor mass'
+    ),
+    'M_steel_CS': OutputParameter(
+        name='M_steel_CS',
+        label='$M_{\\mathrm{CS}}^{\\mathrm{steel}}$',
+        unit='t',
+        levels=(0, 600, 50),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='CS structural steel mass'
+    ),
+    'M_cu_CS': OutputParameter(
+        name='M_cu_CS',
+        label='$M_{\\mathrm{CS}}^{\\mathrm{Cu}}$',
+        unit='t',
+        levels=(0, 200, 20),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='CS copper stabiliser mass'
+    ),
+
+    # -------------------------------------------------------------------------
+    # CONDUCTOR LENGTHS
+    # -------------------------------------------------------------------------
+    'L_cable_TF': OutputParameter(
+        name='L_cable_TF',
+        label='$L_{\\mathrm{cable}}^{\\mathrm{TF}}$',
+        unit='km',
+        levels=(0, 500, 50),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='conductor',
+        description='Total TF cable conductor length (all coils)'
+    ),
+    'L_cable_CS': OutputParameter(
+        name='L_cable_CS',
+        label='$L_{\\mathrm{cable}}^{\\mathrm{CS}}$',
+        unit='km',
+        levels=(0, 100, 10),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='conductor',
+        description='Total CS cable conductor length'
+    ),
+    'L_sc_strand_TF': OutputParameter(
+        name='L_sc_strand_TF',
+        label='$L_{\\mathrm{SC}}^{\\mathrm{TF}}$',
+        unit='km',
+        levels=(0, 2000, 200),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='conductor',
+        description='Total TF SC strand length (all coils)'
+    ),
+    'L_sc_strand_CS': OutputParameter(
+        name='L_sc_strand_CS',
+        label='$L_{\\mathrm{SC}}^{\\mathrm{CS}}$',
+        unit='km',
+        levels=(0, 500, 50),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='conductor',
+        description='Total CS SC strand length'
+    ),
+
+    # -------------------------------------------------------------------------
     # COMPONENT LIFETIMES & AVAILABILITY
     # -------------------------------------------------------------------------
     't_blanket_fpy': OutputParameter(
@@ -958,6 +1096,8 @@ CATEGORY_INFO = {
     'structural': ('Structural', 'Mechanical stress and materials'),
     'runaway': ('Runaway Electrons', 'RE seed and avalanche indicators (post-convergence diagnostic)'),
     'availability': ('Availability', 'Component lifetimes, replacement schedule, availability and capacity factor'),
+    'materials': ('Masses & Volumes', 'Blanket volume and TF/CS coil masses per material'),
+    'conductor': ('Conductor Lengths', 'TF and CS cable and SC strand total lengths'),
     'limits': ('Limits', 'Operational limits (internal)'),
 }
 
@@ -1719,6 +1859,21 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
             except Exception:
                 pass
 
+        # ── Unpack masses, volumes and conductor lengths from _coil_extra ───
+        L_cable_TF_s    = _coil_extra[12] * 1e-3   # m → km
+        L_cable_CS_s    = _coil_extra[13] * 1e-3
+        L_sc_TF_s       = _coil_extra[16] * 1e-3
+        L_sc_CS_s       = _coil_extra[17] * 1e-3
+        M_steel_TF_s    = _coil_extra[18] * 1e-3   # kg → t
+        M_sc_TF_s       = _coil_extra[19] * 1e-3
+        M_cu_TF_s       = _coil_extra[20] * 1e-3
+        M_total_TF_s    = _coil_extra[22] * 1e-3
+        M_steel_CS_s    = _coil_extra[23] * 1e-3
+        M_sc_CS_s       = _coil_extra[24] * 1e-3
+        M_cu_CS_s       = _coil_extra[25] * 1e-3
+        M_total_CS_s    = _coil_extra[27] * 1e-3
+        V_blanket_s     = _coil_extra[28]
+
         # ── Unpack lifetime/availability outputs (last 8 elements of result) ──
         (t_bl_fpy, t_div_fpy,
          t_bl_yr,  t_div_yr,
@@ -1792,6 +1947,19 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
             density_limit=n_condition,
             beta_limit=beta_condition,
             q_limit=q_condition,
+            V_blanket=V_blanket_s,
+            M_total_TF=M_total_TF_s,
+            M_sc_TF=M_sc_TF_s,
+            M_steel_TF=M_steel_TF_s,
+            M_cu_TF=M_cu_TF_s,
+            M_total_CS=M_total_CS_s,
+            M_sc_CS=M_sc_CS_s,
+            M_steel_CS=M_steel_CS_s,
+            M_cu_CS=M_cu_CS_s,
+            L_cable_TF=L_cable_TF_s,
+            L_cable_CS=L_cable_CS_s,
+            L_sc_strand_TF=L_sc_TF_s,
+            L_sc_strand_CS=L_sc_CS_s,
             t_blanket_fpy=t_bl_fpy,
             t_div_fpy=t_div_fpy,
             t_blanket_yr=t_bl_yr,
