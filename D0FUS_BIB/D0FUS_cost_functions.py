@@ -37,6 +37,10 @@ if __name__ != "__main__":
         from .D0FUS_import import *
         from .D0FUS_parameterization import *
         from .D0FUS_cost_data import *
+        from .D0FUS_physical_functions import (
+            f_pp_availability, f_pp_capacity_factor,
+            f_critical_neutron_load, f_op_time_before_load_limit,
+        )
     except ImportError:
         import numpy as np
         from D0FUS_cost_data import *
@@ -52,6 +56,10 @@ else:
         from D0FUS_BIB.D0FUS_import import *
         from D0FUS_BIB.D0FUS_parameterization import *
         from D0FUS_BIB.D0FUS_cost_data import *
+        from D0FUS_BIB.D0FUS_physical_functions import (
+            f_pp_availability, f_pp_capacity_factor,
+            f_critical_neutron_load, f_op_time_before_load_limit,
+        )
     except ModuleNotFoundError:
         import numpy as np
         from D0FUS_cost_data import *
@@ -102,97 +110,10 @@ def f_unit_cost_scaling(quantity, unit_cost):
     cost = quantity * unit_cost
     return cost
 
-#%% 2. Technology & Operation related general functions
-
-def f_pp_availability(T_op_limit, dt_rep):
-    """
-    Power plant availability fraction.
-
-    Simple model: the plant operates for T_op_limit years, then is shut
-    down for dt_rep years for scheduled component replacement.
-    Refs: Sheffield (2016) Section III.B; Entler (2018) Section 5.
-
-    Parameters
-    ----------
-    T_op_limit : float  Maximum operation time before replacement [yr].
-    dt_rep     : float  Scheduled replacement/maintenance downtime [yr].
-
-    Returns
-    -------
-    Av : float  Plant availability [-], in (0, 1).
-    """
-    Av = T_op_limit / (T_op_limit + dt_rep)
-    return Av
-
-def f_pp_capacity_factor(Av, Util_factor, Dwell_factor):
-    """
-    Power plant capacity factor.
-
-    CF = Av * Util_factor * Dwell_factor.
-    - Av: hardware availability (replacement cycle).
-    - Util_factor: fraction of available time at nominal power.
-    - Dwell_factor: duty cycle correction for pulsed operation
-      (1.0 for steady-state, < 1.0 for pulsed).
-
-    Parameters
-    ----------
-    Av           : float  Plant availability [-].
-    Util_factor  : float  Utilisation factor [-].
-    Dwell_factor : float  Dwell time factor [-] (1.0 = steady-state).
-
-    Returns
-    -------
-    CF : float  Capacity factor [-], in (0, 1).
-    """
-    CF = Av * Util_factor * Dwell_factor
-    return CF
-
-def f_critical_neutron_load(F_dpa, L_dpa, S):
-    """
-    Critical neutron load of a plasma-facing component [MW yr].
-
-    The component reaches its end-of-life when the accumulated fluence
-    (Gamma_n * t) produces L_dpa displacements per atom.
-
-    Approximation from D. Whyte (Seminar JPP 2024).
-
-    Parameters
-    ----------
-    F_dpa : float  Neutron-to-dpa conversion factor [dpa m^2 / (MW yr)].
-                   Typical: ~10 for EUROFER97 at 14 MeV.
-                   Ref: Gilbert et al., NF 57 (2017) 046015.
-    L_dpa : float  Material dpa limit [dpa].
-                   EUROFER97: ~50 dpa; ODS steels: potentially higher.
-                   Ref: Zinkle & Snead, Annu. Rev. Mater. Res. 44 (2014) 241.
-    S     : float  Surface exposed to neutron flux [m^2].
-
-    Returns
-    -------
-    X_crit_load : float  Critical neutron load [MW yr].
-    """
-    X_crit_load = (L_dpa * S) / F_dpa
-    return X_crit_load
-
-def f_op_time_before_load_limit(X_crit_load, Util_factor, Dwell_factor, Load_nn):
-    """
-    Maximum operation time before reaching the neutron load limit [yr].
-
-    T_op = X_crit_load / (Load_nn * Util_factor * Dwell_factor).
-    Adapted from D. Whyte (Seminar JPP 2024).
-
-    Parameters
-    ----------
-    X_crit_load  : float  Critical neutron load of the component [MW yr].
-    Util_factor  : float  Utilisation factor [-].
-    Dwell_factor : float  Dwell time factor [-].
-    Load_nn      : float  Nominal neutron/heat load on the component [MW].
-
-    Returns
-    -------
-    T_op_lim : float  Operation time before load limit [yr].
-    """
-    T_op_lim = X_crit_load / (Load_nn * Util_factor * Dwell_factor)
-    return T_op_lim
+# f_pp_availability, f_pp_capacity_factor, f_critical_neutron_load,
+# f_op_time_before_load_limit have been moved to D0FUS_physical_functions.py.
+# They are imported above and remain accessible via this module for backward
+# compatibility with the Whyte model and any external callers.
 
 #%% 3. Cost functions - Dennis Whyte 2024 adapted model
 
@@ -320,7 +241,8 @@ def f_COE_computation_Whyte(C_fixed, C_elements_rep, CF, P_elec):
 
 def f_costs_Sheffield(discount_rate, contingency, T_life, T_build,
                       P_t, P_e, P_aux, Gamma_n,
-                      Util_factor, Dwell_factor, dt_rep,
+                      T_op_limit, CF,
+                      t_life_bl_yr, t_life_div_yr,
                       V_FI, V_pc, V_sg, V_bl, S_tt,
                       Supra_cost_factor):
     """
@@ -335,22 +257,25 @@ def f_costs_Sheffield(discount_rate, contingency, T_life, T_build,
 
     Parameters
     ----------
-    discount_rate     : float  Real discount rate [-].
-    contingency       : float  Contingency fraction [-].
-    T_life            : int    Plant operational lifetime [yr].
-    T_build           : int    Construction time [yr].
-    P_t               : float  Thermal power output [MWth].
-    P_e               : float  Net electric power output [MWe].
-    P_aux             : float  Auxiliary heating power to plasma [MW].
-    Gamma_n           : float  Neutron wall load [MW/m^2].
-    Util_factor       : float  Utilisation factor [-].
-    Dwell_factor      : float  Dwell factor [-] (1.0 for steady-state).
-    dt_rep            : float  Replacement downtime [yr].
-    V_FI              : float  Fusion island bounding volume [m^3].
-    V_pc              : float  Primary coil volume (TF + CS) [m^3].
-    V_sg              : float  Shield and gaps volume [m^3].
-    V_bl              : float  Blanket volume [m^3].
-    S_tt              : float  Divertor target surface [m^2].
+    discount_rate  : float  Real discount rate [-].
+    contingency    : float  Contingency fraction [-].
+    T_life         : int    Plant operational lifetime [yr].
+    T_build        : int    Construction time [yr].
+    P_t            : float  Thermal power output [MWth].
+    P_e            : float  Net electric power output [MWe].
+    P_aux          : float  Auxiliary heating power to plasma [MW].
+    Gamma_n        : float  Neutron wall load [MW/m^2].
+    T_op_limit     : float  Operation time per replacement cycle [yr]
+                            (pre-computed by f_availability_schedule).
+    CF             : float  Capacity factor [-]
+                            (pre-computed by f_availability_schedule).
+    t_life_bl_yr   : float  Blanket calendar lifetime [yr].
+    t_life_div_yr  : float  Divertor calendar lifetime [yr].
+    V_FI           : float  Fusion island bounding volume [m^3].
+    V_pc           : float  Primary coil volume (TF + CS) [m^3].
+    V_sg           : float  Shield and gaps volume [m^3].
+    V_bl           : float  Blanket volume [m^3].
+    S_tt           : float  Divertor target surface [m^2].
     Supra_cost_factor : float  SC coil cost multiplier vs Cu [-].
 
     Returns
@@ -386,31 +311,10 @@ def f_costs_Sheffield(discount_rate, contingency, T_life, T_build,
                                                        x_bld_sfd, V_FI, C_FI)
     (C_CO, C_ind) = f_total_capital_cost_Sheffield(C_D, T_build, contingency)
 
-    # Thermal/neutron flux and component lifetimes
-    T_load_bl = T_load_bl_sfd
-    Load_bl = Gamma_n
-    ###########################################################################
-    #### DIVERTOR TARGETS REPLACEMENTS NEGLECTED HERE BECAUSE OF ABSENCE OF ###
-    ## MODEL TO COMPUTE FLUX TO DIVERTOR AND ITS LIFETIME : FOR FUTURE WORK ? #
-    ###########################################################################
-    T_load_tt = 1e20     # effectively infinite -> no divertor replacement
-    Load_tt = load_factor_tt_sfd * Load_bl
-
-    # Maximum operation time
-    T_op_limit_bl = f_op_time_before_load_limit(T_load_bl, Util_factor,
-                                                Dwell_factor, Load_bl)
-    T_op_limit_tt = f_op_time_before_load_limit(T_load_tt, Util_factor,
-                                                Dwell_factor, Load_tt)
-    T_op_limit = min(T_op_limit_bl, T_op_limit_tt)
-
-    # Availability and capacity factor
-    Av = f_pp_availability(T_op_limit, dt_rep)
-    CF = f_pp_capacity_factor(Av, Util_factor, Dwell_factor)
-
-    # OpEx [2010 M$/yr]
-    C_F = f_annual_consumables_costs_Sheffield(CF, T_life, 0.1, C_bl, Load_bl,
-                                               T_load_bl, 0.2, C_tt, Load_tt,
-                                               T_load_tt, 0.1, C_aux, C_fa_sfd)
+    # OpEx [2010 M$/yr] — component lifetimes from physical model
+    C_F = f_annual_consumables_costs_Sheffield(T_life, 0.1, C_bl, t_life_bl_yr,
+                                               0.2, C_tt, t_life_div_yr,
+                                               0.1, C_aux, C_fa_sfd)
     C_OM = f_annual_OandM_costs_Sheffield(C_OM_sfd, P_e, P_OM_sfd, x_OM_sfd)
 
     # Cost of electricity [2010 $/MWh]
@@ -524,37 +428,32 @@ def f_annual_OandM_costs_Sheffield(c_scale_OM, P_e, P_scale_OM, x_scale_OM):
     C_OM = c_scale_OM * (P_e / P_scale_OM)**x_scale_OM
     return C_OM
 
-def f_annual_consumables_costs_Sheffield(CF, T_life, failure_bl, C_bl, Load_bl,
-                                         T_load_bl, failure_tt, C_tt, Load_tt,
-                                         T_load_tt, f_aaux, C_aux, C_fa):
+def f_annual_consumables_costs_Sheffield(T_life, failure_bl, C_bl, t_life_bl_yr,
+                                         failure_tt, C_tt, t_life_div_yr,
+                                         f_aaux, C_aux, C_fa):
     """
-    Annual consumable costs: blanket + target replacements + aux fraction + fuel.
+    Annual consumable costs: blanket + divertor replacements + aux fraction + fuel.
     Sheffield (2016) Section III.C.
 
     Parameters
     ----------
-    CF         : float  Capacity factor [-].
-    T_life     : float  Plant lifetime [yr].
-    failure_bl : float  Blanket failure surcharge fraction [-].
-    C_bl       : float  Blanket cost [2010 M$].
-    Load_bl    : float  Neutron load on blanket [MW/m^2].
-    T_load_bl  : float  Blanket max fluence [MW yr/m^2].
-    failure_tt : float  Target failure surcharge fraction [-].
-    C_tt       : float  Target cost [2010 M$].
-    Load_tt    : float  Heat load on targets [MW/m^2].
-    T_load_tt  : float  Target max fluence [MW yr/m^2].
-    f_aaux     : float  Annual fraction of aux system cost [-].
-    C_aux      : float  Aux heating system cost [2010 M$].
-    C_fa       : float  Annual fuel cost [2010 M$/yr].
+    T_life        : float  Plant lifetime [yr].
+    failure_bl    : float  Blanket failure surcharge fraction [-].
+    C_bl          : float  Blanket cost [2010 M$].
+    t_life_bl_yr  : float  Blanket calendar lifetime [yr].
+    failure_tt    : float  Divertor failure surcharge fraction [-].
+    C_tt          : float  Divertor target cost [2010 M$].
+    t_life_div_yr : float  Divertor calendar lifetime [yr].
+    f_aaux        : float  Annual fraction of aux system cost [-].
+    C_aux         : float  Aux heating system cost [2010 M$].
+    C_fa          : float  Annual fuel cost [2010 M$/yr].
 
     Returns
     -------
     C_F : float  Annual consumable cost [2010 M$/yr].
     """
-    C_ba = f_annual_rep_cost_Sheffield(failure_bl, C_bl, CF,
-                                       T_life, Load_bl, T_load_bl)
-    C_ta = f_annual_rep_cost_Sheffield(failure_tt, C_tt, CF,
-                                       T_life, Load_tt, T_load_tt)
+    C_ba = f_annual_rep_cost_Sheffield(failure_bl, C_bl, T_life, t_life_bl_yr)
+    C_ta = f_annual_rep_cost_Sheffield(failure_tt, C_tt, T_life, t_life_div_yr)
     C_F = C_ba + C_ta + f_aaux * C_aux + C_fa
     return C_F
 
@@ -618,29 +517,27 @@ def f_interest_charge_construction_Sheffield(T_build):
     f_CAPO = 1.011**(T_build + 0.61)
     return f_CAPO
 
-def f_annual_rep_cost_Sheffield(failure, C_init, CF, T_life, Load_nom, T_load):
+def f_annual_rep_cost_Sheffield(failure, C_init, T_life, t_comp_yr):
     """
     Annual replacement cost of a single component over the plant lifetime.
     Sheffield (2016) Section III.C.
 
-    Number of replacements = CF * T_life * Load_nom / T_load - 1
-    (subtracting the initial set included in CapEx).
+    N_rep = T_life / t_comp_yr  (replacements over plant life, including initial).
+    Annual cost = (1 + failure) * C_init * max(N_rep - 1, 0) / T_life.
 
     Parameters
     ----------
-    failure  : float  Failure surcharge fraction [-].
-    C_init   : float  Component initial cost [2010 M$].
-    CF       : float  Capacity factor [-].
-    T_life   : float  Plant lifetime [yr].
-    Load_nom : float  Nominal flux on component [MW/m^2].
-    T_load   : float  Maximum tolerable fluence [MW yr/m^2].
+    failure    : float  Failure surcharge fraction [-].
+    C_init     : float  Component initial cost [2010 M$].
+    T_life     : float  Plant lifetime [yr].
+    t_comp_yr  : float  Component calendar lifetime [yr].
 
     Returns
     -------
     C_a : float  Annualised replacement cost [2010 M$/yr].
     """
-    C_others = (CF * T_life * Load_nom / T_load - 1) * C_init / T_life
-    C_a = (1 + failure) * C_others
+    N_rep = T_life / t_comp_yr
+    C_a = (1 + failure) * max(N_rep - 1.0, 0.0) * C_init / T_life
     return C_a
 
 
@@ -697,22 +594,23 @@ if __name__ == "__main__":
     print(f"   Ref: Jo et al., Energies 14 (2021) 6817")
     print(SEP)
     res_shf = f_costs_Sheffield(
-        discount_rate     = 0.07,
-        contingency       = 0.15,
-        T_life            = 40,
-        T_build           = 8,
-        P_t               = 4150.0,
-        P_e               = 1200.0,
-        P_aux             = 200.0,
-        Gamma_n           = 1.0,
-        Util_factor       = 0.85,
-        Dwell_factor      = 1.0,
-        dt_rep            = 1.5,
-        V_FI              = 5000.0,
-        V_pc              = 800.0,
-        V_sg              = 600.0,
-        V_bl              = 400.0,
-        S_tt              = 50.0,
+        discount_rate  = 0.07,
+        contingency    = 0.15,
+        T_life         = 40,
+        T_build        = 8,
+        P_t            = 4150.0,
+        P_e            = 1200.0,
+        P_aux          = 200.0,
+        Gamma_n        = 1.0,
+        T_op_limit     = 5.0,    # representative blanket cycle ~5 yr
+        CF             = 0.70,   # Av * Util * Dwell
+        t_life_bl_yr   = 5.0,    # blanket calendar lifetime [yr]
+        t_life_div_yr  = 3.0,    # divertor calendar lifetime [yr]
+        V_FI           = 5000.0,
+        V_pc           = 800.0,
+        V_sg           = 600.0,
+        V_bl           = 400.0,
+        S_tt           = 50.0,
         Supra_cost_factor = 2.0,
     )
     T_op, CF, C_CO, COE = res_shf[0], res_shf[1], res_shf[2], res_shf[3]
