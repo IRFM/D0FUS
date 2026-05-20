@@ -862,6 +862,90 @@ OUTPUT_REGISTRY = {
         category='limits',
         description='Radial build validity flag'
     ),
+
+    # -------------------------------------------------------------------------
+    # COMPONENT LIFETIMES & AVAILABILITY
+    # -------------------------------------------------------------------------
+    't_blanket_fpy': OutputParameter(
+        name='t_blanket_fpy',
+        label='$t_{\\mathrm{bl}}$',
+        unit='fpy',
+        levels=(0, 15, 1),
+        fmt='%.1f',
+        use_radial_mask=True,
+        category='availability',
+        description='Blanket structural lifetime (dpa model)'
+    ),
+    't_div_fpy': OutputParameter(
+        name='t_div_fpy',
+        label='$t_{\\mathrm{div}}$',
+        unit='fpy',
+        levels=(0, 10, 1),
+        fmt='%.1f',
+        use_radial_mask=True,
+        category='availability',
+        description='Divertor lifetime (integrated heat model)'
+    ),
+    't_blanket_yr': OutputParameter(
+        name='t_blanket_yr',
+        label='$t_{\\mathrm{bl}}$',
+        unit='yr',
+        levels=(0, 20, 2),
+        fmt='%.1f',
+        use_radial_mask=True,
+        category='availability',
+        description='Blanket calendar lifetime'
+    ),
+    't_div_yr': OutputParameter(
+        name='t_div_yr',
+        label='$t_{\\mathrm{div}}$',
+        unit='yr',
+        levels=(0, 15, 1),
+        fmt='%.1f',
+        use_radial_mask=True,
+        category='availability',
+        description='Divertor calendar lifetime'
+    ),
+    'T_op_limit': OutputParameter(
+        name='T_op_limit',
+        label='$T_{\\mathrm{op}}$',
+        unit='yr',
+        levels=(0, 15, 1),
+        fmt='%.1f',
+        use_radial_mask=True,
+        category='availability',
+        description='Calendar operation time per replacement cycle'
+    ),
+    'dt_rep_eff': OutputParameter(
+        name='dt_rep_eff',
+        label='$\\Delta t_{\\mathrm{rep}}$',
+        unit='yr',
+        levels=(0, 3, 0.2),
+        fmt='%.2f',
+        use_radial_mask=True,
+        category='availability',
+        description='Effective average replacement downtime per cycle'
+    ),
+    'Av': OutputParameter(
+        name='Av',
+        label='$A_v$',
+        unit='',
+        levels=(0.5, 1.0, 0.05),
+        fmt='%.2f',
+        use_radial_mask=True,
+        category='availability',
+        description='Plant availability'
+    ),
+    'CF': OutputParameter(
+        name='CF',
+        label='$\\mathrm{CF}$',
+        unit='',
+        levels=(0.3, 0.9, 0.05),
+        fmt='%.2f',
+        use_radial_mask=True,
+        category='availability',
+        description='Plant capacity factor'
+    ),
 }
 
 # Category descriptions for display
@@ -873,6 +957,7 @@ CATEGORY_INFO = {
     'geometry': ('Geometry', 'Plasma and coil dimensions'),
     'structural': ('Structural', 'Mechanical stress and materials'),
     'runaway': ('Runaway Electrons', 'RE seed and avalanche indicators (post-convergence diagnostic)'),
+    'availability': ('Availability', 'Component lifetimes, replacement schedule, availability and capacity factor'),
     'limits': ('Limits', 'Operational limits (internal)'),
 }
 
@@ -1634,6 +1719,12 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
             except Exception:
                 pass
 
+        # ── Unpack lifetime/availability outputs (last 8 elements of result) ──
+        (t_bl_fpy, t_div_fpy,
+         t_bl_yr,  t_div_yr,
+         T_op_s,   dt_eff_s,
+         Av_s,     CF_s_out) = _coil_extra[-8:]
+
         # ── Store all results ────────────────────────────────────────
         outputs.set_point(y, x,
             Q=Q,
@@ -1701,6 +1792,14 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
             density_limit=n_condition,
             beta_limit=beta_condition,
             q_limit=q_condition,
+            t_blanket_fpy=t_bl_fpy,
+            t_div_fpy=t_div_fpy,
+            t_blanket_yr=t_bl_yr,
+            t_div_yr=t_div_yr,
+            T_op_limit=T_op_s,
+            dt_rep_eff=dt_eff_s,
+            Av=Av_s,
+            CF=CF_s_out,
         )
 
         # Combined TF + CS thickness
