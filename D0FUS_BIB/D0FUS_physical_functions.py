@@ -6656,7 +6656,7 @@ def f_tau_alpha(n_bar, T_bar, tauE, C_Alpha, nu_T,
 
 # ── Component volumes ─────────────────────────────────────────────────────────
 
-def f_volume(a, b, c, d, R0, κ):
+def f_volume(a, b, c, d, R0, κ, Delta_TF, H_TF):
     """
     Approximate volumes of the main reactor structural components.
 
@@ -6681,14 +6681,18 @@ def f_volume(a, b, c, d, R0, κ):
         Major radius [m].
     κ : float
         Plasma elongation (LCFS) (dimensionless).
+    Delta_TF : float
+        Outboard port-access radial clearance [m].
+    H_TF : float
+        Total TF coil height from Princeton-D cross-section [m].
 
     Returns
     -------
-    V_BB : float
+    V_blanket : float
         Volume of FW + BB + neutron shield + VV + gaps [m³].
-    V_TF : float
-        Volume of TF coil winding packs [m³].
-    V_CS : float
+    V_TF_Pappus : float
+        Volume of TF coil winding packs (Pappus approximation) [m³].
+    V_CS_geom : float
         Volume of the central solenoid [m³].
     V_FI : float
         Fusion-island bounding-cylinder volume [m³].
@@ -6703,23 +6707,23 @@ def f_volume(a, b, c, d, R0, κ):
             V = 2π R₀ × A_cross  (Pappus).
     - CS  : annular cylinder, height 2(κa + b + c),
             inner radius R₀ − a − b − c − d.
-    - FI  : solid cylinder, height 2(κa + b + c),
-            outer radius R₀ + a + b + c.
+    - FI  : solid cylinder, height H_TF,
+            outer radius R₀ + a + b + Delta_TF + c.
     """
     # Blanket shell (Pappus): A_cross = 4[(a+b)(κa+b) − a·κa] = 4b[a(1+κ)+b]
-    V_BB = 8 * np.pi * b * R0 * (a * (1 + κ) + b)
+    V_blanket = 8 * np.pi * b * R0 * (a * (1 + κ) + b)
 
     # TF shell (Pappus): A_cross = 4c[a(1+κ) + 2b + c]
-    V_TF = 8 * np.pi * c * R0 * (a * (1 + κ) + 2 * b + c)
+    V_TF_Pappus = 8 * np.pi * c * R0 * (a * (1 + κ) + 2 * b + c)
 
     # Central solenoid: π h (R_out² − R_in²), h = 2(κa + b + c)
     R_i = R0 - a - b - c
-    V_CS = 2 * np.pi * (κ * a + b + c) * (2 * d * R_i - d**2)
+    V_CS_geom = 2 * np.pi * (κ * a + b + c) * (2 * d * R_i - d**2)
 
-    # Fusion-island bounding cylinder: π R² h
-    V_FI = 2 * np.pi * (κ * a + b + c) * (R0 + a + b + c)**2
+    # Fusion-island bounding cylinder: π R² H_TF, R = R0 + a + b + Delta_TF + c
+    V_FI = 2 * np.pi * H_TF * (R0 + a + b + Delta_TF + c)**2
 
-    return (V_BB, V_TF, V_CS, V_FI)
+    return (V_blanket, V_TF_Pappus, V_CS_geom, V_FI)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
