@@ -352,6 +352,17 @@ class GlobalConfig:
     # Designs exceeding C_invest_max are penalised. Set to 1e6 to disable.
     C_invest_max        : float = 25e3   # Capital cost ceiling [M EUR]
 
+    # ── 17. Radial build sublayer widths ─────────────────────────────────────
+    # b = total plasma→TF radial gap (drives all existing machinery).
+    # Single width per component (no IB/OB distinction except for the BB which
+    # derives separately: δ_BB_ib = b − Σ(fixed), δ_BB_ob = b + Delta_TF − Σ(fixed)).
+    # Layers in order from plasma outward: gap_plasma, FW, BB(derived), shield, VV, gap_TF
+    delta_gap_plasma : float = 0.02   # Plasma-facing gap [m]
+    delta_FW         : float = 0.05   # First wall [m]
+    delta_shield     : float = 0.30   # Neutron shield [m]
+    delta_VV         : float = 0.15   # Vacuum vessel [m]
+    delta_gap_TF     : float = 0.05   # VV→TF gap [m]
+
     # ── 16. Component lifetime & availability model ───────────────────────────
     # Blanket lifetime: t_bl [fpy] = dpa_lim * A_FW / (0.8 * C_dpa * P_fus)
     # Ref: Gilbert et al. (2013); EUROfusion (2015)
@@ -362,7 +373,7 @@ class GlobalConfig:
     # Ref: ITER Organization (2025); CEA IRFM (2017)
     epsilon_div         : float = 50.0   # Divertor integrated heat limit [MW yr / m²]
     f_peak              : float = 3.0    # Divertor heat flux peaking factor [-]
-    f_div_area_fraction : float = 0.05   # A_div / A_FW ratio [-]
+    f_div_area_fraction : float = 0.08   # A_div / A_FW ratio [-]
     # Replacement downtimes (performed in parallel if scheduled together)
     dt_rep_bl           : float = 1.5    # Blanket replacement downtime [yr]
     dt_rep_div          : float = 0.5    # Divertor replacement downtime [yr]
