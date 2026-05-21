@@ -1992,7 +1992,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
 
     # ── Component lifetimes and plant availability ────────────────────────────
     A_div          = config.f_div_area_fraction * Surface_solution
-    t_life_bl_fpy  = f_blanket_lifetime_fpy(P_fus, Surface_solution,
+    A_blanket      = Surface_solution * (1.0 - config.f_div_area_fraction)
+    t_life_bl_fpy  = f_blanket_lifetime_fpy(P_fus, A_blanket,
                                              config.dpa_lim, config.C_dpa)
     t_life_div_fpy = f_divertor_lifetime_fpy(P_sep_solution, A_div,
                                               config.epsilon_div, config.f_peak)
