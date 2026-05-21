@@ -5276,6 +5276,126 @@ def f_V_blanket(a: float, b: float, R0: float,
     return 2.0 * np.pi * (_moment_area(R_outer, Z_outer) - _moment_area(R_in, Z_in))
 
 
+# ── Radial build component volumes ──────────────────────────────────────────
+
+def _f_sublayer_volume(
+    delta_ib: float, delta_ob: float,
+    t_ib:     float, t_ob:     float,
+    a: float, κ: float, R0: float,
+) -> float:
+    """
+    Volume of one sublayer of the radial build using the rectangular Pappus model.
+
+    The torus cross-section is split into three contributions:
+      IB  — inner straight leg
+      OB  — outer leg
+      TB  — top+bottom arcs connecting IB to OB
+
+    Parameters
+    ----------
+    delta_ib, delta_ob : float  IB and OB layer thicknesses [m].
+    t_ib,    t_ob      : float  Cumulative depth at the inner boundary on IB/OB [m].
+    a                  : float  Plasma minor radius [m].
+    κ                  : float  Plasma elongation [-].
+    R0                 : float  Plasma major radius [m].
+
+    Notes
+    -----
+    For the symmetric case (delta_ib=delta_ob=δ, t_ib=t_ob=t) the result
+    reduces exactly to the f_volume Pappus formula:
+        V = 8π R0 δ [a(1+κ) + 2t + δ]
+    """
+    # IB contribution: inner-leg strip
+    R_ib = R0 - a - t_ib - delta_ib / 2.0
+    H_ib = κ * a + t_ib + delta_ib / 2.0
+    V_ib = 4.0 * np.pi * R_ib * H_ib * delta_ib
+
+    # OB contribution: outer-leg strip
+    R_ob = R0 + a + t_ob + delta_ob / 2.0
+    H_ob = κ * a + t_ob + delta_ob / 2.0
+    V_ob = 4.0 * np.pi * R_ob * H_ob * delta_ob
+
+    # Top/bottom arcs: average thickness + average cumulative depth
+    delta_tb = 0.5 * (delta_ib + delta_ob)
+    t_avg    = 0.5 * (t_ib    + t_ob)
+    V_tb     = 8.0 * np.pi * R0 * (a + t_avg + delta_tb / 2.0) * delta_tb
+
+    return V_ib + V_ob + V_tb
+
+
+def f_radial_build_component_volumes(
+    a: float, b: float, κ: float, R0: float,
+    Delta_TF: float,
+    Surface: float,
+    delta_gap_plasma: float,
+    delta_FW:         float,
+    delta_shield:     float,
+    delta_VV:         float,
+    delta_gap_TF:     float,
+    f_div_area_fraction: float,
+) -> dict:
+    """
+    Volumes of individual radial build components from plasma to TF coil.
+
+    Layer order from plasma outward:
+      gap_plasma → FW → BB (residual) → shield → VV → gap_TF
+
+    All fixed layers use a single width (no IB/OB distinction).  The breeding
+    blanket absorbs the residual, which is asymmetric because Delta_TF adds
+    extra outboard space:
+        δ_BB_ib = b            − (gap_plasma + FW + shield + VV + gap_TF)
+        δ_BB_ob = b + Delta_TF − (gap_plasma + FW + shield + VV + gap_TF)
+
+    The divertor occupies f_div_area_fraction of the first-wall surface and
+    replaces FW+BB radially.  Volumes labelled *_eff exclude that fraction.
+
+    Returns
+    -------
+    dict with keys:
+        V_gap_plasma, V_FW, V_BB,  V_shield, V_VV, V_gap_TF  — layer volumes [m³]
+        V_FW_eff, V_BB_eff                — FW/BB excluding divertor region [m³]
+        V_divertor                        — divertor volume [m³]
+        delta_BB_ib, delta_BB_ob          — derived BB thicknesses [m]
+    """
+    # Fixed-layer total (same for IB and OB)
+    fixed = delta_gap_plasma + delta_FW + delta_shield + delta_VV + delta_gap_TF
+    delta_BB_ib = b            - fixed
+    delta_BB_ob = b + Delta_TF - fixed
+
+    # Layers: (name, delta_ib, delta_ob); uniform layers have delta_ib == delta_ob
+    layers = [
+        ("gap_plasma", delta_gap_plasma, delta_gap_plasma),
+        ("FW",         delta_FW,         delta_FW),
+        ("BB",         delta_BB_ib,      delta_BB_ob),
+        ("shield",     delta_shield,     delta_shield),
+        ("VV",         delta_VV,         delta_VV),
+        ("gap_TF",     delta_gap_TF,     delta_gap_TF),
+    ]
+
+    volumes = {}
+    t_ib = 0.0
+    t_ob = 0.0
+    for name, d_ib, d_ob in layers:
+        volumes[f"V_{name}"] = _f_sublayer_volume(d_ib, d_ob, t_ib, t_ob, a, κ, R0)
+        t_ib += d_ib
+        t_ob += d_ob
+
+    # Divertor replaces FW+BB in f_div fraction of the poloidal surface
+    V_FW_BB_total = volumes["V_FW"] + volumes["V_BB"]
+    V_divertor     = f_div_area_fraction * V_FW_BB_total
+
+    volumes["V_FW_eff"]    = volumes["V_FW"] * (1.0 - f_div_area_fraction)
+    volumes["V_BB_eff"]    = volumes["V_BB"] * (1.0 - f_div_area_fraction)
+    volumes["V_divertor"]  = V_divertor
+    volumes["delta_BB_ib"] = delta_BB_ib
+    volumes["delta_BB_ob"] = delta_BB_ob
+    # Total blanket volume = sum of all 6 fixed layers (divertor is a subset, not extra)
+    volumes["V_total"] = (volumes["V_gap_plasma"] + volumes["V_FW"] + volumes["V_BB"]
+                          + volumes["V_shield"]   + volumes["V_VV"] + volumes["V_gap_TF"])
+
+    return volumes
+
+
 def f_V_CS(a: float, b: float, c: float, d: float,
            R0: float, κ: float,
            Gap: float, Choice_Buck_Wedg: str) -> float:
