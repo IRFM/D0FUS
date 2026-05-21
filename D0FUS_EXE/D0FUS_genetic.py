@@ -178,7 +178,7 @@ _IDX = {
     'tau_sd_alpha':    97,
     'W_fast_alpha':    98,
     # ── Coil volumes and cable inventory ───────────────────────────────
-    'V_TF_one':       99,     # Single TF coil volume (Pappus centroid) [m³]
+    'V_TF_one':       99,    # Single TF coil volume (Pappus centroid) [m³]
     'V_CS_geom':      100,   # Total CS solenoid volume [m³]
     'V_steel_TF':     101,    # TF steel total (all coils) [m³]
     'V_sc_TF':        102,    # TF SC material total [m³]
@@ -210,7 +210,7 @@ _IDX = {
     # ── Blanket volume ───────────────────────────────────────────────────────
     'V_blanket':       127,  # Blanket volume (Miller LCFS → TF) [m³]
     # ── Component lifetimes and availability ─────────────────────────────────
-    't_life_bl_fpy':   128,  # Blanket lifetime [fpy]
+    't_life_bl_fpy':   128,  # [fpy]  # Blanket lifetime [fpy]
     't_life_div_fpy':  129,  # Divertor lifetime [fpy]
     't_life_bl_yr':    130,  # Blanket lifetime [yr]
     't_life_div_yr':   131,  # Divertor lifetime [yr]
@@ -218,6 +218,14 @@ _IDX = {
     'dt_rep_eff':      133,  # Effective replacement downtime [yr]
     'Av':              134,  # Plant availability [-]
     'CF':              135,  # Capacity factor [-]
+    # ── Radial build component volumes ───────────────────────────────────────
+    'V_rb_gap_plasma': 136,
+    'V_rb_FW':         137,  # First wall volume (excl. divertor) [m³]
+    'V_rb_BB':         138,  # Breeding blanket volume (excl. divertor) [m³]
+    'V_rb_shield':     139,
+    'V_rb_VV':         140,
+    'V_rb_gap_TF':     141,
+    'V_rb_divertor':   142,
 }
 
 #%% Global Variables (default values)
@@ -541,8 +549,11 @@ def evaluate_individual(individual, verbose=False):
             CF_g         = _safe_real(output[_IDX['CF']])
             t_bl_yr_g    = _safe_real(output[_IDX['t_life_bl_yr']])
             t_div_yr_g   = _safe_real(output[_IDX['t_life_div_yr']])
+            V_rb_BB_g    = _safe_real(output[_IDX['V_rb_BB']])
+            # Analytical H_TF approximation avoids the ODE solve inside
+            # f_TF_cross_section, which is called for every GA individual
             _, _, Delta_TF_g = Number_TF_coils(config.R0, config.a, config.b, config.ripple_adm, config.L_min)
-            _, _, _H_TF_g, _, _, _, _, _, _ = f_TF_cross_section(config.a, config.b, config.R0, c_TF, Delta_TF_g)
+            _H_TF_g = 2.0 * (κ * config.a + config.b + c_TF)
             (V_blanket, V_TF_Pappus, V_CS_geom, V_FI) = f_volume(
                 config.a, config.b, c_TF, d_CS, config.R0, κ, Delta_TF_g, _H_TF_g)
 
@@ -562,7 +573,7 @@ def evaluate_individual(individual, verbose=False):
                 V_FI=V_FI,
                 V_pc=V_TF_Pappus + V_CS_geom,
                 V_sg=V_blanket,
-                V_bl=V_blanket,
+                V_bl=V_rb_BB_g,
                 S_tt=0.1 * Surface,
                 Supra_cost_factor=config.Supra_cost_factor,
             )
@@ -1182,9 +1193,10 @@ def run_genetic_optimization(input_file,
         CF_b           = final_output[_IDX['CF']]
         t_bl_yr_b      = final_output[_IDX['t_life_bl_yr']]
         t_div_yr_b     = final_output[_IDX['t_life_div_yr']]
+        V_rb_BB_b      = final_output[_IDX['V_rb_BB']]
         P_th_best      = config.P_fus * config.M_blanket + P_CD_best
         _, _, Delta_TF_b = Number_TF_coils(config.R0, config.a, config.b, config.ripple_adm, config.L_min)
-        _, _, _H_TF_b, _, _, _, _, _, _ = f_TF_cross_section(config.a, config.b, config.R0, c_TF, Delta_TF_b)
+        _H_TF_b = 2.0 * (κ_best * config.a + config.b + c_TF)
         (V_blanket_b, V_TF_Pappus_b, V_CS_geom_b, V_FI_b) = f_volume(
             config.a, config.b, c_TF, d_CS, config.R0, κ_best, Delta_TF_b, _H_TF_b)
         _cres_best = f_costs_Sheffield(
@@ -1194,7 +1206,7 @@ def run_genetic_optimization(input_file,
             Gamma_n=Gamma_n_best,
             T_op_limit=T_op_limit_b, CF=CF_b,
             t_life_bl_yr=t_bl_yr_b, t_life_div_yr=t_div_yr_b,
-            V_FI=V_FI_b, V_pc=V_TF_Pappus_b+V_CS_geom_b, V_sg=V_blanket_b, V_bl=V_blanket_b,
+            V_FI=V_FI_b, V_pc=V_TF_Pappus_b+V_CS_geom_b, V_sg=V_blanket_b, V_bl=V_rb_BB_b,
             S_tt=0.1*Surface_best,
             Supra_cost_factor=config.Supra_cost_factor)
         _COE_best     = _cres_best[3]

@@ -864,6 +864,80 @@ OUTPUT_REGISTRY = {
     ),
 
     # -------------------------------------------------------------------------
+    # RADIAL BUILD COMPONENT VOLUMES
+    # -------------------------------------------------------------------------
+    'V_rb_gap_plasma': OutputParameter(
+        name='V_rb_gap_plasma',
+        label='$V_{\\mathrm{gap,pl}}$',
+        unit='m³',
+        levels=(0, 200, 20),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='radial_build',
+        description='Plasma-facing gap volume (all around)'
+    ),
+    'V_rb_FW': OutputParameter(
+        name='V_rb_FW',
+        label='$V_{\\mathrm{FW}}$',
+        unit='m³',
+        levels=(0, 500, 50),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='radial_build',
+        description='First wall volume (excl. divertor region)'
+    ),
+    'V_rb_BB': OutputParameter(
+        name='V_rb_BB',
+        label='$V_{\\mathrm{BB}}$',
+        unit='m³',
+        levels=(0, 3000, 200),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='radial_build',
+        description='Breeding blanket volume (excl. divertor region)'
+    ),
+    'V_rb_shield': OutputParameter(
+        name='V_rb_shield',
+        label='$V_{\\mathrm{shield}}$',
+        unit='m³',
+        levels=(0, 2000, 200),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='radial_build',
+        description='Neutron shield volume (all around)'
+    ),
+    'V_rb_VV': OutputParameter(
+        name='V_rb_VV',
+        label='$V_{\\mathrm{VV}}$',
+        unit='m³',
+        levels=(0, 1000, 100),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='radial_build',
+        description='Vacuum vessel volume (all around)'
+    ),
+    'V_rb_gap_TF': OutputParameter(
+        name='V_rb_gap_TF',
+        label='$V_{\\mathrm{gap,TF}}$',
+        unit='m³',
+        levels=(0, 500, 50),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='radial_build',
+        description='VV→TF gap volume (all around)'
+    ),
+    'V_rb_divertor': OutputParameter(
+        name='V_rb_divertor',
+        label='$V_{\\mathrm{div}}$',
+        unit='m³',
+        levels=(0, 200, 20),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='radial_build',
+        description='Divertor volume'
+    ),
+
+    # -------------------------------------------------------------------------
     # BLANKET & COIL MASSES
     # -------------------------------------------------------------------------
     'V_blanket': OutputParameter(
@@ -1096,6 +1170,7 @@ CATEGORY_INFO = {
     'structural': ('Structural', 'Mechanical stress and materials'),
     'runaway': ('Runaway Electrons', 'RE seed and avalanche indicators (post-convergence diagnostic)'),
     'availability': ('Availability', 'Component lifetimes, replacement schedule, availability and capacity factor'),
+    'radial_build': ('Radial Build Volumes', 'Component volumes: plasma gap, FW, breeding blanket, shield, VV, divertor'),
     'materials': ('Masses & Volumes', 'Blanket volume and TF/CS coil masses per material'),
     'conductor': ('Conductor Lengths', 'TF and CS cable and SC strand total lengths'),
     'limits': ('Limits', 'Operational limits (internal)'),
@@ -1830,8 +1905,9 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
                 CF_s         = res[135]
                 t_bl_yr_s    = res[130]
                 t_div_yr_s   = res[131]
+                V_rb_BB_s    = res[138]
                 _, _, Delta_TF_s = Number_TF_coils(config.R0, config.a, config.b, config.ripple_adm, config.L_min)
-                _, _, _H_TF_s, _, _, _, _, _, _ = f_TF_cross_section(config.a, config.b, config.R0, c, Delta_TF_s)
+                _H_TF_s = 2.0 * (κ * config.a + config.b + c)
                 (V_blanket_s, V_TF_Pappus_s, V_CS_geom_s, V_FI_s) = f_volume(
                     config.a, config.b, c, d, config.R0, κ, Delta_TF_s, _H_TF_s)
                 _cres = f_costs_Sheffield(
@@ -1850,7 +1926,7 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
                     V_FI=V_FI_s,
                     V_pc=V_TF_Pappus_s + V_CS_geom_s,
                     V_sg=V_blanket_s,
-                    V_bl=V_blanket_s,
+                    V_bl=V_rb_BB_s,
                     S_tt=0.1 * Surface,
                     Supra_cost_factor=config.Supra_cost_factor,
                 )
@@ -1858,6 +1934,15 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
                 _C_invest_val = _cres[2] * 1e-3  # M EUR → B EUR
             except Exception:
                 pass
+
+        # ── Unpack radial build component volumes (offsets 37–43) ────────────
+        V_rb_gap_plasma_s = _coil_extra[37]
+        V_rb_FW_s         = _coil_extra[38]
+        V_rb_BB_s         = _coil_extra[39]
+        V_rb_shield_s     = _coil_extra[40]
+        V_rb_VV_s         = _coil_extra[41]
+        V_rb_gap_TF_s     = _coil_extra[42]
+        V_rb_divertor_s   = _coil_extra[43]
 
         # ── Unpack masses, volumes and conductor lengths from _coil_extra ───
         L_cable_TF_s    = _coil_extra[12] * 1e-3   # m → km
@@ -1874,11 +1959,11 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
         M_total_CS_s    = _coil_extra[27] * 1e-3
         V_blanket_s     = _coil_extra[28]
 
-        # ── Unpack lifetime/availability outputs (last 8 elements of result) ──
+        # ── Unpack lifetime/availability outputs (offsets 29–36) ─────────────
         (t_bl_fpy, t_div_fpy,
          t_bl_yr,  t_div_yr,
          T_op_s,   dt_eff_s,
-         Av_s,     CF_s_out) = _coil_extra[-8:]
+         Av_s,     CF_s_out) = _coil_extra[29:37]
 
         # ── Store all results ────────────────────────────────────────
         outputs.set_point(y, x,
@@ -1947,6 +2032,13 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
             density_limit=n_condition,
             beta_limit=beta_condition,
             q_limit=q_condition,
+            V_rb_gap_plasma=V_rb_gap_plasma_s,
+            V_rb_FW=V_rb_FW_s,
+            V_rb_BB=V_rb_BB_s,
+            V_rb_shield=V_rb_shield_s,
+            V_rb_VV=V_rb_VV_s,
+            V_rb_gap_TF=V_rb_gap_TF_s,
+            V_rb_divertor=V_rb_divertor_s,
             V_blanket=V_blanket_s,
             M_total_TF=M_total_TF_s,
             M_sc_TF=M_sc_TF_s,
