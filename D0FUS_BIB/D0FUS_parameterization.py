@@ -366,17 +366,17 @@ class GlobalConfig:
     # ── 16. Component lifetime & availability model ───────────────────────────
     # Blanket lifetime: t_bl [fpy] = dpa_lim * A_FW / (0.8 * C_dpa * P_fus)
     # Ref: Gilbert et al. (2013); EUROfusion (2015)
-    dpa_lim             : float = 80.0   # Blanket structural damage limit [dpa]
+    dpa_lim             : float = 70.0   # Blanket structural damage limit [dpa]
     C_dpa               : float = 12.0   # dpa rate per neutron wall load [dpa fpy⁻¹ / (MW m⁻²)]
     # Divertor lifetime: t_div [fpy] = epsilon_div * A_div / (f_peak * P_sep)
     # A_div = f_div_area_fraction * A_FW (first-wall area)
     # Ref: ITER Organization (2025); CEA IRFM (2017)
-    epsilon_div         : float = 50.0   # Divertor integrated heat limit [MW yr / m²]
+    epsilon_div         : float = 30.0   # Divertor integrated heat limit [MW yr / m²]
     f_peak              : float = 3.0    # Divertor heat flux peaking factor [-]
     f_div_area_fraction : float = 0.08   # A_div / A_FW ratio [-]
     # Replacement downtimes (performed in parallel if scheduled together)
-    dt_rep_bl           : float = 1.5    # Blanket replacement downtime [yr]
-    dt_rep_div          : float = 0.5    # Divertor replacement downtime [yr]
+    dt_rep_bl           : float = 0.5    # Blanket replacement downtime [yr]
+    dt_rep_div          : float = 0.4    # Divertor replacement downtime [yr]
 
 # Module-level default instance — import and reuse rather than reinstantiating
 DEFAULT_CONFIG = GlobalConfig()
