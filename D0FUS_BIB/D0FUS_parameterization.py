@@ -364,6 +364,14 @@ class GlobalConfig:
     delta_VV         : float = 0.15   # Vacuum vessel [m]
     delta_gap_TF     : float = 0.05   # VV→TF gap [m]
 
+    # ── Effective volumetric densities for radial-build mass estimates ────────
+    # Smeared/homogenised values.  Defaults from BLANKET_MATERIAL_DENSITIES.
+    rho_FW       : float = 7900.0    # First wall           [kg/m³]
+    rho_BB       : float = 4500.0    # Breeding blanket     [kg/m³]
+    rho_shield   : float = 5500.0    # Neutron shield       [kg/m³]
+    rho_VV       : float = 7500.0    # Vacuum vessel        [kg/m³]
+    rho_divertor : float = 13000.0   # Divertor             [kg/m³]
+
     # ── 16. Component lifetime & availability model ───────────────────────────
     # Blanket lifetime: t_bl [fpy] = dpa_lim * A_FW / (0.8 * C_dpa * P_fus)
     # Ref: Gilbert et al. (2013); EUROfusion (2015)
@@ -563,6 +571,16 @@ COIL_MATERIAL_DENSITIES = {
     'Cu':         8960.0,   # [kg/m³]  OFHC copper
     # Insulation (cryogenic glass-epoxy)
     'insulation': 1900.0,   # [kg/m³]  GFRP CTD-101K
+}
+
+# Effective volumetric densities for radial-build components.
+# These are smeared/homogenised values for 0D mass estimates.
+BLANKET_MATERIAL_DENSITIES = {
+    'FW':       7900.0,    # [kg/m³]  EUROFER / 316L steel (steel-dominated)
+    'BB':       4500.0,    # [kg/m³]  effective (HCPB ~3500, WCLL ~6000; mid-range)
+    'shield':   5500.0,    # [kg/m³]  steel + borated-water mix (~60/40 by vol.)
+    'VV':       7500.0,    # [kg/m³]  double-wall 316L SS with water fill
+    'divertor': 13000.0,   # [kg/m³]  W monoblocks + CuCrZr + steel structure
 }
 
 
