@@ -1543,6 +1543,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             _nan, _nan,                          # V_rb_FW, V_rb_BB
             _nan, _nan, _nan,                    # V_rb_shield, V_rb_VV, V_rb_gap_TF
             _nan,                                # V_rb_divertor
+            _nan, _nan, _nan, _nan, _nan, _nan,  # M_rb_FW, M_rb_BB, M_rb_shield, M_rb_VV, M_rb_divertor, M_rb_total
         )
 
     # =========================================================================
@@ -1840,6 +1841,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             _nan, _nan,                          # V_rb_FW, V_rb_BB
             _nan, _nan, _nan,                    # V_rb_shield, V_rb_VV, V_rb_gap_TF
             _nan,                                # V_rb_divertor
+            _nan, _nan, _nan, _nan, _nan, _nan,  # M_rb_FW, M_rb_BB, M_rb_shield, M_rb_VV, M_rb_divertor, M_rb_total
         )
 
     # ==============================================================================
@@ -1956,6 +1958,14 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     V_rb_gap_TF   = _rb['V_gap_TF']
     V_rb_divertor = _rb['V_divertor']
 
+    # ── Radial build component masses ─────────────────────────────────────────
+    (M_rb_FW, M_rb_BB, M_rb_shield,
+     M_rb_VV, M_rb_divertor,
+     M_rb_total) = f_blanket_masses(
+        V_rb_FW, V_rb_BB, V_rb_shield, V_rb_VV, V_rb_divertor,
+        config.rho_FW, config.rho_BB, config.rho_shield,
+        config.rho_VV, config.rho_divertor)
+
     cost_solution = (V_rb_BB + V_TF_one * N_TF + V_CS_geom) / P_fus   # legacy cost proxy [m^3/MW]
 
     # ── Material volumes (TF: total = V_TF_one × N_TF; CS: full solenoid) ─────
@@ -2061,7 +2071,10 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             V_rb_SOL,                                              # 136
             V_rb_FW,        V_rb_BB,                              # 137, 138
             V_rb_shield,    V_rb_VV,    V_rb_gap_TF,              # 139, 140, 141
-            V_rb_divertor)                                         # 142
+            V_rb_divertor,                                         # 142
+            # ── Radial build component masses (indices 143–148) ──────────────
+            M_rb_FW,      M_rb_BB,       M_rb_shield,             # 143, 144, 145
+            M_rb_VV,      M_rb_divertor, M_rb_total)              # 146, 147, 148
 
 
 #%% Output writer
@@ -2153,6 +2166,13 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
             _M_steel_CS     = _rest[56];  _M_sc_CS    = _rest[57]
             _M_cu_CS        = _rest[58];  _M_In_CS    = _rest[59];  _M_total_CS = _rest[60]
             _V_blanket      = _rest[61] if len(_rest) >= 62 else np.nan
+            # Radial build masses (layout [77:83] — after lifetimes [62:70] and V_rb [70:77])
+            if len(_rest) >= 83:
+                M_rb_FW       = _rest[77];  M_rb_BB       = _rest[78]
+                M_rb_shield   = _rest[79];  M_rb_VV       = _rest[80]
+                M_rb_divertor = _rest[81];  M_rb_total    = _rest[82]
+            else:
+                M_rb_FW = M_rb_BB = M_rb_shield = M_rb_VV = M_rb_divertor = M_rb_total = np.nan
         else:
             (_V_TF_one, _V_CS_geom,
              _V_steel_TF, _V_sc_TF, _V_cu_TF, _V_He_TF, _V_In_TF,
@@ -2163,6 +2183,7 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
              _M_steel_TF, _M_sc_TF, _M_cu_TF, _M_In_TF, _M_total_TF,
              _M_steel_CS, _M_sc_CS, _M_cu_CS, _M_In_CS, _M_total_CS) = (np.nan,) * 28
             _V_blanket = np.nan
+            M_rb_FW = M_rb_BB = M_rb_shield = M_rb_VV = M_rb_divertor = M_rb_total = np.nan
     elif len(_rest) >= 23:
         # Intermediate format: TF fracs only
         _f_sc_TF      = _rest[17]
@@ -2181,6 +2202,7 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
          _M_steel_TF, _M_sc_TF, _M_cu_TF, _M_In_TF, _M_total_TF,
          _M_steel_CS, _M_sc_CS, _M_cu_CS, _M_In_CS, _M_total_CS) = (np.nan,) * 28
         _V_blanket = np.nan
+        M_rb_FW = M_rb_BB = M_rb_shield = M_rb_VV = M_rb_divertor = M_rb_total = np.nan
     else:
         # Old tuple format: no cable fractions
         _f_sc_TF = _f_cu_TF = _f_He_pipe_TF = _f_void_TF = _f_He_TF = _f_In_TF = np.nan
@@ -2194,6 +2216,7 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
          _M_steel_TF, _M_sc_TF, _M_cu_TF, _M_In_TF, _M_total_TF,
          _M_steel_CS, _M_sc_CS, _M_cu_CS, _M_In_CS, _M_total_CS) = (np.nan,) * 28
         _V_blanket = np.nan
+        M_rb_FW = M_rb_BB = M_rb_shield = M_rb_VV = M_rb_divertor = M_rb_total = np.nan
 
     # ── Profile peaking / pedestal parameters ─────────────────────────────────
     # Use the module-level _PROFILE_PRESETS table (single source of truth).
@@ -2372,6 +2395,13 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         "M_cu_CS":     _f(_M_cu_CS,     np.nan),
         "M_In_CS":     _f(_M_In_CS,     np.nan),
         "M_total_CS":  _f(_M_total_CS,  np.nan),
+        # ── Radial build component masses ────────────────────────────────────
+        "M_rb_FW":       _f(M_rb_FW,       np.nan),
+        "M_rb_BB":       _f(M_rb_BB,       np.nan),
+        "M_rb_shield":   _f(M_rb_shield,   np.nan),
+        "M_rb_VV":       _f(M_rb_VV,       np.nan),
+        "M_rb_divertor": _f(M_rb_divertor, np.nan),
+        "M_rb_total":    _f(M_rb_total,    np.nan),
     }
 
 
@@ -2460,7 +2490,9 @@ def save_run_output(config: GlobalConfig,
      V_rb_SOL,
      V_rb_FW, V_rb_BB,
      V_rb_shield, V_rb_VV, V_rb_gap_TF,
-     V_rb_divertor) = results
+     V_rb_divertor,
+     M_rb_FW, M_rb_BB, M_rb_shield,
+     M_rb_VV, M_rb_divertor, M_rb_total) = results
 
     # ── Recompute N_TF for display (not stored in results tuple) ──────────
     try:
@@ -2621,35 +2653,8 @@ def save_run_output(config: GlobalConfig,
         print(f"[O]  ├ f_He      (total He = pipe + void)           : {f_He_CS*100:.2f} [%]", file=out)
         print(f"[O]  └ f_In      (insulation)                       : {f_In_CS*100:.2f} [%]", file=out)
         print("-------------------------------------------------------------------------", file=out)
-        print(f"[O] V_TF_one  (Single TF coil volume, Princeton-D) : {V_TF_one:.4f} [m³]",  file=out)
-        print(f"[O] V_CS_geom (Total CS solenoid volume)           : {V_CS_geom:.4f} [m³]", file=out)
-        print(f"[O] V_blanket (blanket, Miller LCFS→TF inner face) : {V_blanket:.4f} [m³]", file=out)
-        print("-------------------------------------------------------------------------", file=out)
-        print(f"[O] Radial build component volumes (Pappus, IB/OB asymmetric)", file=out)
-        print(f"[O]  ├ V_SOL        (scrape-off layer, all around)  : {V_rb_SOL:.1f} [m³]", file=out)
-        print(f"[O]  ├ V_FW         (first wall, excl. divertor)    : {V_rb_FW:.1f} [m³]", file=out)
-        print(f"[O]  ├ V_BB         (breeding blanket, excl. div.)  : {V_rb_BB:.1f} [m³]", file=out)
-        print(f"[O]  ├ V_divertor   (divertor, f_div={config.f_div_area_fraction:.2f})          : {V_rb_divertor:.1f} [m³]", file=out)
-        print(f"[O]  ├ V_shield     (neutron shield, all around)    : {V_rb_shield:.1f} [m³]", file=out)
-        print(f"[O]  ├ V_VV         (vacuum vessel, all around)     : {V_rb_VV:.1f} [m³]", file=out)
-        print(f"[O]  └ V_gap_TF     (VV→TF gap, all around)         : {V_rb_gap_TF:.1f} [m³]", file=out)
-        print("-------------------------------------------------------------------------", file=out)
-        V_TF_total = V_TF_one * N_TF_disp if np.isfinite(V_TF_one) else np.nan
-        print(f"[O] TF material volumes  (total = V_TF_one × N_TF = {V_TF_one:.3f} × {N_TF_disp})", file=out)
-        print(f"[O]  ├ V_steel_TF  (structural steel)              : {V_steel_TF:.3f} [m³]", file=out)
-        print(f"[O]  ├ V_sc_TF     (superconductor)                : {V_sc_TF:.3f} [m³]",   file=out)
-        print(f"[O]  ├ V_cu_TF     (copper stabiliser)             : {V_cu_TF:.3f} [m³]",   file=out)
-        print(f"[O]  ├ V_He_TF     (helium, pipe+void)             : {V_He_TF:.3f} [m³]",   file=out)
-        print(f"[O]  └ V_In_TF     (insulation)                    : {V_In_TF:.3f} [m³]",   file=out)
-        print(f"[O] CS material volumes  (total solenoid)", file=out)
-        print(f"[O]  ├ V_steel_CS  (structural steel)              : {V_steel_CS:.3f} [m³]", file=out)
-        print(f"[O]  ├ V_sc_CS     (superconductor)                : {V_sc_CS:.3f} [m³]",   file=out)
-        print(f"[O]  ├ V_cu_CS     (copper stabiliser)             : {V_cu_CS:.3f} [m³]",   file=out)
-        print(f"[O]  ├ V_He_CS     (helium, pipe+void)             : {V_He_CS:.3f} [m³]",   file=out)
-        print(f"[O]  └ V_In_CS     (insulation)                    : {V_In_CS:.3f} [m³]",   file=out)
-        print("-------------------------------------------------------------------------", file=out)
-        print(f"[O] L_cable_TF (total cable, all TF coils)         : {L_cable_TF/1e3:.3f} [km]", file=out)
-        print(f"[O] L_cable_CS (total cable, all CS modules)       : {L_cable_CS/1e3:.3f} [km]", file=out)
+        print(f"[O] L_cable_TF (total cable, all TF coils)          : {L_cable_TF/1e3:.3f} [km]", file=out)
+        print(f"[O] L_cable_CS (total cable, all CS modules)        : {L_cable_CS/1e3:.3f} [km]", file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[O] SC strands per cable  ({config.Supra_choice})", file=out)
         print(f"[O]  ├ n_sc_TF                                      : {n_sc_TF:.0f}", file=out)
@@ -2658,6 +2663,32 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] Total SC strand length", file=out)
         print(f"[O]  ├ L_sc_strand_TF                               : {L_sc_strand_TF/1e3:.0f} [km]", file=out)
         print(f"[O]  └ L_sc_strand_CS                               : {L_sc_strand_CS/1e3:.0f} [km]", file=out)
+        print("-------------------------------------------------------------------------", file=out)
+        print(f"[O] V_TF_one  (Single TF coil volume, Princeton-D)  : {V_TF_one:.4f} [m³]",  file=out)
+        print(f"[O] V_CS_geom (Total CS solenoid volume)            : {V_CS_geom:.4f} [m³]", file=out)
+        print(f"[O] V_blanket (blanket, Miller LCFS→TF inner face)  : {V_blanket:.4f} [m³]", file=out)
+        print("-------------------------------------------------------------------------", file=out)
+        V_TF_total = V_TF_one * N_TF_disp if np.isfinite(V_TF_one) else np.nan
+        print(f"[O] TF material volumes  (total = V_TF_one × N_TF = {V_TF_one:.3f} × {N_TF_disp})", file=out)
+        print(f"[O]  ├ V_steel_TF  (structural steel)               : {V_steel_TF:.3f} [m³]", file=out)
+        print(f"[O]  ├ V_sc_TF     (superconductor)                 : {V_sc_TF:.3f} [m³]",   file=out)
+        print(f"[O]  ├ V_cu_TF     (copper stabiliser)              : {V_cu_TF:.3f} [m³]",   file=out)
+        print(f"[O]  ├ V_He_TF     (helium, pipe+void)              : {V_He_TF:.3f} [m³]",   file=out)
+        print(f"[O]  └ V_In_TF     (insulation)                     : {V_In_TF:.3f} [m³]",   file=out)
+        print(f"[O] CS material volumes  (total solenoid)", file=out)
+        print(f"[O]  ├ V_steel_CS  (structural steel)               : {V_steel_CS:.3f} [m³]", file=out)
+        print(f"[O]  ├ V_sc_CS     (superconductor)                 : {V_sc_CS:.3f} [m³]",   file=out)
+        print(f"[O]  ├ V_cu_CS     (copper stabiliser)              : {V_cu_CS:.3f} [m³]",   file=out)
+        print(f"[O]  ├ V_He_CS     (helium, pipe+void)              : {V_He_CS:.3f} [m³]",   file=out)
+        print(f"[O]  └ V_In_CS     (insulation)                     : {V_In_CS:.3f} [m³]",   file=out)
+        print(f"[O] Blanket components volumes (Pappus, LCFS→TF inner face, IB/OB asymmetric)", file=out)
+        print(f"[O]  ├ V_SOL        (scrape-off layer, all around)  : {V_rb_SOL:.1f} [m³]", file=out)
+        print(f"[O]  ├ V_FW         (first wall, excl. divertor)    : {V_rb_FW:.1f} [m³]", file=out)
+        print(f"[O]  ├ V_BB         (breeding blanket, excl. div.)  : {V_rb_BB:.1f} [m³]", file=out)
+        print(f"[O]  ├ V_divertor   (divertor, f_div={config.f_div_area_fraction:.2f})          : {V_rb_divertor:.1f} [m³]", file=out)
+        print(f"[O]  ├ V_shield     (neutron shield, all around)    : {V_rb_shield:.1f} [m³]", file=out)
+        print(f"[O]  ├ V_VV         (vacuum vessel, all around)     : {V_rb_VV:.1f} [m³]", file=out)
+        print(f"[O]  └ V_gap_TF     (VV→TF gap, all around)         : {V_rb_gap_TF:.1f} [m³]", file=out)
         print("-------------------------------------------------------------------------", file=out)
         _rho = material_rho(config.Chosen_Steel, config.Supra_choice)
         print(f"[O] TF coil masses  (total all N_TF coils, {config.Chosen_Steel} / {config.Supra_choice})", file=out)
@@ -2672,6 +2703,13 @@ def save_run_output(config: GlobalConfig,
         print(f"[O]  ├ M_cu_CS                                      : {M_cu_CS/1e3:.1f} [t]",   file=out)
         print(f"[O]  ├ M_In_CS                                      : {M_In_CS/1e3:.1f} [t]",   file=out)
         print(f"[O]  └ M_total_CS                                   : {M_total_CS/1e3:.1f} [t]", file=out)
+        print(f"[O] Blanket components masses", file=out)
+        print(f"[O]  ├ M_rb_FW       (first wall, excl. div.)       : {M_rb_FW/1e3:.1f} [t]",      file=out)
+        print(f"[O]  ├ M_rb_BB       (breeding blanket, excl. div.) : {M_rb_BB/1e3:.1f} [t]",      file=out)
+        print(f"[O]  ├ M_rb_shield   (neutron shield)               : {M_rb_shield/1e3:.1f} [t]",   file=out)
+        print(f"[O]  ├ M_rb_VV       (vacuum vessel)                : {M_rb_VV/1e3:.1f} [t]",      file=out)
+        print(f"[O]  ├ M_rb_divertor (divertor)                     : {M_rb_divertor/1e3:.1f} [t]", file=out)
+        print(f"[O]  └ M_rb_total    (FW+BB+shield+VV+div)          : {M_rb_total/1e3:.1f} [t]",   file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[O] Psi_PI      (Breakdown flux)                    : {ΨPI:.3f} [Wb]",      file=out)
         print(f"[O] Psi_RampUp  (Ramp-up flux)                      : {ΨRampUp:.3f} [Wb]",  file=out)
@@ -2698,7 +2736,7 @@ def save_run_output(config: GlobalConfig,
                     _sp, _fc, nbar, config.Tbar, nu_n, nu_T, Volume,
                     rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
                     Vprime_data=Vprime_data, rho_core=rho_rad_core)
-                print(f"[O]  \u251c P_imp_{_sp:<3s} (f={_fc:.1e}, brem+line+recomb)   : {_Pt:.3f} [MW] "
+                print(f"[O]  \u251c P_imp_{_sp:<3s} (f={_fc:.1e}, brem+line+recomb)      : {_Pt:.3f} [MW] "
                       f"(core={_Pc:.3f}, edge={_Pt - _Pc:.3f})", file=out)
             print(f"[O]  f_imp_dilution (\u03a3 Z_j\u00b7f_j)                     : {f_imp_dilution:.4f} [-]", file=out)
         _P_rad_total = P_syn + P_Brem + P_line
@@ -2712,7 +2750,7 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] P_wallplug (Wall-plug heating/CD power)         : {P_wallplug:.3f} [MW]",     file=out)
         _P_gross = config.eta_T * config.M_blanket * config.P_fus
         print(f"[O] Q_eng  (Engineering gain = P_elec / P_wallplug) : {P_elec / P_wallplug:.3f}", file=out)
-        print(f"[O] Cost   ((V_rb_BB+V_TF_one*N_TF+V_CS_geom) / P_fus)   : {cost:.3f} [m³/MW]",    file=out)
+        print(f"[O] Cost   ((V_BB+V_TF+V_CS) / P_fus)               : {cost:.3f} [m³/MW]",    file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[O] t_blanket_fpy  (Blanket lifetime, dpa model)       : {t_life_bl_fpy:.3f} [fpy]", file=out)
         print(f"[O] t_div_fpy      (Divertor lifetime, heat model)     : {t_life_div_fpy:.3f} [fpy]", file=out)
@@ -2729,10 +2767,10 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] tau_E          (Energy confinement time)        : {tauE:.3f} [s]",             file=out)
         print(f"[O] Ip             (Plasma current)                 : {Ip:.3f} [MA]",              file=out)
         print(f"[O] Ib             (Bootstrap current, {config.Bootstrap_choice}) : {Ib:.3f} [MA]", file=out)
-        print(f"[O] I_CD           (Driven current, {config.CD_source}) : {I_CD:.3f} [MA]", file=out)
+        print(f"[O] I_CD           (Driven current, {config.CD_source})       : {I_CD:.3f} [MA]", file=out)
         print(f"[O] I_Ohm          (Ohmic current)                  : {I_Ohm:.3f} [MA]",           file=out)
         print(f"[O] f_b            (Bootstrap fraction)             : {(Ib/Ip)*100:.3f} [%]",      file=out)
-        print(f"[O] l_i(3)         (Internal inductance, {config.q_profile_mode}) : {li_sc:.3f} [-]", file=out)
+        print(f"[O] l_i(3)         (Internal inductance, {config.q_profile_mode})   : {li_sc:.3f} [-]", file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[I] Tbar  (Volume-averaged ion temperature)         : {config.Tbar:.3f} [keV]",    file=out)
         print(f"[O] nbar  (Volume-averaged electron density)        : {nbar:.3f} [10²⁰ m⁻³]",     file=out)
@@ -2791,7 +2829,7 @@ def save_run_output(config: GlobalConfig,
             print(f"[I] Te_final       (Post-TQ temperature)                : {RE['Te_final_eV']:.0f} [eV]", file=out)
             print(f"[I] pellet_dilution (SPI/MGI density factor)            : {RE['pellet_dilution']:.1f} [-]", file=out)
             print(f"[I] nbar_diluted   (Post-pellet density)                : {RE['nbar_diluted']:.3f} [1e20 m-3]", file=out)
-            print(f"[I] Tbar_diluted   (Pre-TQ temperature, {'isobaric' if RE['pellet_dilution_cools'] else 'unchanged'})      : {RE['Tbar_diluted']:.2f} [keV]", file=out)
+            print(f"[I] Tbar_diluted   (Pre-TQ temperature, {'isobaric' if RE['pellet_dilution_cools'] else 'unchanged'})       : {RE['Tbar_diluted']:.2f} [keV]", file=out)
             print(f"[O] f_RE_core      (Hot-tail fraction at rho=0)         : {RE['f_RE_core']:.3e} [-]", file=out)
             print(f"[O] f_RE_avg       (Volume-averaged hot-tail fraction)  : {RE['f_RE_avg']:.3e} [-]", file=out)
             print(f"[O] I_RE_seed      (Hot-tail seed, pre-pellet)          : {RE['I_RE_seed']:.3e} [A]", file=out)
