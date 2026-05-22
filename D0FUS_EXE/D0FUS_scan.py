@@ -938,6 +938,70 @@ OUTPUT_REGISTRY = {
     ),
 
     # -------------------------------------------------------------------------
+    # RADIAL BUILD COMPONENT MASSES
+    # -------------------------------------------------------------------------
+    'M_rb_FW': OutputParameter(
+        name='M_rb_FW',
+        label='$M_{\\mathrm{FW}}$',
+        unit='t',
+        levels=(0, 5000, 500),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='First wall mass (excl. divertor region)'
+    ),
+    'M_rb_BB': OutputParameter(
+        name='M_rb_BB',
+        label='$M_{\\mathrm{BB}}$',
+        unit='t',
+        levels=(0, 20000, 2000),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='Breeding blanket mass (excl. divertor region)'
+    ),
+    'M_rb_shield': OutputParameter(
+        name='M_rb_shield',
+        label='$M_{\\mathrm{shield}}$',
+        unit='t',
+        levels=(0, 20000, 2000),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='Neutron shield mass'
+    ),
+    'M_rb_VV': OutputParameter(
+        name='M_rb_VV',
+        label='$M_{\\mathrm{VV}}$',
+        unit='t',
+        levels=(0, 10000, 1000),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='Vacuum vessel mass'
+    ),
+    'M_rb_divertor': OutputParameter(
+        name='M_rb_divertor',
+        label='$M_{\\mathrm{div}}$',
+        unit='t',
+        levels=(0, 2000, 200),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='Divertor mass'
+    ),
+    'M_rb_total': OutputParameter(
+        name='M_rb_total',
+        label='$M_{\\mathrm{blanket}}^{\\mathrm{tot}}$',
+        unit='t',
+        levels=(0, 50000, 5000),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='Total radial build mass (FW + BB + shield + VV + divertor)'
+    ),
+
+    # -------------------------------------------------------------------------
     # BLANKET & COIL MASSES
     # -------------------------------------------------------------------------
     'V_blanket': OutputParameter(
@@ -1943,6 +2007,13 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
         V_rb_VV_s         = _coil_extra[41]
         V_rb_gap_TF_s     = _coil_extra[42]
         V_rb_divertor_s   = _coil_extra[43]
+        # ── Radial build masses (offsets 44–49) ──────────────────────────────
+        M_rb_FW_s         = _coil_extra[44] * 1e-3   # kg → t
+        M_rb_BB_s         = _coil_extra[45] * 1e-3
+        M_rb_shield_s     = _coil_extra[46] * 1e-3
+        M_rb_VV_s         = _coil_extra[47] * 1e-3
+        M_rb_divertor_s   = _coil_extra[48] * 1e-3
+        M_rb_total_s      = _coil_extra[49] * 1e-3
 
         # ── Unpack masses, volumes and conductor lengths from _coil_extra ───
         L_cable_TF_s    = _coil_extra[12] * 1e-3   # m → km
@@ -2039,6 +2110,12 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
             V_rb_VV=V_rb_VV_s,
             V_rb_gap_TF=V_rb_gap_TF_s,
             V_rb_divertor=V_rb_divertor_s,
+            M_rb_FW=M_rb_FW_s,
+            M_rb_BB=M_rb_BB_s,
+            M_rb_shield=M_rb_shield_s,
+            M_rb_VV=M_rb_VV_s,
+            M_rb_divertor=M_rb_divertor_s,
+            M_rb_total=M_rb_total_s,
             V_blanket=V_blanket_s,
             M_total_TF=M_total_TF_s,
             M_sc_TF=M_sc_TF_s,
