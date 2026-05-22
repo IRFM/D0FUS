@@ -5619,6 +5619,33 @@ def f_coil_masses(
             M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS)
 
 
+def f_blanket_masses(
+    V_FW:       float, V_BB:       float, V_shield: float,
+    V_VV:       float, V_divertor: float,
+    rho_FW:     float, rho_BB:     float, rho_shield: float,
+    rho_VV:     float, rho_divertor: float,
+) -> tuple:
+    """
+    Masses of radial-build components from their volumes and effective densities.
+
+    Parameters
+    ----------
+    V_*   : float  Component volume [m³] (excluding divertor fraction where noted).
+    rho_* : float  Effective volumetric density [kg/m³].
+
+    Returns
+    -------
+    (M_FW, M_BB, M_shield, M_VV, M_divertor, M_total_blanket)  — all in [kg].
+    """
+    M_FW       = V_FW       * rho_FW
+    M_BB       = V_BB       * rho_BB
+    M_shield   = V_shield   * rho_shield
+    M_VV       = V_VV       * rho_VV
+    M_divertor = V_divertor * rho_divertor
+    M_total_blanket = M_FW + M_BB + M_shield + M_VV + M_divertor
+    return M_FW, M_BB, M_shield, M_VV, M_divertor, M_total_blanket
+
+
 def f_cable_length(
     N_TF: int, L_turn_TF: float, Bmax_TF: float, R_TF_in: float,
     I_cond: float,
