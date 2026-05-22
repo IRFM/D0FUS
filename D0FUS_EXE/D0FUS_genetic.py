@@ -226,6 +226,13 @@ _IDX = {
     'V_rb_VV':         140,
     'V_rb_gap_TF':     141,
     'V_rb_divertor':   142,
+    # ── Radial build component masses ────────────────────────────────────────
+    'M_rb_FW':         143,  # First wall mass [kg]
+    'M_rb_BB':         144,  # Breeding blanket mass [kg]
+    'M_rb_shield':     145,  # Neutron shield mass [kg]
+    'M_rb_VV':         146,  # Vacuum vessel mass [kg]
+    'M_rb_divertor':   147,  # Divertor mass [kg]
+    'M_rb_total':      148,  # Total radial build mass [kg]
 }
 
 #%% Global Variables (default values)
