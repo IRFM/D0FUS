@@ -60,7 +60,7 @@ if __name__ != "__main__":
         F_CIRCE0D, compute_von_mises_stress,
         calculate_E_mag_TF,
         f_TF_cross_section,
-        _princeton_D_contour,
+        _sol_fw_miller_contours,
         _offset_contour,
     )
     from .D0FUS_parameterization import DEFAULT_CONFIG, E_ELEM
@@ -92,7 +92,7 @@ else:
         F_CIRCE0D, compute_von_mises_stress,
         calculate_E_mag_TF,
         f_TF_cross_section,
-        _princeton_D_contour,
+        _sol_fw_miller_contours,
         _offset_contour,
     )
     from D0FUS_BIB.D0FUS_parameterization import DEFAULT_CONFIG, E_ELEM
@@ -2336,13 +2336,14 @@ def _resolve_build(run: dict) -> dict:
     e_shield   = float(run.get("e_shield",  max(b * 0.38, 0.3)))
     e_gap      = max(b - e_fw - e_blanket - e_shield, 0.0)
 
-    # Sublayer widths — single value per component (no IB/OB except BB)
-    d_gap  = float(run.get("delta_gap_plasma", 0.02))
-    d_FW   = float(run.get("delta_FW",         0.05))
+    # Sublayer widths and SOL/FW shape parameters
+    d_SOL       = float(run.get("delta_SOL", run.get("delta_gap_plasma", 0.10)))
+    f_kappa_sol = float(run.get("f_kappa_SOL", 0.10))
+    d_FW        = float(run.get("delta_FW",         0.05))
     d_sh   = float(run.get("delta_shield",     0.30))
     d_VV   = float(run.get("delta_VV",         0.15))
     d_gTF  = float(run.get("delta_gap_TF",     0.05))
-    fixed  = d_gap + d_FW + d_sh + d_VV + d_gTF
+    fixed  = d_SOL + d_FW + d_sh + d_VV + d_gTF
     d_BB_ib = max(b            - fixed, 0.01)
     d_BB_ob = max(b + Delta_TF - fixed, 0.01)
 
@@ -2352,7 +2353,8 @@ def _resolve_build(run: dict) -> dict:
         R_TF_in=R_TF_in, R_TF_out=R_TF_out,
         R_CS_ext=R_CS_ext, R_CS_int=R_CS_int,
         e_fw=e_fw, e_blanket=e_blanket, e_shield=e_shield, e_gap=e_gap,
-        d_gap=d_gap, d_FW=d_FW, d_sh=d_sh, d_VV=d_VV, d_gTF=d_gTF,
+        d_SOL=d_SOL, f_kappa_sol=f_kappa_sol, d_FW=d_FW,
+        d_sh=d_sh, d_VV=d_VV, d_gTF=d_gTF,
         d_BB_ib=d_BB_ib, d_BB_ob=d_BB_ob,
     )
 
@@ -2647,35 +2649,26 @@ def plot_assembly_side_view(
     V_blkt      = float(run.get("V_blanket", float("nan")))
 
     # ── Sublayer thicknesses ─────────────────────────────────────────────
-    d_gap  = bd["d_gap"];   d_FW  = bd["d_FW"]
-    d_sh   = bd["d_sh"];    d_VV  = bd["d_VV"];  d_gTF = bd["d_gTF"]
-    d_BB_ib = bd["d_BB_ib"];  d_BB_ob = bd["d_BB_ob"]
+    d_SOL       = bd["d_SOL"];  f_kappa_sol = bd["f_kappa_sol"];  d_FW = bd["d_FW"]
+    d_sh        = bd["d_sh"];   d_VV  = bd["d_VV"];  d_gTF = bd["d_gTF"]
+    d_BB_ib     = bd["d_BB_ib"];  d_BB_ob = bd["d_BB_ob"]
 
     # ── Colour palette ───────────────────────────────────────────────────
     col_plasma  = "#FFD0DA"   # light pink — distinct from white gaps
     LAYER_COLORS = {
-        "Plasma gap": "white",
+        "SOL":        "#ADD8E6",   # scrape-off layer — light blue
         "First wall": "#4A505A",
         "BB":         "#E07820",
-        "Shield":     "#2C3E50",
+        "Shield":     "#2E8B57",
         "VV":         "#6C7A89",
         "TF gap":     "white",
         "Divertor":   "#9B2335",
     }
 
-    # ── Geometry helpers ─────────────────────────────────────────────────
-    theta_lc = np.linspace(0, 2*np.pi, 500, endpoint=False)
-
-    def _miller(t_out):
-        a_e = a + t_out
-        return (R0 + a_e * np.cos(theta_lc + np.arcsin(delta_edge) * np.sin(theta_lc)),
-                kappa_edge * a_e * np.sin(theta_lc))
-
-    # Plasma-side outer edges
-    R_gap_outer, Z_gap_outer = _miller(d_gap)
-    R_FW_outer,  Z_FW_outer  = _miller(d_gap + d_FW)
-
-    # TF-side layer boundaries: normal offsets of the TF inner face
+    # ── SOL/FW outer: Miller ellipses from the physics source of truth ────────
+    R_SOL_outer, Z_SOL_outer, R_FW_outer, Z_FW_outer = _sol_fw_miller_contours(
+        R0, a, kappa_edge, delta_edge, d_SOL, f_kappa_sol, d_FW)
+    # TF-side layers: inward offsets of the TF inner face (same shape family)
     R_VV_outer,  Z_VV_outer  = _offset_contour(R_tf_in, Z_tf_in, d_gTF)
     R_sh_outer,  Z_sh_outer  = _offset_contour(R_tf_in, Z_tf_in, d_gTF + d_VV)
     R_BB_outer,  Z_BB_outer  = _offset_contour(R_tf_in, Z_tf_in, d_gTF + d_VV + d_sh)
@@ -2693,10 +2686,10 @@ def plot_assembly_side_view(
             if af >= tgt and ab >= tgt: break
         return np.array(sorted(set(idx)))
 
-    _di_in  = _bottom_arc(R_gap_outer, Z_gap_outer, f_div)
+    _di_in  = _bottom_arc(R_SOL_outer, Z_SOL_outer, f_div)
     _di_out = _bottom_arc(R_BB_outer,  Z_BB_outer,  f_div)
-    R_div_poly = np.concatenate([R_gap_outer[_di_in],  R_BB_outer[_di_out][::-1]])
-    Z_div_poly = np.concatenate([Z_gap_outer[_di_in],  Z_BB_outer[_di_out][::-1]])
+    R_div_poly = np.concatenate([R_SOL_outer[_di_in],  R_BB_outer[_di_out][::-1]])
+    Z_div_poly = np.concatenate([Z_SOL_outer[_di_in],  Z_BB_outer[_di_out][::-1]])
 
     # ── Colours ─────────────────────────────────────────────────────────
     col_cs_bg  = "#C8C8C8"
@@ -2726,9 +2719,9 @@ def plot_assembly_side_view(
     ax.fill(R_sh_outer,   Z_sh_outer,   fc=LAYER_COLORS["Shield"],    ec="none", zorder=zbase+2)
     ax.fill(R_BB_outer,   Z_BB_outer,   fc=LAYER_COLORS["BB"],        ec="none", zorder=zbase+3)
     ax.fill(R_FW_outer,   Z_FW_outer,   fc=LAYER_COLORS["First wall"],ec="none", zorder=zbase+4)
-    ax.fill(R_gap_outer,  Z_gap_outer,  fc=LAYER_COLORS["Plasma gap"],ec="none", zorder=zbase+5)
+    ax.fill(R_SOL_outer,  Z_SOL_outer,  fc=LAYER_COLORS["SOL"],       ec="none", zorder=zbase+5)
     ax.fill(R_lcfs,       Z_lcfs,       fc=col_plasma,                ec="none", zorder=zbase+6)
-    # Divertor: bottom arc between gap outer (FW inner) and BB outer (shield inner)
+    # Divertor: bottom arc between SOL outer (FW inner) and BB outer (shield inner)
     ax.fill(R_div_poly, Z_div_poly, fc=LAYER_COLORS["Divertor"], ec="none", zorder=zbase+7)
 
     # 4 — Contour lines: TF outer face and TF inner face only (no LCFS contour)
@@ -2767,7 +2760,7 @@ def plot_assembly_side_view(
         Patch(fc=c, ec="grey", lw=0.4, label=n)
         for n, c in LAYER_COLORS.items() if c != "white"
     ] + [
-        Patch(fc="white", ec="grey", lw=0.4, label="Gaps"),
+        Patch(fc="white", ec="grey", lw=0.4, label="TF gap"),
         Patch(fc=col_plasma, ec="grey", lw=0.4, label="Plasma"),
     ]
     ax.legend(handles=legend_elements, loc="upper right", fontsize=8,
@@ -2836,214 +2829,6 @@ def plot_assembly_side_view(
 
     plt.tight_layout()
     _save_or_show(fig, save_dir, "run_assembly_side_view")
-
-
-# ---------------------------------------------------------------------------
-# B2b — Blanket side view (R–Z plane)
-# ---------------------------------------------------------------------------
-
-
-def plot_blanket_side_view(
-    run: dict,
-    save_dir: str | None = None,
-) -> None:
-    """
-    Detailed poloidal (R-Z) cross-section of the radial build between plasma
-    and TF coil, showing all sublayers: plasma gap, first wall, breeding
-    blanket, neutron shield, vacuum vessel, and TF-facing gap.
-
-    Layer boundaries are Princeton-D contours at cumulative IB/OB depths.
-    No contour lines between thin layers — colour alone distinguishes them.
-    Only the TF inner face (outermost) and the Miller LCFS (innermost) carry
-    boundary lines.
-
-    Parameters
-    ----------
-    run      : dict   D0FUS run output including radial build keys.
-    save_dir : str or None
-    """
-    # ── Extract geometry ─────────────────────────────────────────────
-    R0         = float(run["R0"])
-    a          = float(run["a"])
-    kappa_edge = float(run.get("kappa_edge", 1.85))
-    delta_edge = float(run.get("delta_edge", 0.33))
-    bd         = _resolve_build(run)
-
-    b        = bd["b"]
-    c_TF     = bd["c_TF"]
-    Delta_TF = bd["Delta_TF"]
-
-    d_gap  = bd["d_gap"];   d_FW  = bd["d_FW"]
-    d_sh   = bd["d_sh"];    d_VV  = bd["d_VV"];  d_gTF = bd["d_gTF"]
-    d_BB_ib = bd["d_BB_ib"];  d_BB_ob = bd["d_BB_ob"]
-
-    f_div  = float(run.get("f_div_area_fraction", 0.05))
-    col_plasma  = "#FFD0DA"
-    LAYER_COLORS = {
-        "Plasma gap": "white",
-        "First wall": "#4A505A",
-        "BB":         "#E07820",
-        "Shield":     "#2C3E50",
-        "VV":         "#6C7A89",
-        "TF gap":     "white",
-        "Divertor":   "#9B2335",
-    }
-
-    # ── Outer boundary: TF inner face ────────────────────────────────
-    (_, _, _, _, _, _, _, R_out, Z_out) = f_TF_cross_section(a, b, R0, c_TF, Delta_TF)
-    r1_out  = R0 - a - b
-    r2_out  = R0 + a + b + Delta_TF
-    H_blkt  = 2.0 * float(Z_out.max())
-    h       = H_blkt / 2.0
-    b_out   = b + Delta_TF
-
-    # ── Inner boundary: Miller LCFS ───────────────────────────────────
-    theta = np.linspace(0.0, 2.0 * np.pi, 500, endpoint=False)
-    R_in  = R0 + a * np.cos(theta + np.arcsin(delta_edge) * np.sin(theta))
-    Z_in  = kappa_edge * a * np.sin(theta)
-
-    # ── Geometry helpers (same approach as assembly view) ─────────────
-    def _miller(t_out):
-        a_e = a + t_out
-        return (R0 + a_e * np.cos(theta + np.arcsin(delta_edge) * np.sin(theta)),
-                kappa_edge * a_e * np.sin(theta))
-
-    R_gap_outer, Z_gap_outer = _miller(d_gap)
-    R_FW_outer,  Z_FW_outer  = _miller(d_gap + d_FW)
-    R_VV_outer,  Z_VV_outer  = _offset_contour(R_out, Z_out, d_gTF)
-    R_sh_outer,  Z_sh_outer  = _offset_contour(R_out, Z_out, d_gTF + d_VV)
-    R_BB_outer,  Z_BB_outer  = _offset_contour(R_out, Z_out, d_gTF + d_VV + d_sh)
-
-    # ── Divertor polygon: bottom arc from gap outer (FW inner) to BB outer (shield inner)
-    def _bottom_arc_bl(R, Z, frac):
-        n = len(R); ds = np.hypot(np.diff(np.r_[R, R[0]]), np.diff(np.r_[Z, Z[0]]))
-        tgt = frac * ds.sum() / 2.0; i0 = int(np.argmin(Z))
-        idx = [i0]; af = ab = 0.0
-        for s in range(1, n // 2 + 1):
-            af += ds[(i0 + s - 1) % n]; ab += ds[(i0 - s) % n]
-            idx.append((i0 + s) % n); idx.insert(0, (i0 - s) % n)
-            if af >= tgt and ab >= tgt: break
-        return np.array(sorted(set(idx)))
-
-    _di_in  = _bottom_arc_bl(R_gap_outer, Z_gap_outer, f_div)
-    _di_out = _bottom_arc_bl(R_BB_outer,  Z_BB_outer,  f_div)
-    R_div_poly = np.concatenate([R_gap_outer[_di_in],  R_BB_outer[_di_out][::-1]])
-    Z_div_poly = np.concatenate([Z_gap_outer[_di_in],  Z_BB_outer[_di_out][::-1]])
-
-    col_line   = "black"
-    col_dim    = "#333333"
-
-    # ── Figure ────────────────────────────────────────────────────────
-    fig, ax = plt.subplots(figsize=(5, 7))
-
-    # Paint layers from outside in (overpaint approach)
-    zbase = 2
-    ax.fill(R_out,       Z_out,       fc=LAYER_COLORS["TF gap"],    ec="none", zorder=zbase)
-    ax.fill(R_VV_outer,  Z_VV_outer,  fc=LAYER_COLORS["VV"],        ec="none", zorder=zbase+1)
-    ax.fill(R_sh_outer,  Z_sh_outer,  fc=LAYER_COLORS["Shield"],    ec="none", zorder=zbase+2)
-    ax.fill(R_BB_outer,  Z_BB_outer,  fc=LAYER_COLORS["BB"],        ec="none", zorder=zbase+3)
-    ax.fill(R_FW_outer,  Z_FW_outer,  fc=LAYER_COLORS["First wall"],ec="none", zorder=zbase+4)
-    ax.fill(R_gap_outer, Z_gap_outer, fc=LAYER_COLORS["Plasma gap"],ec="none", zorder=zbase+5)
-    ax.fill(R_in,        Z_in,        fc=col_plasma,                ec="none", zorder=zbase+6)
-    # Divertor: between FW inner (gap outer) and shield inner (BB outer), bottom arc
-    ax.fill(R_div_poly, Z_div_poly, fc=LAYER_COLORS["Divertor"], ec="none", zorder=zbase+7)
-
-    # Contour lines: TF inner face only — no LCFS contour
-    ax.plot(R_out, Z_out, color=col_line, lw=1.8, zorder=zbase+8)
-
-    ax.axhline(0, color=col_line, lw=0.4, ls="-.", alpha=0.4, zorder=1)
-
-    # ── Legend ────────────────────────────────────────────────────────
-    from matplotlib.patches import Patch
-    legend_elements = [
-        Patch(fc=c, ec="grey", lw=0.4, label=n)
-        for n, c in LAYER_COLORS.items() if c != "white"
-    ] + [
-        Patch(fc="white", ec="grey", lw=0.4, label="Gaps"),
-        Patch(fc=col_plasma, ec="grey", lw=0.4, label="Plasma"),
-    ]
-    ax.legend(handles=legend_elements, loc="upper right", fontsize=8,
-              framealpha=0.9, edgecolor="grey", handlelength=1.2,
-              borderpad=0.6, labelspacing=0.3)
-
-    # ── Dimension annotations ─────────────────────────────────────────
-    arr_kw = dict(arrowstyle="<->", color=col_dim, lw=0.9, mutation_scale=10)
-    ext_kw = dict(color=col_dim, lw=0.4, ls="-", alpha=0.5)
-    lbl_kw = dict(fontsize=9, color=col_dim, ha="center",
-                  bbox=dict(fc="white", ec="none", alpha=1.0, pad=1.5))
-    z_bottom = -h
-
-    # b_in — inboard total thickness
-    z_a1 = z_bottom - 0.4
-    ax.plot([r1_out, r1_out], [z_bottom, z_a1 - 0.05], **ext_kw, zorder=9)
-    ax.plot([R0 - a, R0 - a], [z_bottom, z_a1 - 0.05], **ext_kw, zorder=9)
-    ax.annotate("", xy=(R0 - a, z_a1), xytext=(r1_out, z_a1),
-                arrowprops=arr_kw, zorder=9)
-    ax.text((r1_out + R0 - a) / 2, z_a1 - 0.25,
-            f"$b_{{in}}$ = {b:.2f} m", va="top", **lbl_kw)
-
-    # b_out — outboard total thickness
-    z_a2 = z_a1 - 0.9
-    ax.plot([R0 - a, R0 - a], [z_a1 - 0.05, z_a2 - 0.05], **ext_kw, zorder=9)
-    ax.plot([r2_out, r2_out], [z_bottom,     z_a2 - 0.05], **ext_kw, zorder=9)
-    ax.annotate("", xy=(r2_out, z_a2), xytext=(R0 + a, z_a2),
-                arrowprops=arr_kw, zorder=9)
-    ax.text((R0 + a + r2_out) / 2, z_a2 - 0.25,
-            f"$b_{{out}}$ = {b_out:.2f} m", va="top", **lbl_kw)
-
-    # BB IB/OB thickness annotations at midplane
-    ann_z = 0.0
-    ann_gap = 0.08
-    # IB side
-    R_bb_out_ib = R0 - a - (d_gap + d_FW)
-    R_bb_in_ib  = R_bb_out_ib - d_BB_ib
-    ax.annotate("", xy=(R_bb_in_ib, ann_z), xytext=(R_bb_out_ib, ann_z),
-                arrowprops=dict(arrowstyle="<->", color=col_dim, lw=0.7, mutation_scale=7),
-                zorder=9)
-    ax.text((R_bb_in_ib + R_bb_out_ib) / 2, ann_z + ann_gap,
-            f"BB_ib\n{d_BB_ib:.2f}m", fontsize=6.5, color=col_dim,
-            ha="center", va="bottom", rotation=90,
-            bbox=dict(fc="white", ec="none", alpha=0.8, pad=1))
-    # OB side
-    R_bb_out_ob = R0 + a + (d_gap + d_FW)
-    R_bb_in_ob  = R_bb_out_ob + d_BB_ob
-    ax.annotate("", xy=(R_bb_in_ob, ann_z), xytext=(R_bb_out_ob, ann_z),
-                arrowprops=dict(arrowstyle="<->", color=col_dim, lw=0.7, mutation_scale=7),
-                zorder=9)
-    ax.text((R_bb_out_ob + R_bb_in_ob) / 2, ann_z + ann_gap,
-            f"BB_ob\n{d_BB_ob:.2f}m", fontsize=6.5, color=col_dim,
-            ha="center", va="bottom", rotation=90,
-            bbox=dict(fc="white", ec="none", alpha=0.8, pad=1))
-
-    # H_blkt — total height
-    R_vann = r1_out - 0.35
-    ax.plot([r1_out, R_vann - 0.03], [ h,  h], **ext_kw, zorder=9)
-    ax.plot([r1_out, R_vann - 0.03], [-h, -h], **ext_kw, zorder=9)
-    ax.annotate("", xy=(R_vann, h), xytext=(R_vann, -h),
-                arrowprops=arr_kw, zorder=9)
-    ax.text(R_vann - 0.20, 0,
-            f"$H_{{blkt}}$ = {H_blkt:.2f} m", rotation=90,
-            fontsize=9, color=col_dim, ha="center", va="center",
-            bbox=dict(fc="white", ec="none", alpha=1.0, pad=1.5))
-
-    # ── Axes styling ──────────────────────────────────────────────────
-    ax.set_aspect("equal")
-    ax.set_xlabel("$R$  [m]", fontsize=11)
-    ax.set_ylabel("$Z$  [m]", fontsize=11)
-    ax.set_title(
-        "Radial build layers — poloidal cross-section",
-        fontsize=11, fontweight="bold", pad=10,
-    )
-    ax.grid(False)
-    ax.tick_params(labelsize=10, direction="in")
-    for spine in ax.spines.values():
-        spine.set_linewidth(0.8)
-
-    ax.set_xlim(r1_out - 1.5, r2_out + 0.8)
-    ax.set_ylim(-h - 2.2 - 0.9, h + 0.8)
-
-    plt.tight_layout()
-    _save_or_show(fig, save_dir, "run_blanket_side_view")
 
 
 # ---------------------------------------------------------------------------
@@ -3228,7 +3013,7 @@ def plot_all(
         Pass ``None`` to display each figure interactively.
     cfg      : config object (DEFAULT_CONFIG if None).
     """
-    N = 32
+    N = 31
 
     def _p(i, label):
         print(f"  [{i:2d}/{N}] {label}")
@@ -3330,20 +3115,17 @@ def plot_all(
     _p(27, "TF coil side view")
     plot_TF_side_view(run, save_dir=save_dir)
 
-    _p(28, "Blanket side view")
-    plot_blanket_side_view(run, save_dir=save_dir)
-
-    _p(29, "CS cross-section")
+    _p(28, "CS cross-section")
     plot_CS_cross_section(run, save_dir=save_dir)
 
     # ── Benchmarks & machine comparison ───────────────────────────────
-    _p(30, "TF benchmark table")
+    _p(29, "TF benchmark table")
     plot_TF_benchmark_table(cfg=cfg, save_dir=save_dir)
 
-    _p(31, "CS benchmark table")
+    _p(30, "CS benchmark table")
     plot_CS_benchmark_table(cfg=cfg, save_dir=save_dir)
 
-    _p(32, "Tokamak LCFS comparison")
+    _p(31, "Tokamak LCFS comparison")
     plot_cross_section_comparison(run=run, save_dir=save_dir)
 
     print("Done.")
@@ -3379,7 +3161,7 @@ def plot_run(
         If provided, figures are saved as PNG files.
         Pass ``None`` to display interactively.
     """
-    N = 12
+    N = 11
 
     def _p(i, label):
         print(f"  [{i:2d}/{N}] {label}")
@@ -3414,16 +3196,13 @@ def plot_run(
     _p(8, "TF coil side view")
     plot_TF_side_view(run, save_dir=save_dir)
 
-    _p(9, "Blanket side view")
-    plot_blanket_side_view(run, save_dir=save_dir)
-
-    _p(10, "CICC TF conductor")
+    _p(9, "CICC TF conductor")
     plot_CICC_cross_section(build_conductor_from_run(run, coil="TF"), save_dir=save_dir)
 
-    _p(11, "CS cross-section")
+    _p(10, "CS cross-section")
     plot_CS_cross_section(run, save_dir=save_dir)
 
-    _p(12, "CICC CS conductor")
+    _p(11, "CICC CS conductor")
     plot_CICC_cross_section(build_conductor_from_run(run, coil="CS"), save_dir=save_dir)
 
     print("Done.")
