@@ -5094,9 +5094,37 @@ def _princeton_D_contour(r1: float, r2: float, n_leg: int = 50) -> tuple:
     return R, Z
 
 
+def _princeton_D_r2_from_height(r1: float, Z_target: float) -> float:
+    """
+    Find the outboard midplane radius r2 of a Princeton-D curve whose
+    half-height equals Z_target, given inboard leg radius r1.
+
+    Height is monotonically increasing with r2 (for fixed r1), so a
+    simple brentq root-find on the Princeton-D ODE is used.
+
+    Parameters
+    ----------
+    r1       : float  Inboard leg radius [m].
+    Z_target : float  Desired half-height (Z_max) [m].
+
+    Returns
+    -------
+    r2 : float  Outboard midplane radius [m].
+    """
+    def _residual(r2):
+        _, Z = _princeton_D_contour(r1, r2)
+        return Z.max() - Z_target
+
+    r2_lo = r1 * 1.01
+    r2_hi = r1 * 30.0
+    if _residual(r2_hi) < 0:
+        return r2_hi
+    return brentq(_residual, r2_lo, r2_hi, xtol=1e-4)
+
+
 def _offset_contour(R: np.ndarray, Z: np.ndarray, d: float) -> tuple:
     """
-    Inward-offset parallel curve of a clockwise Princeton-D contour.
+    Parallel-curve offset of a clockwise Princeton-D contour.
 
     Split at the straight inboard leg to avoid corner artefacts; each
     segment is offset independently and stitched back together.
@@ -5323,77 +5351,144 @@ def _f_sublayer_volume(
     return V_ib + V_ob + V_tb
 
 
+def _sol_fw_miller_contours(
+    R0: float, a: float, κ: float, δ: float,
+    delta_SOL: float, f_kappa_SOL: float, delta_FW: float,
+    n_theta: int = 500,
+) -> tuple:
+    """
+    Miller-ellipse contours for the SOL outer and FW outer boundaries.
+
+    Both share the plasma triangularity δ and elongation κ_sol = κ·(1 + f_kappa_SOL).
+    Minor radius is expanded by delta_SOL (SOL) or delta_SOL+delta_FW (FW).
+
+    Parameters
+    ----------
+    R0, a        : float  Major and minor plasma radii [m].
+    κ            : float  Plasma LCFS elongation [-].
+    δ            : float  Plasma LCFS triangularity [-].
+    delta_SOL    : float  SOL width at IB and OB midplane [m].
+    f_kappa_SOL  : float  Elongation increase factor: κ_sol = κ·(1+f) [-].
+    delta_FW     : float  First wall width at IB and OB midplane [m].
+    n_theta      : int    Poloidal resolution.
+
+    Returns
+    -------
+    R_SOL, Z_SOL, R_FW, Z_FW : ndarray  Closed contour arrays.
+    """
+    theta     = np.linspace(0.0, 2.0 * np.pi, n_theta, endpoint=False)
+    kappa_sol = κ * (1.0 + f_kappa_SOL)
+    cos_t     = np.cos(theta + np.arcsin(δ) * np.sin(theta))
+    sin_t     = np.sin(theta)
+
+    a_sol = a + delta_SOL
+    a_fw  = a + delta_SOL + delta_FW
+
+    R_SOL = R0 + a_sol * cos_t;  Z_SOL = kappa_sol * a_sol * sin_t
+    R_FW  = R0 + a_fw  * cos_t;  Z_FW  = kappa_sol * a_fw  * sin_t
+    return R_SOL, Z_SOL, R_FW, Z_FW
+
+
 def f_radial_build_component_volumes(
-    a: float, b: float, κ: float, R0: float,
+    a: float, b: float, κ: float, δ: float, R0: float,
     Delta_TF: float,
     Surface: float,
-    delta_gap_plasma: float,
+    delta_SOL:        float,
+    f_kappa_SOL:      float,
     delta_FW:         float,
     delta_shield:     float,
     delta_VV:         float,
     delta_gap_TF:     float,
     f_div_area_fraction: float,
+    R_tf_in: np.ndarray,
+    Z_tf_in: np.ndarray,
+    N_theta: int = 500,
 ) -> dict:
     """
-    Volumes of individual radial build components from plasma to TF coil.
+    Exact volumes of all radial build components from plasma LCFS to TF inner face.
 
-    Layer order from plasma outward:
-      gap_plasma → FW → BB (residual) → shield → VV → gap_TF
+    Every layer boundary is an actual 3D contour; volumes are computed via the
+    exact body-of-revolution formula V = 2π ∫∫ R dA (_moment_area).
 
-    All fixed layers use a single width (no IB/OB distinction).  The breeding
-    blanket absorbs the residual, which is asymmetric because Delta_TF adds
-    extra outboard space:
-        δ_BB_ib = b            − (gap_plasma + FW + shield + VV + gap_TF)
-        δ_BB_ob = b + Delta_TF − (gap_plasma + FW + shield + VV + gap_TF)
+    Layer stack from plasma outward:
+      LCFS → SOL → FW → BB → shield → VV → gap_TF → TF inner face
 
-    The divertor occupies f_div_area_fraction of the first-wall surface and
-    replaces FW+BB radially.  Volumes labelled *_eff exclude that fraction.
+    Boundaries:
+      SOL outer / FW outer  : Miller ellipses (κ·(1+f_kappa_SOL), same δ, ±width)
+      BB outer              : _offset_contour(TF_inner, d_gap_TF + d_VV + d_shield)
+      shield outer          : _offset_contour(TF_inner, d_gap_TF + d_VV)
+      VV outer              : _offset_contour(TF_inner, d_gap_TF)
+      TF inner face         : Princeton-D (passed in as R_tf_in / Z_tf_in)
+
+    No Pappus approximation, no post-hoc scaling.  V_total equals f_V_blanket
+    to within numerical integration error.
+
+    Parameters
+    ----------
+    R_tf_in, Z_tf_in : ndarray  TF inner-face Princeton-D contour (from f_TF_cross_section).
 
     Returns
     -------
     dict with keys:
-        V_gap_plasma, V_FW, V_BB,  V_shield, V_VV, V_gap_TF  — layer volumes [m³]
-        V_FW_eff, V_BB_eff                — FW/BB excluding divertor region [m³]
-        V_divertor                        — divertor volume [m³]
-        delta_BB_ib, delta_BB_ob          — derived BB thicknesses [m]
+        V_SOL, V_FW, V_BB, V_shield, V_VV, V_gap_TF  — layer volumes [m³]
+        V_FW_eff, V_BB_eff   — FW/BB excluding divertor fraction [m³]
+        V_divertor           — divertor volume [m³]
+        delta_BB_ib, delta_BB_ob  — IB/OB BB thicknesses [m]
+        V_total              — sum of all 6 layers [m³]
     """
-    # Fixed-layer total (same for IB and OB)
-    fixed = delta_gap_plasma + delta_FW + delta_shield + delta_VV + delta_gap_TF
+    # ── SOL and FW: Miller ellipse contours ──────────────────────────────────
+    theta_lc = np.linspace(0.0, 2.0 * np.pi, N_theta, endpoint=False)
+    R_lcfs = R0 + a * np.cos(theta_lc + np.arcsin(δ) * np.sin(theta_lc))
+    Z_lcfs = κ * a * np.sin(theta_lc)
+
+    R_sol, Z_sol, R_fw, Z_fw = _sol_fw_miller_contours(
+        R0, a, κ, δ, delta_SOL, f_kappa_SOL, delta_FW, N_theta)
+
+    M_lcfs = _moment_area(R_lcfs, Z_lcfs)
+    M_sol  = _moment_area(R_sol,  Z_sol)
+    M_fw   = _moment_area(R_fw,   Z_fw)
+
+    V_SOL = 2.0 * np.pi * (M_sol - M_lcfs)
+    V_FW  = 2.0 * np.pi * (M_fw  - M_sol)
+
+    # ── BB, shield, VV, gap_TF: Princeton-D offset contours ─────────────────
+    R_VV_o, Z_VV_o = _offset_contour(R_tf_in, Z_tf_in, delta_gap_TF)
+    R_sh_o, Z_sh_o = _offset_contour(R_tf_in, Z_tf_in, delta_gap_TF + delta_VV)
+    R_BB_o, Z_BB_o = _offset_contour(R_tf_in, Z_tf_in, delta_gap_TF + delta_VV + delta_shield)
+
+    M_tf  = _moment_area(R_tf_in, Z_tf_in)
+    M_vv  = _moment_area(R_VV_o,  Z_VV_o)
+    M_sh  = _moment_area(R_sh_o,  Z_sh_o)
+    M_bb  = _moment_area(R_BB_o,  Z_BB_o)
+
+    V_gap_TF = 2.0 * np.pi * (M_tf  - M_vv)
+    V_VV     = 2.0 * np.pi * (M_vv  - M_sh)
+    V_shield = 2.0 * np.pi * (M_sh  - M_bb)
+    V_BB     = 2.0 * np.pi * (M_bb  - M_fw)
+
+    # ── BB residual thicknesses (for annotation use) ─────────────────────────
+    fixed       = delta_SOL + delta_FW + delta_shield + delta_VV + delta_gap_TF
     delta_BB_ib = b            - fixed
     delta_BB_ob = b + Delta_TF - fixed
 
-    # Layers: (name, delta_ib, delta_ob); uniform layers have delta_ib == delta_ob
-    layers = [
-        ("gap_plasma", delta_gap_plasma, delta_gap_plasma),
-        ("FW",         delta_FW,         delta_FW),
-        ("BB",         delta_BB_ib,      delta_BB_ob),
-        ("shield",     delta_shield,     delta_shield),
-        ("VV",         delta_VV,         delta_VV),
-        ("gap_TF",     delta_gap_TF,     delta_gap_TF),
-    ]
+    # ── Divertor: fraction of FW+BB ─────────────────────────────────────────
+    V_FW_BB     = V_FW + V_BB
+    V_divertor  = f_div_area_fraction * V_FW_BB
+    V_FW_eff    = V_FW * (1.0 - f_div_area_fraction)
+    V_BB_eff    = V_BB * (1.0 - f_div_area_fraction)
 
-    volumes = {}
-    t_ib = 0.0
-    t_ob = 0.0
-    for name, d_ib, d_ob in layers:
-        volumes[f"V_{name}"] = _f_sublayer_volume(d_ib, d_ob, t_ib, t_ob, a, κ, R0)
-        t_ib += d_ib
-        t_ob += d_ob
+    V_total = V_SOL + V_FW + V_BB + V_shield + V_VV + V_gap_TF
 
-    # Divertor replaces FW+BB in f_div fraction of the poloidal surface
-    V_FW_BB_total = volumes["V_FW"] + volumes["V_BB"]
-    V_divertor     = f_div_area_fraction * V_FW_BB_total
-
-    volumes["V_FW_eff"]    = volumes["V_FW"] * (1.0 - f_div_area_fraction)
-    volumes["V_BB_eff"]    = volumes["V_BB"] * (1.0 - f_div_area_fraction)
-    volumes["V_divertor"]  = V_divertor
-    volumes["delta_BB_ib"] = delta_BB_ib
-    volumes["delta_BB_ob"] = delta_BB_ob
-    # Total blanket volume = sum of all 6 fixed layers (divertor is a subset, not extra)
-    volumes["V_total"] = (volumes["V_gap_plasma"] + volumes["V_FW"] + volumes["V_BB"]
-                          + volumes["V_shield"]   + volumes["V_VV"] + volumes["V_gap_TF"])
-
-    return volumes
+    return {
+        "V_SOL":     V_SOL,     "V_FW":      V_FW,
+        "V_BB":      V_BB,      "V_shield":  V_shield,
+        "V_VV":      V_VV,      "V_gap_TF":  V_gap_TF,
+        "V_FW_eff":  V_FW_eff,  "V_BB_eff":  V_BB_eff,
+        "V_divertor": V_divertor,
+        "delta_BB_ib": delta_BB_ib,
+        "delta_BB_ob": delta_BB_ob,
+        "V_total":   V_total,
+    }
 
 
 def f_V_CS(a: float, b: float, c: float, d: float,
