@@ -219,7 +219,7 @@ _IDX = {
     'Av':              134,  # Plant availability [-]
     'CF':              135,  # Capacity factor [-]
     # ── Radial build component volumes ───────────────────────────────────────
-    'V_rb_gap_plasma': 136,
+    'V_rb_SOL':        136,  # SOL / far-SOL volume (all around) [m³]
     'V_rb_FW':         137,  # First wall volume (excl. divertor) [m³]
     'V_rb_BB':         138,  # Breeding blanket volume (excl. divertor) [m³]
     'V_rb_shield':     139,

@@ -866,15 +866,15 @@ OUTPUT_REGISTRY = {
     # -------------------------------------------------------------------------
     # RADIAL BUILD COMPONENT VOLUMES
     # -------------------------------------------------------------------------
-    'V_rb_gap_plasma': OutputParameter(
-        name='V_rb_gap_plasma',
-        label='$V_{\\mathrm{gap,pl}}$',
+    'V_rb_SOL': OutputParameter(
+        name='V_rb_SOL',
+        label='$V_{\\mathrm{SOL}}$',
         unit='m³',
         levels=(0, 200, 20),
         fmt='%.0f',
         use_radial_mask=True,
         category='radial_build',
-        description='Plasma-facing gap volume (all around)'
+        description='SOL / far-SOL volume (all around)'
     ),
     'V_rb_FW': OutputParameter(
         name='V_rb_FW',
@@ -1936,7 +1936,7 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
                 pass
 
         # ── Unpack radial build component volumes (offsets 37–43) ────────────
-        V_rb_gap_plasma_s = _coil_extra[37]
+        V_rb_SOL_s        = _coil_extra[37]
         V_rb_FW_s         = _coil_extra[38]
         V_rb_BB_s         = _coil_extra[39]
         V_rb_shield_s     = _coil_extra[40]
@@ -2032,7 +2032,7 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
             density_limit=n_condition,
             beta_limit=beta_condition,
             q_limit=q_condition,
-            V_rb_gap_plasma=V_rb_gap_plasma_s,
+            V_rb_SOL=V_rb_SOL_s,
             V_rb_FW=V_rb_FW_s,
             V_rb_BB=V_rb_BB_s,
             V_rb_shield=V_rb_shield_s,

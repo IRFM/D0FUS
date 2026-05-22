@@ -1539,7 +1539,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             _nan, _nan,                          # t_life_bl_yr, t_life_div_yr
             _nan, _nan,                          # T_op_limit, dt_rep_eff
             _nan, _nan,                          # Av, CF
-            _nan,                                # V_rb_gap_plasma
+            _nan,                                # V_rb_SOL
             _nan, _nan,                          # V_rb_FW, V_rb_BB
             _nan, _nan, _nan,                    # V_rb_shield, V_rb_VV, V_rb_gap_TF
             _nan,                                # V_rb_divertor
@@ -1836,7 +1836,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             _nan, _nan,                          # t_life_bl_yr, t_life_div_yr
             _nan, _nan,                          # T_op_limit, dt_rep_eff
             _nan, _nan,                          # Av, CF
-            _nan,                                # V_rb_gap_plasma
+            _nan,                                # V_rb_SOL
             _nan, _nan,                          # V_rb_FW, V_rb_BB
             _nan, _nan, _nan,                    # V_rb_shield, V_rb_VV, V_rb_gap_TF
             _nan,                                # V_rb_divertor
@@ -1929,30 +1929,32 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     V_CS_geom = f_V_CS(a, b, c, d, R0, κ, Gap, Choice_Buck_Wedg)
 
     # ── Radial build component volumes ────────────────────────────────────────
-    # Accurate total from Miller LCFS / Princeton-D integral (f_V_blanket).
-    # Component fractions from Pappus rectangular model, then scaled so that
-    # their sum matches the accurate total — best of both worlds.
+    # All boundaries are real 3D contours; volumes via exact _moment_area integrals.
+    # SOL/FW: Miller ellipses.  BB/shield/VV/gap_TF: Princeton-D offsets from TF inner face.
+    # No Pappus approximation; no post-hoc scaling.
     V_blanket = f_V_blanket(a, b, R0, κ, δ, Delta_TF,
                             R_outer=_R_in, Z_outer=_Z_in)
     _rb = f_radial_build_component_volumes(
-        a=a, b=b, κ=κ, R0=R0,
+        a=a, b=b, κ=κ, δ=δ, R0=R0,
         Delta_TF=Delta_TF,
         Surface=Surface_solution,
-        delta_gap_plasma=config.delta_gap_plasma,
+        delta_SOL=config.delta_SOL,
+        f_kappa_SOL=config.f_kappa_SOL,
         delta_FW=config.delta_FW,
         delta_shield=config.delta_shield,
         delta_VV=config.delta_VV,
         delta_gap_TF=config.delta_gap_TF,
         f_div_area_fraction=config.f_div_area_fraction,
+        R_tf_in=_R_in,
+        Z_tf_in=_Z_in,
     )
-    _scale          = V_blanket / _rb['V_total'] if _rb['V_total'] > 0 else 1.0
-    V_rb_gap_plasma = _rb['V_gap_plasma'] * _scale
-    V_rb_FW         = _rb['V_FW_eff']    * _scale
-    V_rb_BB         = _rb['V_BB_eff']    * _scale
-    V_rb_shield     = _rb['V_shield']    * _scale
-    V_rb_VV         = _rb['V_VV']        * _scale
-    V_rb_gap_TF     = _rb['V_gap_TF']    * _scale
-    V_rb_divertor   = _rb['V_divertor']  * _scale
+    V_rb_SOL      = _rb['V_SOL']
+    V_rb_FW       = _rb['V_FW_eff']
+    V_rb_BB       = _rb['V_BB_eff']
+    V_rb_shield   = _rb['V_shield']
+    V_rb_VV       = _rb['V_VV']
+    V_rb_gap_TF   = _rb['V_gap_TF']
+    V_rb_divertor = _rb['V_divertor']
 
     cost_solution = (V_rb_BB + V_TF_one * N_TF + V_CS_geom) / P_fus   # legacy cost proxy [m^3/MW]
 
@@ -2056,7 +2058,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             T_op_limit,     dt_rep_eff,                            # 132, 133
             Av_solution,    CF_solution,                          # 134, 135
             # ── Radial build component volumes (indices 136–142) ─────────────
-            V_rb_gap_plasma,                                       # 136
+            V_rb_SOL,                                              # 136
             V_rb_FW,        V_rb_BB,                              # 137, 138
             V_rb_shield,    V_rb_VV,    V_rb_gap_TF,              # 139, 140, 141
             V_rb_divertor)                                         # 142
@@ -2306,8 +2308,9 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         "Delta_TF":        Delta_TF,   # Extra outboard radial clearance from port-access constraint [m]
         "Gap":             config.Gap,
         # ── Radial build sublayer widths ──────────────────────────────────────
-        "delta_gap_plasma": config.delta_gap_plasma,
-        "delta_FW":         config.delta_FW,
+        "delta_SOL":   config.delta_SOL,
+        "f_kappa_SOL": config.f_kappa_SOL,
+        "delta_FW":    config.delta_FW,
         "delta_shield":     config.delta_shield,
         "delta_VV":         config.delta_VV,
         "delta_gap_TF":     config.delta_gap_TF,
@@ -2454,7 +2457,7 @@ def save_run_output(config: GlobalConfig,
      t_life_bl_yr, t_life_div_yr,
      T_op_limit, dt_rep_eff,
      Av, CF,
-     V_rb_gap_plasma,
+     V_rb_SOL,
      V_rb_FW, V_rb_BB,
      V_rb_shield, V_rb_VV, V_rb_gap_TF,
      V_rb_divertor) = results
@@ -2623,7 +2626,7 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] V_blanket (blanket, Miller LCFS→TF inner face) : {V_blanket:.4f} [m³]", file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[O] Radial build component volumes (Pappus, IB/OB asymmetric)", file=out)
-        print(f"[O]  ├ V_gap_plasma (plasma→FW gap, all around)     : {V_rb_gap_plasma:.1f} [m³]", file=out)
+        print(f"[O]  ├ V_SOL        (scrape-off layer, all around)  : {V_rb_SOL:.1f} [m³]", file=out)
         print(f"[O]  ├ V_FW         (first wall, excl. divertor)    : {V_rb_FW:.1f} [m³]", file=out)
         print(f"[O]  ├ V_BB         (breeding blanket, excl. div.)  : {V_rb_BB:.1f} [m³]", file=out)
         print(f"[O]  ├ V_divertor   (divertor, f_div={config.f_div_area_fraction:.2f})          : {V_rb_divertor:.1f} [m³]", file=out)
