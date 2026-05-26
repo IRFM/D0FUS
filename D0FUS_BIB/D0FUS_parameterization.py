@@ -122,7 +122,7 @@ class GlobalConfig:
     #   'Sauter'    — uses LCFS values (κ_edge, δ_edge). Sauter, FED 112 (2016) Eq. 30.
     #   'ITER_1989' — uses ψ_N = 0.95 values (κ₉₅, δ₉₅). Uckan (1989), also Johner (2011).
     Option_q95         : str = 'Sauter'         # q₉₅ formula: 'Sauter' (default) or 'ITER_1989'
-    Option_Kappa       : str = 'Wenninger'    # Elongation model: 'Wenninger', 'Stambaugh', 'Freidberg', 'Manual'
+    Option_Kappa       : str = 'Wenninger'      # Elongation model: 'Wenninger', 'Stambaugh', 'Freidberg', 'Manual'
     κ_manual           : float = 1.9            # Elongation (Manual mode only) [-]
 
     # ── 2a. Safety factor and current density profiles ────────────────────────
@@ -215,6 +215,26 @@ class GlobalConfig:
     Young_modul_Steel    : float = 200e9    # Steel Young's modulus [Pa] (only used in CIRCE model)
     Young_modul_GF       : float = 90e9     # S-glass fiber Young's modulus [Pa] (only used in CIRCE model)
     fatigue_CS           : float = 2.0      # CS fatigue knockdown factor (pulsed & wedging only) [-]
+    # ── Steel allowable safety factors ───────────────────────────────────────
+    # Dimensionless knockdown applied to the steel mechanical allowable inside
+    # the TF and CS thickness solvers: σ_eff = σ_allowable / SF.
+    # Captures effects not represented by the idealised CICC area model:
+    #   – Realistic winding-pack filling factor: round/square cables inside a
+    #     rectangular envelope leave 15–30% of the WP cross-section occupied
+    #     by ground insulation, inter-pancake plates, helium manifolds,
+    #     terminations and assembly clearances. The structural jacket carries
+    #     the electromagnetic load through a section reduced by this factor.
+    #   – Stress concentrations at jacket corners and transitions (K_t ≈ 1.2–1.5).
+    #   – Weld efficiency on jacket seams (η_w ≈ 0.85–0.90).
+    #   – Manufacturing thickness tolerances (≈ ±5%).
+    # Default 1.0 preserves backward compatibility (raw material allowable used
+    # directly). Realistic engineering value for both TF and CS large-magnet
+    # CICC designs is ≈ 1.5 (composition of the four contributions above).
+    # The CS fatigue knockdown (fatigue_CS) multiplies on top of SF_CS, since
+    # the two factors address disjoint phenomena: primary static stress (SF)
+    # versus cyclic damage accumulation (fatigue_CS).
+    SF_TF                : float = 1.0      # Safety factor on TF steel allowable [-] (suggested ≈ 1.5 for realistic CICC packing)
+    SF_CS                : float = 1.0      # Safety factor on CS steel allowable [-] (suggested ≈ 1.5 for realistic CICC packing)
 
     # ── 7. TF coil engineering ───────────────────────────────────────────────
     Radial_build_model   : str   = 'refined' # Stress model: 'academic', 'refined', 'CIRCE'
@@ -297,7 +317,7 @@ class GlobalConfig:
     # P_CD_total = P_LH + P_ECRH + P_NBI + P_ICRH  (P_aux_input ignored).
     P_LH   : float = 0.0      # LHCD plasma power [MW]
     P_ECRH : float = 0.0      # ECRH plasma power [MW]
-    P_NBI  : float = 0.0      # NBI injected power [MW]  (5 % losses applied internally)
+    P_NBI  : float = 0.0      # NBI injected power[MW]
     P_ICRH : float = 0.0      # ICRH plasma power [MW]   (heating only, no current drive)
     # --- Steady-State mode: power fractions per source [-] ---
     # Used when Operation_mode = 'Steady-State' and CD_source = 'Multi'

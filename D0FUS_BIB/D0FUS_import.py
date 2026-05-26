@@ -18,11 +18,13 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 import json
 import math
+import multiprocessing
 import random
 import re
 import shutil
 import sys
 import time
+import traceback
 import warnings
 import importlib
 from datetime import datetime
@@ -34,7 +36,7 @@ import numpy as np
 import pandas as pd
 import sympy as sp
 from typing import List, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, replace, asdict
 
 #%% Scipy - Optimization and Numerical Methods
 
@@ -66,11 +68,13 @@ import matplotlib.colors as mcolors
 import matplotlib.lines as mlines
 import matplotlib.patches as mpatches
 import matplotlib.cm as cm
+from matplotlib.animation import FuncAnimation, PillowWriter
 from matplotlib.colors import Normalize
 from matplotlib.gridspec import GridSpec
 from matplotlib.patches import Circle, Rectangle, Patch
 from matplotlib.ticker import MultipleLocator
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  (registers the '3d' projection)
 from pandas.plotting import table
 from tqdm import tqdm
 from dataclasses import dataclass

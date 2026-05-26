@@ -493,7 +493,7 @@ def _unpack_CS_config(config):
         Keys: Gap, I_cond, V_max, f_He_pipe, f_void, f_In,
         T_hotspot, RRR, Marge_T_He, Marge_T_Nb3Sn, Marge_T_NbTi,
         Marge_T_REBCO, Eps, Tet, n_shape_CS, fatigue_CS,
-        Operation_mode, f_swing_usable.
+        Operation_mode, f_swing_usable, SF_CS.
     """
     # f_swing_usable fallback: 0.75 (25% of bipolar swing reserved for control).
     # Used to absorb gracefully any legacy config instance that does not
@@ -504,6 +504,13 @@ def _unpack_CS_config(config):
     if f_swing_usable_val is None or f_swing_usable_val <= 0 or f_swing_usable_val > 1.0:
         raise ValueError(
             f"GlobalConfig.f_swing_usable must lie in (0, 1], got {f_swing_usable_val}."
+        )
+    # Steel allowable safety factor for the CS. Backward-compatible default
+    # of 1.0 if a legacy GlobalConfig instance lacks the field.
+    SF_CS_val = getattr(config, 'SF_CS', 1.0)
+    if SF_CS_val is None or SF_CS_val <= 0:
+        raise ValueError(
+            f"GlobalConfig.SF_CS must be strictly positive, got {SF_CS_val}."
         )
     return dict(
         Gap            = config.Gap,
@@ -529,6 +536,10 @@ def _unpack_CS_config(config):
         # flux budget. Applied in _CS_geometry_init via
         #   ΨCS_capacity = ΨCS_plasma / f_swing_usable.
         f_swing_usable = f_swing_usable_val,
+        # Steel allowable safety factor for the CS structural jacket.
+        # Applied at the top of each f_CS_* solver as σ_CS ← σ_CS / SF_CS.
+        # Composes multiplicatively with fatigue_CS in pulsed/wedging cases.
+        SF_CS          = SF_CS_val,
     )
 
 
@@ -3063,7 +3074,7 @@ if __name__ == "__main__":
 #%% Academic model
 
 def f_TF_academic(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg,
-                  coef_inboard_tension, F_CClamp, delta_port=0.0):
+                  coef_inboard_tension, F_CClamp, delta_port=0.0, SF_TF=1.0):
     """
     Calculate the thickness of the TF coil using a 2-layer thin cylinder model.
 
@@ -3100,6 +3111,14 @@ def f_TF_academic(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg,
         port-access constraints. Pushes R2 outward so that the F_z log
         term ln(R2 / R1) reflects the actual outer-leg position. Default:
         0.0 (matches the original analytic formula).
+    SF_TF : float, optional
+        Safety factor applied to the steel mechanical allowable σ_TF.
+        Captures the realistic CICC packing penalty (unfilled WP envelope,
+        inter-pancake plates, helium manifolds, ground insulation), plus
+        stress concentrations, weld efficiency and manufacturing tolerances
+        not represented in the idealised area model. The effective allowable
+        used by the solver is σ_TF / SF_TF. Default 1.0 (no margin).
+        Realistic engineering value ≈ 1.5 for large-magnet CICC designs.
 
     Returns
     -------
@@ -3118,6 +3137,13 @@ def f_TF_academic(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg,
     Steel_fraction : float
         Nose / total thickness ratio [-].
     """
+
+    # Apply safety factor on the steel mechanical allowable.
+    # All downstream stress balances (Tresca, F_z, hoop) use σ_TF
+    # divided by SF_TF, so the solver sizes the structure to saturate
+    # the reduced allowable. The resulting thickness is self-consistently
+    # larger in a non-linear way (axial and radial contributions couple).
+    σ_TF = σ_TF / SF_TF
     
     def f_B0(Bmax, a, b, R0):
         """
@@ -3461,7 +3487,7 @@ def Nose_refined(R_ext_Nose, sigma_max, omega, B_max, R_0, a, b,
 
 def f_TF_refined(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n,
                c_BP, coef_inboard_tension, F_CClamp, TF_grading=False,
-               delta_port=0.0):
+               delta_port=0.0, SF_TF=1.0):
     
     """
     Calculate the thickness of the TF coil using a 2 layer thick cylinder model 
@@ -3489,6 +3515,16 @@ def f_TF_refined(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n
         Winding_Pack_refined and Nose_refined so that F_z and σ_z are
         evaluated with the actual outer-leg position rather than the
         blanket outer edge. Default: 0.0 (paper convention).
+    SF_TF : float, optional
+        Safety factor applied to the steel mechanical allowable σ_TF before
+        the WP and Nose stress balances. Captures the realistic CICC packing
+        penalty (unfilled WP envelope, inter-pancake plates, helium
+        manifolds, ground insulation), plus stress concentrations, weld
+        efficiency and manufacturing tolerances not represented in the
+        idealised area model. The effective allowable propagated to
+        Winding_Pack_refined and Nose_refined is σ_TF / SF_TF. Default 1.0
+        (no margin). Realistic engineering value ≈ 1.5 for large-magnet
+        CICC designs.
 
     Returns:
     c : TF total inboard radial thickness [m]
@@ -3500,6 +3536,14 @@ def f_TF_refined(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n
     """
     
     debuging = 'Off'
+
+    # Apply safety factor on the steel mechanical allowable. Both the
+    # Winding_Pack_refined and Nose_refined sub-solvers receive the reduced
+    # value, so the WP/Nose split is sized consistently against σ_TF / SF_TF.
+    # The non-linear coupling between c_WP (which sets R_ext, hence B and J)
+    # and c_Nose (which sees the resulting vertical force) means the total
+    # thickness response to SF_TF is not affine in 1/SF_TF.
+    σ_TF = σ_TF / SF_TF
     
     if Choice_Buck_Wedg == "Wedging":
         
@@ -4142,7 +4186,7 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     config : GlobalConfig
         Global design configuration. Used to access: Gap, I_cond, V_max,
         f_He_pipe, f_void, f_In, T_hotspot, RRR, Marge_T_He, Marge_T_Nb3Sn,
-        Marge_T_NbTi, Marge_T_REBCO, Eps, Tet, n_shape_CS.
+        Marge_T_NbTi, Marge_T_REBCO, Eps, Tet, n_shape_CS, fatigue_CS, SF_CS, f_swing_usable.
     """
     
     # ------------------------------------------------------------------
@@ -4157,6 +4201,14 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     Eps, Tet, n_shape_CS       = _c['Eps'], _c['Tet'], _c['n_shape_CS']
     fatigue_CS     = _c['fatigue_CS']
     Operation_mode = _c['Operation_mode']
+    SF_CS          = _c['SF_CS']
+    # Apply safety factor on the steel mechanical allowable. The downstream
+    # stress residual compares the smeared Tresca equivalent against this
+    # reduced allowable, so the solver sizes the CS jacket to saturate
+    # σ_CS / SF_CS. In pulsed/wedging cases the fatigue knockdown
+    # (fatigue_CS) is applied on top in stress_residual, yielding a
+    # combined effective allowable σ_CS / (SF_CS × fatigue_CS).
+    σ_CS = σ_CS / SF_CS
     debug = False
     Tol_CS = 1e-3
 
@@ -4516,7 +4568,7 @@ def f_CS_refined(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_C
     config : GlobalConfig
         Global design configuration. Used to access: Gap, I_cond, V_max,
         f_He_pipe, f_void, f_In, T_hotspot, RRR, Marge_T_He, Marge_T_Nb3Sn,
-        Marge_T_NbTi, Marge_T_REBCO, Eps, Tet, n_shape_CS.
+        Marge_T_NbTi, Marge_T_REBCO, Eps, Tet, n_shape_CS, fatigue_CS, SF_CS, f_swing_usable.
     """
     
     # ------------------------------------------------------------------
@@ -4531,6 +4583,14 @@ def f_CS_refined(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_C
     Eps, Tet, n_shape_CS       = _c['Eps'], _c['Tet'], _c['n_shape_CS']
     fatigue_CS     = _c['fatigue_CS']
     Operation_mode = _c['Operation_mode']
+    SF_CS          = _c['SF_CS']
+    # Apply safety factor on the steel mechanical allowable. The downstream
+    # stress residual compares the smeared Tresca equivalent against this
+    # reduced allowable, so the solver sizes the CS jacket to saturate
+    # σ_CS / SF_CS. In pulsed/wedging cases the fatigue knockdown
+    # (fatigue_CS) is applied on top in f_sigma_diff, yielding a combined
+    # effective allowable σ_CS / (SF_CS × fatigue_CS).
+    σ_CS = σ_CS / SF_CS
     debug = False
     Tol_CS = 1e-3
 
@@ -4773,7 +4833,7 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
     config : GlobalConfig
         Global design configuration. Used to access: Gap, I_cond, V_max,
         f_He_pipe, f_void, f_In, T_hotspot, RRR, Marge_T_He, Marge_T_Nb3Sn,
-        Marge_T_NbTi, Marge_T_REBCO, Eps, Tet, n_shape_CS.
+        Marge_T_NbTi, Marge_T_REBCO, Eps, Tet, n_shape_CS, fatigue_CS, SF_CS, f_swing_usable.
     """
     
     # ------------------------------------------------------------------
@@ -4788,8 +4848,14 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
     Eps, Tet, n_shape_CS       = _c['Eps'], _c['Tet'], _c['n_shape_CS']
     fatigue_CS     = _c['fatigue_CS']
     Operation_mode = _c['Operation_mode']
+    SF_CS          = _c['SF_CS']
     Young_modul_Steel = config.Young_modul_Steel
     nu_Steel          = config.nu_Steel
+    # Apply safety factor on the steel mechanical allowable. The CIRCE radial
+    # equilibrium uses σ_CS / SF_CS as the Tresca cap inside f_sigma_diff;
+    # in pulsed/wedging cases the fatigue knockdown (fatigue_CS) multiplies
+    # on top, giving an effective allowable σ_CS / (SF_CS × fatigue_CS).
+    σ_CS = σ_CS / SF_CS
     debug = False
     Tol_CS = 1e-3
 

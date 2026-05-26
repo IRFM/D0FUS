@@ -20,10 +20,32 @@ population_size = 50
 generations     = 10
 crossover_rate  = 0.6
 mutation_rate   = 0.5
+n_workers       = 4               # parallel fitness evaluation
 
 # Minimise Cost of Electricity under a capital cost ceiling
 fitness_objective = C_invest
 C_invest_max      = 25e3          # Budget ceiling [M EUR] — ITER ≈ 25 B EUR (2020)
+
+# ── Local refinement (memetic hybrid) ────────────────────────────────────────
+# At the end of the GA, refine the top-k Hall-of-Fame members with a local
+# search. 'nelder-mead' is robust to the step discontinuities introduced by
+# the stability penalties; 'lbfgsb' is faster on smooth regions; 'gradient'
+# is a transparent fallback. Set local_refine_method = none to disable.
+local_refine_method    = nelder-mead
+local_refine_top_k     = 3
+local_refine_every     = 0        # 0 = final refinement only; N > 0 enables memetic
+local_refine_max_iters = 200
+
+# ── Trajectory GIF (post-run visualization) ──────────────────────────────────
+# Generates a 3D-plus-2D animated GIF of the cumulative-best design across
+# a chosen 2D parameter plane, with the GA exploration cloud overlaid as
+# semi-transparent grey scatter.
+make_gif       = True
+gif_var_x      = a
+gif_var_y      = R0
+gif_resolution = 30               # grid resolution per axis (n² evals for the scan)
+gif_log_scale  = True
+gif_fps        = 8
 
 # ── 1. Optimised design variables [min, max] ────────────────────────────────
 #
@@ -184,7 +206,17 @@ L_min       = 3.6                  # Equatorial port width [m]
 #   - Lower COE at higher Tbar (improved Q) if stability allows
 #   - Trade-offs between aspect ratio and burn duration (CS flux)
 #
+# Outputs in D0FUS_OUTPUTS/genetic/Genetic_D0FUS_<timestamp>/:
+#   - convergence.png                  best-fitness curve over generations
+#   - optimization_summary.json        full HoF + refinement log + trajectory
+#   - trajectory_a_R0.gif              3D + 2D animation with exploration cloud
+#   - scan_a_R0.npz                    raw scan + cloud (re-plot offline)
+#   - standard D0FUS save_run_output for the best design
+#
 # Run:
-#   python D0FUS_genetic.py genetic_ITER.txt --pop 200 --gen 50
+#   python D0FUS_genetic.py 3_genetic_ITER.txt
+#
+# All knobs above (pop, gen, refine, gif) can also be overridden on the
+# command line, see `python D0FUS_genetic.py` without arguments for help.
 #
 # ══════════════════════════════════════════════════════════════════════════════

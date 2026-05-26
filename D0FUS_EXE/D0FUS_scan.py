@@ -1160,6 +1160,12 @@ INPUT_PARAMETER_REGISTRY = {
     'fatigue_CS': InputParameter(
         name='fatigue_CS', display_name='CS fatigue knockdown factor (Pulsed + Wedging)',
         unit='', min_val=1.5, max_val=3.0, n_default=10, tick_step=0.5),
+    'SF_TF': InputParameter(
+        name='SF_TF', display_name='TF steel allowable safety factor',
+        unit='', min_val=1.0, max_val=2.0, n_default=6, tick_step=0.2),
+    'SF_CS': InputParameter(
+        name='SF_CS', display_name='CS steel allowable safety factor',
+        unit='', min_val=1.0, max_val=2.0, n_default=6, tick_step=0.2),
     'coef_inboard_tension': InputParameter(
         name='coef_inboard_tension', display_name='TF inboard/outboard vertical stress fraction',
         unit='', min_val=0.3, max_val=0.7, n_default=10, tick_step=0.1),
@@ -1324,7 +1330,7 @@ def display_input_parameters():
         ('Profile peaking (Manual)', ['nu_n', 'nu_T']),
         ('Operation & heating',      ['P_aux_input', 'Temps_Plateau_input']),
         ('MHD limits',               ['q_limit', 'Greenwald_limit']),
-        ('TF/CS engineering',        ['fatigue_CS', 'coef_inboard_tension', 'Gap', 'c_BP']),
+        ('TF/CS engineering',        ['fatigue_CS', 'SF_TF', 'SF_CS', 'coef_inboard_tension', 'Gap', 'c_BP']),
         ('Superconductor',           ['T_helium', 'Marge_T_He', 'Marge_T_Nb3Sn',
                                       'Marge_T_NbTi', 'Marge_T_REBCO',
                                       'f_He_pipe', 'f_void', 'f_In']),

@@ -415,6 +415,11 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # by fatigue_CS only when Operation_mode == 'Pulsed' AND the light case
     # (CS own electromagnetic load dominant, sigma_theta > 0) governs — which
     # is always the case in Wedging, and conditionally in Bucking (P_CS > 2 P_TF).
+    # The structural safety factors config.SF_TF and config.SF_CS are likewise
+    # applied inside the solvers at their entry (σ ← σ / SF). They compose
+    # multiplicatively with fatigue_CS on the CS side (disjoint mechanisms:
+    # primary static stress vs cyclic damage). Default 1.0 preserves the legacy
+    # behaviour; ≈ 1.5 captures realistic CICC packing penalties.
 
     # Fraction of vertical tension carried by the TF winding pack
     if Choice_Buck_Wedg == "Wedging":
@@ -1758,17 +1763,22 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     #    TOROIDAL FIELD (TF) COIL RADIAL BUILD
     #    Determines the inboard thickness 'c' from mechanical and magnetic constraints.
     # ==============================================================================
+    # config.SF_TF applies the safety factor on the steel mechanical allowable
+    # at the solver entry (σ_TF ← σ_TF / SF_TF). Default 1.0 reproduces the
+    # legacy behaviour; realistic engineering value ≈ 1.5 covers the unfilled
+    # WP envelope, stress concentrations, weld efficiency and manufacturing
+    # tolerances not represented in the idealised CICC area model.
     if Radial_build_model == "academic":
         (c, c_WP_TF, c_Nose_TF,
          σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF) = f_TF_academic(
             a, b, R0, σ_TF, J_max_TF_conducteur, Bmax_TF, Choice_Buck_Wedg,
-            coef_inboard_tension, F_CClamp)
+            coef_inboard_tension, F_CClamp, SF_TF=config.SF_TF)
 
     elif Radial_build_model in ("refined", "CIRCE"):
         (c, c_WP_TF, c_Nose_TF,
          σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF) = f_TF_refined(
             a, b, R0, σ_TF, J_max_TF_conducteur, Bmax_TF, Choice_Buck_Wedg, omega_TF, n_shape_TF,
-            c_BP, coef_inboard_tension, F_CClamp, TF_grading)
+            c_BP, coef_inboard_tension, F_CClamp, TF_grading, SF_TF=config.SF_TF)
 
     else:
         raise ValueError(

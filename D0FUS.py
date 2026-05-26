@@ -170,12 +170,39 @@ def detect_mode_from_input(input_file):
 #%% Main functions
 
 def print_banner():
-    """Display D0FUS banner"""
-    banner = """
+    """Display the D0FUS startup banner.
+
+    Simple double-line framed banner with title, tagline, version, author,
+    license and repository URL. Can be silenced with the environment variable
+    ``D0FUS_NO_BANNER`` (useful for batch scans, HPC jobs, CI).
+    """
+    if os.environ.get("D0FUS_NO_BANNER", "").strip() not in ("", "0", "false", "False"):
+        return
+
+    # Resolve installed package version, fall back to a static string
+    try:
+        from importlib.metadata import version, PackageNotFoundError
+        try:
+            v = version("d0fus")
+        except PackageNotFoundError:
+            v = "dev"
+    except ImportError:
+        v = "dev"
+
+    # The version is the only dynamic line; the others are hardcoded for clarity.
+    # Inside width is 51 characters; the version is centered programmatically.
+    version_line = f"Version {v}".center(51)
+
+    banner = f"""
     ╔═══════════════════════════════════════════════════╗
     ║                                                   ║
     ║                       D0FUS                       ║
-    ║     Design 0-dimensional for Fusion Systems       ║
+    ║      Design 0-dimensional for Fusion Systems      ║
+    ║                                                   ║
+    ╠═══════════════════════════════════════════════════╣
+    ║{version_line}║
+    ║         T. Auclair, CEA-IRFM  |  CeCILL-C         ║
+    ║           https://github.com/IRFM/D0FUS           ║
     ║                                                   ║
     ╚═══════════════════════════════════════════════════╝
     """

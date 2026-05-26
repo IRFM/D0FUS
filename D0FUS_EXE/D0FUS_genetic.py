@@ -1,45 +1,168 @@
 """
 D0FUS Genetic Algorithm Optimization Module
-============================================
-Adapted to the GlobalConfig / dc_replace architecture of D0FUS_run (v2).
+===========================================
+Memetic optimization driver for the D0FUS (Design 0-dimensional for
+FUsion Systems) project. Built on the GlobalConfig / dataclasses.replace
+architecture of D0FUS_run v2.
 
+Algorithm
+---------
+Global exploration is handled by a DEAP-based genetic algorithm with
+simulated-binary crossover, an adaptive polynomial mutation that shifts
+from exploration-wide jumps to exploitation-narrow steps as generations
+progress, tournament-based mu+lambda replacement, and unconditional
+diversity injection every 7 generations (or whenever stagnation is
+detected over 3 consecutive generations). A Hall-of-Fame preserves the
+overall best designs across the run, with one minimal-elitism step per
+generation guaranteeing the current champion is never lost.
+
+Local exploitation is provided by an optional memetic refinement applied
+to the top-k Hall-of-Fame members at the end of the GA and, optionally,
+to the current best every N generations during the GA. Three local
+optimisers are available, all working in normalised [0,1]^d coordinates
+for scale invariance:
+  - 'gradient'     projected gradient descent with centered finite
+                   differences and Armijo backtracking line search.
+                   Pedagogical, transparent, and parallelisable.
+  - 'lbfgsb'       scipy.optimize.minimize with method 'L-BFGS-B' and
+                   bound constraints. Quasi-Newton, fast in smooth
+                   regions; accepts a parallel Jacobian when a pool is
+                   available.
+  - 'nelder-mead'  scipy.optimize.minimize with method 'Nelder-Mead'
+                   and bound support. Derivative-free simplex, robust
+                   to the step discontinuities introduced by the
+                   stability penalties.
+
+Constraints
+-----------
+Stability and engineering constraints are enforced multiplicatively on
+the fitness through compute_stability_penalty and check_radial_build:
+  - Greenwald density limit             nbar_line < nG
+  - Normalised beta limit               betaT     < betaN
+  - Kink safety factor                  q_kink    > q_limit  (q* or q95)
+  - Sheffield capital-cost ceiling      C_invest  < C_invest_max
+  - Positive innermost radial build     r_d       > 0
+  - Finite TF / CS thicknesses          c_TF, d_CS > 1 mm
+The step + quadratic penalty form keeps marginal violations expensive
+while bounding penalty growth so the GA can still extract useful
+genetic material from severely violated designs.
+
+Fitness objectives
+------------------
+Selected via 'fitness_objective' in the input file:
+  - 'COE'       cost of electricity (Sheffield 2016, EUR/MWh) under a
+                hard C_invest_max ceiling. Default.
+  - 'volume'    machine-volume proxy (V_BB + V_TF + V_CS) / P_fus.
+  - 'C_invest'  total capital cost (Sheffield 2016, M EUR).
+  - 'P_elec'    net electric power (maximised).
+
+Outputs
+-------
+Each run creates a timestamped directory under D0FUS_OUTPUTS/genetic/
+containing:
+  - convergence.png                 best-fitness curve over generations
+                                    with valid-design counts.
+  - optimization_summary.json       settings, parameters of the best
+                                    design, stability margins, full
+                                    Hall of Fame, per-call refinement
+                                    log, per-generation cumulative-best
+                                    trajectory, and per-generation
+                                    exploration summary stats.
+  - trajectory_<vx>_<vy>.gif        when make_gif is true: a 3D-plus-2D
+                                    animated GIF of the cumulative-best
+                                    design moving across a chosen
+                                    parameter plane (default a, R0)
+                                    over the cost surface (in log10 by
+                                    default), with the GA evaluations
+                                    plotted as a semi-transparent grey
+                                    scatter cloud that grows as the GA
+                                    progresses.
+  - scan_<vx>_<vy>.npz              raw 2D scan and exploration cloud
+                                    (gen, x, y, fitness) for re-plotting
+                                    without re-running.
+  - the standard D0FUS save_run_output of the best design.
+
+Usage (CLI)
+-----------
+    python D0FUS_genetic.py <input_file> [options]
+Example:
+    python D0FUS_genetic.py inputs/EU_DEMO.txt \\
+        --refine nelder-mead --refine-topk 3 --refine-every 10 \\
+        --gif --gif-vars a,R0 --gif-res 30
+
+Input file
+----------
+One key per line, '#' starts a comment. Scalar values become static
+inputs (e.g. 'P_fus = 500'). Square-bracket pairs become GA-optimised
+parameters (e.g. 'R0 = [4.0, 9.0]'). All GA, refinement and GIF
+hyperparameters (population_size, generations, n_workers,
+local_refine_method, local_refine_top_k, gif_var_x, gif_resolution,
+...) can be set there too; see run_genetic_optimization for the full
+list of recognised keys.
+
+Dependencies
+------------
+All standard, scientific, plotting and DEAP imports are centralised in
+D0FUS_import.py. Project-specific dependencies (D0FUS_BIB physics and
+cost modules, D0FUS_EXE.run, D0FUS_EXE.save_run_output) are imported at
+the top of this file.
+
+Author
+------
+Auclair Timothé, CEA-IRFM Cadarache.
+Originally created : December 2023.
+Last major revision : May 2026 (memetic local refinement, parallel
+gradient, exploration cloud, trajectory GIF, centralised imports).
 """
 
 #%% Imports
-import sys
-import os
-import warnings
+
+# Centralised imports — D0FUS_BIB/D0FUS_import.py exports all standard,
+# scientific, plotting and DEAP names.
+#
+# Path resolution strategy:
+#   - Normal usage (D0FUS.py is the entry point): D0FUS.py already inserts
+#     the project root in sys.path. The first attempt succeeds.
+#   - Standalone execution of this module: fall back to inserting the
+#     project root using a fully-normalised absolute path. The check
+#     ``_project_root not in sys.path`` prevents duplicate entries that
+#     would otherwise let the module be discovered under two different
+#     qualified names (e.g. ``D0FUS_genetic`` AND ``D0FUS_EXE.D0FUS_genetic``)
+#     and break Windows ``multiprocessing`` pickling.
+try:
+    from D0FUS_BIB.D0FUS_import import *
+except ModuleNotFoundError:
+    import sys, os
+    _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _project_root not in sys.path:
+        sys.path.insert(0, _project_root)
+    from D0FUS_BIB.D0FUS_import import *
+
+# ── Supplementary imports specific to this module ────────────────────────────
+# The wildcard import above covers most of what D0FUS_genetic needs, but a
+# few names used here (parallel pool, dataclass introspection, animation,
+# 3D axes registration, traceback in except blocks) are not exported by
+# the current D0FUS_BIB/D0FUS_import.py. They are imported explicitly so
+# this module is self-contained and does not require any change to
+# D0FUS_import.py. If D0FUS_import.py is later extended to cover these,
+# the duplicate imports are harmless (Python caches the modules).
 import multiprocessing
-import numpy as np
-import json
-from datetime import datetime
-from dataclasses import replace as dc_replace, asdict
+import traceback
+from dataclasses import replace, asdict
+from matplotlib.animation import FuncAnimation, PillowWriter
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  (registers '3d' projection)
 
-# Plotting
-try:
-    import matplotlib.pyplot as plt
-    PLOTTING_AVAILABLE = True
-except ImportError:
-    PLOTTING_AVAILABLE = False
-
-# Add parent directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-
-# Import DEAP library
-try:
-    from deap import base, creator, tools, algorithms
-    import random
-except ImportError:
-    print("\n ERROR: DEAP library not found. Please install it:")
-    print("    pip install deap")
-    sys.exit(1)
-
-# Import D0FUS modules
+# Project-specific D0FUS imports (kept here because they describe this
+# module's direct dependencies inside the D0FUS source tree).
 from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG
 from D0FUS_BIB.D0FUS_physical_functions import f_volume
 from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
 from D0FUS_BIB.D0FUS_cost_data import *
 from D0FUS_EXE.D0FUS_run import run, save_run_output
+
+# Backwards-compatible alias: some legacy parts of the file may still use
+# the `dc_replace` name (and the docstring references it).
+dc_replace = replace
 
 # ── Fitness objective ────────────────────────────────────────────────────────
 # Selectable via 'fitness_objective = ...' in the input file.
@@ -226,6 +349,40 @@ def to_serializable(x):
         return str(x)
     except:
         return None
+
+
+def _summarize_cloud_per_gen(ga_cloud):
+    """
+    Aggregate the GA exploration cloud into per-generation summary stats.
+
+    The full cloud (one entry per evaluation) can hold ~10^4 points after
+    a typical run; serialising it inline in JSON makes the file unwieldy.
+    The raw cloud is stored separately in the .npz file alongside the
+    scan; here we keep only counts and fitness quantiles per generation.
+
+    Returns
+    -------
+    list of dicts, one per generation present in the cloud, with keys:
+        gen, n_evals, f_min, f_median, f_max
+    """
+    if not ga_cloud:
+        return []
+    # Group by generation
+    by_gen = {}
+    for entry in ga_cloud:
+        g = entry.get('gen', 0)
+        by_gen.setdefault(g, []).append(entry['fitness'])
+    out = []
+    for g in sorted(by_gen.keys()):
+        fs = np.asarray(by_gen[g], dtype=float)
+        out.append({
+            'gen':      int(g),
+            'n_evals':  int(len(fs)),
+            'f_min':    float(np.min(fs)),
+            'f_median': float(np.median(fs)),
+            'f_max':    float(np.max(fs)),
+        })
+    return out
 
 #%% Constraint Handling
 
@@ -731,14 +888,25 @@ def inject_diverse_individuals(pop, n_inject, opt_ranges, param_keys):
     Now: always replace the n_inject worst individuals, regardless of
     the newcomer's fitness.  This forces the GA to re-explore even if
     the new point is initially poor.
+
+    Returns
+    -------
+    pop : list
+        Same object as input, modified in place.
+    injected : list of creator.Individual
+        The newly evaluated individuals, each with its `fitness.values`
+        already populated. The caller may use this list to log the
+        evaluation events (e.g. for the GA exploration cloud).
     """
+    injected = []
     for _ in range(n_inject):
         new_ind = creator.Individual([
             random.uniform(opt_ranges[k][0], opt_ranges[k][1])
             for k in param_keys
         ])
         new_ind.fitness.values = toolbox.evaluate(new_ind)
-        
+        injected.append(new_ind)
+
         # Find worst individual (only among those with valid fitness)
         valid_indices = [i for i in range(len(pop)) 
                         if pop[i].fitness.valid and len(pop[i].fitness.values) > 0]
@@ -749,7 +917,7 @@ def inject_diverse_individuals(pop, n_inject, opt_ranges, param_keys):
         else:
             pop[0] = new_ind
     
-    return pop
+    return pop, injected
 
 
 def _pool_initializer(static_inputs_, param_keys_, opt_ranges_):
@@ -759,6 +927,10 @@ def _pool_initializer(static_inputs_, param_keys_, opt_ranges_):
     Required on Windows/macOS (spawn start method) where worker processes
     start fresh and do not inherit the parent's global state.
     On Linux (fork), this is a no-op since globals are already inherited.
+
+    Note: kept for backwards compatibility with legacy code paths. The
+    joblib-based parallel map below (`_evaluate_for_joblib`) does NOT need
+    this initializer because each job carries its own context.
     """
     global static_inputs, param_keys, opt_ranges
     static_inputs = static_inputs_
@@ -766,34 +938,123 @@ def _pool_initializer(static_inputs_, param_keys_, opt_ranges_):
     opt_ranges    = opt_ranges_
 
 
-def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
-                          patience=20, verbose=True, n_workers=1):
+def _evaluate_for_joblib(args):
     """
-    Run GA with enhanced exploration and diversity maintenance.
+    Worker for parallel GA fitness evaluation, mirroring the pattern in
+    D0FUS_scan._run_scan_point.
+
+    All dependencies are imported locally to prevent cloudpickle from
+    serializing this module's global namespace, which would otherwise be
+    polluted with __main__-bound symbols when D0FUS.py is launched via
+    %runfile in Spyder. Each individual carries its own context
+    (static_inputs, param_keys, opt_ranges) as plain Python data, so the
+    worker does NOT rely on module globals being pre-populated by an
+    initializer — that is what made multiprocessing.Pool fail across
+    successive Spyder runs.
+
+    Parameters
+    ----------
+    args : tuple
+        (individual_values, static_inputs_dict, param_keys_list, opt_ranges_dict)
+
+    Returns
+    -------
+    tuple of float
+        Fitness tuple as returned by evaluate_individual.
+    """
+    import os as _os
+    import sys as _sys
+
+    # Make the D0FUS package importable in the worker process. Identical
+    # idiom to D0FUS_scan._run_scan_point.
+    _parent = _os.path.normpath(
+        _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..'))
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
+
+    ind_values, static_inputs_dict, param_keys_list, opt_ranges_dict = args
+
+    # Set the genuine D0FUS_genetic module's globals before delegating to
+    # evaluate_individual. Done per call (rather than once per worker via
+    # an initializer) so the worker stays stateless — the call is
+    # idempotent and the cost is negligible (a few dict assignments).
+    from D0FUS_EXE import D0FUS_genetic as _gen_mod
+    _gen_mod.static_inputs = static_inputs_dict
+    _gen_mod.param_keys    = param_keys_list
+    _gen_mod.opt_ranges    = opt_ranges_dict
+
+    return _gen_mod.evaluate_individual(ind_values)
+
+
+def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
+                          patience=20, verbose=True, n_workers=1,
+                          local_refine_method=None,
+                          local_refine_top_k=3,
+                          local_refine_every=0,
+                          local_refine_kwargs=None,
+                          diversity_inject_fraction=0.30,
+                          cloud_refinement_min_dist=0.05):
+    """
+    Run GA with enhanced exploration, diversity maintenance, and optional
+    memetic local refinement.
 
     Parameters
     ----------
     pop_size, n_generations, cxpb, mutpb, patience, verbose : see caller.
     n_workers : int
         Number of parallel worker processes for fitness evaluation.
-        1 (default) → sequential map (original behaviour).
-        N > 1       → multiprocessing.Pool with N workers.
+        1 (default) -> sequential map (original behaviour).
+        N > 1       -> multiprocessing.Pool with N workers.
         Works on Linux (fork) and macOS/Windows (spawn) alike, because
         _pool_initializer re-populates the required globals in each worker.
+    local_refine_method : {None, 'gradient', 'lbfgsb'}
+        If not None, apply local refinement (see refine_individual) to the
+        top-k Hall-of-Fame members at the end of the GA. 'gradient' is the
+        hand-rolled projected gradient descent; 'lbfgsb' uses scipy's
+        L-BFGS-B. None disables local refinement.
+    local_refine_top_k : int
+        Number of top HoF members to refine at the end of the GA.
+    local_refine_every : int
+        If > 0, additionally refine the current best HoF member every N
+        generations (memetic mode). 0 disables periodic refinement.
+    local_refine_kwargs : dict or None
+        Extra kwargs forwarded to the local optimiser
+        (e.g. max_iters, h, step_init, ftol, gtol, eps).
     """
     global current_generation
 
-    # ── Optional parallel map via multiprocessing.Pool ────────────────────────
-    _pool = None
+    # ── Optional parallel map via joblib/loky (cloudpickle-based) ─────────────
+    # Identical pattern to D0FUS_scan: cloudpickle is robust to module-reload
+    # and sys.path pollution under Spyder's %runfile, which the standard
+    # multiprocessing.Pool + initializer pattern is not (PicklingError on
+    # successive runs, see commit history). joblib is already a dependency
+    # of D0FUS_scan, so no new package is introduced here.
+    _pool = None  # kept as `None` — refine_topk paths that previously took
+                  # a Pool now run gradient/L-BFGS-B sequentially. Nelder-Mead
+                  # (the default refinement method) does not use a pool, so
+                  # this has no effect on the recommended workflow.
     if n_workers > 1:
-        _pool = multiprocessing.Pool(
-            processes=n_workers,
-            initializer=_pool_initializer,
-            initargs=(static_inputs, param_keys, opt_ranges),
-        )
-        toolbox.register("map", _pool.map)
+        from joblib import Parallel, delayed
+
+        # Local closure: the joblib map ignores its `func` argument because
+        # DEAP only ever calls toolbox.map(toolbox.evaluate, pop), and the
+        # worker wrapper always invokes evaluate_individual. Each job
+        # carries its own context, making the call idempotent across runs.
+        def _joblib_map(_unused_func, iterable):
+            jobs = [
+                (list(ind),
+                 dict(static_inputs),
+                 list(param_keys),
+                 dict(opt_ranges))
+                for ind in iterable
+            ]
+            return Parallel(n_jobs=n_workers, backend='loky', verbose=0)(
+                delayed(_evaluate_for_joblib)(job) for job in jobs
+            )
+
+        toolbox.register("map", _joblib_map)
         if verbose:
-            print(f"  Parallel fitness evaluation: {n_workers} workers")
+            print(f"  Parallel fitness evaluation: {n_workers} workers (joblib/loky)")
     else:
         toolbox.register("map", map)   # built-in sequential map
 
@@ -829,12 +1090,40 @@ def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
     print(f"    Crossover: {cxpb}, Mutation: {mutpb}")
     print(f"    Diversity injection every 7 generations")
     print(f"{'='*70}\n")
-    
+
+    # ── History trackers (defined before any evaluation that may use them) ──
+    # `ga_cloud` logs every valid D0FUS evaluation that happens inside the
+    # GA loop (initial pop, offspring of each generation, diversity injection).
+    # It does NOT include refinement evaluations (those cluster near the
+    # best by construction and would distort the exploration picture).
+    # Each entry: {gen, params, fitness}.
+    ga_cloud = []
+
+    def _append_to_cloud(ind, gen_tag):
+        """Append a single individual to ga_cloud if its fitness is valid."""
+        if not ind.fitness.valid:
+            return
+        f = ind.fitness.values[0]
+        if f >= PENALTY_VALUE / 2 or not np.isfinite(f):
+            return
+        ga_cloud.append({
+            'gen': gen_tag,
+            'params': {k: float(ind[i]) for i, k in enumerate(param_keys)},
+            'fitness': float(f),
+        })
+
+    # `refinement_log` accumulates the info dicts returned by every
+    # refine_topk call (periodic memetic + final). Each entry is tagged
+    # with a 'phase' field ('memetic' / 'final') so the JSON summary
+    # can break down the contribution per phase.
+    refinement_log = []
+
     # Initial evaluation
     current_generation = 0
     fitnesses = list(map(toolbox.evaluate, pop))
     for ind, fit in zip(pop, fitnesses):
         ind.fitness.values = fit
+        _append_to_cloud(ind, 0)
 
     # ── Diagnostic: abort early if entire initial population is invalid ───
     n_init_valid = sum(1 for f in fitnesses if f[0] < PENALTY_VALUE / 2)
@@ -872,6 +1161,18 @@ def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
     
     best_fitness_history = []
     stagnation_counter = 0
+
+    # ── History trackers for post-run analytics and visualization ──────────
+    # `hof_history` records the cumulative-best individual at the end of
+    # each generation, in the form {gen, params, fitness}. This is used
+    # by animate_ga_trajectory() to render the design-point trajectory.
+    hof_history = []
+    if len(hof) > 0:
+        hof_history.append({
+            'gen': 0,
+            'params': {k: float(hof[0][i]) for i, k in enumerate(param_keys)},
+            'fitness': float(hof[0].fitness.values[0]),
+        })
     
     for gen in range(1, n_generations + 1):
         current_generation = gen
@@ -898,6 +1199,7 @@ def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
         fitnesses = list(map(toolbox.evaluate, invalid_ind))
         for ind, fit in zip(invalid_ind, fitnesses):
             ind.fitness.values = fit
+            _append_to_cloud(ind, gen)
         
         # Mu+Lambda selection — tournament-based, NOT pure elitist.
         # selBest kills diversity: once a basin dominates, exploration dies.
@@ -915,7 +1217,15 @@ def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
         hof.update(pop)
         record = stats.compile(pop)
         logbook.record(gen=gen, nevals=len(invalid_ind), **record)
-        
+
+        # Record cumulative-best parameters for post-run trajectory plots
+        if len(hof) > 0:
+            hof_history.append({
+                'gen': gen,
+                'params': {k: float(hof[0][i]) for i, k in enumerate(param_keys)},
+                'fitness': float(hof[0].fitness.values[0]),
+            })
+
         if verbose:
             print(logbook.stream)
         
@@ -929,34 +1239,728 @@ def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
             else:
                 stagnation_counter = 0
         
-        # Inject diversity if stagnating or periodically
+        # Inject diversity if stagnating or periodically.
+        # The injection fraction is controlled by `diversity_inject_fraction`
+        # (default 0.30 = 30% of pop). The previous fixed 10% was too small:
+        # once the population had collapsed to one basin, 10% of fresh blood
+        # could not overpower the basin's gravity.
         if stagnation_counter >= 3 or gen % 7 == 0:
-            n_inject = max(5, pop_size // 10)
-            pop = inject_diverse_individuals(pop, n_inject, opt_ranges, param_keys)
+            n_inject = max(5, int(pop_size * diversity_inject_fraction))
+            pop, _injected = inject_diverse_individuals(
+                pop, n_inject, opt_ranges, param_keys)
+            for ind in _injected:
+                _append_to_cloud(ind, gen)
             if stagnation_counter >= 3:
                 stagnation_counter = 0
                 if verbose:
                     print(f"    [Diversity injection: {n_inject} new individuals]")
-        
+
+        # ── Memetic periodic refinement ──────────────────────────────────
+        # If enabled, refine the current best HoF member every N generations
+        # and reinsert it. Heavy: keep N >= 5 unless the population is small.
+        if (local_refine_method is not None
+                and local_refine_every > 0
+                and gen % local_refine_every == 0
+                and len(hof) > 0):
+            _periodic_info = refine_topk(
+                hof, k=1,
+                method=local_refine_method,
+                pool=_pool,
+                verbose=verbose,
+                **(local_refine_kwargs or {})
+            )
+            # Tag the info with the generation tag so we can identify
+            # memetic events in the JSON output later.
+            for _refind, _info in _periodic_info:
+                _info['phase'] = 'memetic'
+                _info['gen']   = gen
+            refinement_log.extend(_info for _, _info in _periodic_info)
+            # Also replace the worst pop member with the refined HoF[0]
+            # so the GA picks up the improvement immediately.
+            worst_i = max(range(len(pop)),
+                          key=lambda i: pop[i].fitness.values[0])
+            pop[worst_i] = toolbox.clone(hof[0])
+            # The HoF best may have changed; refresh the history entry
+            hof_history[-1] = {
+                'gen': gen,
+                'params': {k: float(hof[0][i]) for i, k in enumerate(param_keys)},
+                'fitness': float(hof[0].fitness.values[0]),
+            }
+
         # Early stopping
         if stagnation_counter >= patience:
             print(f"\n Converged at generation {gen}")
             break
-    
-    # ── Shut down worker pool cleanly ─────────────────────────────────────────
-    if _pool is not None:
-        _pool.close()
-        _pool.join()
 
-    return hof[0], logbook, hof
+    # ── Final local refinement on diverse starters from the GA cloud ─────────
+    # Rationale: by the end of the GA the HoF has often collapsed to k
+    # near-clones of the same point, making `refine top-k of the HoF`
+    # equivalent to refining one point k times. Selecting k diverse
+    # starters from the cloud (which retains the full exploration
+    # history) gives Nelder-Mead k different basins of attraction to
+    # polish, drastically improving the chance of finding a globally
+    # competitive design.
+    if local_refine_method is not None and len(hof) > 0:
+        # Build a synthetic HoF from diverse cloud entries
+        diverse_starters = _select_diverse_from_cloud(
+            ga_cloud, k=local_refine_top_k,
+            opt_ranges_loc=opt_ranges, param_keys_loc=param_keys,
+            min_dist_norm=cloud_refinement_min_dist,
+            verbose=verbose,
+        )
+        if not diverse_starters:
+            # Fallback: cloud was empty (should not happen) - use HoF as before.
+            refine_hof = hof
+            n_eff = local_refine_top_k
+        else:
+            # Build a fresh HoF of size = number of diverse starters and
+            # populate it with proper Individuals derived from the cloud.
+            n_eff = len(diverse_starters)
+            refine_hof = tools.HallOfFame(n_eff)
+            for d in diverse_starters:
+                ind = creator.Individual(
+                    [float(d['params'][k_]) for k_ in param_keys])
+                ind.fitness.values = (float(d['fitness']),)
+                refine_hof.update([ind])
+
+        _final_info = refine_topk(
+            refine_hof, k=n_eff,
+            method=local_refine_method,
+            pool=_pool,
+            verbose=verbose,
+            **(local_refine_kwargs or {})
+        )
+        for _refind, _info in _final_info:
+            _info['phase'] = 'final'
+            # Propagate any refined point that beats the main HoF
+            hof.update([_refind])
+        refinement_log.extend(_info for _, _info in _final_info)
+        # Final HoF best may have changed; append a terminal history entry
+        hof_history.append({
+            'gen': hof_history[-1]['gen'] if hof_history else 0,
+            'params': {k: float(hof[0][i]) for i, k in enumerate(param_keys)},
+            'fitness': float(hof[0].fitness.values[0]),
+            'phase': 'post_refinement',
+        })
+
+    # ── No explicit pool teardown needed ──────────────────────────────────────
+    # joblib.Parallel manages its own worker lifecycle and shuts the loky
+    # backend down automatically after each Parallel(...) invocation.
+    # The `_pool = None` placeholder above is retained only for the
+    # `pool=_pool` arguments propagated to refine_topk further down.
+
+    return hof[0], logbook, hof, hof_history, refinement_log, ga_cloud
+
+#%% Local Refinement (Memetic Hybrid: gradient descent / L-BFGS-B)
+#
+# Rationale
+# ---------
+# The Genetic Algorithm is good at exploring the global parameter space but
+# converges slowly inside a single basin of attraction. We graft a local
+# search on top of it that takes the best Hall-of-Fame members and refines
+# them with a derivative-based optimiser. This is the standard "memetic
+# algorithm" pattern (GA = exploration, gradient = exploitation).
+#
+# All local-search work is performed in *normalised* coordinates u in [0,1]^d
+# so that the finite-difference step h is dimensionless and the algorithm
+# is scale-invariant across parameters of very different magnitudes
+# (e.g. R0 in [3, 10] vs Tbar in [5, 30]).
+#
+# Two optimisers are exposed:
+#   - 'gradient' : hand-rolled projected gradient descent with Armijo
+#                  backtracking line search. Centered finite differences.
+#                  Pedagogical and transparent.
+#   - 'lbfgsb'   : scipy.optimize.minimize, method='L-BFGS-B'. Quasi-Newton
+#                  with bound constraints. Generally faster in smooth regions.
+#
+# Caveats
+# -------
+# The step penalties in compute_stability_penalty() introduce non-smoothness
+# at the constraint boundaries. The local search assumes the starting point
+# is feasible (top of HoF), which keeps it inside the smooth interior most
+# of the time. A moderate h (1e-3 in unit coordinates) further smooths
+# residual micro-discontinuities.
+
+def _to_unit_cube(x_phys, opt_ranges, param_keys):
+    """Map a physical parameter vector to the unit hypercube [0,1]^d."""
+    return np.array([
+        (x_phys[i] - opt_ranges[k][0]) / (opt_ranges[k][1] - opt_ranges[k][0])
+        for i, k in enumerate(param_keys)
+    ], dtype=float)
+
+
+def _from_unit_cube(u, opt_ranges, param_keys):
+    """Inverse mapping: unit-cube point to physical parameters."""
+    return np.array([
+        opt_ranges[k][0] + u[i] * (opt_ranges[k][1] - opt_ranges[k][0])
+        for i, k in enumerate(param_keys)
+    ], dtype=float)
+
+
+def _evaluate_unit(u, opt_ranges, param_keys):
+    """
+    Evaluate fitness at a unit-cube point.
+
+    The point is clipped to [0,1]^d, mapped to physical parameters, and
+    passed through evaluate_individual(). Returns a scalar (lower is better).
+    Uses module-level static_inputs implicitly via evaluate_individual.
+    """
+    u_clipped = np.clip(u, 0.0, 1.0)
+    x_phys = _from_unit_cube(u_clipped, opt_ranges, param_keys)
+    return evaluate_individual(list(x_phys))[0]
+
+
+def _eval_unit_for_pool(u):
+    """
+    Picklable top-level wrapper used by pool.map for parallel gradient
+    computation.
+
+    Relies on the worker-process module globals `opt_ranges` and
+    `param_keys` being populated by `_pool_initializer`. When the gradient
+    is evaluated outside the GA loop (standalone call to refine_individual),
+    the caller is responsible for ensuring the pool was initialised with a
+    matching set of ranges and keys.
+    """
+    return _evaluate_unit(u, opt_ranges, param_keys)
+
+
+def _gradient_central(u, opt_ranges, param_keys, h=1e-3, pool=None):
+    """
+    Centered finite-difference gradient at a unit-cube point.
+
+    Requires 2*d function evaluations. The step h is in normalised
+    coordinates so it applies uniformly to all parameters.
+
+    Parameters
+    ----------
+    pool : multiprocessing.Pool or None
+        If provided, the 2*d evaluations are dispatched in parallel via
+        pool.map. This typically yields a (n_workers)-fold speedup, capped
+        by 2*d (no benefit beyond 2*d workers for a single gradient call).
+
+    Returns a (d,) numpy array; NaN entries are replaced with 0 to keep
+    the descent direction defined when one component happens to land on
+    a discontinuity.
+    """
+    d = len(u)
+    # Build the 2*d perturbed points
+    pts_plus, pts_minus, steps = [], [], []
+    for i in range(d):
+        u_plus = u.copy();  u_plus[i] = min(1.0, u[i] + h)
+        u_minus = u.copy(); u_minus[i] = max(0.0, u[i] - h)
+        pts_plus.append(u_plus)
+        pts_minus.append(u_minus)
+        steps.append(u_plus[i] - u_minus[i])
+
+    pts_all = pts_plus + pts_minus
+    if pool is not None:
+        fvals = pool.map(_eval_unit_for_pool, pts_all)
+    else:
+        fvals = [_evaluate_unit(p, opt_ranges, param_keys) for p in pts_all]
+
+    f_plus = fvals[:d]
+    f_minus = fvals[d:]
+
+    grad = np.zeros(d)
+    for i in range(d):
+        if steps[i] <= 0:
+            grad[i] = 0.0
+            continue
+        g_i = (f_plus[i] - f_minus[i]) / steps[i]
+        grad[i] = g_i if np.isfinite(g_i) else 0.0
+    return grad
+
+
+def gradient_descent_unit(u0, opt_ranges, param_keys,
+                          max_iters=30, h=1e-3,
+                          step_init=0.1, c1=1e-4,
+                          max_backtrack=15,
+                          tol_grad=1e-5, tol_step=1e-6,
+                          pool=None, verbose=False,
+                          **_ignored):
+    """
+    Box-constrained projected gradient descent on the unit hypercube.
+
+    Algorithm
+    ---------
+    1. Compute gradient g by centered finite differences (2*d evals,
+       optionally dispatched in parallel via `pool`).
+    2. Direction d = -g / ||g||  (normalised steepest descent).
+    3. Armijo backtracking line search: find the largest alpha such that
+           f(u + alpha * d) <= f(u) - c1 * alpha * ||g||
+       (the directional derivative along d is exactly -||g||).
+    4. Project the new point back to [0,1]^d (clip).
+    5. Repeat until ||g|| < tol_grad, step < tol_step, or max_iters reached.
+
+    Parameters
+    ----------
+    u0 : array-like, shape (d,)
+        Starting point in [0,1]^d.
+    pool : multiprocessing.Pool or None
+        Used only for the gradient computation. The line search itself is
+        sequential (each trial point depends on the previous one).
+    Other parameters : see _gradient_central and module docstring.
+
+    Returns
+    -------
+    u, f, info : final point, final fitness, diagnostics dict.
+    """
+    u = np.array(u0, dtype=float).clip(0.0, 1.0)
+    f = _evaluate_unit(u, opt_ranges, param_keys)
+
+    if not np.isfinite(f) or f >= PENALTY_VALUE / 2:
+        return u, f, {'iters': 0, 'success': False,
+                      'reason': 'invalid_starting_point',
+                      'history': [f]}
+
+    history = [f]
+    step = step_init
+
+    for it in range(1, max_iters + 1):
+        grad = _gradient_central(u, opt_ranges, param_keys, h=h, pool=pool)
+        gnorm = np.linalg.norm(grad)
+
+        if gnorm < tol_grad:
+            return u, f, {'iters': it - 1, 'success': True,
+                          'reason': 'small_gradient', 'history': history}
+
+        # Steepest descent direction (unit length)
+        direction = -grad / gnorm
+
+        # Armijo backtracking line search
+        alpha = step
+        u_new, f_new = u, f
+        accepted = False
+        for _ in range(max_backtrack):
+            u_try = np.clip(u + alpha * direction, 0.0, 1.0)
+            f_try = _evaluate_unit(u_try, opt_ranges, param_keys)
+            if np.isfinite(f_try) and f_try <= f - c1 * alpha * gnorm:
+                u_new, f_new = u_try, f_try
+                accepted = True
+                break
+            alpha *= 0.5
+
+        if not accepted:
+            return u, f, {'iters': it - 1, 'success': False,
+                          'reason': 'line_search_failed', 'history': history}
+
+        step_change = np.linalg.norm(u_new - u)
+        u, f = u_new, f_new
+        history.append(f)
+
+        # Adaptive step: grow back, capped at 1.0 (full cube edge)
+        step = min(alpha * 2.0, 1.0)
+
+        if verbose:
+            print(f"    [grad] it {it:3d}  f={f:.6g}  |g|={gnorm:.3g}  "
+                  f"alpha={alpha:.3g}")
+
+        if step_change < tol_step:
+            return u, f, {'iters': it, 'success': True,
+                          'reason': 'small_step', 'history': history}
+
+    return u, f, {'iters': max_iters, 'success': True,
+                  'reason': 'max_iters', 'history': history}
+
+
+def lbfgsb_unit(u0, opt_ranges, param_keys,
+                max_iters=50, ftol=1e-7, gtol=1e-5,
+                eps=1e-3, pool=None, verbose=False,
+                **_ignored):
+    """
+    L-BFGS-B refinement in unit-cube coordinates.
+
+    Thin wrapper around scipy.optimize.minimize with bounds = [(0,1)]*d.
+    When pool is None, the gradient is approximated internally by scipy
+    via forward finite differences. When pool is provided, we supply an
+    explicit Jacobian computed by `_gradient_central` (centered FD,
+    parallelised via the pool), which is both more accurate and faster
+    for moderate worker counts.
+
+    Returns
+    -------
+    (u, f, info) tuple.
+    """
+    def objective(u):
+        v = _evaluate_unit(u, opt_ranges, param_keys)
+        # L-BFGS-B does not tolerate NaN; remap to a large finite value
+        return v if np.isfinite(v) else PENALTY_VALUE
+
+    bounds = [(0.0, 1.0)] * len(u0)
+
+    minimize_kwargs = dict(
+        method='L-BFGS-B',
+        bounds=bounds,
+        options={'maxiter': max_iters, 'ftol': ftol, 'gtol': gtol},
+    )
+
+    if pool is not None:
+        # Provide an explicit (parallel) Jacobian; scipy then does not call
+        # its own internal finite-difference loop.
+        def jac(u):
+            return _gradient_central(u, opt_ranges, param_keys,
+                                     h=eps, pool=pool)
+        minimize_kwargs['jac'] = jac
+    else:
+        # Fall back to scipy-internal forward FD with step `eps`.
+        minimize_kwargs['options']['eps'] = eps
+
+    res = minimize(
+        objective,
+        np.array(u0, dtype=float).clip(0.0, 1.0),
+        **minimize_kwargs,
+    )
+
+    u_out = np.clip(res.x, 0.0, 1.0)
+    f_out = _evaluate_unit(u_out, opt_ranges, param_keys)
+
+    if verbose:
+        print(f"    [lbfgsb] nit={getattr(res, 'nit', '?')}  "
+              f"nfev={getattr(res, 'nfev', '?')}  "
+              f"success={bool(res.success)}  msg={res.message}")
+
+    return u_out, f_out, {
+        'iters':   getattr(res, 'nit', None),
+        'nfev':    getattr(res, 'nfev', None),
+        'success': bool(res.success),
+        'reason':  str(res.message),
+        'history': [f_out],
+    }
+
+
+def nelder_mead_unit(u0, opt_ranges, param_keys,
+                     max_iters=200, xatol=1e-5, fatol=1e-7,
+                     adaptive=True, verbose=False,
+                     initial_simplex_scale=0.20,
+                     **_ignored):
+    """
+    Nelder-Mead simplex refinement in unit-cube coordinates.
+
+    Derivative-free, robust to non-smooth and noisy objectives. Good
+    fallback when the step penalties in compute_stability_penalty create
+    discontinuities that throw off gradient-based methods.
+
+    Bounds are respected via scipy.optimize.minimize's native bounds
+    support (requires scipy >= 1.7). The `adaptive` flag enables the
+    Gao-Han adaptive parameter scheme (helpful in higher dimensions).
+
+    The initial simplex is built explicitly with edge length
+    `initial_simplex_scale` (in unit-cube coordinates, default 0.20 =
+    20% of the search range). Scipy's default (~5% of the starting
+    point's value) is too narrow when the GA has converged to a basin
+    that is not the global optimum: the simplex never reaches a
+    neighbouring basin. A larger initial simplex lets the refinement
+    cross small ridges between basins.
+
+    Notes
+    -----
+    Pool parallelism does not apply: Nelder-Mead is intrinsically
+    sequential (each simplex move depends on the previous one).
+    The `pool` kwarg is accepted but silently ignored.
+
+    Returns
+    -------
+    (u, f, info) tuple.
+    """
+    def objective(u):
+        v = _evaluate_unit(u, opt_ranges, param_keys)
+        return v if np.isfinite(v) else PENALTY_VALUE
+
+    u0_arr = np.array(u0, dtype=float).clip(0.0, 1.0)
+    d = len(u0_arr)
+    bounds = [(0.0, 1.0)] * d
+
+    # Build a non-degenerate initial simplex of edge length
+    # `initial_simplex_scale`. Each non-base vertex offsets u0 by ±scale
+    # in one axis. We pick the sign that stays inside the unit cube.
+    step = float(initial_simplex_scale)
+    simplex = np.tile(u0_arr, (d + 1, 1))
+    for i in range(d):
+        if u0_arr[i] + step <= 1.0:
+            simplex[i + 1, i] = u0_arr[i] + step
+        else:
+            simplex[i + 1, i] = max(0.0, u0_arr[i] - step)
+
+    res = minimize(
+        objective,
+        u0_arr,
+        method='Nelder-Mead',
+        bounds=bounds,
+        options={'maxiter': max_iters, 'xatol': xatol, 'fatol': fatol,
+                 'adaptive': adaptive,
+                 'initial_simplex': simplex},
+    )
+
+    u_out = np.clip(res.x, 0.0, 1.0)
+    f_out = _evaluate_unit(u_out, opt_ranges, param_keys)
+
+    if verbose:
+        print(f"    [NM] nit={getattr(res, 'nit', '?')}  "
+              f"nfev={getattr(res, 'nfev', '?')}  "
+              f"success={bool(res.success)}  msg={res.message}  "
+              f"simplex_scale={step:.3f}")
+
+    return u_out, f_out, {
+        'iters':   getattr(res, 'nit', None),
+        'nfev':    getattr(res, 'nfev', None),
+        'success': bool(res.success),
+        'reason':  str(res.message),
+        'history': [f_out],
+    }
+
+
+def refine_individual(individual, opt_ranges_loc, param_keys_loc,
+                      method='gradient', pool=None, verbose=False, **kwargs):
+    """
+    Refine a single DEAP individual via local search.
+
+    Parameters
+    ----------
+    individual : sequence
+        Physical parameter vector in the order defined by param_keys_loc.
+        Typically a DEAP Individual from the Hall of Fame.
+    opt_ranges_loc, param_keys_loc :
+        Pass the module-level objects explicitly so the function is
+        unit-testable without relying on globals.
+    method : {'gradient', 'lbfgsb', 'nelder-mead' or 'nm'}
+        Local optimiser. If a scipy-based method is requested but scipy is
+        unavailable, falls back to 'gradient'.
+    pool : multiprocessing.Pool or None
+        Forwarded to the underlying optimiser. Used by 'gradient' and
+        'lbfgsb' for parallel gradient evaluation; ignored by 'nelder-mead'.
+    kwargs : passed through to the underlying optimiser.
+
+    Returns
+    -------
+    refined : creator.Individual
+        New individual with refined parameters and updated fitness.
+    info : dict
+        Augmented with 'f_before', 'f_after', 'improvement', 'method'.
+    """
+    x0 = np.array(list(individual), dtype=float)
+    u0 = _to_unit_cube(x0, opt_ranges_loc, param_keys_loc)
+
+    if individual.fitness.valid:
+        f_before = individual.fitness.values[0]
+    else:
+        f_before = _evaluate_unit(u0, opt_ranges_loc, param_keys_loc)
+
+    method_norm = str(method).lower().strip()
+    if method_norm in ('nm', 'nelder-mead', 'neldermead'):
+        method_norm = 'nelder-mead'
+
+    method_used = method_norm
+    result = None
+
+    if method_norm == 'lbfgsb':
+        result = lbfgsb_unit(u0, opt_ranges_loc, param_keys_loc,
+                             pool=pool, verbose=verbose, **kwargs)
+        if result is None:
+            method_used = 'gradient'
+            if verbose:
+                print("    [refine] scipy unavailable, falling back to gradient")
+
+    elif method_norm == 'nelder-mead':
+        result = nelder_mead_unit(u0, opt_ranges_loc, param_keys_loc,
+                                  verbose=verbose, **kwargs)
+        if result is None:
+            method_used = 'gradient'
+            if verbose:
+                print("    [refine] scipy unavailable, falling back to gradient")
+
+    if result is None:  # gradient (either requested or fallback)
+        # Filter kwargs to those understood by gradient_descent_unit
+        _grad_keys = {'max_iters', 'h', 'step_init', 'c1', 'max_backtrack',
+                      'tol_grad', 'tol_step'}
+        grad_kwargs = {k: v for k, v in kwargs.items() if k in _grad_keys}
+        result = gradient_descent_unit(u0, opt_ranges_loc, param_keys_loc,
+                                       pool=pool, verbose=verbose,
+                                       **grad_kwargs)
+
+    u_out, f_out, info = result
+    x_out = _from_unit_cube(u_out, opt_ranges_loc, param_keys_loc)
+
+    refined = creator.Individual(list(x_out))
+    refined.fitness.values = (f_out,)
+
+    info = dict(info)
+    info['f_before']    = float(f_before)
+    info['f_after']     = float(f_out)
+    info['improvement'] = float(f_before - f_out)
+    info['method']      = method_used
+    return refined, info
+
+
+def _select_diverse_from_cloud(cloud, k, opt_ranges_loc, param_keys_loc,
+                               min_dist_norm=0.05, verbose=False):
+    """
+    Select k diverse points from the GA exploration cloud.
+
+    Rationale
+    ---------
+    The Hall of Fame typically collapses by mid-run: once the population
+    converges to one basin, the top-k members all snapshot the same
+    point with infinitesimal numerical differences. Refining ``top-k of
+    a collapsed HoF'' is then equivalent to refining the same point k
+    times, which is wasteful and misses other basins. The GA cloud, in
+    contrast, contains EVERY valid evaluation across all generations,
+    including poorer-but-distinct points sampled before convergence.
+    Picking diverse starters from the cloud preserves the chance to
+    discover a competitive alternative basin during refinement.
+
+    Algorithm
+    ---------
+    1. Sort the cloud by fitness ascending (best first).
+    2. Add the best point as the first starter.
+    3. Walk down the sorted list; add a candidate iff its L_inf distance
+       in normalised unit-cube space from EVERY already-selected starter
+       is at least ``min_dist_norm`` (default 0.05 = 5% of the range).
+    4. Stop when k starters are selected, or when the sorted list is
+       exhausted. If fewer than k pass the distance filter, top up with
+       the next best candidates regardless of distance.
+
+    Parameters
+    ----------
+    cloud : list of dict
+        Each entry has keys 'gen', 'fitness', 'params' (with 'params' a
+        dict {param_name: value}).
+    k : int
+        Number of diverse starters to select.
+    opt_ranges_loc, param_keys_loc : as in refine_individual.
+    min_dist_norm : float
+        Minimum L_inf distance in unit-cube coordinates between any two
+        selected starters. 0.05 (5% of range) is a sensible default for
+        4D problems; raise to 0.10 for stronger diversity, lower to
+        0.02 for less.
+
+    Returns
+    -------
+    list of dict
+        The selected cloud entries in order of selection. Empty if the
+        cloud is empty.
+    """
+    if not cloud or k < 1:
+        return []
+
+    sorted_cloud = sorted(cloud, key=lambda c: c['fitness'])
+
+    def _to_unit(params_dict):
+        out = np.zeros(len(param_keys_loc), dtype=float)
+        for j, key in enumerate(param_keys_loc):
+            lo, hi = opt_ranges_loc[key]
+            out[j] = (params_dict[key] - lo) / max(hi - lo, 1e-12)
+        return out
+
+    selected = []
+    selected_units = []
+
+    for cand in sorted_cloud:
+        u_cand = _to_unit(cand['params'])
+        if not selected_units:
+            selected.append(cand)
+            selected_units.append(u_cand)
+            continue
+        dists = [float(np.max(np.abs(u_cand - u_s))) for u_s in selected_units]
+        if min(dists) >= min_dist_norm:
+            selected.append(cand)
+            selected_units.append(u_cand)
+            if len(selected) >= k:
+                break
+
+    # Top up with next-best candidates if we couldn't find enough diverse ones.
+    if len(selected) < k:
+        already_ids = set(id(c) for c in selected)
+        for cand in sorted_cloud:
+            if id(cand) in already_ids:
+                continue
+            selected.append(cand)
+            if len(selected) >= k:
+                break
+
+    if verbose:
+        print(f"  [cloud] selected {len(selected)} diverse starters "
+              f"(min_dist_norm = {min_dist_norm})")
+        for i, s in enumerate(selected, 1):
+            print(f"    [{i}] f = {s['fitness']:.2f}  params = "
+                  + "  ".join(f"{k}={v:.3g}" for k, v in s['params'].items()))
+
+    return selected
+
+
+def refine_topk(hof, k=3, method='gradient', pool=None,
+                verbose=True, **kwargs):
+    """
+    Refine the top-k individuals of the Hall of Fame.
+
+    Each refined individual is reinserted via hof.update(), so the HoF
+    automatically keeps the best k members (refined or not). Improvements
+    are reported per individual.
+
+    Parameters
+    ----------
+    hof : deap.tools.HallOfFame
+        Hall of Fame to refine and update in place.
+    k : int
+        Number of top members to refine (clamped to len(hof)).
+    method : {'gradient', 'lbfgsb', 'nelder-mead'}
+        See refine_individual().
+    pool : multiprocessing.Pool or None
+        Forwarded to refine_individual for parallel gradient evaluation.
+    kwargs : forwarded to refine_individual / underlying optimiser.
+
+    Returns
+    -------
+    list of (refined_individual, info) tuples, in the order they were
+    refined (rank 1 first).
+    """
+    k_eff = min(int(k), len(hof))
+    if k_eff < 1:
+        return []
+
+    if verbose:
+        pool_tag = f" (pool={pool._processes})" if pool is not None else ""
+        print(f"\n{'-' * 70}")
+        print(f" Local refinement: top-{k_eff} via {method}{pool_tag}")
+        print(f"{'-' * 70}")
+
+    out = []
+    # Snapshot the starting individuals because hof gets mutated below.
+    starters = [hof[i] for i in range(k_eff)]
+
+    for rank, ind in enumerate(starters, start=1):
+        f0 = ind.fitness.values[0] if ind.fitness.valid else float('nan')
+        if verbose:
+            print(f"\n  [#{rank}] starting fitness = {f0:.6g}")
+
+        refined, info = refine_individual(
+            ind, opt_ranges, param_keys,
+            method=method, pool=pool, verbose=verbose, **kwargs
+        )
+
+        if verbose:
+            print(f"  [#{rank}] refined fitness  = {info['f_after']:.6g}  "
+                  f"(delta = {info['improvement']:+.6g}, "
+                  f"iters={info.get('iters')}, "
+                  f"reason={info.get('reason')})")
+
+        # Tag the info with the starting rank for downstream reporting
+        info['starting_rank'] = rank
+        # Snapshot the refined parameters as well (helpful for JSON output)
+        info['params'] = {k: float(refined[i])
+                          for i, k in enumerate(param_keys)}
+
+        hof.update([refined])
+        out.append((refined, info))
+
+    if verbose:
+        print(f"{'-' * 70}\n")
+    return out
+
 
 #%% Plotting
 
 def plot_convergence(logbook, save_path):
     """Single convergence plot in log scale"""
-    if not PLOTTING_AVAILABLE:
-        return
-    
     plt.rcParams.update({
         'font.size': 11,
         'axes.labelsize': 12,
@@ -1001,6 +2005,350 @@ def plot_convergence(logbook, save_path):
     
     print(f" Convergence plot saved: {save_path}")
 
+
+#%% Visualization (parameter-space trajectory)
+#
+# Build a 2D fitness scan over a chosen pair of design parameters (default:
+# `a` and `R0`) at fixed values of the other parameters (set to the
+# best-found individual). Then animate the cumulative-best trajectory
+# from the GA on top of this surface as a GIF.
+#
+# Two views are stacked in the same animation:
+#   - Left  : 3D surface (cost as height), with the trajectory as a 3D
+#             polyline and a marker for the current generation.
+#   - Right : 2D contour (cost as colour), same trajectory.
+#
+# Cost is plotted on a log10 scale by default since the GA typically
+# spans several orders of magnitude (PENALTY_VALUE is 1e6, valid designs
+# can be 1 to 1000 in COE).
+
+def _eval_scan_point_for_pool(args):
+    """
+    Pool wrapper for the 2D scan. `args` is (idx, params_phys_list).
+
+    Returns (idx, fitness) so results can be reordered after pool.map
+    (parallelised mapping is otherwise non-deterministic in order).
+
+    Note: kept for backwards compatibility with sequential code paths.
+    The parallel path uses `_eval_scan_point_for_joblib` instead, which
+    follows the joblib/loky pattern (cloudpickle-based, robust to module
+    reload under Spyder's %runfile).
+    """
+    idx, params = args
+    return idx, evaluate_individual(list(params))[0]
+
+
+def _eval_scan_point_for_joblib(args):
+    """
+    Joblib worker for the 2D fitness scan, mirroring _evaluate_for_joblib.
+
+    Imports are local and the full context travels with the job so the
+    worker does not depend on module globals being pre-set by an
+    initializer. This avoids the multiprocessing.Pool pickling failures
+    observed in Spyder after a first run pollutes sys.path.
+
+    Parameters
+    ----------
+    args : tuple
+        (idx, params_phys_list, static_inputs_dict, param_keys_list,
+         opt_ranges_dict)
+
+    Returns
+    -------
+    (idx, fitness) : tuple
+    """
+    import os as _os
+    import sys as _sys
+
+    _parent = _os.path.normpath(
+        _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), '..'))
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
+
+    idx, params, static_inputs_dict, param_keys_list, opt_ranges_dict = args
+
+    from D0FUS_EXE import D0FUS_genetic as _gen_mod
+    _gen_mod.static_inputs = static_inputs_dict
+    _gen_mod.param_keys    = param_keys_list
+    _gen_mod.opt_ranges    = opt_ranges_dict
+
+    return idx, _gen_mod.evaluate_individual(list(params))[0]
+
+
+def scan_2d_for_animation(best_individual, opt_ranges, param_keys,
+                          var_x='a', var_y='R0', n_x=30, n_y=30,
+                          n_workers=1, verbose=True):
+    """
+    Build a 2D fitness scan over (var_x, var_y) with all other parameters
+    fixed at the values of `best_individual`.
+
+    Parameters
+    ----------
+    best_individual : sequence
+        Reference design point; var_x and var_y are swept while the
+        remaining components stay at their `best_individual` value.
+    var_x, var_y : str
+        Parameter names to sweep. Both must appear in opt_ranges. The
+        sweep range is taken from opt_ranges[var_x] and opt_ranges[var_y].
+    n_x, n_y : int
+        Grid resolution. Total cost ~= n_x * n_y D0FUS evaluations.
+    n_workers : int
+        If > 1, dispatches evaluations to a fresh multiprocessing.Pool.
+        The GA's own pool is already closed by this point.
+
+    Returns
+    -------
+    XX, YY : 2D ndarrays of shape (n_y, n_x), in physical units.
+    Z : 2D ndarray of fitness values.
+    """
+    if var_x not in opt_ranges or var_y not in opt_ranges:
+        raise ValueError(
+            f"var_x={var_x!r} and var_y={var_y!r} must both be in opt_ranges "
+            f"({list(opt_ranges.keys())})"
+        )
+
+    ix = param_keys.index(var_x)
+    iy = param_keys.index(var_y)
+
+    x_vals = np.linspace(*opt_ranges[var_x], n_x)
+    y_vals = np.linspace(*opt_ranges[var_y], n_y)
+    XX, YY = np.meshgrid(x_vals, y_vals)
+
+    # Build the parameter list for every grid point
+    base = list(best_individual)
+    work = []
+    for i in range(n_y):
+        for j in range(n_x):
+            params = list(base)
+            params[ix] = float(XX[i, j])
+            params[iy] = float(YY[i, j])
+            work.append((i * n_x + j, params))
+
+    n_pts = len(work)
+    if verbose:
+        print(f"\n Building 2D scan: {var_x} x {var_y} = {n_x} x {n_y} "
+              f"= {n_pts} D0FUS evaluations "
+              f"({'parallel' if n_workers > 1 else 'sequential'})")
+
+    fvals = [np.nan] * n_pts
+    if n_workers > 1:
+        # Same joblib/loky pattern as the main GA loop: cloudpickle handles
+        # module-reload pollution that breaks multiprocessing.Pool under
+        # Spyder's %runfile on successive executions.
+        from joblib import Parallel, delayed
+
+        jobs = [
+            (idx, params,
+             dict(static_inputs), list(param_keys), dict(opt_ranges))
+            for idx, params in work
+        ]
+        # joblib preserves submission order, so we can use the idx returned
+        # by the worker as a consistency check rather than for reordering.
+        results = Parallel(n_jobs=n_workers, backend='loky', verbose=0)(
+            delayed(_eval_scan_point_for_joblib)(job) for job in jobs
+        )
+        for idx, f in results:
+            fvals[idx] = f
+    else:
+        for idx, params in work:
+            fvals[idx] = evaluate_individual(list(params))[0]
+
+    Z = np.array(fvals, dtype=float).reshape(n_y, n_x)
+    return XX, YY, Z
+
+
+def animate_ga_trajectory(XX, YY, Z, hof_history, save_path,
+                          var_x='a', var_y='R0',
+                          log_scale=True, fps=8, dpi=100,
+                          rotate_3d=True,
+                          ga_cloud=None,
+                          cloud_alpha=0.12, cloud_size=10,
+                          cloud_color='0.25',
+                          verbose=True):
+    """
+    Build an animated GIF of the GA trajectory in (var_x, var_y) space.
+
+    Parameters
+    ----------
+    XX, YY, Z : 2D ndarrays
+        Output of scan_2d_for_animation. Physical units for XX, YY;
+        raw fitness for Z (log scaling applied here if requested).
+    hof_history : list of dicts
+        As returned by run_genetic_algorithm. Each entry must contain
+        'gen', 'params' (dict keyed by param name), and 'fitness'.
+    save_path : str
+        Output path for the GIF (must end in .gif).
+    log_scale : bool
+        If True, plot log10(max(fitness, eps)) so the early generations
+        (large fitness due to penalties) remain readable.
+    fps : int
+        Frames per second of the animation.
+    rotate_3d : bool
+        If True, slowly rotate the 3D camera over the animation.
+    ga_cloud : list of dicts or None
+        Every valid individual evaluated during the GA, with the same
+        structure as hof_history entries. If provided, plotted as
+        semi-transparent grey scatter that grows over frames, revealing
+        the GA's exploration pattern in addition to the best trajectory.
+    cloud_alpha, cloud_size, cloud_color :
+        Visual style of the scatter. Defaults: alpha 0.12, size 10,
+        a neutral medium-grey ('0.25' in matplotlib greyscale).
+
+    Returns
+    -------
+    True on success, False on internal failure.
+    """
+    # Extract trajectory in physical units
+    xs = np.array([h['params'][var_x] for h in hof_history], dtype=float)
+    ys = np.array([h['params'][var_y] for h in hof_history], dtype=float)
+    fs = np.array([h['fitness']        for h in hof_history], dtype=float)
+    n_frames = len(xs)
+    if n_frames < 2:
+        if verbose:
+            print(" [animate] not enough history points to animate")
+        return False
+
+    # Prepare colour-mapping data (apply log scale if requested)
+    eps = 1e-3
+    def transform(z):
+        return np.log10(np.maximum(z, eps)) if log_scale else z
+
+    Z_plot  = transform(Z)
+    z_traj  = transform(fs)
+    zlabel  = 'log10(fitness)' if log_scale else 'fitness'
+
+    # ── Pre-extract the exploration cloud as numpy arrays ─────────────
+    have_cloud = ga_cloud is not None and len(ga_cloud) > 0
+    if have_cloud:
+        cloud_gens = np.array([c.get('gen', 0) for c in ga_cloud], dtype=int)
+        cloud_xs   = np.array([c['params'][var_x] for c in ga_cloud], dtype=float)
+        cloud_ys   = np.array([c['params'][var_y] for c in ga_cloud], dtype=float)
+        cloud_fs   = np.array([c['fitness']        for c in ga_cloud], dtype=float)
+        cloud_zs   = transform(cloud_fs)
+
+    # ── Map each animation frame to a 'current generation' threshold ──
+    # This is what `cloud_gen <= threshold` will be tested against, so
+    # the cloud grows incrementally as the trajectory plays out.
+    frame_gens = np.array([h.get('gen', i) for i, h in enumerate(hof_history)],
+                          dtype=int)
+
+    fig = plt.figure(figsize=(14, 6))
+    ax3d = fig.add_subplot(1, 2, 1, projection='3d')
+    ax2d = fig.add_subplot(1, 2, 2)
+
+    # Left: 3D surface (set first so the scatter renders on top of it)
+    ax3d.plot_surface(
+        XX, YY, Z_plot, cmap='viridis', alpha=0.55,
+        linewidth=0, antialiased=True,
+    )
+    ax3d.set_xlabel(var_x)
+    ax3d.set_ylabel(var_y)
+    ax3d.set_zlabel(zlabel)
+    ax3d.set_title('Cost surface and best-design trajectory')
+
+    # Right: 2D filled contour
+    levels = np.linspace(np.nanmin(Z_plot), np.nanmax(Z_plot), 25)
+    cf = ax2d.contourf(XX, YY, Z_plot, levels=levels, cmap='viridis')
+    ax2d.set_xlabel(var_x)
+    ax2d.set_ylabel(var_y)
+    ax2d.set_title('Best-design trajectory (top-down view)')
+    cbar = fig.colorbar(cf, ax=ax2d)
+    cbar.set_label(zlabel)
+
+    # ── Cloud artists (semi-transparent scatter, initially empty) ─────
+    cloud3d = cloud2d = None
+    if have_cloud:
+        cloud3d = ax3d.scatter([], [], [], s=cloud_size,
+                               c=cloud_color, alpha=cloud_alpha,
+                               edgecolors='none', depthshade=False)
+        cloud2d = ax2d.scatter([], [], s=cloud_size,
+                               c=cloud_color, alpha=cloud_alpha,
+                               edgecolors='none')
+
+    # Trajectory artists (will be updated frame-by-frame)
+    traj3d, = ax3d.plot([], [], [], color='red', linewidth=2.2, alpha=0.85)
+    pt3d,   = ax3d.plot([], [], [], 'o', color='red',
+                        markersize=8, markeredgecolor='black')
+
+    traj2d, = ax2d.plot([], [], color='red', linewidth=2.2, alpha=0.9)
+    pt2d,   = ax2d.plot([], [], 'o', color='red',
+                        markersize=10, markeredgecolor='black')
+
+    suptitle = fig.suptitle('', fontsize=13)
+
+    # Camera angles for 3D rotation
+    azim0 = -60
+    azim_span = 60.0  # total rotation across the animation
+
+    def init():
+        traj3d.set_data([], [])
+        traj3d.set_3d_properties([])
+        pt3d.set_data([], [])
+        pt3d.set_3d_properties([])
+        traj2d.set_data([], [])
+        pt2d.set_data([], [])
+        if have_cloud:
+            cloud3d._offsets3d = ([], [], [])
+            cloud2d.set_offsets(np.empty((0, 2)))
+        artists = [traj3d, pt3d, traj2d, pt2d, suptitle]
+        if have_cloud:
+            artists.extend([cloud3d, cloud2d])
+        return artists
+
+    def update(frame):
+        f_idx = frame + 1  # include endpoint
+        traj3d.set_data(xs[:f_idx], ys[:f_idx])
+        traj3d.set_3d_properties(z_traj[:f_idx])
+        pt3d.set_data([xs[frame]], [ys[frame]])
+        pt3d.set_3d_properties([z_traj[frame]])
+
+        traj2d.set_data(xs[:f_idx], ys[:f_idx])
+        pt2d.set_data([xs[frame]], [ys[frame]])
+
+        # Grow the exploration cloud up to the current frame's generation
+        if have_cloud:
+            gen_thresh = frame_gens[frame]
+            mask = cloud_gens <= gen_thresh
+            cloud3d._offsets3d = (cloud_xs[mask], cloud_ys[mask], cloud_zs[mask])
+            cloud2d.set_offsets(np.column_stack([cloud_xs[mask],
+                                                  cloud_ys[mask]]))
+
+        if rotate_3d:
+            azim = azim0 + azim_span * (frame / max(n_frames - 1, 1))
+            ax3d.view_init(elev=28, azim=azim)
+
+        gen_label = hof_history[frame].get('gen', frame)
+        phase = hof_history[frame].get('phase', '')
+        phase_str = f"  [{phase}]" if phase else ""
+        # Cloud size annotation (useful for the manuscript)
+        cloud_count = int((cloud_gens <= frame_gens[frame]).sum()) if have_cloud else 0
+        cloud_str = f"   evals: {cloud_count}" if have_cloud else ""
+        suptitle.set_text(
+            f"Generation {gen_label}{phase_str}   "
+            f"best fitness = {fs[frame]:.4g}   "
+            f"{var_x} = {xs[frame]:.3f}   {var_y} = {ys[frame]:.3f}"
+            f"{cloud_str}"
+        )
+        artists = [traj3d, pt3d, traj2d, pt2d, suptitle]
+        if have_cloud:
+            artists.extend([cloud3d, cloud2d])
+        return artists
+
+    anim = FuncAnimation(fig, update, init_func=init,
+                         frames=n_frames, interval=1000 // max(fps, 1),
+                         blit=False)
+    writer = PillowWriter(fps=fps)
+
+    if verbose:
+        cloud_info = f" + {len(ga_cloud)} cloud points" if have_cloud else ""
+        print(f" Rendering GIF ({n_frames} frames at {fps} fps{cloud_info})...")
+    anim.save(save_path, writer=writer, dpi=dpi)
+    plt.close(fig)
+    if verbose:
+        print(f" Animation saved: {save_path}")
+    return True
+
+
 #%% Main Interface
 
 def run_genetic_optimization(input_file, 
@@ -1011,9 +2359,53 @@ def run_genetic_optimization(input_file,
                              patience=20,
                              seed=None,
                              verbose=True,
-                             n_workers=1):
+                             n_workers=1,
+                             local_refine_method=None,
+                             local_refine_top_k=3,
+                             local_refine_every=0,
+                             local_refine_kwargs=None,
+                             diversity_inject_fraction=0.30,
+                             cloud_refinement_min_dist=0.05,
+                             make_gif=False,
+                             gif_var_x='a',
+                             gif_var_y='R0',
+                             gif_resolution=30,
+                             gif_log_scale=True,
+                             gif_fps=8):
     """
-    Main optimization function
+    Main optimization function.
+
+    Local refinement options
+    ------------------------
+    local_refine_method : {None, 'gradient', 'lbfgsb', 'nelder-mead'}
+        Activate memetic refinement at the end of the GA (and optionally
+        periodically). 'gradient' = hand-rolled projected gradient descent;
+        'lbfgsb' = scipy L-BFGS-B with bounds; 'nelder-mead' = derivative-free
+        simplex (robust to step penalties). None disables the feature.
+    local_refine_top_k : int
+        Number of top HoF members to refine after the GA (default: 3).
+    local_refine_every : int
+        Period (in generations) for periodic memetic refinement. 0 disables.
+    local_refine_kwargs : dict or None
+        Forwarded to the underlying optimiser (max_iters, h, step_init,
+        ftol, gtol, eps, ...).
+
+    Visualization options
+    ---------------------
+    make_gif : bool
+        If True, after the GA build a 2D fitness scan over
+        (gif_var_x, gif_var_y) at fixed best-design values for the other
+        parameters, and render a GIF of the GA trajectory on the resulting
+        surface (3D + 2D contour side-by-side).
+    gif_var_x, gif_var_y : str
+        Parameter names for the scan axes. Both must be optimised parameters
+        (i.e. present in opt_ranges) for the scan range to be meaningful.
+    gif_resolution : int
+        Grid resolution per axis (total scan = gif_resolution^2 evaluations).
+    gif_log_scale : bool
+        Plot log10(fitness) so penalty-dominated regions remain readable.
+    gif_fps : int
+        Animation frame rate.
     """
     global current_run_directory
     
@@ -1070,9 +2462,79 @@ def run_genetic_optimization(input_file,
         n_workers = max(1, int(static_inputs.pop('n_workers')))
         print(f"  [input file] n_workers           = {n_workers}")
 
-    best, logbook, hof = run_genetic_algorithm(
+    # ── Local refinement options (override from input file if present) ───────
+    # Recognised keys:
+    #   local_refine_method  : 'gradient', 'lbfgsb', 'none'
+    #   local_refine_top_k   : int
+    #   local_refine_every   : int  (0 disables periodic memetic)
+    #   local_refine_max_iters, local_refine_h, local_refine_step_init,
+    #   local_refine_ftol, local_refine_gtol, local_refine_eps : optimiser knobs
+    if 'local_refine_method' in static_inputs:
+        m = str(static_inputs.pop('local_refine_method')).strip().lower()
+        local_refine_method = None if m in ('none', '', 'off', 'disabled') else m
+        print(f"  [input file] local_refine_method = {local_refine_method}")
+    if 'local_refine_top_k' in static_inputs:
+        local_refine_top_k = int(static_inputs.pop('local_refine_top_k'))
+        print(f"  [input file] local_refine_top_k  = {local_refine_top_k}")
+    if 'local_refine_every' in static_inputs:
+        local_refine_every = int(static_inputs.pop('local_refine_every'))
+        print(f"  [input file] local_refine_every  = {local_refine_every}")
+    if 'diversity_inject_fraction' in static_inputs:
+        diversity_inject_fraction = float(
+            static_inputs.pop('diversity_inject_fraction'))
+        print(f"  [input file] diversity_inject_fraction = {diversity_inject_fraction}")
+    if 'cloud_refinement_min_dist' in static_inputs:
+        cloud_refinement_min_dist = float(
+            static_inputs.pop('cloud_refinement_min_dist'))
+        print(f"  [input file] cloud_refinement_min_dist = {cloud_refinement_min_dist}")
+
+    # Collect optimiser-specific knobs into local_refine_kwargs
+    if local_refine_kwargs is None:
+        local_refine_kwargs = {}
+    _refine_knobs = ('max_iters', 'h', 'step_init', 'ftol', 'gtol', 'eps',
+                     'tol_grad', 'tol_step', 'c1', 'max_backtrack',
+                     'initial_simplex_scale')
+    for knob in _refine_knobs:
+        key = f'local_refine_{knob}'
+        if key in static_inputs:
+            local_refine_kwargs[knob] = float(static_inputs.pop(key))
+            print(f"  [input file] {key:<25s} = {local_refine_kwargs[knob]}")
+    if local_refine_method is not None:
+        print(f"  [input file] local_refine_kwargs  = {local_refine_kwargs}")
+
+    # ── GIF / visualization options ──────────────────────────────────────────
+    if 'make_gif' in static_inputs:
+        _v = static_inputs.pop('make_gif')
+        make_gif = bool(_v) if isinstance(_v, bool) else (
+            str(_v).strip().lower() in ('1', 'true', 'yes', 'on'))
+        print(f"  [input file] make_gif            = {make_gif}")
+    if 'gif_var_x' in static_inputs:
+        gif_var_x = str(static_inputs.pop('gif_var_x')).strip()
+        print(f"  [input file] gif_var_x           = {gif_var_x}")
+    if 'gif_var_y' in static_inputs:
+        gif_var_y = str(static_inputs.pop('gif_var_y')).strip()
+        print(f"  [input file] gif_var_y           = {gif_var_y}")
+    if 'gif_resolution' in static_inputs:
+        gif_resolution = int(static_inputs.pop('gif_resolution'))
+        print(f"  [input file] gif_resolution      = {gif_resolution}")
+    if 'gif_log_scale' in static_inputs:
+        _v = static_inputs.pop('gif_log_scale')
+        gif_log_scale = bool(_v) if isinstance(_v, bool) else (
+            str(_v).strip().lower() in ('1', 'true', 'yes', 'on'))
+        print(f"  [input file] gif_log_scale       = {gif_log_scale}")
+    if 'gif_fps' in static_inputs:
+        gif_fps = int(static_inputs.pop('gif_fps'))
+        print(f"  [input file] gif_fps             = {gif_fps}")
+
+    best, logbook, hof, hof_history, refinement_log, ga_cloud = run_genetic_algorithm(
         population_size, generations, crossover_rate, mutation_rate,
-        patience, verbose, n_workers=n_workers
+        patience, verbose, n_workers=n_workers,
+        local_refine_method=local_refine_method,
+        local_refine_top_k=local_refine_top_k,
+        local_refine_every=local_refine_every,
+        local_refine_kwargs=local_refine_kwargs,
+        diversity_inject_fraction=diversity_inject_fraction,
+        cloud_refinement_min_dist=cloud_refinement_min_dist,
     )
     
     # Results
@@ -1190,8 +2652,62 @@ def run_genetic_optimization(input_file,
     
     # 2. Use D0FUS save_run_output for complete design documentation
     save_run_output(config, final_output, current_run_directory, None)
-    
-    # 3. Save optimization summary JSON
+
+    # 2b. Optional: 2D scan + animated GIF of the GA trajectory
+    gif_path = None
+    scan_data = None
+    if make_gif:
+        try:
+            if gif_var_x not in param_keys or gif_var_y not in param_keys:
+                print(f"\n  [gif] WARNING: gif_var_x={gif_var_x!r} or "
+                      f"gif_var_y={gif_var_y!r} not in optimised parameters "
+                      f"({param_keys}). Skipping GIF generation.")
+            elif not hof_history:
+                print("\n  [gif] WARNING: no HoF history recorded. Skipping GIF.")
+            else:
+                XX, YY, Z = scan_2d_for_animation(
+                    best_individual=list(best),
+                    opt_ranges=opt_ranges, param_keys=param_keys,
+                    var_x=gif_var_x, var_y=gif_var_y,
+                    n_x=gif_resolution, n_y=gif_resolution,
+                    n_workers=n_workers, verbose=verbose,
+                )
+                scan_data = (XX, YY, Z)
+                gif_path = os.path.join(
+                    current_run_directory,
+                    f"trajectory_{gif_var_x}_{gif_var_y}.gif")
+                animate_ga_trajectory(
+                    XX, YY, Z, hof_history, gif_path,
+                    var_x=gif_var_x, var_y=gif_var_y,
+                    log_scale=gif_log_scale, fps=gif_fps,
+                    ga_cloud=ga_cloud,
+                    verbose=verbose,
+                )
+                # Save the raw scan + cloud as .npz for re-plotting later.
+                # The cloud is stored as parallel arrays so it is trivial
+                # to re-load with np.load without any JSON parsing.
+                npz_path = os.path.join(
+                    current_run_directory,
+                    f"scan_{gif_var_x}_{gif_var_y}.npz")
+                _cloud_gens = np.array([c.get('gen', 0) for c in ga_cloud], dtype=int)
+                _cloud_xs   = np.array([c['params'][gif_var_x] for c in ga_cloud], dtype=float)
+                _cloud_ys   = np.array([c['params'][gif_var_y] for c in ga_cloud], dtype=float)
+                _cloud_fs   = np.array([c['fitness']            for c in ga_cloud], dtype=float)
+                np.savez(npz_path,
+                         XX=XX, YY=YY, Z=Z,
+                         var_x=gif_var_x, var_y=gif_var_y,
+                         cloud_gens=_cloud_gens,
+                         cloud_x=_cloud_xs, cloud_y=_cloud_ys,
+                         cloud_fitness=_cloud_fs)
+                if verbose:
+                    print(f" Scan + cloud data saved: {npz_path}  "
+                          f"({len(ga_cloud)} cloud points)")
+        except Exception as _gif_exc:
+            print(f"\n  [gif] Animation failed: "
+                  f"{type(_gif_exc).__name__}: {_gif_exc}")
+            traceback.print_exc()
+
+    # 3. Save optimization summary JSON (enriched with refinement & trajectory)
     summary = {
         "timestamp": datetime.now().isoformat(),
         "seed": seed,
@@ -1201,7 +2717,12 @@ def run_genetic_optimization(input_file,
             "population_size": population_size,
             "generations": generations,
             "crossover_rate": crossover_rate,
-            "mutation_rate": mutation_rate
+            "mutation_rate": mutation_rate,
+            "local_refine_method": local_refine_method,
+            "local_refine_top_k": local_refine_top_k,
+            "local_refine_every": local_refine_every,
+            "local_refine_kwargs": {k: to_serializable(v)
+                                    for k, v in (local_refine_kwargs or {}).items()},
         },
         "optimized_parameters": {k: to_serializable(v) for k, v in best_params.items()},
         "best_fitness": to_serializable(best.fitness.values[0]),
@@ -1231,7 +2752,42 @@ def run_genetic_optimization(input_file,
                 "params": {k: to_serializable(ind[j]) for j, k in enumerate(param_keys)}
             }
             for i, ind in enumerate(hof)
-        ]
+        ],
+        # ── Refinement log: every refine_topk call (memetic + final) ────
+        "refinement_log": [
+            {
+                "phase":         entry.get('phase'),
+                "gen":           entry.get('gen'),
+                "starting_rank": entry.get('starting_rank'),
+                "method":        entry.get('method'),
+                "iters":         to_serializable(entry.get('iters')),
+                "nfev":          to_serializable(entry.get('nfev')),
+                "success":       to_serializable(entry.get('success')),
+                "reason":        entry.get('reason'),
+                "f_before":      to_serializable(entry.get('f_before')),
+                "f_after":       to_serializable(entry.get('f_after')),
+                "improvement":   to_serializable(entry.get('improvement')),
+                "params":        {k: to_serializable(v)
+                                  for k, v in (entry.get('params') or {}).items()},
+            }
+            for entry in refinement_log
+        ],
+        # ── GA trajectory: cumulative-best per generation ───────────────
+        "ga_trajectory": [
+            {
+                "gen":     entry.get('gen'),
+                "fitness": to_serializable(entry.get('fitness')),
+                "params":  {k: to_serializable(v)
+                            for k, v in (entry.get('params') or {}).items()},
+                **({'phase': entry['phase']} if 'phase' in entry else {}),
+            }
+            for entry in hof_history
+        ],
+        # ── Exploration cloud: aggregate stats per generation ────────────
+        # The full cloud is saved separately in scan_{var_x}_{var_y}.npz to
+        # keep the JSON tractable. Here we only record per-generation
+        # summary statistics (count and quantiles of the fitness).
+        "ga_exploration_summary": _summarize_cloud_per_gen(ga_cloud),
     }
     
     summary_path = os.path.join(current_run_directory, "optimization_summary.json")
@@ -1257,7 +2813,6 @@ def debug_single_run(a=2.0, R0=6.0, Bmax_TF=12.0, Tbar=15.0):
         load_input_file("my_input.txt")
         debug_single_run(a=1.5, R0=5.0, Bmax_TF=14.0, Tbar=12.0)
     """
-    import traceback
     test_params = {"a": a, "R0": R0, "Bmax_TF": Bmax_TF, "Tbar": Tbar}
     print(f"\n=== debug_single_run ===")
     print(f"Parameters: {test_params}")
@@ -1286,10 +2841,19 @@ def main():
     if len(sys.argv) < 2:
         print("Usage: python D0FUS_genetic.py <input_file> [options]")
         print("\nOptions:")
-        print("  --pop N      Population size (default: 200)")
-        print("  --gen N      Max generations (default: 50)")
-        print("  --mut F      Mutation rate (default: 0.3)")
-        print("  --seed N     Random seed for reproducibility")
+        print("  --pop N           Population size (default: 200)")
+        print("  --gen N           Max generations (default: 50)")
+        print("  --mut F           Mutation rate (default: 0.3)")
+        print("  --seed N          Random seed for reproducibility")
+        print("  --refine METHOD   Local refinement: 'gradient', 'lbfgsb', "
+              "'nelder-mead', or 'none' (default: none)")
+        print("  --refine-topk N   Refine top-N HoF members at the end (default: 3)")
+        print("  --refine-every N  Memetic period in generations (0 = off, default: 0)")
+        print("  --gif             Generate the trajectory GIF after the GA")
+        print("  --gif-vars X,Y    Parameter axes for the GIF (default: a,R0)")
+        print("  --gif-res N       Scan resolution per axis (default: 30)")
+        print("  --gif-fps N       Animation frame rate (default: 8)")
+        print("  --gif-linear      Use linear cost scale (default: log10)")
         sys.exit(1)
     
     input_file = sys.argv[1]
@@ -1303,21 +2867,46 @@ def main():
     n_gen = 50
     mut_rate = 0.3
     seed = None
+    refine_method = None
+    refine_topk_val = 3
+    refine_every_val = 0
+    make_gif_flag = False
+    gif_vx, gif_vy = 'a', 'R0'
+    gif_res = 30
+    gif_fps_val = 8
+    gif_log_flag = True
     
     i = 2
     while i < len(sys.argv):
         if sys.argv[i] == "--pop" and i + 1 < len(sys.argv):
-            pop_size = int(sys.argv[i + 1])
-            i += 2
+            pop_size = int(sys.argv[i + 1]); i += 2
         elif sys.argv[i] == "--gen" and i + 1 < len(sys.argv):
-            n_gen = int(sys.argv[i + 1])
-            i += 2
+            n_gen = int(sys.argv[i + 1]); i += 2
         elif sys.argv[i] == "--mut" and i + 1 < len(sys.argv):
-            mut_rate = float(sys.argv[i + 1])
-            i += 2
+            mut_rate = float(sys.argv[i + 1]); i += 2
         elif sys.argv[i] == "--seed" and i + 1 < len(sys.argv):
-            seed = int(sys.argv[i + 1])
+            seed = int(sys.argv[i + 1]); i += 2
+        elif sys.argv[i] == "--refine" and i + 1 < len(sys.argv):
+            m = sys.argv[i + 1].strip().lower()
+            refine_method = None if m in ('none', 'off') else m
             i += 2
+        elif sys.argv[i] == "--refine-topk" and i + 1 < len(sys.argv):
+            refine_topk_val = int(sys.argv[i + 1]); i += 2
+        elif sys.argv[i] == "--refine-every" and i + 1 < len(sys.argv):
+            refine_every_val = int(sys.argv[i + 1]); i += 2
+        elif sys.argv[i] == "--gif":
+            make_gif_flag = True; i += 1
+        elif sys.argv[i] == "--gif-vars" and i + 1 < len(sys.argv):
+            parts = sys.argv[i + 1].split(',')
+            if len(parts) == 2:
+                gif_vx, gif_vy = parts[0].strip(), parts[1].strip()
+            i += 2
+        elif sys.argv[i] == "--gif-res" and i + 1 < len(sys.argv):
+            gif_res = int(sys.argv[i + 1]); i += 2
+        elif sys.argv[i] == "--gif-fps" and i + 1 < len(sys.argv):
+            gif_fps_val = int(sys.argv[i + 1]); i += 2
+        elif sys.argv[i] == "--gif-linear":
+            gif_log_flag = False; i += 1
         else:
             i += 1
     
@@ -1327,7 +2916,16 @@ def main():
         generations=n_gen,
         mutation_rate=mut_rate,
         seed=seed,
-        verbose=True
+        verbose=True,
+        local_refine_method=refine_method,
+        local_refine_top_k=refine_topk_val,
+        local_refine_every=refine_every_val,
+        make_gif=make_gif_flag,
+        gif_var_x=gif_vx,
+        gif_var_y=gif_vy,
+        gif_resolution=gif_res,
+        gif_log_scale=gif_log_flag,
+        gif_fps=gif_fps_val,
     )
 
 
