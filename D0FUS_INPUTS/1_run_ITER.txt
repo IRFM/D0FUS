@@ -277,7 +277,7 @@ cs_axial_stress = True          # Include fringe-field axial stress in Tresca cr
                                 # Non-negligible at ITER scale:
                                 # B_z ~ 1–2 T at coil ends → σ_z contribution to Tresca.
                                 # Refined analytical formula (finite-length solenoid).
-f_swing_usable = 0.5             # CS flux fraction lost for control            
+f_swing_usable = 0.75             # CS flux fraction lost for control            
 
 # ── 9. Superconductor operating conditions ───────────────────────────────────
 

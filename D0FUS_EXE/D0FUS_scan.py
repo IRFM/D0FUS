@@ -28,7 +28,7 @@ from D0FUS_BIB.D0FUS_radial_build_functions import *
 from D0FUS_BIB.D0FUS_physical_functions import *
 from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
 from D0FUS_BIB.D0FUS_cost_data import *
-from D0FUS_EXE.D0FUS_run import run, load_config_from_file, _PROFILE_PRESETS
+from D0FUS_EXE.D0FUS_run import run, load_config_from_file, _PROFILE_PRESETS, _compute_Zeff_effective
 from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG
 
 #%% Output Parameter Registry
@@ -1114,8 +1114,11 @@ INPUT_PARAMETER_REGISTRY = {
 
     # ── 4. Core plasma physics ────────────────────────────────────────────────
     'Tbar': InputParameter(
-        name='Tbar', display_name='Volume-averaged plasma temperature',
+        name='Tbar', display_name='Volume-averaged electron temperature',
         unit='keV', min_val=8.0, max_val=22.0, n_default=20, tick_step=2.0),
+    'tau_i_e': InputParameter(
+        name='tau_i_e', display_name='Ion/electron temperature ratio Ti/Te',
+        unit='', min_val=0.7, max_val=1.5, n_default=10, tick_step=0.1),
     'H': InputParameter(
         name='H', display_name='H-factor (confinement enhancement)',
         unit='', min_val=0.8, max_val=1.5, n_default=15, tick_step=0.1),
@@ -1326,7 +1329,7 @@ def display_input_parameters():
         ('Primary geometry',         ['R0', 'a', 'b']),
         ('Magnetic field',           ['Bmax_TF', 'Bmax_CS_adm']),
         ('Fusion power',             ['P_fus']),
-        ('Core plasma physics',      ['Tbar', 'H', 'Zeff', 'betaN_limit', 'C_Alpha', 'rho_rad_core']),
+        ('Core plasma physics',      ['Tbar', 'tau_i_e', 'H', 'Zeff', 'betaN_limit', 'C_Alpha', 'rho_rad_core']),
         ('Profile peaking (Manual)', ['nu_n', 'nu_T']),
         ('Operation & heating',      ['P_aux_input', 'Temps_Plateau_input']),
         ('MHD limits',               ['q_limit', 'Greenwald_limit']),
@@ -1436,11 +1439,12 @@ def _run_scan_point(args):
             Ip     = results[8]
             κ      = results[62]
             li_sc  = results[72]
+            f_alpha_sol = results[40]   # converged helium ash fraction n_He/n_e
 
             re_dict = compute_RE_indicators(
                 Ip=Ip, nbar=nbar, Tbar=config.Tbar,
                 a=config.a, R0=config.R0, κ=κ,
-                Z_eff=config.Zeff, li=li_sc,
+                Z_eff=_compute_Zeff_effective(config, f_alpha_sol), li=li_sc,
                 nu_n=nu_n, nu_T=nu_T,
                 rho_ped=rho_ped, n_ped_frac=n_ped_frac,
                 T_ped_frac=T_ped_frac,

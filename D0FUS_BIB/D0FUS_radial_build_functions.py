@@ -173,6 +173,27 @@ def _solve_graded_wp(R_ext, B_max, J_max, sigma_max, omega, n, ln_term,
                / (2 * μ0 * denom) * ln_term
 
     def integrate(sigma_z):
+        # ----------------------------------------------------------------
+        # Smeared radial stress profile in the TF inner leg, refined level.
+        #
+        # Force balance on an axisymmetric annulus of radius R, per unit
+        # vertical length, gives the radial stress at R as the total inward
+        # Lorentz force from the conductor lying outside R, divided by the
+        # cylindrical area at R:
+        #
+        #     sigma_r(R) = (1 / R) * integral from R to R_ext of
+        #                  alpha(R') * J_max * B(R') * R' dR'
+        #
+        # The integrand is the moment of the Laplace body force; defining
+        # M(R) as that integral, the local smeared radial stress is
+        # sigma_r(R) = M(R) / R. By construction sigma_r vanishes at the
+        # plasma-side free surface R = R_ext (where M = 0), it monotonically
+        # grows inward as the load accumulates, and in the thin-shell limit
+        # (R_sep -> R_ext) it converges to the magnetic pressure
+        # P_mag = B_max**2 / (2 * mu0). For varying alpha(R) this is the
+        # natural extension consistent with the uniform-alpha closed form
+        # used in the ungraded branch.
+        # ----------------------------------------------------------------
         sigma_r_budget = sigma_max - sigma_z
         if sigma_r_budget <= 0:
             return None
@@ -181,6 +202,7 @@ def _solve_graded_wp(R_ext, B_max, J_max, sigma_max, omega, n, ln_term,
         NI  = B_max * 2 * np.pi * R_ext / μ0
         B   = B_max
         sigma_r = 0.0
+        M       = 0.0   # Moment integral M(R) of the Laplace body force [Pa.m]
 
         R_list     = [R]
         alpha_list = []
@@ -210,13 +232,18 @@ def _solve_graded_wp(R_ext, B_max, J_max, sigma_max, omega, n, ln_term,
             B_new = μ0 * NI_new / (2 * np.pi * R_new) if R_new > 0 else 0.0
 
             dR_eff = R - R_new
-            sigma_r_new = sigma_r + alpha_val * J_max \
-                          * 0.5 * (B + B_new) * dR_eff
+            # Trapezoidal increment of M(R) over the radial step from R to R_new,
+            # integrand alpha * J_max * B * R'. The local smeared sigma_r at
+            # the inner-step radius is then M_new / R_new.
+            dM       = alpha_val * J_max * 0.5 * (B * R + B_new * R_new) * dR_eff
+            M_new    = M + dM
+            sigma_r_new = M_new / R_new if R_new > 0 else np.inf
 
             R   = R_new
             NI  = NI_new
             B   = B_new
             sigma_r = sigma_r_new
+            M       = M_new
 
             R_list.append(R)
             sr_list.append(sigma_r)
@@ -385,18 +412,22 @@ def _adaptive_root_search(residual_fn, d_lo, d_hi,
     Pass 1 — Hybrid probe (n_probe_1 pts) over [d_lo, d_hi]:
         Collects all nan→finite transitions and sign-change brackets.
 
-    Pass 2 — Adaptive refinement (triggered only if Pass 1 finds no bracket):
-        For each nan→finite transition detected in Pass 1:
+    Pass 2 — Adaptive refinement around every nan→finite transition:
+        For each nan transition detected in Pass 1:
             a. Bisect to pin d_min_valid (~25 bisection steps).
             b. Fine hybrid probe (n_probe_2 pts) on [d_min_valid, d_hi].
             c. Accumulate any new sign-change brackets.
-        Handles islands where the entire valid domain fits between two
-        consecutive Pass 1 points (the primary failure mode at high field).
+        Pass 2 always runs whenever a nan transition exists, even when
+        Pass 1 already returned brackets at larger d, so that roots
+        adjacent to a +inf → finite jump (invisible to Pass 1 because the
+        bracket detector requires both endpoints to be finite) are not
+        missed. Brackets reported by both passes are deduplicated before
+        the brentq stage.
 
     Pass 3 — brentq on every bracket; return best root per ``select``.
 
-    Worst-case evaluation budget: n_probe_1 + 25 + n_probe_2 + 15 ~ 85.
-    Typical (Pass 1 succeeds): n_probe_1 + 15 ~ 35.
+    Worst-case evaluation budget: n_probe_1 + (25 + n_probe_2 + 15) per
+    nan transition ~ 85 with a single transition, the typical TF case.
 
     Parameters
     ----------
@@ -426,43 +457,62 @@ def _adaptive_root_search(residual_fn, d_lo, d_hi,
     nan_transitions, sign_changes = _find_bracket(
         residual_fn, d_lo, d_hi, n_probe_1)
 
-    # ── Pass 2: adaptive refinement (only if no bracket from Pass 1) ─
+    # ── Pass 2: refine around every nan → finite transition ──────────
+    # A nan → finite boundary can hide a sign change immediately adjacent
+    # to it: in the residual functions used here, structurally infeasible
+    # points (alpha out of range, gamma undefined, B exceeding the field
+    # limit, etc.) return np.inf, and the bracket detector in _find_bracket
+    # requires both endpoints to be finite before flagging a sign change,
+    # so the change of sign across an inf → negative jump is invisible to
+    # Pass 1. This is harmless for monotone residuals but does hide roots
+    # when the residual has two zero crossings, the lower one sitting just
+    # past a +inf wall (typical of the TF refined branch with a
+    # moment-weighted radial stress). Pass 2 therefore runs unconditionally
+    # whenever a nan transition exists, even when Pass 1 already returned
+    # brackets at larger d. The fine probe on [d_min_valid, d_hi] picks up
+    # the missing low-d sign change inside the strictly finite domain, where
+    # brentq can subsequently be applied without infinite endpoints.
+    for nt_lo, nt_hi in nan_transitions:
+        d_min_valid = _bisect_valid_boundary(residual_fn, nt_lo, nt_hi)
+        if d_min_valid >= d_hi:
+            continue
+        _, new_scs = _find_bracket(
+            residual_fn, d_min_valid, d_hi, n_probe_2)
+        sign_changes.extend(new_scs)
+
+    # Pass 1 and Pass 2 may report the same bracket more than once when
+    # their probe grids happen to land on adjacent points around the same
+    # zero crossing; deduplicate so each root is found at most once by
+    # brentq downstream.
+    if sign_changes:
+        seen = set()
+        unique = []
+        for lo, hi in sign_changes:
+            key = (round(float(lo), 9), round(float(hi), 9))
+            if key not in seen:
+                seen.add(key)
+                unique.append((float(lo), float(hi)))
+        sign_changes = unique
+
     if not sign_changes:
-        if not nan_transitions:
-            # Residual is NaN everywhere in [d_lo, d_hi]:
-            # no valid operating point exists (B > B_max_CS or J_wost = 0
-            # for all thicknesses).
-            return np.nan
-
-        # Probe each nan→finite transition: the root may sit in a narrow
-        # valid island that Pass 1 straddled entirely.
-        for nt_lo, nt_hi in nan_transitions:
-            d_min_valid = _bisect_valid_boundary(residual_fn, nt_lo, nt_hi)
-            if d_min_valid >= d_hi:
-                continue
-            _, new_scs = _find_bracket(
-                residual_fn, d_min_valid, d_hi, n_probe_2)
-            sign_changes.extend(new_scs)
-
-        if not sign_changes:
-            # No sign change found even after refinement.  Two sub-cases:
-            #
-            # (a) Residual < 0 everywhere in the valid domain:
-            #     stress constraint is satisfied for ALL valid d.
-            #     Return the thinnest valid winding pack (d_min_valid).
-            #     This can happen for conservative σ_CS with high-Jc HTS.
-            #
-            # (b) Residual > 0 everywhere: stress limit exceeded for all d.
-            #     Design is infeasible → return NaN.
-            if select == 'smallest' and nan_transitions:
-                d_boundary = _bisect_valid_boundary(
-                    residual_fn,
-                    nan_transitions[0][0],
-                    nan_transitions[0][1])
-                y_boundary = residual_fn(d_boundary)
-                if np.isfinite(y_boundary) and y_boundary < 0:
-                    return d_boundary
-            return np.nan
+        # No sign change anywhere on the explored domain. Two sub-cases:
+        #
+        # (a) Residual < 0 everywhere in the valid domain:
+        #     stress constraint is satisfied for ALL valid d.
+        #     Return the thinnest valid winding pack (d_min_valid).
+        #     This can happen for conservative sigma limits with high-Jc HTS.
+        #
+        # (b) Residual > 0 everywhere, or the residual is undefined over
+        #     the whole domain: design infeasible → return NaN.
+        if select == 'smallest' and nan_transitions:
+            d_boundary = _bisect_valid_boundary(
+                residual_fn,
+                nan_transitions[0][0],
+                nan_transitions[0][1])
+            y_boundary = residual_fn(d_boundary)
+            if np.isfinite(y_boundary) and y_boundary < 0:
+                return d_boundary
+        return np.nan
 
     # ── Pass 3: brentq on every bracket, collect all roots ───────────
     roots = []
@@ -519,6 +569,7 @@ def _unpack_CS_config(config):
         f_He_pipe      = config.f_He_pipe,
         f_void         = config.f_void,
         f_In           = config.f_In,
+        f_gap          = getattr(config, 'f_gap', 0.0),
         T_hotspot      = config.T_hotspot,
         RRR            = config.RRR,
         Marge_T_He     = config.Marge_T_He,
@@ -1396,7 +1447,7 @@ def calculate_t_dump(E_mag, I_cond, V_max, N_sub, tau_h):
 # =============================================================================
 
 def size_cable_fractions(J_non_Cu, B_peak, T_op, t_dump,
-                         T_hotspot, f_He_pipe, f_void, f_In, RRR):
+                         T_hotspot, f_He_pipe, f_void, f_In, RRR, f_gap=0.0):
     """
     Calculate cable composition based on quench protection (Maddock criterion).
 
@@ -1455,7 +1506,7 @@ def size_cable_fractions(J_non_Cu, B_peak, T_op, t_dump,
     -----
     "wost" = Without Steel.  All fractions are relative to the non-steel
     cross-section and sum to 1.0:
-        f_In + f_He_pipe + f_void_wost + f_sc + f_cu = 1.0
+        f_In + f_He_pipe + f_gap + f_void_wost + f_sc + f_cu = 1.0
 
     References
     ----------
@@ -1472,8 +1523,11 @@ def size_cable_fractions(J_non_Cu, B_peak, T_op, t_dump,
     ratio_cu_sc = J_non_Cu / J_cu_max
 
     # ── Hierarchical area decomposition in wost ──
-    # Level 1: insulation + He pipe + active zone
-    f_active = 1.0 - f_In - f_He_pipe
+    # Level 1: insulation + He pipe + winding-pack overhead + active zone.
+    # f_gap (ground/inter-pancake insulation and assembly clearances) occupies
+    # wost volume but carries no current, so like helium it dilutes the
+    # conductor and is excluded from the load-bearing steel downstream.
+    f_active = 1.0 - f_In - f_He_pipe - f_gap
 
     # Level 2: inside active zone — interstitial void + strands
     f_strand_in_active = 1.0 - f_void
@@ -1502,6 +1556,7 @@ def size_cable_fractions(J_non_Cu, B_peak, T_op, t_dump,
         "f_void":    f_void_wost,
         "f_He":      f_He_total,
         "f_In":      f_In,
+        "f_gap":     f_gap,
         "J_wost":    J_wost,
     }
 
@@ -1606,6 +1661,7 @@ def _compute_cable_current_density_core(
     Eps,
     Tet,
     J_wost_Manual=None,
+    f_gap=0.0,
 ):
     """
     Core computation function for cable current density calculations.
@@ -1684,7 +1740,7 @@ def _compute_cable_current_density_core(
     
     # Guard against invalid inputs (NaN propagation prevention)
     if np.isnan(B_peak) or np.isnan(E_mag) or np.isnan(N_sub):
-        f_active = 1.0 - f_In - f_He_pipe
+        f_active = 1.0 - f_In - f_He_pipe - f_gap
         return {
             'J_non_Cu': 0,
             'J_wost': 0,
@@ -1739,7 +1795,7 @@ def _compute_cable_current_density_core(
     
     # Handle case where SC is beyond critical surface
     if J_non_Cu <= 0:
-        f_active = 1.0 - f_In - f_He_pipe
+        f_active = 1.0 - f_In - f_He_pipe - f_gap
         return {
             'J_non_Cu': 0,
             'J_wost': 0,
@@ -1766,6 +1822,7 @@ def _compute_cable_current_density_core(
         f_void=f_void,
         f_In=f_In,
         RRR=RRR,
+        f_gap=f_gap,
     )
     
     return {
@@ -1809,6 +1866,7 @@ def _cached_cable_current_density(
     Eps: float,
     Tet: float,
     J_wost_Manual: float,
+    f_gap: float = 0.0,
 ):
     """
     LRU-cached wrapper for cable current density calculations.
@@ -1881,7 +1939,7 @@ def _cached_cable_current_density(
     """
     key = (sc_type, B_peak_rounded, T_op, E_mag_rounded, I_cond, V_max, N_sub,
            tau_h, f_He_pipe, f_void, f_In, T_hotspot, RRR, Marge_T_He,
-           Marge_T_Nb3Sn, Marge_T_NbTi, Marge_T_REBCO, Eps, Tet, J_wost_Manual)
+           Marge_T_Nb3Sn, Marge_T_NbTi, Marge_T_REBCO, Eps, Tet, J_wost_Manual, f_gap)
     if key in _cable_density_cache:
         _cable_density_stats['hits'] += 1
         return _cable_density_cache[key]
@@ -1907,6 +1965,7 @@ def _cached_cable_current_density(
         Eps=Eps,
         Tet=Tet,
         J_wost_Manual=J_wost_Manual if J_wost_Manual > 0 else None,
+        f_gap=f_gap,
     )
     _cable_density_cache[key] = result
     return result
@@ -1933,6 +1992,7 @@ def calculate_cable_current_density(
     Eps,
     Tet,
     J_wost_Manual=None,
+    f_gap=0.0,
 ):
     """
     Calculate current density on the non-steel part of the conductor.
@@ -2033,7 +2093,7 @@ def calculate_cable_current_density(
     
     # Guard against invalid inputs (NaN propagation prevention)
     if np.isnan(B_peak) or np.isnan(E_mag) or np.isnan(N_sub):
-        f_active = 1.0 - f_In - f_He_pipe
+        f_active = 1.0 - f_In - f_He_pipe - f_gap
         return {
             'J_non_Cu': 0,
             'J_wost': 0,
@@ -2081,6 +2141,7 @@ def calculate_cable_current_density(
         Eps=Eps,
         Tet=Tet,
         J_wost_Manual=J_wost_Manual_val,
+        f_gap=f_gap,
     )
 
 
@@ -3253,6 +3314,26 @@ def Winding_Pack_refined(R_0, a, b, sigma_max, J_max, B_max, omega, n,
         inboard radial budget). Grading can therefore never degrade the
         ungraded baseline.
 
+    Radial stress convention (shared by both modes):
+        The smeared radial stress at any radius R inside the winding pack
+        is obtained from a force balance on the cylindrical annulus
+        outside R, giving
+
+            sigma_r(R) = (1 / R) * integral from R to R_ext of
+                         alpha(R') * J_max * B(R') * R' dR'.
+
+        For uniform alpha (ungraded branch) this admits the closed form
+
+            sigma_r(R_sep) = f_Laplace(R_sep, R_ext) * P_mag,
+
+        with P_mag = B_max**2 / (2 * mu0) the magnetic pressure at the
+        high-field face and f_Laplace a purely geometric factor that goes
+        to unity in the thin-shell limit R_sep -> R_ext. For varying
+        alpha(R) (graded branch) the same integral is built up
+        trapezoidally during the inward radial sweep. The peak stress in
+        the structural steel is in both cases obtained by scaling the
+        smeared bore value with 1 / gamma(alpha, n).
+
     Args:
         R_0: Major radius [m]
         a: Plasma minor radius [m]
@@ -3325,6 +3406,46 @@ def Winding_Pack_refined(R_0, a, b, sigma_max, J_max, B_max, omega, n,
             return np.nan
         return val
 
+    def sigma_r_smeared_bore(R_sep):
+        """
+        Smeared radial stress at the WP bore (R = R_sep), uniform-alpha leg.
+
+        Derived from the equilibrium relation for an axisymmetric thick
+        cylinder carrying a uniform Lorentz body force,
+
+            sigma_r(R) = (1 / R) * integral from R to R_ext of
+                         J * B(R') * R' dR',
+
+        evaluated at the bore R = R_sep, with B(R) given by Ampere's law
+        inside the conductor. The closed form factorises the magnetic
+        pressure at the high-field face,
+
+            P_mag = B_max**2 / (2 * mu0),
+
+        from a purely geometric concentration factor,
+
+            f_Laplace(r_i, r_e) = 4 r_e**2 (r_e + 2 r_i)
+                                  / [3 r_i (r_e + r_i)**2],
+
+        so that sigma_r,smeared(r_i) = f_Laplace * P_mag. The factor tends
+        to unity in the thin-shell limit r_i -> r_e (Maxwell pressure
+        recovered) and grows monotonically as r_i decreases, reflecting
+        the volumetric J x B load being borne by an inner surface of
+        shrinking area. The peak stress in the structural steel is then
+        obtained downstream by scaling with 1 / gamma(alpha, n).
+
+        Returns
+        -------
+        float
+            Bore-smeared radial stress [Pa], or +inf if R_sep is degenerate.
+        """
+        if R_sep <= 0:
+            return np.inf
+        P_mag     = B_max**2 / (2.0 * μ0)
+        f_Laplace = (4.0 * R_ext**2 * (R_ext + 2.0 * R_sep)
+                     / (3.0 * R_sep * (R_ext + R_sep)**2))
+        return f_Laplace * P_mag
+
     def tresca_residual(R_sep):
         a_val = alpha(R_sep)
         if np.isnan(a_val):
@@ -3333,7 +3454,8 @@ def Winding_Pack_refined(R_0, a, b, sigma_max, J_max, B_max, omega, n,
         if np.isnan(g_val):
             return np.inf
         try:
-            sigma_r = B_max**2 / (2 * μ0 * g_val)
+            # Radial stress in the steel = bore-smeared sigma_r divided by gamma.
+            sigma_r = sigma_r_smeared_bore(R_sep) / g_val
             denom_z = R_ext**2 - R_sep**2
             if denom_z <= 0:
                 return np.inf
@@ -3378,7 +3500,11 @@ def Winding_Pack_refined(R_0, a, b, sigma_max, J_max, B_max, omega, n,
             result_ungraded = (np.nan, np.nan, np.nan, np.nan, np.nan)
         else:
             try:
-                sigma_r = B_max**2 / (2 * μ0 * g_val)
+                # Radial stress in the steel = bore-smeared sigma_r divided by gamma,
+                # using the same moment-weighted Laplace expression as the residual
+                # so that the reported solution is exactly consistent with the
+                # Tresca check that selected it.
+                sigma_r = sigma_r_smeared_bore(R_sep_solution) / g_val
                 sigma_z = (omega / (1 - a_val)) * B_max**2 * R_ext**2 / (2 * μ0 * (R_ext**2 - R_sep_solution**2)) * ln_term
                 sigma_theta = 0
                 winding_pack_thickness = R_ext - R_sep_solution
@@ -4194,7 +4320,7 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     # ------------------------------------------------------------------
     _c = _unpack_CS_config(config)
     Gap, I_cond, V_max   = _c['Gap'], _c['I_cond'], _c['V_max']
-    f_He_pipe, f_void, f_In = _c['f_He_pipe'], _c['f_void'], _c['f_In']
+    f_He_pipe, f_void, f_In, f_gap = _c['f_He_pipe'], _c['f_void'], _c['f_In'], _c['f_gap']
     T_hotspot, RRR       = _c['T_hotspot'], _c['RRR']
     Marge_T_He, Marge_T_Nb3Sn = _c['Marge_T_He'], _c['Marge_T_Nb3Sn']
     Marge_T_NbTi, Marge_T_REBCO = _c['Marge_T_NbTi'], _c['Marge_T_REBCO']
@@ -4266,7 +4392,7 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
         result_J = calculate_cable_current_density(
             sc_type=Supra_choice_CS, B_peak=B_CS_est, T_op=T_Helium,
             E_mag=E_mag_CS, I_cond=I_cond, V_max=V_max, N_sub=N_sub_CS,
-            tau_h=tau_h, f_He_pipe=f_He_pipe, f_void=f_void, f_In=f_In,
+            tau_h=tau_h, f_He_pipe=f_He_pipe, f_void=f_void, f_In=f_In, f_gap=f_gap,
             T_hotspot=T_hotspot, RRR=RRR, Marge_T_He=Marge_T_He,
             Marge_T_Nb3Sn=Marge_T_Nb3Sn, Marge_T_NbTi=Marge_T_NbTi,
             Marge_T_REBCO=Marge_T_REBCO, Eps=Eps, Tet=Tet,
@@ -4576,7 +4702,7 @@ def f_CS_refined(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_C
     # ------------------------------------------------------------------
     _c = _unpack_CS_config(config)
     Gap, I_cond, V_max   = _c['Gap'], _c['I_cond'], _c['V_max']
-    f_He_pipe, f_void, f_In = _c['f_He_pipe'], _c['f_void'], _c['f_In']
+    f_He_pipe, f_void, f_In, f_gap = _c['f_He_pipe'], _c['f_void'], _c['f_In'], _c['f_gap']
     T_hotspot, RRR       = _c['T_hotspot'], _c['RRR']
     Marge_T_He, Marge_T_Nb3Sn = _c['Marge_T_He'], _c['Marge_T_Nb3Sn']
     Marge_T_NbTi, Marge_T_REBCO = _c['Marge_T_NbTi'], _c['Marge_T_REBCO']
@@ -4624,7 +4750,7 @@ def f_CS_refined(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_C
         # STRATEGY C: Use cached cable current density
         result_J = calculate_cable_current_density(
             sc_type=Supra_choice_CS, B_peak=B_CS, T_op=T_Helium, E_mag=E_mag_CS,
-            I_cond=I_cond, V_max=V_max, N_sub=N_sub_CS, tau_h=tau_h, f_He_pipe=f_He_pipe, f_void=f_void, f_In=f_In,
+            I_cond=I_cond, V_max=V_max, N_sub=N_sub_CS, tau_h=tau_h, f_He_pipe=f_He_pipe, f_void=f_void, f_In=f_In, f_gap=f_gap,
             T_hotspot=T_hotspot, RRR=RRR, Marge_T_He=Marge_T_He, Marge_T_Nb3Sn=Marge_T_Nb3Sn,
             Marge_T_NbTi=Marge_T_NbTi, Marge_T_REBCO=Marge_T_REBCO, Eps=Eps, Tet=Tet,
             J_wost_Manual=Jc_manual if Supra_choice_CS == 'Manual' else None)
@@ -4841,7 +4967,7 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
     # ------------------------------------------------------------------
     _c = _unpack_CS_config(config)
     Gap, I_cond, V_max   = _c['Gap'], _c['I_cond'], _c['V_max']
-    f_He_pipe, f_void, f_In = _c['f_He_pipe'], _c['f_void'], _c['f_In']
+    f_He_pipe, f_void, f_In, f_gap = _c['f_He_pipe'], _c['f_void'], _c['f_In'], _c['f_gap']
     T_hotspot, RRR       = _c['T_hotspot'], _c['RRR']
     Marge_T_He, Marge_T_Nb3Sn = _c['Marge_T_He'], _c['Marge_T_Nb3Sn']
     Marge_T_NbTi, Marge_T_REBCO = _c['Marge_T_NbTi'], _c['Marge_T_REBCO']
@@ -4891,7 +5017,7 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
         # STRATEGY C: Use cached cable current density
         result_J = calculate_cable_current_density(
             sc_type=Supra_choice_CS, B_peak=B_CS, T_op=T_Helium, E_mag=E_mag_CS,
-            I_cond=I_cond, V_max=V_max, N_sub=N_sub_CS, tau_h=tau_h, f_He_pipe=f_He_pipe, f_void=f_void, f_In=f_In,
+            I_cond=I_cond, V_max=V_max, N_sub=N_sub_CS, tau_h=tau_h, f_He_pipe=f_He_pipe, f_void=f_void, f_In=f_In, f_gap=f_gap,
             T_hotspot=T_hotspot, RRR=RRR, Marge_T_He=Marge_T_He, Marge_T_Nb3Sn=Marge_T_Nb3Sn,
             Marge_T_NbTi=Marge_T_NbTi, Marge_T_REBCO=Marge_T_REBCO, Eps=Eps, Tet=Tet,
             J_wost_Manual=Jc_manual if Supra_choice_CS == 'Manual' else None)

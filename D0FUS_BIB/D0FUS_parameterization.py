@@ -97,8 +97,10 @@ class GlobalConfig:
     Bmax_TF  : float = 12.0        # Peak magnetic field on TF conductor [T]
     Bmax_CS_adm  : float = 25.0    # Peak magnetic field allowed on the CS [T]
     P_fus : float = 2000.0         # Total fusion power [MW]
-    Tbar  : float = 14.0           # Volume-averaged ion temperature [keV]
-    H     : float = 1.0            # Confinement enhancement factor (H-factor) [-]
+    Tbar  : float = 14.0           # Volume-averaged electron temperature T_e [keV]
+    tau_i_e : float = 1.0          # Ion-to-electron temperature ratio T_i/T_e [-]
+                                   # 1.0 -> single-temperature plasma (T_i = T_e).
+                                   # Prescribed: T_i(rho) = tau_i_e * T_e(rho),
 
     # ── 2. Physics and operation ─────────────────────────────────────────────
     Operation_mode     : str   = 'Pulsed'       # 'Steady-State' or 'Pulsed'
@@ -173,7 +175,15 @@ class GlobalConfig:
 
     # ── 4. Plasma composition ────────────────────────────────────────────────
     Atomic_mass : float = 2.5   # Volume-averaged ionic mass [AMU]  (D-T: 2.5)
-    Zeff        : float = 2.0   # Effective plasma charge [-]
+    Zeff        : float = None   # Effective plasma charge [-].
+                                 # None  -> computed self-consistently from the impurity
+                                 #          inventory (impurity_species + f_imp_core) and the
+                                 #          helium ash fraction (see _compute_Zeff_effective):
+                                 #              Z_eff = 1 + 2 f_He - sum_j <Z_j> c_j
+                                 #                                  + sum_j <Z_j>^2 c_j
+                                 #          An empty impurity inventory therefore yields a clean
+                                 #          D-T+He plasma with Z_eff ~ 1 + 2 f_He (~1.1).
+                                 # float -> manual override (legacy behaviour, e.g. Zeff = 2.0).
     r_synch     : float = 0.5   # Synchrotron radiation wall reflectivity [-]
     C_Alpha     : float = 7.0   # Helium ash dilution tuning parameter [-] (default taken from PROCESS)
     # Impurity line radiation (0D bulk-plasma estimate).
@@ -277,7 +287,11 @@ class GlobalConfig:
     f_void    : float = None    # Interstitial void fraction in strand bundle [-]
                                 # None = auto: 0.33 (LTS) / 0.00 (REBCO).
                                 # Set explicitly (e.g. 0.30) to override.
-    f_In      : float = 0.15    # Insulation area fraction [-]
+    f_In      : float = 0.05    # Insulation area fraction [-]
+    # Winding-pack overhead fraction in wost, treated exactly like the
+    # helium fraction: ground and inter-pancake insulation plus assembly
+    # clearances that occupy volume but carry neither current nor load.
+    f_gap     : float = 0.15    # WP insulation + clearance fraction in wost [-]
 
     # Temperature margins above T_helium defining T_operating [K]
     # Conservative baseline: Corato et al., "Common operating values for DEMO…" (2016)
@@ -344,6 +358,16 @@ class GlobalConfig:
 
     # ── 12. Plasma-facing components ─────────────────────────────────────────
     theta_deg : float = 2.7      # Divertor strike-point grazing angle [deg]
+
+    # Refined divertor exhaust (two-point model, Stangeby 2018). All used only
+    # in the post-convergence f_heat_two_point evaluation; they do not feed the
+    # core power balance.
+    f_n_sep       : float = 0.20  # n_sep / volume-average density n̄ [-].
+                                  # Groth value taken from https://arxiv.org/pdf/2406.15693
+    f_cooling_div : float = 0.0   # SOL volumetric power-loss fraction [-] (2PM input)
+    f_mom_div     : float = 0.0   # SOL volumetric momentum-loss fraction [-] (2PM input)
+    q_dep_limit   : float = 5.0   # Tolerable deposited target heat flux [MW/m²]
+    flux_expansion: float = 1.0   # Target/upstream flux expansion R_t/R_u [-]
 
     # ── 13. Maintenance constraints ──────────────────────────────────────────
     ripple_adm : float = 0.01    # Admissible toroidal field ripple [-]  (default 1%)

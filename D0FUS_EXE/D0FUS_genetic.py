@@ -55,6 +55,9 @@ Selected via 'fitness_objective' in the input file:
   - 'volume'    machine-volume proxy (V_BB + V_TF + V_CS) / P_fus.
   - 'C_invest'  total capital cost (Sheffield 2016, M EUR).
   - 'P_elec'    net electric power (maximised).
+  - 'R0'        major radius (minimised), i.e. the most compact
+                machine satisfying every constraint. R0 must be a
+                GA-optimised parameter for this to be meaningful.
 
 Outputs
 -------
@@ -172,8 +175,12 @@ dc_replace = replace
 #   'volume'   : minimise (V_BB + V_TF + V_CS) / P_fus  [m^3/MW]
 #   'C_invest' : minimise total capital cost (Sheffield 2016)      [M EUR]
 #   'P_elec'   : maximise net electric power (minimise -P_elec)    [MW]
+#   'R0'       : minimise the major radius (most compact machine)  [m]
+#                 R0 must be declared as a GA-optimised parameter
+#                 (e.g. 'R0 = [4.0, 9.0]') for this objective to be
+#                 meaningful; otherwise the fitness is a constant.
 #
-VALID_FITNESS_OBJECTIVES = ('COE', 'volume', 'C_invest', 'P_elec')
+VALID_FITNESS_OBJECTIVES = ('COE', 'volume', 'C_invest', 'P_elec', 'R0')
 
 # =============================================================================
 # run() return-tuple index map  (v3 — 93 outputs)
@@ -635,6 +642,17 @@ def evaluate_individual(individual, verbose=False):
         if objective == 'volume':
             # Legacy cost proxy: (V_BB + V_TF + V_CS) / P_fus [m^3/MW]
             raw_fitness = cost
+
+        elif objective == 'R0':
+            # Compact-machine objective: minimise the major radius [m].
+            # R0 is a design variable (config.R0), so the GA drives the
+            # design toward the smallest major radius that still satisfies
+            # every physics and engineering constraint. The stability and
+            # radial-build penalties below inflate R0 for infeasible
+            # designs, keeping the search inside the feasible region.
+            # The C_invest_max ceiling is intentionally left inactive
+            # here (as for 'volume'), since _C_inv stays NaN.
+            raw_fitness = _safe_real(config.R0)
 
         elif objective in ('COE', 'C_invest', 'P_elec'):
             # Sheffield (2016) cost model — needs derived quantities
@@ -2449,6 +2467,13 @@ def run_genetic_optimization(input_file,
     if _obj == 'COE':
         _budget = static_inputs.get('C_invest_max', DEFAULT_CONFIG.C_invest_max)
         print(f"  [input file] C_invest_max      = {float(_budget)*1e-3:.1f} B EUR (budget ceiling)")
+    if _obj == 'R0' and 'R0' not in param_keys:
+        # Degenerate case: minimising a fixed major radius gives a constant
+        # fitness, so the GA would only search the remaining design space
+        # for any feasible point. Warn the user to bracket R0.
+        print("  [warn] fitness_objective = 'R0' but R0 is not a GA "
+              "parameter; declare it as a range (e.g. 'R0 = [4.0, 9.0]') "
+              "to actually minimise the major radius.")
 
     if len(param_keys) < 1:
         print("\n ERROR: Need at least 1 optimization parameter")
@@ -2617,6 +2642,7 @@ def run_genetic_optimization(input_file,
         _tag = "WITHIN BUDGET" if _within else "OVER BUDGET"
         print(f"    Budget ceiling:             {_budget*1e-3:.1f} B EUR  [{_tag}]")
     print(f"\n Best design metrics:")
+    print(f"    R0 (major radius):          {config.R0:.4f} [m]")
     print(f"    Volume proxy (V/P_fus):     {cost:.4f} [m^3/MW]")
     print(f"    COE (Sheffield):            {_COE_best:.1f} [EUR/MWh]")
     print(f"    C_invest:                   {_C_invest_best:.2f} [B EUR]")

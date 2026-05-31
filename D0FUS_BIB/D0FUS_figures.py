@@ -49,6 +49,7 @@ if __name__ != "__main__":
         f_He_fraction,
         f_q_profile,
         f_sigmav,
+        _two_point_core, M_F_DT,
     )
     from .D0FUS_radial_build_functions import (
         J_non_Cu_NbTi, J_non_Cu_Nb3Sn, J_non_Cu_REBCO,
@@ -78,6 +79,7 @@ else:
         f_He_fraction,
         f_q_profile,
         f_sigmav,
+        _two_point_core, M_F_DT,
     )
     from D0FUS_BIB.D0FUS_radial_build_functions import (
         J_non_Cu_NbTi, J_non_Cu_Nb3Sn, J_non_Cu_REBCO,
@@ -2214,6 +2216,85 @@ def plot_radiation_profile(
     _save_or_show(fig, save_dir, "run_radiation_profile")
 
 
+def plot_divertor_two_point(
+    run: dict,
+    n_pts: int = 300,
+    save_dir: str | None = None,
+) -> None:
+    """
+    Simple two-point-model view: target temperature versus SOL dissipation.
+
+    A single panel shows the target electron temperature T_et as a function of
+    the SOL power-loss fraction f_cooling, at the converged upstream conditions
+    (q_par_u, p_u read from the run). The dashed line is the detachment
+    threshold T_et = 10 eV (Stangeby 2018). The flat plateau at high T_et is the
+    attached sheath-limited branch where the two-point model no longer applies.
+    The minimum dissipation required for target survival (Eq. 14) is given in
+    the title and marked by the dotted vertical line.
+
+    Parameters
+    ----------
+    run      : dict   D0FUS run output; reads the 'divertor' sub-dict produced
+                      by f_heat_two_point.
+    n_pts    : int    Number of f_cooling samples.
+    save_dir : str or None
+
+    References
+    ----------
+    P.C. Stangeby, Plasma Phys. Control. Fusion 60 (2018) 044022.
+    """
+    div = run.get("divertor", {}) or {}
+    if not {"q_par_u", "T_eu", "n_sep"}.issubset(div):
+        print("  [skip] no two-point-model divertor solution in run dict")
+        return
+
+    q_par_u   = div["q_par_u"]                 # [MW/m^2]
+    T_eu      = div["T_eu"]                     # [eV]
+    n_sep     = div["n_sep"]                    # [m^-3]
+    f_c_op    = div.get("f_cooling", 0.0)
+    f_m_op    = div.get("f_mom", 0.0)
+    T_et_op   = div.get("T_et", np.nan)
+    f_pwr_req = div.get("f_pwr_loss_req", np.nan)
+    R0        = run.get("R0", "?")
+
+    q_par_u_SI = q_par_u * 1e6
+    p_u        = 2.0 * n_sep * E_ELEM * T_eu
+
+    f_c  = np.linspace(0.0, 0.995, n_pts)
+    T_et = np.array([min(_two_point_core(q_par_u_SI, p_u, fc, f_m_op, 7.0, M_F_DT)[0],
+                         T_eu) for fc in f_c])
+
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    ax.plot(f_c, T_et, color="#4477AA", lw=2.4)
+    ax.axhline(10.0, color="#EE6677", lw=1.3, ls="--")
+    ax.text(0.015, 11.0, "detachment (10 eV)", color="#EE6677",
+            fontsize=9, va="bottom")
+    if np.isfinite(f_pwr_req):
+        ax.axvline(f_pwr_req, color="0.55", lw=1.0, ls=":")
+    if np.isfinite(T_et_op):
+        ax.plot([f_c_op], [T_et_op], "o", ms=9, color="k", zorder=5)
+        near_left = f_c_op < 0.5
+        near_top  = T_et_op > 0.3 * T_eu
+        ax.annotate(f"operating point\n$T_{{e,t}}$ = {T_et_op:.1f} eV",
+                    (f_c_op, T_et_op), textcoords="offset points",
+                    xytext=(14 if near_left else -12, -16 if near_top else 14),
+                    ha="left" if near_left else "right",
+                    va="top" if near_top else "bottom", fontsize=9)
+
+    ax.set_yscale("log")
+    ax.set_xlim(0, 1)
+    ax.set_xlabel(r"SOL power-loss fraction $f_{\rm cooling}$", fontsize=12)
+    ax.set_ylabel(r"Target electron temperature $T_{e,t}$ [eV]", fontsize=12)
+    ttl = (rf"Divertor two-point model:  $R_0$={R0} m,  "
+           rf"$q_{{\parallel u}}$={q_par_u/1e3:.2f} GW/m$^2$")
+    if np.isfinite(f_pwr_req):
+        ttl += f",  required dissipation = {f_pwr_req:.2f}"
+    ax.set_title(ttl, fontsize=11)
+    ax.grid(True, which="both", alpha=0.3)
+    plt.tight_layout()
+    _save_or_show(fig, save_dir, "run_divertor_two_point")
+
+
 # ---------------------------------------------------------------------------
 # A — Convenience wrapper
 # ---------------------------------------------------------------------------
@@ -2998,23 +3079,24 @@ def plot_run(
     save_dir: str | None = None,
 ) -> None:
     """
-    Render the run-specific figure set (10 figures).
+    Render the run-specific figure set (11 figures).
 
     This is the subset called after each D0FUS run.  It contains only the
     figures that depend on the current run configuration and results —
     no validation curves, no benchmarks, no scaling-law surveys.
 
     Figures produced:
-      [ 1/10]  Tokamak LCFS comparison (with D0FUS overlay)
-      [ 2/10]  Miller flux surfaces (run geometry)
-      [ 3/10]  Shaping profiles κ(ρ), δ(ρ)
-      [ 4/10]  Kinetic profiles n(ρ), T(ρ), p(ρ)
-      [ 5/10]  Safety factor q(ρ) and current decomposition
-      [ 6/10]  Radiation profiles
-      [ 7/10]  TF coil side view
-      [ 8/10]  CICC TF conductor
-      [ 9/10]  CS cross-section
-      [10/10]  CICC CS conductor
+      [ 1/11]  Tokamak LCFS comparison (with D0FUS overlay)
+      [ 2/11]  Miller flux surfaces (run geometry)
+      [ 3/11]  Shaping profiles κ(ρ), δ(ρ)
+      [ 4/11]  Kinetic profiles n(ρ), T(ρ), p(ρ)
+      [ 5/11]  Safety factor q(ρ) and current decomposition
+      [ 6/11]  Radiation profiles
+      [ 7/11]  Divertor two-point model (detachment vs SOL dissipation)
+      [ 8/11]  TF coil side view
+      [ 9/11]  CICC TF conductor
+      [10/11]  CS cross-section
+      [11/11]  CICC CS conductor
 
     Parameters
     ----------
@@ -3023,7 +3105,7 @@ def plot_run(
         If provided, figures are saved as PNG files.
         Pass ``None`` to display interactively.
     """
-    N = 10
+    N = 11
 
     def _p(i, label):
         print(f"  [{i:2d}/{N}] {label}")
@@ -3051,17 +3133,20 @@ def plot_run(
     _p(6, "Radiation profiles")
     plot_radiation_profile(run, save_dir=save_dir)
 
+    _p(7, "Divertor two-point model")
+    plot_divertor_two_point(run, save_dir=save_dir)
+
     # ── Coils & conductors ────────────────────────────────────────────
-    _p(7, "TF coil side view")
+    _p(8, "TF coil side view")
     plot_TF_side_view(run, save_dir=save_dir)
 
-    _p(8, "CICC TF conductor")
+    _p(9, "CICC TF conductor")
     plot_CICC_cross_section(build_conductor_from_run(run, coil="TF"), save_dir=save_dir)
 
-    _p(9, "CS cross-section")
+    _p(10, "CS cross-section")
     plot_CS_cross_section(run, save_dir=save_dir)
 
-    _p(10, "CICC CS conductor")
+    _p(11, "CICC CS conductor")
     plot_CICC_cross_section(build_conductor_from_run(run, coil="CS"), save_dir=save_dir)
 
     print("Done.")
@@ -3308,11 +3393,11 @@ def plot_TF_benchmark_table(cfg=None, save_dir=None) -> None:
         "ARC":     {"a": 1.10, "b": 0.89, "R0": 3.30, "σ": 1000e6, "T_op": 20.0,
                     "B_max": 23.0,  "n_TF": 1,   "sc": "REBCO", "config": "Plug",
                     "κ": 1.84, "I_cond": 50e3, "V_max": 10e3, "N_sub": 6,
-                    "tau_h": 20,   "J_wost": 120e6},
+                    "tau_h": 20,   "J_wost": 200e6},
         "SPARC":   {"a": 0.57, "b": 0.18, "R0": 1.85, "σ": 1000e6, "T_op": 20.0,
                     "B_max": 20.0,  "n_TF": 1,   "sc": "REBCO", "config": "Bucking",
-                    "κ": 1.75, "I_cond": 40.5e3,"V_max": 10e3, "N_sub": 4,
-                    "tau_h": 20,   "J_wost": 120e6},
+                    "κ": 1.75, "I_cond": 40.5e3,"V_max": 10e3, "N_sub": 6,
+                    "tau_h": 20,   "J_wost": 200e6},
     }
 
     def _clean(val):

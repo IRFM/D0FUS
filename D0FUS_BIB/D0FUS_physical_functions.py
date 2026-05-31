@@ -1128,7 +1128,7 @@ def f_sigmav(T):
 
 def f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, kappa,
            rho_ped=1.0, n_ped_frac=0.0, T_ped_frac=0.0,
-           Vprime_data=None, f_imp=0.0):
+           Vprime_data=None, f_imp=0.0, tau_i_e=1.0):
     """
     Required volume-averaged electron density to achieve a target fusion power.
 
@@ -1197,7 +1197,9 @@ def f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, kappa,
                           Vprime_data)
         n_hat   = f_nprof(1.0,  nu_n, rho_grid, rho_ped, n_ped_frac,
                           Vprime_data)
-        sv_arr  = f_sigmav(T_arr)
+        # DT reactivity is governed by the ion temperature: T_i = tau_i_e * T_e.
+        # T_arr is the electron profile; scale it to the ion profile here.
+        sv_arr  = f_sigmav(tau_i_e * T_arr)
         # Guard against NaN/inf at ρ→1 where T→0 and ⟨σv⟩→0 rapidly
         integrand = np.nan_to_num(sv_arr * n_hat**2 * Vprime,
                                    nan=0.0, posinf=0.0)
@@ -1212,7 +1214,8 @@ def f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, kappa,
         _rho_acad = np.linspace(0.0, 1.0, 200)
         _T_acad   = f_Tprof(Tbar, nu_T, _rho_acad, rho_ped, T_ped_frac)
         _n_acad   = f_nprof(1.0,  nu_n, _rho_acad, rho_ped, n_ped_frac)
-        _sv_acad  = f_sigmav(_T_acad)
+        # Reactivity uses the ion temperature T_i = tau_i_e * T_e.
+        _sv_acad  = f_sigmav(tau_i_e * _T_acad)
         _intgd    = np.nan_to_num(_sv_acad * _n_acad**2 * 2.0 * _rho_acad,
                                    nan=0.0, posinf=0.0)
         I_fus     = float(np.trapezoid(_intgd, _rho_acad))
@@ -1250,11 +1253,13 @@ def f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, kappa,
 
 def f_pbar(nu_n, nu_T, n_bar, Tbar,
            rho_ped=1.0, n_ped_frac=0.0, T_ped_frac=0.0,
-           Vprime_data=None):
+           Vprime_data=None, tau_i_e=1.0):
     """
-    Volume-averaged plasma pressure  p̄ = 2⟨nT⟩_vol  [MPa].
+    Volume-averaged plasma pressure  p̄ = (1 + τ_ie)⟨nT⟩_vol  [MPa].
 
-    The factor 2 accounts for equal ion and electron pressure (T_i = T_e).
+    The total pressure is p = p_e + p_i = n_e T_e + n_i T_i.  With n_i ≈ n_e
+    and the prescribed ratio T_i = τ_ie · T_e, the single-temperature prefactor
+    2 generalises to (1 + τ_ie); τ_ie = 1 recovers p̄ = 2⟨nT⟩ (T_i = T_e).
     The integral ⟨nT⟩_vol = ∫ n(ρ)·T(ρ)·w(ρ) dρ uses:
 
       Academic mode:
@@ -1298,21 +1303,23 @@ def f_pbar(nu_n, nu_T, n_bar, Tbar,
         T_hat = f_Tprof(1.0, nu_T, rho_grid, rho_ped, T_ped_frac,
                         Vprime_data)
         C_vol = float(np.trapezoid(n_hat * T_hat * Vprime, rho_grid)) / V_total
-        profile_factor = 2.0 * C_vol
+        # p = p_e + p_i = (1 + tau_i_e) n_e T_e  (n_i ~ n_e, T_i = tau_i_e T_e)
+        profile_factor = (1.0 + tau_i_e) * C_vol
 
     elif rho_ped >= 1.0:
-        # Academic mode, parabolic: closed-form analytical result
-        profile_factor = 2.0 * (1.0 + nu_n) * (1.0 + nu_T) / (1.0 + nu_n + nu_T)
+        # Academic mode, parabolic: closed-form analytical result.
+        # Prefactor (1 + tau_i_e): p = p_e + p_i with T_i = tau_i_e T_e.
+        profile_factor = (1.0 + tau_i_e) * (1.0 + nu_n) * (1.0 + nu_T) / (1.0 + nu_n + nu_T)
 
     else:
         # Academic mode, pedestal: numerical with cylindrical weight 2ρ dρ
         # C_vol = <n̂ T̂>_vol = 2 ∫₀¹ n̂(ρ) T̂(ρ) ρ dρ   (cylindrical volume average)
-        # profile_factor = 2 × C_vol   (factor 2 accounts for p = p_e + p_i = 2nT)
+        # profile_factor = (1 + tau_i_e) × C_vol   (p = p_e + p_i, T_i = tau_i_e T_e)
         rho_arr = np.linspace(0.0, 1.0, 2000)
         n_hat   = f_nprof(1.0, nu_n, rho_arr, rho_ped, n_ped_frac)
         T_hat   = f_Tprof(1.0, nu_T, rho_arr, rho_ped, T_ped_frac)
         C_vol = 2.0 * float(np.trapezoid(n_hat * T_hat * rho_arr, rho_arr))
-        profile_factor = 2.0 * C_vol
+        profile_factor = (1.0 + tau_i_e) * C_vol
         
     # Convert: n [10²⁰ m⁻³] × T [keV] → p [Pa] → [MPa]
     p_bar = profile_factor * (n_bar * 1e20) * (Tbar * E_ELEM * 1e3) / 1e6
@@ -5082,7 +5089,7 @@ def f_Sauter_Redl_Ib(R0, a, kappa, B0, nbar, Tbar, q95, Z_eff, nu_n, nu_T, n_rho
                      rho_ped=1.0, n_ped_frac=0.0, T_ped_frac=0.0,
                      Vprime_data=None, kappa_95=None, rho_95=0.95,
                      return_profile=False, q_profile=None,
-                     trapped_fraction_model='Sauter2002'):
+                     trapped_fraction_model='Sauter2002', tau_i_e=1.0):
     """
     Bootstrap current using the Sauter-Redl neoclassical model.
 
@@ -5173,12 +5180,13 @@ def f_Sauter_Redl_Ib(R0, a, kappa, B0, nbar, Tbar, q95, Z_eff, nu_n, nu_T, n_rho
 
     # SI units
     n_e  = n_arr * 1e20           # [m^-3]
-    T_eV = T_arr * 1e3            # [eV]
+    T_eV = T_arr * 1e3            # [eV]  electron temperature
+    Ti_eV = tau_i_e * T_eV        # [eV]  ion temperature, T_i = tau_i_e * T_e
     n_i  = n_e / Z_eff
 
     # Pressure [Pa]
     p_e   = n_e * T_eV * E_ELEM
-    p_i   = n_i * T_eV * E_ELEM
+    p_i   = n_i * Ti_eV * E_ELEM
     p_tot = p_e + p_i
     R_pe  = np.where(p_tot > 0, p_e / p_tot, 0.5)
 
@@ -5191,7 +5199,7 @@ def f_Sauter_Redl_Ib(R0, a, kappa, B0, nbar, Tbar, q95, Z_eff, nu_n, nu_T, n_rho
     # Trapped fraction and collisionalities (vectorised)
     f_t  = _trapped_fraction(eps_arr, fit=trapped_fraction_model)
     nu_e = _nu_e_star(n_e, T_eV, q_arr, R0, eps_arr, Z_eff)
-    nu_i_arr = _nu_i_star(n_i, T_eV, q_arr, R0, eps_arr)
+    nu_i_arr = _nu_i_star(n_i, Ti_eV, q_arr, R0, eps_arr)   # ion collisionality on T_i
 
     # Redl coefficients (vectorised — all use only np operations)
     # Redl Eq. 19: L34 = L31 (simplification validated by NEO)
@@ -5201,8 +5209,8 @@ def f_Sauter_Redl_Ib(R0, a, kappa, B0, nbar, Tbar, q95, Z_eff, nu_n, nu_T, n_rho
     alp = _alpha_Redl(f_t, nu_i_arr, Z_eff)     # Redl α depends on Z_eff
 
     # Logarithmic gradients
-    dln_p  = dln_n + dln_T
-    dln_Ti = dln_T   # Ti = Te assumed
+    dln_p  = dln_n + dln_T   # T_i = tau_i_e T_e (const ratio): dln(p_tot) = dln_n + dln_Te
+    dln_Ti = dln_T           # dln(T_i) = dln(tau_i_e T_e) = dln(T_e) for constant ratio
 
     # Bootstrap coefficient [Redl Eq. 5]
     C_bs = L31 * dln_p + L32 * R_pe * dln_T + L34 * alp * (1.0 - R_pe) * dln_Ti
@@ -5259,7 +5267,7 @@ def f_q_profile_refined(
         rho_CD=0.3, delta_CD=0.15,
         q_init=None,
         n_rho=200, tol=1e-3, max_iter=15, damping=0.5,
-        N_theta_inv_R2=400):
+        N_theta_inv_R2=400, tau_i_e=1.0):
     """
     Self-consistent safety-factor and current-density profiles (Mode 'refined').
 
@@ -5620,7 +5628,7 @@ def f_q_profile_refined(
             n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
             Vprime_data=Vprime_data_internal, kappa_95=kappa_95, rho_95=rho_95,
             return_profile=True, q_profile=q_dict,
-            trapped_fraction_model=trapped_fraction_model)
+            trapped_fraction_model=trapped_fraction_model, tau_i_e=tau_i_e)
         j_bs   = np.interp(rho, bs_res['rho'], bs_res['j_bs'])
         I_bs_A = float(np.clip(bs_res['I_bs'] * 1e6, 0.0, Ip_A))
 
@@ -5675,7 +5683,7 @@ def f_q_profile_refined(
         n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
         Vprime_data=Vprime_data_internal, kappa_95=kappa_95, rho_95=rho_95,
         return_profile=True, q_profile=q_dict_final,
-        trapped_fraction_model=trapped_fraction_model)
+        trapped_fraction_model=trapped_fraction_model, tau_i_e=tau_i_e)
     j_bs   = np.interp(rho, bs_res['rho'], bs_res['j_bs'])
     I_bs_A = float(np.clip(bs_res['I_bs'] * 1e6, 0.0, Ip_A))
     I_Ohm_A = max(Ip_A - I_CD_A - I_bs_A, 0.0)
@@ -5846,7 +5854,7 @@ def f_heat_pol(R0, B0, P_sep, a, q95):
 
     References
     ----------
-    M. Siccinio et al., Fusion Engineering and Design 176 (2019) 107523.
+    M. Siccinio et al., Nuclear Fusion 59 (2019) 106026.
     """
     A = R0 / a
     return (P_sep * B0) / (q95 * A * R0**2)
@@ -5886,7 +5894,9 @@ def f_heat_PFU_Eich(P_sol, B_pol, R, eps, theta_deg):
 
     Notes
     -----
-    Eich (2013) regression (fit 7, Table 1):
+    Eich (2013) regression #15 (Table 3, all devices incl. spherical, R²=0.88).
+    NOT "fit 7": regression #7 has the form 0.67 B_tor^-0.71 q95^1.03 P_sol^0.05
+    R^0.08 and is a different functional family. The coefficients below are #15:
         λ_q [mm] = 1.35 · R^{0.04} · B_pol^{-0.92} · ε^{0.42} · P_sol^{-0.02}
     Peak parallel flux (toroidal symmetry over the outer midplane):
         q_∥0 = P_sol / (2π R λ_q)
@@ -5909,6 +5919,203 @@ def f_heat_PFU_Eich(P_sol, B_pol, R, eps, theta_deg):
     q_target = q_par0 * np.sin(θ)
 
     return lambda_q, q_par0, q_target
+
+
+# =============================================================================
+# Refined divertor exhaust — two-point model (Stangeby 2018)
+# =============================================================================
+#
+# Fidelity ladder of the D0FUS divertor models:
+#   figure_of_merit : H, H_par, H_pol  (f_heat_refined / f_heat_par / f_heat_pol)
+#                     Nested 0D scalars to RANK designs vs ITER, NOT predictions.
+#   Academic        : f_heat_PFU_Eich — peak ATTACHED parallel flux (upper bound).
+#   refined         : f_heat_two_point — two-point model with volumetric losses,
+#                     giving the target temperature, the detachment state and the
+#                     SOL power-loss fraction required for target survival.
+#
+# The seeding-impurity concentration closure (Lengyel / extended-Lengyel,
+# Kallenbach 2016; Body, Kallenbach & Eich 2025, arXiv:2504.05486) is out of
+# scope for a lean 0D code (needs OpenADAS atomic data); it is the natural
+# future upgrade of f_heat_two_point.
+
+# Average DT fuel-ion mass, m_f = 2.5 u, Stangeby (2018) convention.
+M_F_DT = 2.5 * 1.67e-27   # [kg]
+
+
+def f_heat_dissipation_required(q_par_u, theta_deg,
+                                q_dep_limit=5.0, flux_expansion=1.0):
+    """
+    Minimum SOL volumetric power-loss fraction needed for target survival.
+
+    From a flux-tube power balance (Stangeby 2018, Eq. 14), the fraction of the
+    upstream parallel power that must be dissipated before the target to keep the
+    deposited plasma heat flux below an engineering limit is:
+
+        1 − f_pwr_loss = (q_dep_limit / sinθ) (R_t/R_u) / q_∥u
+
+    This is the single most informative 0D exhaust output: it needs neither the
+    upstream density nor any 2PM closure, only q_∥u (from Eich) and the target
+    geometry.
+
+    Parameters
+    ----------
+    q_par_u : float    Upstream parallel heat flux density [MW/m²].
+    theta_deg : float  Field-line incidence angle on the target [deg].
+    q_dep_limit : float  Tolerable plasma-only deposited target flux [MW/m²].
+        Default 5.0 (Stangeby), leaving headroom under the ~10 MW/m² limit.
+    flux_expansion : float  Target/upstream flux expansion R_t/R_u [-].
+        Default 1.0; >1 for Super-X type long legs, which relax the requirement.
+
+    Returns
+    -------
+    f_pwr_loss : float   Minimum required SOL power-loss fraction, clamped to
+        [0, 1). Zero means the target survives with no dissipation.
+
+    References
+    ----------
+    P.C. Stangeby, Plasma Phys. Control. Fusion 60 (2018) 044022, Eq. (14).
+    """
+    s = np.sin(np.deg2rad(theta_deg))
+    one_minus = (q_dep_limit / s) * flux_expansion / q_par_u
+    return float(np.clip(1.0 - one_minus, 0.0, 1.0 - 1e-12))
+
+
+def _two_point_core(q_par_u_SI, p_u, f_cooling, f_mom, gamma_sheath, m_f):
+    """
+    Bare 2PM target quantities (Stangeby 2018, Eqs. 15a–17a), UNCAPPED.
+
+    T_et   = (8 m_f / e γ²) (q_∥u/p_u)²  [(1−f_cooling)/(1−f_mom)]²        [eV]
+    n_et   = (γ² / 32 m_f) (p_u³/q_∥u²) (1−f_mom)³/(1−f_cooling)²          [m⁻³]
+    Γ_et   = (γ / 8 m_f)  (p_u²/q_∥u)  (1−f_mom)²/(1−f_cooling)            [m⁻²s⁻¹]
+
+    Self-consistent by construction with the Bohm condition Γ_et = n_et c_st,
+    the pressure balance p_t = (1−f_mom) p_u and the power balance
+    q_∥t = (1−f_cooling) q_∥u. Kept separate so the conduction-limited cap in
+    f_heat_two_point does not hide this consistency.
+
+    Returns (T_et [eV], n_et [m⁻³], Γ_et [m⁻²s⁻¹]).
+    """
+    ratio = (1.0 - f_cooling) / (1.0 - f_mom)
+    T_et = (8.0 * m_f / (E_ELEM * gamma_sheath**2)) * (q_par_u_SI / p_u)**2 * ratio**2
+    n_et = (gamma_sheath**2 / (32.0 * m_f)) * (p_u**3 / q_par_u_SI**2) \
+           * (1.0 - f_mom)**3 / (1.0 - f_cooling)**2
+    Gamma_et = (gamma_sheath / (8.0 * m_f)) * (p_u**2 / q_par_u_SI) \
+               * (1.0 - f_mom)**2 / (1.0 - f_cooling)
+    return T_et, n_et, Gamma_et
+
+
+def f_heat_two_point(P_sol, B_pol, R0, eps, q95, n_sep, theta_deg,
+                     f_cooling=0.0, f_mom=0.0,
+                     gamma_sheath=7.0, kappa0e=2000.0, eps_pot=15.0,
+                     q_dep_limit=5.0, flux_expansion=1.0,
+                     m_f=M_F_DT):
+    """
+    Refined 0D divertor exhaust estimate via the two-point model.
+
+    Chain (Stangeby 2018):
+      1. λ_q from Eich (2013) regression #15 → upstream parallel flux
+         q_∥u = P_sol / (2π R₀ λ_q).
+      2. Upstream electron temperature from Spitzer–Härm conduction (Eq. 38),
+         T_eu = (7 q_∥u L / 2 κ₀ₑ)^(2/7), connection length L = π R₀ q₉₅.
+      3. Upstream total pressure p_u = 2 n_sep e T_eu  (T_i=T_e, M_u=0, Z=1; Eq. 20).
+      4. Target quantities from the 2PM with volumetric losses (Eqs. 15a–17a).
+      5. Deposited target heat flux (Eqs. 1–3):
+         q_dep_t = (γ_sheath + ε_pot/T_et) e T_et Γ_et sinθ.
+      6. Required dissipation fraction (Eq. 14), independent of the closure.
+
+    The 2PM is CONDUCTION-LIMITED: valid only for T_et ≪ T_eu. When the inputs
+    (typically a reactor with q_∥u ~ GW/m² and no dissipation, f_cooling=f_mom=0)
+    drive T_et above T_eu, the regime is sheath-limited and the attached target
+    is unviable; this is flagged via 'regime' and T_et is capped at T_eu. The
+    physical reading is that strong dissipation is mandatory, which is exactly
+    what f_pwr_loss_req quantifies.
+
+    Parameters
+    ----------
+    P_sol : float     Power crossing the separatrix (= divertor power) [MW].
+    B_pol : float     Outer-midplane poloidal field [T].
+    R0 : float        Major radius [m].
+    eps : float       Inverse aspect ratio a/R₀ [-].
+    q95 : float       Safety factor at ψ_N = 0.95 [-].
+    n_sep : float     Upstream (separatrix) electron density [m⁻³].
+    theta_deg : float Field-line incidence angle on the target [deg].
+    f_cooling : float Volumetric power-loss fraction along the flux tube (Eq. 18),
+        input not predicted. 0 = attached.
+    f_mom : float     Volumetric momentum-loss fraction (Eq. 19). 0 = attached.
+    gamma_sheath : float  Sheath heat transmission coefficient [-], default 7.0.
+    kappa0e : float   Electron Spitzer–Härm coefficient [W m⁻¹ eV⁻⁷ᐟ²], default
+        2000. Stangeby uses ~3000; T_eu ∝ κ₀ₑ^(−2/7) makes this nearly immaterial.
+    eps_pot : float   Hydrogenic potential energy deposited per ion [eV], default 15.
+    q_dep_limit : float  Tolerable deposited target flux [MW/m²], default 5.0.
+    flux_expansion : float  Target/upstream flux expansion R_t/R_u [-].
+    m_f : float       Fuel-ion mass [kg], default DT (2.5 u).
+
+    Returns
+    -------
+    dict with keys:
+        'lambda_q'        SOL power width [m].
+        'q_par_u'         Upstream parallel heat flux [MW/m²].
+        'T_eu'            Upstream electron temperature [eV].
+        'T_et'            Target electron temperature [eV] (capped at T_eu).
+        'n_et'            Target electron density [m⁻³].
+        'Gamma_et'        Target parallel particle flux [m⁻²s⁻¹].
+        'q_dep_t'         Deposited perpendicular target flux [MW/m²].
+        'f_pwr_loss_req'  Min. SOL power-loss fraction for survival [-].
+        'regime'          'sheath-limited' | 'conduction-limited'.
+        'detached'        bool, T_et < 10 eV.
+        'sputtering_safe' bool, T_et < 5 eV (gross W erosion strongly suppressed).
+
+    References
+    ----------
+    P.C. Stangeby, Plasma Phys. Control. Fusion 60 (2018) 044022.
+    V. Kotov & D. Reiter, Plasma Phys. Control. Fusion 51 (2009) 115002.
+    """
+    s = np.sin(np.deg2rad(theta_deg))
+
+    # 1. SOL width and upstream parallel flux
+    lambda_q = 1.35 * R0**0.04 * B_pol**(-0.92) * eps**0.42 * P_sol**(-0.02) * 1e-3
+    q_par_u = P_sol / (2.0 * np.pi * R0 * lambda_q)              # [MW/m²]
+    q_par_u_SI = q_par_u * 1e6                                   # [W/m²]
+
+    # 2. Upstream temperature, Spitzer conduction (Eq. 38), L = π R₀ q₉₅
+    L_conn = np.pi * R0 * q95
+    T_eu = (7.0 * q_par_u_SI * L_conn / (2.0 * kappa0e))**(2.0/7.0)
+
+    # 3. Upstream total pressure (Eq. 20; T_i=T_e, M_u=0, Z=1)
+    p_u = 2.0 * n_sep * E_ELEM * T_eu                           # [Pa]
+
+    # 4. Target quantities, 2PM with losses (Eqs. 15a–17a)
+    T_et, n_et, Gamma_et = _two_point_core(
+        q_par_u_SI, p_u, f_cooling, f_mom, gamma_sheath, m_f)
+
+    # Conduction-limited validity: cap T_et at T_eu, flag sheath-limited.
+    if T_et >= T_eu:
+        regime = 'sheath-limited'
+        T_et = T_eu
+    else:
+        regime = 'conduction-limited'
+
+    # 5. Deposited perpendicular target heat flux (Eqs. 1–3)
+    gamma_target = gamma_sheath + eps_pot / T_et
+    q_dep_t = gamma_target * E_ELEM * T_et * Gamma_et * s * 1e-6  # [MW/m²]
+
+    # 6. Required dissipation fraction (Eq. 14)
+    f_pwr_loss_req = f_heat_dissipation_required(
+        q_par_u, theta_deg, q_dep_limit, flux_expansion)
+
+    return {
+        'lambda_q':        lambda_q,
+        'q_par_u':         q_par_u,
+        'T_eu':            T_eu,
+        'T_et':            T_et,
+        'n_et':            n_et,
+        'Gamma_et':        Gamma_et,
+        'q_dep_t':         q_dep_t,
+        'f_pwr_loss_req':  f_pwr_loss_req,
+        'regime':          regime,
+        'detached':        bool(T_et < 10.0),
+        'sputtering_safe': bool(T_et < 5.0),
+    }
 
 
 # ── Plasma current from τ_E scaling law ──────────────────────────────────────
@@ -6510,7 +6717,7 @@ def f_Q(P_fus, P_CD, P_Ohm):
 # ── Helium ash accumulation model ─────────────────────────────────────────────
 
 def _sigmav_vol(T_bar, nu_T, rho_ped=1.0, T_ped_frac=0.0, N=200,
-                Vprime_data=None):
+                Vprime_data=None, tau_i_e=1.0):
     """
     Volume-averaged DT reactivity ⟨σv⟩_vol = ∫₀¹ ⟨σv⟩[T(ρ)] · w(ρ) dρ.
 
@@ -6538,18 +6745,18 @@ def _sigmav_vol(T_bar, nu_T, rho_ped=1.0, T_ped_frac=0.0, N=200,
         rho_grid, Vprime, V_total = Vprime_data[:3]  # safe: 5-tuple (rho, V', V, dA, Lp)
         T   = f_Tprof(T_bar, nu_T, rho_grid, rho_ped, T_ped_frac,
                        Vprime_data)
-        sv  = f_sigmav(T)
+        sv  = f_sigmav(tau_i_e * T)   # reactivity on T_i = tau_i_e * T_e
         return float(np.trapezoid(sv * Vprime, rho_grid)) / V_total
     else:
         # Academic mode: cylindrical weight 2ρ dρ
         rho = np.linspace(0.0, 1.0, N)
         T   = f_Tprof(T_bar, nu_T, rho, rho_ped, T_ped_frac)
-        sv  = f_sigmav(T)
+        sv  = f_sigmav(tau_i_e * T)   # reactivity on T_i = tau_i_e * T_e
         return float(np.trapezoid(sv * 2.0 * rho, rho))
 
 
 def f_He_fraction(n_bar, T_bar, tauE, C_Alpha, nu_T,
-                  rho_ped=1.0, T_ped_frac=0.0, Vprime_data=None):
+                  rho_ped=1.0, T_ped_frac=0.0, Vprime_data=None, tau_i_e=1.0):
     """
     Estimate the equilibrium helium ash fraction f_α = n_α / n_e.
 
@@ -6607,9 +6814,9 @@ def f_He_fraction(n_bar, T_bar, tauE, C_Alpha, nu_T,
     ----------
     Y. Sarazin et al., Nuclear Fusion (2021). Appendix B.
     """
-    # Volume-averaged reactivity via shared helper
+    # Volume-averaged reactivity via shared helper (uses T_i = tau_i_e * T_e)
     sigmav_vol = _sigmav_vol(T_bar, nu_T, rho_ped, T_ped_frac,
-                             Vprime_data=Vprime_data)
+                             Vprime_data=Vprime_data, tau_i_e=tau_i_e)
     C = n_bar * 1e20 * sigmav_vol * C_Alpha * tauE
     return (C + 1 - np.sqrt(2 * C + 1)) / (2 * C)
 
@@ -7603,7 +7810,10 @@ if __name__ == "__main__":
         print(f"  {_ire0:<20.0e} {_ire_inf/1e6:>12.3f}  {_ref99:>12.3f}  {_fig17:>12}")
 
     import D0FUS_BIB.D0FUS_figures as figs
-    figs.plot_He_fraction(C_Alpha=_C_α)
+    # plot_He_fraction takes separate ITER/DEMO removal efficiencies
+    # (C_Alpha_ITER=5.0, C_Alpha_DEMO=7.0 by default); the old single 'C_Alpha'
+    # keyword no longer exists. Defaults match the benchmark above (C_α = 5).
+    figs.plot_He_fraction(C_Alpha_ITER=_C_α)
 
 #%%
 

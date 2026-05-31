@@ -130,12 +130,24 @@ def load_config_from_file(filepath: str,
                     print(f"  [scan]   {key} = {raw_val}  →  skipped (kept at default)")
                 continue
 
-            # Attempt numeric conversion; fall back to string
-            try:
-                val = float(raw_val)
-                val = int(val) if val.is_integer() else val
-            except ValueError:
-                val = raw_val
+            # Attempt boolean conversion FIRST. This must come before the
+            # float try because float('True') raises ValueError and the string
+            # would otherwise fall through and be stored as 'True' / 'False'
+            # — both Python-truthy non-empty strings. Downstream code that
+            # does `if not flag:` or `X if flag else Y` would then silently
+            # take the truthy branch in both cases. Two GlobalConfig bool
+            # fields are affected by this trap: TF_grading and pellet_dilution_cools
+            if raw_val in ('True', 'true'):
+                val = True
+            elif raw_val in ('False', 'false'):
+                val = False
+            else:
+                # Attempt numeric conversion; fall back to string
+                try:
+                    val = float(raw_val)
+                    val = int(val) if val.is_integer() else val
+                except ValueError:
+                    val = raw_val
 
             # Only accept keys that exist in GlobalConfig
             if key not in GlobalConfig.__dataclass_fields__:
@@ -152,6 +164,69 @@ def load_config_from_file(filepath: str,
 
 #%% Core calculation
 # ---------------------------------------------------------------------------
+
+# Coronal-equilibrium mean ion charges <Z> for the supported impurities.
+# Fixed (temperature-independent) approximation, shared with the fuel-dilution
+# term computed inside run().  Low/mid-Z species are fully stripped at reactor
+# temperatures (<Z> = nuclear Z); high-Z species (W) carry a mid-range value.
+_Z_CORONAL_MEAN = {'Be': 4, 'C': 6, 'N': 7, 'Ne': 10, 'Ar': 18, 'Kr': 34, 'Xe': 44, 'W': 46}
+
+
+def _parse_impurity_inventory(config):
+    """
+    Parse config.impurity_species / config.f_imp_core into matched lists.
+
+    Returns
+    -------
+    (species, concentrations) : (list[str], list[float])
+        Only entries with a strictly positive concentration n_imp/n_e are kept.
+        Empty / 'None' inventory returns ([], []).
+    """
+    sp_raw = getattr(config, 'impurity_species', '')
+    fc_raw = getattr(config, 'f_imp_core', '')
+    if sp_raw is None or str(sp_raw).strip() in ('', 'None', 'none'):
+        return [], []
+    species = [s.strip() for s in str(sp_raw).split(',') if s.strip()]
+    if isinstance(fc_raw, (int, float)):
+        conc = [float(fc_raw)]
+    else:
+        conc = [float(c.strip()) for c in str(fc_raw).split(',') if c.strip()]
+    paired = [(s, c) for s, c in zip(species, conc) if c > 0]
+    return [p[0] for p in paired], [p[1] for p in paired]
+
+
+def _compute_Zeff_effective(config, f_alpha):
+    """
+    Effective plasma charge Z_eff = sum_k n_k Z_k^2 / n_e.
+
+    If config.Zeff is an explicit float, that value is returned unchanged
+    (manual override / legacy behaviour).  Otherwise Z_eff is computed
+    self-consistently from the prescribed impurity inventory and the helium
+    ash fraction f_alpha = n_He/n_e, using the same coronal mean charges
+    <Z_j> as the fuel-dilution term:
+
+        Z_eff = 1 + 2 f_He - sum_j <Z_j> c_j + sum_j <Z_j>^2 c_j
+
+    where the leading 1 is the D-T fuel baseline (Z = 1), 2 f_He the helium
+    ash (Z_He = 2), and c_j = n_j/n_e the impurity concentrations.  An empty
+    inventory therefore gives Z_eff = 1 + 2 f_He (clean D-T+He plasma).
+
+    Note: <Z_j> are fixed coronal values; for high-Z species (W) this is a
+    mid-temperature approximation, and the rigorous moment is <Z^2> rather
+    than <Z>^2.
+
+    Parameters
+    ----------
+    config  : GlobalConfig  Configuration (provides Zeff override + inventory).
+    f_alpha : float         Helium ash fraction n_He / n_e.
+    """
+    if getattr(config, 'Zeff', None) is not None:
+        return float(config.Zeff)
+    species, conc = _parse_impurity_inventory(config)
+    Z1 = sum(_Z_CORONAL_MEAN.get(s, 10) * c for s, c in zip(species, conc))
+    Z2 = sum(_Z_CORONAL_MEAN.get(s, 10) ** 2 * c for s, c in zip(species, conc))
+    return 1.0 + 2.0 * float(f_alpha) - Z1 + Z2
+
 
 def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     """
@@ -208,6 +283,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     Bmax_CS_adm                   = config.Bmax_CS_adm
     P_fus                     = config.P_fus
     Tbar                      = config.Tbar
+    tau_i_e                   = config.tau_i_e   # Ion/electron temperature ratio T_i/T_e
     H                         = config.H
     Operation_mode            = config.Operation_mode
     Temps_Plateau_input       = config.Temps_Plateau_input
@@ -232,7 +308,10 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     Greenwald_limit           = config.Greenwald_limit
     ms                        = config.ms
     Atomic_mass               = config.Atomic_mass
-    Zeff                      = config.Zeff
+    Zeff_override             = config.Zeff   # None -> compute Z_eff from inventory + ash;
+                                              # float -> impose (legacy). See
+                                              # _compute_Zeff_effective; the local Z_eff used
+                                              # below is built from this per f_alpha.
     r_synch                   = config.r_synch
     C_Alpha                   = config.C_Alpha
     Ce                        = config.Ce
@@ -258,6 +337,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     f_He_pipe                 = config.f_He_pipe
     f_void                    = config.f_void
     f_In                      = config.f_In
+    f_gap                     = getattr(config, 'f_gap', 0.0)
     Marge_T_Nb3Sn             = config.Marge_T_Nb3Sn
     Marge_T_NbTi              = config.Marge_T_NbTi
     Marge_T_REBCO             = config.Marge_T_REBCO
@@ -273,6 +353,11 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     eta_T                     = config.eta_T
     eta_WP                    = config.eta_WP_acad if config.CD_source == 'Academic' else config.eta_RF
     theta_deg                 = config.theta_deg
+    f_n_sep                   = config.f_n_sep
+    f_cooling_div             = config.f_cooling_div
+    f_mom_div                 = config.f_mom_div
+    q_dep_limit               = config.q_dep_limit
+    flux_expansion            = config.flux_expansion
     ripple_adm                = config.ripple_adm
     L_min                     = config.L_min
     # ── Multi-source current drive / heating ──────────────────────────────────
@@ -373,9 +458,13 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     imp_species_list, imp_conc_list = _parse_impurity_list(
         config.impurity_species, config.f_imp_core)
 
-    _Z_CORONAL = {'Be': 4, 'C': 6, 'N': 7, 'Ne': 10, 'Ar': 18, 'Kr': 34, 'Xe': 44, 'W': 46}
+    _Z_CORONAL = _Z_CORONAL_MEAN   # module-level table (single source of truth)
     f_imp_dilution = sum(_Z_CORONAL.get(s, 10) * c
                          for s, c in zip(imp_species_list, imp_conc_list))
+    # Impurity Z^2 moment sum_j <Z_j>^2 c_j, reused below to build the effective
+    # Z_eff = Z_eff_fuel + Zeff_imp_Z2 when config.Zeff is None (computed mode).
+    Zeff_imp_Z2 = sum(_Z_CORONAL.get(s, 10) ** 2 * c
+                      for s, c in zip(imp_species_list, imp_conc_list))
 
     # ── Profile peaking factors ───────────────────────────────────────────────
     # Values are read from the module-level _PROFILE_PRESETS table (single
@@ -555,7 +644,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     result_J_TF = calculate_cable_current_density(
         sc_type=Supra_choice, B_peak=Bmax_TF, T_op=T_helium, E_mag=E_mag_TF,
         I_cond=I_cond, V_max=V_max, N_sub=N_sub, tau_h=tau_h,
-        f_He_pipe=f_He_pipe, f_void=f_void, f_In=f_In,
+        f_He_pipe=f_He_pipe, f_void=f_void, f_In=f_In, f_gap=f_gap,
         T_hotspot=T_hotspot, RRR=RRR, Marge_T_He=Marge_T_He,
         Marge_T_Nb3Sn=Marge_T_Nb3Sn, Marge_T_NbTi=Marge_T_NbTi,
         Marge_T_REBCO=Marge_T_REBCO, Eps=Eps, Tet=Tet,
@@ -625,7 +714,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     def _solve_q_profile(Ip_loc, I_CD_loc, q95_loc, B0_loc, nbar_loc,
                          rho_CD_loc, delta_CD_loc,
                          n_rho=60, max_iter=10, tol=5e-3, damping=0.5,
-                         q_init=None):
+                         q_init=None, Zeff_loc=None):
         """
         Mode-aware front end for q,j profile evaluation.
 
@@ -651,7 +740,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             # these parameters are ignored.
             return f_q_profile_refined(
                 Ip_loc, I_CD_loc,
-                R0, a, B0_loc, κ, nbar_loc, Tbar, Zeff,
+                R0, a, B0_loc, κ, nbar_loc, Tbar, Zeff_loc,
                 nu_n, nu_T,
                 trapped_fraction_model=trapped_fraction_model,
                 eta_model=eta_model,
@@ -660,7 +749,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 delta=δ, delta_95=δ_95,
                 rho_CD=rho_CD_loc, delta_CD=delta_CD_loc,
                 q_init=q_init,
-                n_rho=n_rho, max_iter=max_iter, tol=tol, damping=damping)
+                n_rho=n_rho, max_iter=max_iter, tol=tol, damping=damping,
+                tau_i_e=tau_i_e)
         else:
             raise ValueError(
                 f"Unknown q_profile_mode: '{q_profile_mode}'. "
@@ -713,11 +803,12 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         nbar_loc = f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, κ,
                           rho_ped=rho_ped, n_ped_frac=n_ped_frac,
                           T_ped_frac=T_ped_frac,
-                          Vprime_data=Vprime_data, f_imp=f_imp_dilution)
+                          Vprime_data=Vprime_data, f_imp=f_imp_dilution,
+                          tau_i_e=tau_i_e)
         pbar_loc = f_pbar(nu_n, nu_T, nbar_loc, Tbar,
                           rho_ped=rho_ped, n_ped_frac=n_ped_frac,
                           T_ped_frac=T_ped_frac,
-                          Vprime_data=Vprime_data)
+                          Vprime_data=Vprime_data, tau_i_e=tau_i_e)
         nbar_line_loc = f_nbar_line(nbar_loc, nu_n, rho_ped, n_ped_frac)
 
         # Radiative power losses [MW]
@@ -727,6 +818,9 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         #             = (1 - 2*f_He - f_imp) + 4*f_He = 1 + 2*f_He - f_imp
         # Impurity radiation (brem+line+recomb) is in P_line via Mavrin L_z.
         Zeff_fuel = 1.0 + 2.0 * f_alpha - f_imp_dilution
+        # Full effective charge for transport/bootstrap/CD/runaway:
+        # Z_eff = Z_eff_fuel + sum_j <Z_j>^2 c_j, or the user override.
+        Zeff = Zeff_override if Zeff_override is not None else (Zeff_fuel + Zeff_imp_Z2)
         P_Brem_loc = f_P_bremsstrahlung(nbar_loc, Tbar, Zeff_fuel,
                                         Volume_solution, nu_n, nu_T,
                                         rho_ped=rho_ped,
@@ -813,7 +907,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 T_ped_frac=T_ped_frac,
                 Vprime_data=Vprime_data, kappa_95=κ_95,
                 q_profile=_q_profile_cache[0],
-                trapped_fraction_model=trapped_fraction_model)
+                trapped_fraction_model=trapped_fraction_model, tau_i_e=tau_i_e)
         elif Bootstrap_choice == 'Segal':
             Ib_loc = f_Segal_Ib(
                 nu_n, nu_T, a / R0, κ, nbar_loc, Tbar, R0, Ip_loc,
@@ -948,7 +1042,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                     Ip_loc, I_CD_loc, q95_loc, B0_solution, nbar_loc,
                     rho_CD_loc=_rho_CD_q, delta_CD_loc=_delta_CD_q,
                     n_rho=60, max_iter=10, tol=5e-3, damping=0.5,
-                    q_init=_q_profile_cache[0])
+                    q_init=_q_profile_cache[0], Zeff_loc=Zeff)
                 _q_cache_I_Ohm[0] = I_Ohm_loc
                 _q_cache_Ip[0]    = Ip_loc
             except Exception:
@@ -962,7 +1056,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         # Helium ash fraction from confinement time
         new_fa_loc = f_He_fraction(
             nbar_loc, Tbar, tau_E_loc, C_Alpha, nu_T,
-            rho_ped=rho_ped, T_ped_frac=T_ped_frac)
+            rho_ped=rho_ped, T_ped_frac=T_ped_frac, tau_i_e=tau_i_e)
 
         if _dbg:
             print(f"    new_f_alpha={new_fa_loc:.6f} (input={f_alpha:.6f})")
@@ -1531,6 +1625,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             _nan, _nan, _nan, _nan, _nan, _nan,  # f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF
             _nan, _nan, _nan, _nan, _nan, _nan,  # f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS
             _nan, _nan, _nan, _nan,              # beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha
+            {},                                  # divertor_solution (empty on failure)
         )
 
     # =========================================================================
@@ -1543,6 +1638,10 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     #  and _compute_P_line_split, all of which involve numerical quadrature
     #  over the radial profile).
     _chain = _converged_chain[0]
+    # Effective charge at the converged helium-ash fraction (override-aware).
+    # Used by f_beta_fast_alpha, the CD efficiencies, f_P_Ohm and Magnetic_flux
+    # below; consistent with the value used inside the converged physics chain.
+    Zeff = _compute_Zeff_effective(config, f_alpha_solution)
     nbar_solution        = _chain['nbar']
     pbar_solution        = _chain['pbar']
     W_th_solution        = f_W_th(pbar_solution, Volume_solution)      # [J]
@@ -1698,6 +1797,27 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     heat_pol_solution   = f_heat_pol(R0, B0_solution, P_sep_solution, a, q95_solution)
     lambda_q_Eich_m, q_parallel0_Eich, q_target_Eich = f_heat_PFU_Eich(
         P_sep_solution, B_pol_solution, R0, a / R0, theta_deg)
+
+    # ── Refined divertor exhaust: two-point model (Stangeby 2018) ─────────────
+    # D0FUS density profiles vanish at the LCFS by construction (tanh edge), so
+    # n_sep is NOT read off the profile. It is anchored to the volume-average
+    # density: n_sep = f_n_sep · n̄. Anchoring to n̄ rather than the Greenwald
+    # limit n_G is essential: at low Greenwald fraction a fixed n_sep/n_G could
+    # exceed n̄, which is unphysical. The ITPA H-mode database normalises exactly
+    # this way (n_sep/n̄ ≈ 0.1–0.5, arXiv:2406.15693). nbar is in 1e20 m^-3.
+    n_sep_solution = f_n_sep * nbar_solution * 1e20        # [m^-3]
+
+    divertor_solution = f_heat_two_point(
+        P_sep_solution, B_pol_solution, R0, a / R0, q95_solution,
+        n_sep_solution, theta_deg,
+        f_cooling=f_cooling_div, f_mom=f_mom_div,
+        q_dep_limit=q_dep_limit, flux_expansion=flux_expansion)
+    divertor_solution['n_sep']            = n_sep_solution
+    divertor_solution['f_cooling']        = f_cooling_div     # operating point
+    divertor_solution['f_mom']            = f_mom_div         # operating point
+    divertor_solution['theta_deg']        = theta_deg
+    divertor_solution['q_dep_limit']      = q_dep_limit
+    divertor_solution['q_par0_attached']  = q_parallel0_Eich  # Academic peak flux
     # First-wall load: radiative power distributed over the plasma surface
     P_1rst_wall_rad    = f_P_wall(P_rad_total_solution, Surface_solution)
     # Exhaust power density: P_div / S (useful divertor figure of merit)
@@ -1745,7 +1865,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         B0_solution, nbar_solution,
         rho_CD_loc=_rho_CD_eff, delta_CD_loc=_delta_CD_eff,
         n_rho=80, max_iter=20, tol=1e-3, damping=0.5,
-        q_init=_q_profile_cache[0])
+        q_init=_q_profile_cache[0], Zeff_loc=Zeff)
     li_solution      = _q_sc['li']
 
     # L-H power threshold — all Martin/Delabie scalings were fitted with line-averaged density
@@ -1845,7 +1965,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             sc_type=Supra_choice_CS, B_peak=B_CS, T_op=T_helium,
             E_mag=E_mag_CS_post,
             I_cond=I_cond, V_max=V_max, N_sub=N_sub_CS, tau_h=tau_h,
-            f_He_pipe=f_He_pipe, f_void=f_void, f_In=f_In,
+            f_He_pipe=f_He_pipe, f_void=f_void, f_In=f_In, f_gap=f_gap,
             T_hotspot=T_hotspot, RRR=RRR, Marge_T_He=Marge_T_He,
             Marge_T_Nb3Sn=Marge_T_Nb3Sn, Marge_T_NbTi=Marge_T_NbTi,
             Marge_T_REBCO=Marge_T_REBCO, Eps=Eps, Tet=Tet,
@@ -1894,7 +2014,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             I_LH_solution,  I_EC_solution,  I_NBI_solution,
             f_sc_TF,  f_cu_TF,  f_He_pipe_TF,  f_void_TF,  f_He_TF,  f_In_TF,
             f_sc_CS,  f_cu_CS,  f_He_pipe_CS,  f_void_CS,  f_He_CS,  f_In_CS,
-            beta_fast_alpha,  betaN_total,  tau_sd_alpha,  W_fast_alpha)
+            beta_fast_alpha,  betaN_total,  tau_sd_alpha,  W_fast_alpha,
+            divertor_solution)
 
 
 #%% Output writer
@@ -2070,7 +2191,8 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         "T_ped_frac":  T_ped_frac,
         # MHD
         "q95":         _f(q95, 3.0),
-        "Z_eff":       config.Zeff,
+        "Z_eff":       _compute_Zeff_effective(config, _f(_f_alpha, 0.0)),
+        "f_He":        _f(_f_alpha, 0.0),
         # Power balance
         "P_fus":       config.P_fus,
         "P_aux":       config.P_aux_input,
@@ -2115,6 +2237,9 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         "f_void_CS":    _f(_f_void_CS, np.nan),
         "f_He_CS":      _f(_f_He_CS, np.nan),
         "f_In_CS":      _f(_f_In_CS, np.nan),
+        # Refined divertor exhaust (two-point model). Empty dict on failure or
+        # when the trailing tuple element is absent (older callers).
+        "divertor":     (_rest[33] if len(_rest) >= 34 else {}),
     }
 
 
@@ -2186,7 +2311,8 @@ def save_run_output(config: GlobalConfig,
      I_LH_out, I_EC_out, I_NBI_out,
      f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF,
      f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS,
-     beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha) = results
+     beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha,
+     divertor_out) = results
 
     # ── Recompute N_TF for display (not stored in results tuple) ──────────
     try:
@@ -2399,7 +2525,10 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] f_b            (Bootstrap fraction)             : {(Ib/Ip)*100:.3f} [%]",      file=out)
         print(f"[O] l_i(3)         (Internal inductance, {config.q_profile_mode}) : {li_sc:.3f} [-]", file=out)
         print("-------------------------------------------------------------------------", file=out)
-        print(f"[I] Tbar  (Volume-averaged ion temperature)         : {config.Tbar:.3f} [keV]",    file=out)
+        print(f"[I] Tbar  (Volume-averaged electron temperature Te)  : {config.Tbar:.3f} [keV]",    file=out)
+        print(f"[I] tau_i_e (Ion/electron temperature ratio Ti/Te)   : {config.tau_i_e:.3f} [-]",   file=out)
+        print(f"[O] Ti    (Volume-averaged ion temperature)          : {config.tau_i_e*config.Tbar:.3f} [keV]", file=out)
+        print(f"[{'I' if config.Zeff is not None else 'O'}] Z_eff (Effective charge, {'imposed' if config.Zeff is not None else 'computed from inventory+ash'}) : {_compute_Zeff_effective(config, f_alpha):.3f} [-]", file=out)
         print(f"[O] nbar  (Volume-averaged electron density)        : {nbar:.3f} [10²⁰ m⁻³]",     file=out)
         print(f"[O] nbar_line (Line-averaged electron density)      : {nbar_line:.3f} [10²⁰ m⁻³]", file=out)
         print(f"[O] nG    (Greenwald density limit)                 : {nG:.3f} [10²⁰ m⁻³]",       file=out)
@@ -2443,7 +2572,7 @@ def save_run_output(config: GlobalConfig,
             # config.q_profile_mode), passed through the results tuple.
             RE = compute_RE_indicators(
                 Ip=Ip, nbar=nbar, Tbar=config.Tbar,
-                a=config.a, R0=config.R0, κ=κ, Z_eff=config.Zeff, li=li_sc,
+                a=config.a, R0=config.R0, κ=κ, Z_eff=_compute_Zeff_effective(config, f_alpha), li=li_sc,
                 nu_n=nu_n, nu_T=nu_T,
                 rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
                 Te_final_eV=config.Te_final_eV, tau_TQ=config.tau_TQ,
@@ -2646,7 +2775,7 @@ def _generate_run_figures(config: GlobalConfig, results: tuple,
                 config.R0, config.a,
                 run_dict.get("B0", config.Bmax_TF),
                 run_dict.get("kappa_edge", 1.7), run_dict.get("nbar", 1.0),
-                config.Tbar, config.Zeff,
+                config.Tbar, _compute_Zeff_effective(config, run_dict.get("f_He", 0.0)),
                 run_dict["nu_n"], run_dict["nu_T"],
                 trapped_fraction_model=config.trapped_fraction_model,
                 eta_model=config.eta_model,
@@ -2655,7 +2784,8 @@ def _generate_run_figures(config: GlobalConfig, results: tuple,
                 T_ped_frac=run_dict["T_ped_frac"],
                 Vprime_data=run_dict.get("Vprime_data"),
                 rho_CD=config.rho_EC, delta_CD=0.15,
-                n_rho=120, max_iter=15, tol=1e-3, damping=0.5)
+                n_rho=120, max_iter=15, tol=1e-3, damping=0.5,
+                tau_i_e=config.tau_i_e)
         run_dict["_q_sc"]        = _q_sc
     except Exception as _e:
         if verbose >= 1:
