@@ -395,7 +395,10 @@ def _summarize_cloud_per_gen(ga_cloud):
 
 def compute_stability_penalty(nbar_line, nG, betaT, betaN, q_kink,
                                q_min=DEFAULT_CONFIG.q_limit,
+                               betaN_limit=DEFAULT_CONFIG.betaN_limit,
+                               Ip=None, Ip_limit=None,
                                penalty_step=2.0,
+                               penalty_lin=10.0,
                                penalty_slope=20.0,
                                margin_width=0.05,
                                margin_amplitude=0.15):
@@ -425,12 +428,12 @@ def compute_stability_penalty(nbar_line, nG, betaT, betaN, q_kink,
        fitness is multiplied by 1.15 (a 15% cost surcharge).
        At 5% margin, penalty → 0 (no surcharge).
 
-    penalty_per_constraint (violation)  = penalty_step + penalty_slope × excess²
+    penalty_per_constraint (violation)  = penalty_step + penalty_lin × excess + penalty_slope × excess²
     penalty_per_constraint (margin zone) = margin_amplitude × (1 − margin)³
 
     Examples (per constraint, violation side):
       At boundary (ε → 0⁺):  2.0             → multiplier ≈ 3.0
-      At 10% excess:         2.0 + 0.2 = 2.2 → multiplier ≈ 3.2
+      At 10% excess:         2.0 + 1.0 + 0.2 = 3.2 → multiplier ≈ 4.2
 
     Examples (per constraint, margin zone):
       At 0% margin (just feasible):  0.15     → multiplier ≈ 1.15
@@ -456,6 +459,11 @@ def compute_stability_penalty(nbar_line, nG, betaT, betaN, q_kink,
     penalty_step : float
         Discontinuity cost at the stability boundary.  A value of 2.0
         means the fitness is multiplied by ≥ 3 for any violation.
+    penalty_lin : float
+        Linear growth coefficient beyond the boundary.  Provides a non-zero
+        slope AT the boundary so a barely-infeasible design is pulled back to
+        the limit; must exceed ~3x the cost elasticity to remove the infeasible
+        local minimum.
     penalty_slope : float
         Quadratic growth coefficient beyond the boundary.
     margin_width : float
@@ -471,7 +479,7 @@ def compute_stability_penalty(nbar_line, nG, betaT, betaN, q_kink,
         density_ratio = nbar_line / nG
         if density_ratio > 1.0:
             excess = density_ratio - 1.0
-            penalty = penalty_step + penalty_slope * excess ** 2
+            penalty = penalty_step + penalty_lin * excess + penalty_slope * excess ** 2
             penalty_terms.append(penalty)
             violations['density'] = {
                 'value': float(nbar_line), 'limit': float(nG),
@@ -481,26 +489,40 @@ def compute_stability_penalty(nbar_line, nG, betaT, betaN, q_kink,
             margin_used = (density_ratio - (1.0 - margin_width)) / margin_width
             penalty_terms.append(margin_amplitude * margin_used ** 3)
     
-    # Beta limit: betaT (in %) < betaN (in %)
-    betaT_percent = betaT * 100
-    if betaN > 0:
-        beta_ratio = betaT_percent / betaN
+    # Troyon beta limit: normalised beta_N must stay below betaN_limit
+    if betaN_limit > 0:
+        beta_ratio = betaN / betaN_limit
         if beta_ratio > 1.0:
             excess = beta_ratio - 1.0
-            penalty = penalty_step + penalty_slope * excess ** 2
+            penalty = penalty_step + penalty_lin * excess + penalty_slope * excess ** 2
             penalty_terms.append(penalty)
             violations['beta'] = {
-                'value': float(betaT_percent), 'limit': float(betaN),
+                'value': float(betaN), 'limit': float(betaN_limit),
                 'ratio': float(beta_ratio)
             }
         elif beta_ratio > (1.0 - margin_width):
             margin_used = (beta_ratio - (1.0 - margin_width)) / margin_width
             penalty_terms.append(margin_amplitude * margin_used ** 3)
     
+    # Plasma-current ceiling: Ip must stay below Ip_limit (disruption headroom)
+    if Ip is not None and isinstance(Ip_limit, (int, float)) and Ip_limit > 0:
+        ip_ratio = Ip / Ip_limit
+        if ip_ratio > 1.0:
+            excess = ip_ratio - 1.0
+            penalty = penalty_step + penalty_lin * excess + penalty_slope * excess ** 2
+            penalty_terms.append(penalty)
+            violations['Ip'] = {
+                'value': float(Ip), 'limit': float(Ip_limit),
+                'ratio': float(ip_ratio)
+            }
+        elif ip_ratio > (1.0 - margin_width):
+            margin_used = (ip_ratio - (1.0 - margin_width)) / margin_width
+            penalty_terms.append(margin_amplitude * margin_used ** 3)
+    
     # Kink safety factor: q_kink > q_min  (q_kink = q* or q95)
     if q_kink < q_min:
         deficit = (q_min - q_kink) / q_min
-        penalty = penalty_step + penalty_slope * deficit ** 2
+        penalty = penalty_step + penalty_lin * deficit + penalty_slope * deficit ** 2
         penalty_terms.append(penalty)
         violations['q_kink'] = {
             'value': float(q_kink), 'limit': float(q_min),
@@ -609,6 +631,7 @@ def evaluate_individual(individual, verbose=False):
         R0_abcd   = _safe_real(output[_IDX['r_d']])
         c_TF      = _safe_real(output[_IDX['c']])
         d_CS      = _safe_real(output[_IDX['d']])
+        Ip        = _safe_real(output[_IDX['Ip']])
 
         # Select kink parameter (q* or q95) for stability checks.
         _kink_param = static_inputs.get('kink_parameter', DEFAULT_CONFIG.kink_parameter)
@@ -628,7 +651,9 @@ def evaluate_individual(individual, verbose=False):
         q_lim = static_inputs.get('q_limit', DEFAULT_CONFIG.q_limit)
         is_stable, penalty_multiplier, violations = compute_stability_penalty(
             nbar_line, nG, betaT, betaN, q_kink,
-            q_min=q_lim
+            q_min=q_lim,
+            betaN_limit=static_inputs.get('betaN_limit', DEFAULT_CONFIG.betaN_limit),
+            Ip=Ip, Ip_limit=static_inputs.get('Ip_limit', DEFAULT_CONFIG.Ip_limit)
         )
 
         # ── Compute fitness value based on selected objective ────────────
@@ -2602,11 +2627,11 @@ def run_genetic_optimization(input_file,
 
     # Check stability (using line-averaged density for Greenwald comparison)
     q_lim = static_inputs.get('q_limit', DEFAULT_CONFIG.q_limit)
+    betaN_lim = static_inputs.get('betaN_limit', DEFAULT_CONFIG.betaN_limit)
+    Ip_lim = static_inputs.get('Ip_limit', DEFAULT_CONFIG.Ip_limit)
     is_stable, _, violations = compute_stability_penalty(
-        nbar_line, nG, betaT, betaN, q_kink, q_min=q_lim)
-    
-    # betaT is fraction, convert to % for display
-    betaT_percent = betaT * 100
+        nbar_line, nG, betaT, betaN, q_kink, q_min=q_lim, betaN_limit=betaN_lim,
+        Ip=Ip, Ip_limit=Ip_lim)
 
     # Compute Sheffield COE for the best design (regardless of objective)
     _COE_best = np.nan
@@ -2650,7 +2675,9 @@ def run_genetic_optimization(input_file,
     print(f"    Ip:                         {Ip:.2f} MA")
     print(f"    P_elec:                     {P_elec:.1f} MW")
     print(f"    n_line/nG: {nbar_line/nG:.3f} ({(1-nbar_line/nG)*100:+.1f}% margin)")
-    print(f"    betaT/betaN: {betaT_percent/betaN:.3f} ({(1-betaT_percent/betaN)*100:+.1f}% margin)")
+    print(f"    betaN/betaN_limit: {betaN/betaN_lim:.3f} ({(1-betaN/betaN_lim)*100:+.1f}% margin)")
+    if Ip_lim is not None:
+        print(f"    Ip/Ip_limit: {Ip/Ip_lim:.3f} ({(1-Ip/Ip_lim)*100:+.1f}% margin)")
     q_lim = static_inputs.get('q_limit', DEFAULT_CONFIG.q_limit)
     print(f"    {_q_label}/q_limit: {q_kink/q_lim:.3f} ({(q_kink/q_lim-1)*100:+.1f}% margin)")
     print(f"    c_TF: {c_TF:.3f} m   d_CS: {d_CS:.3f} m   r_d: {r_d:.3f} m")
@@ -2764,7 +2791,8 @@ def run_genetic_optimization(input_file,
             "n_line_over_nG": to_serializable(nbar_line/nG),
             "q_kink_over_qlim": to_serializable(q_kink/q_lim),
             "kink_parameter": _kink_param,
-            "betaT_over_betaN": to_serializable(betaT_percent/betaN) if betaN > 0 else None
+            "betaN_over_betaN_limit": to_serializable(betaN/betaN_lim) if betaN_lim > 0 else None,
+            "Ip_over_Ip_limit": to_serializable(Ip/Ip_lim) if Ip_lim is not None else None
         },
         "radial_build": {
             "c_TF_m": to_serializable(c_TF),

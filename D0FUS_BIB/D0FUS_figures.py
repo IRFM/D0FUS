@@ -60,6 +60,7 @@ if __name__ != "__main__":
         f_CS_ACAD, f_CS_refined, f_CS_CIRCE,
         F_CIRCE0D, compute_von_mises_stress,
         calculate_E_mag_TF,
+        Number_TF_coils,
     )
     from .D0FUS_parameterization import DEFAULT_CONFIG, E_ELEM
 
@@ -90,6 +91,7 @@ else:
         f_CS_ACAD, f_CS_refined, f_CS_CIRCE,
         F_CIRCE0D, compute_von_mises_stress,
         calculate_E_mag_TF,
+        Number_TF_coils,
     )
     from D0FUS_BIB.D0FUS_parameterization import DEFAULT_CONFIG, E_ELEM
 
@@ -4277,6 +4279,193 @@ def plot_CICC_cross_section(
 # =============================================================================
 # Stand-alone execution — smoke test
 # =============================================================================
+
+
+# =============================================================================
+# 7. TF coil number - ripple and port-access constraints
+# =============================================================================
+
+# D0FUS-consistent palette (matches the hex codes used elsewhere in this file)
+_RIP_C_PLASMA = "#f4a582"   # plasma fill
+_RIP_C_COIL   = "#2166ac"   # TF coil footprint
+_RIP_C_ACCESS = "#4dac26"   # maintenance / heating access sector
+
+
+def plot_tf_ripple(
+    R0: float = 6.2,
+    a: float = 2.0,
+    b: float = 1.2,
+    ripple_adm: float = 0.01,
+    L_min: float = 3.6,
+    grid: int = 460,
+    save_dir: str | None = None,
+) -> None:
+    """
+    Top-view map of the toroidal field magnitude produced by the discrete TF
+    coils, illustrating the field ripple.
+
+    The coil number, ripple and outboard standoff (N_coil, ripple, Delta_ext)
+    are taken from the package routine ``Number_TF_coils`` so the figure stays
+    consistent with the D0FUS sizing.  Each coil is modelled as a pair of
+    infinite straight filaments (inner leg at R0 - a - b carrying +I, outer leg
+    at R0 + a + b + Delta_ext carrying -I, at the same toroidal angle); the field
+    magnitude |B| is evaluated on a Cartesian grid in the toroidal mid-plane.
+    The prefactor mu0*I/(2*pi) is dropped, so |B| is in arbitrary units.  The
+    iso-|B| contours scallop near the coils: that scalloping is the ripple.
+
+    Parameters
+    ----------
+    R0, a    : float   Major and minor radius [m].
+    b        : float   Aggregated inboard build (FW + blanket + shield + gaps) [m].
+    ripple_adm : float Admissible ripple fraction (default 1 %).
+    L_min    : float   Minimum toroidal access per coil [m] (default 3.6 m, the
+                       ITER-reproducing value; the manuscript also uses 3.0 m).
+    grid     : int     Number of grid points per axis for the field map.
+    save_dir : str or None
+
+    References
+    ----------
+    Wesson, Tokamaks, 4th ed., p.169 - ripple model.
+    Goldston & Rutherford, Introduction to Plasma Physics, IOP (1995), ch.14.
+    """
+    n_coil, ripple_sel, Delta_ext = Number_TF_coils(R0, a, b, ripple_adm, L_min)
+    R_in   = R0 - a - b
+    R_out  = R0 + a + b + Delta_ext
+    theta  = 2.0 * np.pi * np.arange(n_coil) / n_coil
+
+    # filament positions (inner + outer legs) and signed currents
+    fx = np.concatenate([R_in * np.cos(theta),  R_out * np.cos(theta)])
+    fy = np.concatenate([R_in * np.sin(theta),  R_out * np.sin(theta)])
+    cur = np.concatenate([np.ones(n_coil),      -np.ones(n_coil)])
+
+    # |B| on a Cartesian grid (loop over filaments to limit memory)
+    L = R_out + 0.7
+    gx = np.linspace(-L, L, grid)
+    X, Y = np.meshgrid(gx, gx)
+    Bx = np.zeros_like(X)
+    By = np.zeros_like(X)
+    dmin = np.full(X.shape, np.inf)
+    for xi, yi, ci in zip(fx, fy, cur):
+        dx = X - xi
+        dy = Y - yi
+        d2 = dx * dx + dy * dy
+        Bx += ci * (-dy) / d2
+        By += ci * (dx) / d2
+        dmin = np.minimum(dmin, np.sqrt(d2))
+    rr = np.sqrt(X ** 2 + Y ** 2)
+    Bmag = np.sqrt(Bx ** 2 + By ** 2)
+    # cap the colour scale to the plasma-region field, then hide near-wire
+    # spikes and the central column for legibility
+    vmax = np.percentile(Bmag[(rr > R0 - a) & (rr < R0 + a) & (dmin > 0.22)], 99)
+    Bmag = np.ma.array(Bmag, mask=(dmin < 0.22) | (rr < R0 - a))
+
+    th = np.linspace(0, 2 * np.pi, 400)
+    fig, ax = plt.subplots(figsize=(6.4, 5.9))
+    ax.set_aspect("equal")
+    pcm = ax.pcolormesh(X, Y, Bmag, shading="auto", cmap="magma", vmin=0, vmax=vmax)
+    ax.contour(X, Y, Bmag, levels=np.linspace(0.35 * vmax, vmax, 7),
+               colors="white", linewidths=0.45, alpha=0.55)
+    ax.add_patch(mpatches.Circle((0, 0), R0 - a, facecolor="0.75",
+                                 edgecolor="0.5", lw=0.8, zorder=4))
+    ax.text(0, 0, "central\ncolumn", ha="center", va="center", fontsize=8,
+            color="0.25", zorder=5)
+    ax.plot((R0 + a) * np.cos(th), (R0 + a) * np.sin(th), color="cyan",
+            lw=1.3, ls="--", alpha=0.9, zorder=4)
+    ax.plot(R_out * np.cos(th), R_out * np.sin(th), color="white", lw=0.7,
+            ls=":", alpha=0.5, zorder=4)
+    ax.plot(R_out * np.cos(theta), R_out * np.sin(theta), "o", color="white",
+            ms=5, mec="k", mew=0.5, zorder=5)
+    ax.text(0, (R0 + a) + 0.15, "plasma edge", color="cyan", fontsize=8,
+            ha="center", va="bottom", zorder=6)
+    ax.text(-L + 0.3, L - 0.5,
+            rf"$\delta_\mathrm{{ripple}} = {ripple_sel * 100:.2f}\,\%$",
+            color="white", fontsize=11, va="top")
+    ax.set_xlim(-L, L)
+    ax.set_ylim(-L, L)
+    ax.set_xlabel("x [m]", fontsize=12)
+    ax.set_ylabel("y [m]", fontsize=12)
+    ax.set_title(rf"Toroidal field magnitude, top view ($N_\mathrm{{coil}} = {n_coil}$)",
+                 fontsize=11)
+    fig.colorbar(pcm, ax=ax, shrink=0.85, label=r"$|B|$ (arb. units)")
+    plt.tight_layout()
+    _save_or_show(fig, save_dir, "tf_ripple")
+
+
+def plot_port_access(
+    R0: float = 6.2,
+    a: float = 2.0,
+    b: float = 1.2,
+    ripple_adm: float = 0.01,
+    L_min: float = 3.6,
+    save_dir: str | None = None,
+) -> None:
+    """
+    Clean top view of the tokamak showing the TF coils and the angular sectors
+    left free between them for maintenance and heating access.
+
+    The coil number and outboard standoff come from ``Number_TF_coils`` (same
+    call as plot_tf_ripple), so the layout matches the D0FUS sizing.
+
+    Parameters
+    ----------
+    R0, a, b   : float   Plasma geometry and aggregated inboard build [m].
+    ripple_adm : float   Admissible ripple fraction (for the N_coil selection).
+    L_min      : float   Minimum toroidal pitch per coil for maintenance [m].
+    save_dir   : str or None
+    """
+    n_coil, ripple_sel, Delta_ext = Number_TF_coils(R0, a, b, ripple_adm, L_min)
+    R_out = R0 + a + b + Delta_ext
+    theta_deg = np.degrees(2.0 * np.pi * np.arange(n_coil) / n_coil)
+    pitch = 360.0 / n_coil
+    coil_hw = 0.30 * pitch                         # illustrative coil half-width
+    band = (R_out + 0.6) - (R0 + a)
+
+    fig, ax = plt.subplots(figsize=(6.2, 6.0))
+    ax.set_aspect("equal")
+
+    # plasma annulus + central column
+    ax.add_patch(mpatches.Wedge((0, 0), R0 + a, 0, 360, width=2 * a,
+                                facecolor=_RIP_C_PLASMA, alpha=0.45, lw=0, zorder=1))
+    ax.add_patch(mpatches.Circle((0, 0), R0 - a, facecolor="0.85",
+                                 edgecolor="0.6", lw=0.8, zorder=2))
+    ax.text(0, 0, "central\ncolumn", ha="center", va="center", fontsize=8.5,
+            color="0.3", zorder=3)
+    ax.text(0, -R0, "plasma", ha="center", va="center", fontsize=9,
+            color="#9c4a2f", zorder=3,
+            bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.7))
+
+    # access corridors (gaps) and coil footprints
+    for t in theta_deg:
+        ax.add_patch(mpatches.Wedge((0, 0), R_out + 0.6, t + coil_hw,
+                                    t + pitch - coil_hw, width=band,
+                                    facecolor=_RIP_C_ACCESS, alpha=0.16, lw=0,
+                                    zorder=2))
+        ax.add_patch(mpatches.Wedge((0, 0), R_out + 0.6, t - coil_hw,
+                                    t + coil_hw, width=1.7,
+                                    facecolor=_RIP_C_COIL, edgecolor="none",
+                                    alpha=0.95, zorder=3))
+
+    # single neutral label on one access sector
+    tlab = theta_deg[0] + pitch / 2
+    r_lab = R0 + a + 0.9
+    ax.annotate("maintenance /\nheating access",
+                xy=(r_lab * np.cos(np.radians(tlab)), r_lab * np.sin(np.radians(tlab))),
+                xytext=(1.12 * R_out, 1.02 * R_out), fontsize=9, color="#2f6b16",
+                ha="left", arrowprops=dict(arrowstyle="->", color="#2f6b16", lw=1.0))
+
+    ax.plot([], [], color=_RIP_C_COIL, lw=6, label=rf"TF coils ($N = {n_coil}$)")
+    ax.plot([], [], color=_RIP_C_ACCESS, lw=6, alpha=0.4, label="access sectors")
+    lim = R_out + 1.6
+    ax.set_xlim(-lim, lim)
+    ax.set_ylim(-lim, lim)
+    ax.set_xlabel("x [m]", fontsize=12)
+    ax.set_ylabel("y [m]", fontsize=12)
+    ax.set_title(rf"TF coils and maintenance access, top view ($N_\mathrm{{coil}} = {n_coil}$)",
+                 fontsize=11)
+    ax.legend(fontsize=9, loc="upper left")
+    plt.tight_layout()
+    _save_or_show(fig, save_dir, "port_access")
+
 
 if __name__ == "__main__":
 

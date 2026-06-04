@@ -101,6 +101,7 @@ class GlobalConfig:
     tau_i_e : float = 1.0          # Ion-to-electron temperature ratio T_i/T_e [-]
                                    # 1.0 -> single-temperature plasma (T_i = T_e).
                                    # Prescribed: T_i(rho) = tau_i_e * T_e(rho),
+    H     : float = 1.0            # Confinement enhancement factor (H-factor) [-]
 
     # ── 2. Physics and operation ─────────────────────────────────────────────
     Operation_mode     : str   = 'Pulsed'       # 'Steady-State' or 'Pulsed'
@@ -171,6 +172,7 @@ class GlobalConfig:
     #   kink_parameter='q95'    → q_limit ≈ 3.0–3.5  (ITER/EU-DEMO practice)
     q_limit         : float = 3.0  # Kink safety factor threshold [-]
     Greenwald_limit : float = 1.0  # Greenwald density fraction limit [-]
+    Ip_limit        : float = None # Upper bound on plasma current [MA]; None = no ceiling (GA)
     ms              : float = 0.3  # Vertical stability margin parameter [-]
 
     # ── 4. Plasma composition ────────────────────────────────────────────────
