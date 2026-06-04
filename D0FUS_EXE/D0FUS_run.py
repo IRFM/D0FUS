@@ -20,7 +20,7 @@ from dataclasses import replace as dc_replace, asdict
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # D0FUS modules
-from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG
+from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG, coerce_input_value
 from D0FUS_BIB.D0FUS_radial_build_functions import *
 from D0FUS_BIB.D0FUS_physical_functions import *
 from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
@@ -130,24 +130,13 @@ def load_config_from_file(filepath: str,
                     print(f"  [scan]   {key} = {raw_val}  →  skipped (kept at default)")
                 continue
 
-            # Attempt boolean conversion FIRST. This must come before the
-            # float try because float('True') raises ValueError and the string
-            # would otherwise fall through and be stored as 'True' / 'False'
-            # — both Python-truthy non-empty strings. Downstream code that
-            # does `if not flag:` or `X if flag else Y` would then silently
-            # take the truthy branch in both cases. Two GlobalConfig bool
-            # fields are affected by this trap: TF_grading and pellet_dilution_cools
-            if raw_val in ('True', 'true'):
-                val = True
-            elif raw_val in ('False', 'false'):
-                val = False
-            else:
-                # Attempt numeric conversion; fall back to string
-                try:
-                    val = float(raw_val)
-                    val = int(val) if val.is_integer() else val
-                except ValueError:
-                    val = raw_val
+            # Coerce the raw token to the correct Python type for this
+            # GlobalConfig field via the shared helper (single source of
+            # truth across the run, genetic and scan loaders). A boolean
+            # field written as "False" therefore decodes to the bool False
+            # rather than the truthy string "False", and an optional field
+            # written as "None" decodes to the Python None.
+            val = coerce_input_value(key, raw_val)
 
             # Only accept keys that exist in GlobalConfig
             if key not in GlobalConfig.__dataclass_fields__:

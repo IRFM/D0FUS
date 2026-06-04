@@ -402,6 +402,91 @@ class GlobalConfig:
 # Module-level default instance — import and reuse rather than reinstantiating
 DEFAULT_CONFIG = GlobalConfig()
 
+# =============================================================================
+#  Shared input-deck value coercion
+# =============================================================================
+# Single source of truth for converting a raw "key = value" token read from a
+# text input deck into the correctly typed Python value for the matching
+# GlobalConfig field. The three loaders (load_config_from_file in D0FUS_run,
+# load_input_file in D0FUS_genetic, load_scan_parameters in D0FUS_scan) all call
+# this helper, so they can never again disagree on how a token is interpreted.
+#
+# The GlobalConfig field default acts as the type oracle:
+#   - boolean field  : "True"/"False" (any case, also 1/0/yes/no/on/off) -> bool
+#   - optional field : "None"/"null" -> None, otherwise a number
+#   - string field   : kept verbatim, so a string sentinel such as
+#                       cost_model = "None" is preserved instead of being
+#                       turned into the Python None
+#   - numeric field  : float, narrowed to int when integral
+# Keys that are not GlobalConfig fields (e.g. GA or scan hyperparameters) keep
+# the historical float-or-verbatim-string behaviour so their dedicated
+# downstream handling is left untouched.
+
+_CONFIG_FIELD_KINDS = None
+
+
+def _config_field_kinds():
+    """Build and cache a {field_name: kind} map from the GlobalConfig defaults."""
+    global _CONFIG_FIELD_KINDS
+    if _CONFIG_FIELD_KINDS is None:
+        from dataclasses import fields as _dc_fields
+        kinds = {}
+        for _f in _dc_fields(GlobalConfig):
+            _d = _f.default
+            if isinstance(_d, bool):
+                kinds[_f.name] = 'bool'
+            elif _d is None:
+                kinds[_f.name] = 'optional'
+            elif isinstance(_d, str):
+                kinds[_f.name] = 'str'
+            else:
+                kinds[_f.name] = 'numeric'
+        _CONFIG_FIELD_KINDS = kinds
+    return _CONFIG_FIELD_KINDS
+
+
+def coerce_input_value(key, raw_value):
+    """Coerce a raw input-deck token to the right type for GlobalConfig[key].
+
+    See the module comment above for the coercion rules. Already-typed (non
+    string) inputs are returned unchanged, so the function is safe to call on
+    values that have already been parsed.
+    """
+    if not isinstance(raw_value, str):
+        return raw_value
+
+    raw = raw_value.strip()
+    low = raw.lower()
+    kind = _config_field_kinds().get(key, 'numeric')
+
+    if kind == 'bool':
+        if low in ('true', '1', 'yes', 'on'):
+            return True
+        if low in ('false', '0', 'no', 'off'):
+            return False
+        return raw  # malformed boolean: keep visible rather than guess
+
+    if kind == 'optional':
+        if low in ('none', 'null', ''):
+            return None
+        try:
+            v = float(raw)
+            return int(v) if v.is_integer() else v
+        except ValueError:
+            return raw
+
+    if kind == 'str':
+        return raw  # preserve string sentinels (e.g. "None", "Sheffield")
+
+    # Numeric GlobalConfig field, or a non-config key (hyperparameter):
+    # historical float-or-verbatim-string behaviour.
+    try:
+        v = float(raw)
+        return int(v) if v.is_integer() else v
+    except ValueError:
+        return raw
+
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Two named presets are exposed as top-level factories.  They each return a

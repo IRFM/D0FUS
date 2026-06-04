@@ -157,7 +157,7 @@ from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  (registers '3d' projectio
 
 # Project-specific D0FUS imports (kept here because they describe this
 # module's direct dependencies inside the D0FUS source tree).
-from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG
+from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG, coerce_input_value
 from D0FUS_BIB.D0FUS_physical_functions import f_volume
 from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
 from D0FUS_BIB.D0FUS_cost_data import *
@@ -828,10 +828,11 @@ def load_input_file(input_file):
                 # (e.g. a user might have 'a = 3.0' before 'a = [2, 4]').
                 if key in opt_ranges:
                     continue
-                try:
-                    static_inputs[key] = float(value)
-                except ValueError:
-                    static_inputs[key] = value
+                # Type-aware coercion shared with the run / scan loaders, so
+                # a boolean such as "False" is not silently kept as the
+                # truthy string "False", and optional fields decode "None"
+                # to the Python None.
+                static_inputs[key] = coerce_input_value(key, value)
 
     # Fill defaults from GlobalConfig dataclass fields
     for field_name, default_val in default_dict.items():
