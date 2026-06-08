@@ -4018,8 +4018,11 @@ def build_conductor_from_run(run: dict, coil: str = "TF") -> dict:
     f_In    = run.get(f"f_In_{coil}", np.nan)
     sc_type = run.get("Supra_choice", "Nb3Sn")
 
-    # Steel asymmetry parameter: n = δ_S1/δ_S2 (1 = square, 0 = optimal)
-    n_cond = float(run.get(f"n_{coil}", 1.0))
+    # Steel asymmetry parameter: n = δ_S1/δ_S2 (1 = square, 0 = optimal).
+    # The run dict stores this as ``n_shape_TF`` / ``n_shape_CS`` (see
+    # _build_run_dict). The previous key ``n_{coil}`` never matched, so the
+    # aspect ratio silently stayed at 1.0 (square) for every run.
+    n_cond = float(run.get(f"n_shape_{coil}", 1.0))
 
     # Guard: fall back to static dict if any fraction is NaN or unphysical
     fallback = _CONDUCTOR_TF if coil == "TF" else _CONDUCTOR_CS
@@ -4028,8 +4031,16 @@ def build_conductor_from_run(run: dict, coil: str = "TF") -> dict:
         return fallback
     if not all(0.0 <= f <= 1.0 for f in fracs):
         return fallback
-    wost_sum = f_sc + f_cu + f_pipe + f_void + f_In
-    if abs(wost_sum - 1.0) > 0.05:
+
+    # The wost (non-steel) region is split into SIX area fractions that sum to
+    # one:  f_sc + f_cu + f_He_pipe + f_void + f_In + f_gap = 1.  The run dict
+    # only stores the first five; the sixth, f_gap (manufacturing / wrap gaps,
+    # passed to calculate_cable_current_density but not forwarded), is recovered
+    # here as the residual.  Earlier code summed only the five stored fractions
+    # and required the total to equal 1, so any deck with f_gap > 0 (the default
+    # 0.15) failed the check and silently reverted to the static Nb3Sn fallback.
+    f_gap = 1.0 - (f_sc + f_cu + f_pipe + f_void + f_In)
+    if not (-0.05 <= f_gap <= 1.0):
         return fallback
 
     # ── Jacket aspect ratio from δ_S1/δ_S2 geometry ──
@@ -4042,15 +4053,20 @@ def build_conductor_from_run(run: dict, coil: str = "TF") -> dict:
     # f_cable_total = wost_frac - f_insulation_total  (derived)
 
     # ── Level 2: renormalise wost fractions to cable-space ──
-    # cable-space = wost minus insulation → fraction of wost = (1 - f_In)
+    # cable-space = wost minus insulation → fraction of wost = (1 - f_In).
+    # f_gap is empty (non-conducting) area, so it is merged into the He void,
+    # which is rendered as the light-blue cable-space background.  This keeps
+    # the four Level-2 fractions summing to exactly one:
+    #   f_SC + f_Cu + f_He_pipe + f_void = 1
     f_cable_wost = 1.0 - f_In
     if f_cable_wost < 1e-6:
         return fallback
 
-    f_SC_cable      = f_sc   / f_cable_wost
-    f_Cu_cable      = f_cu   / f_cable_wost
-    f_He_pipe_cable = f_pipe / f_cable_wost
-    f_void_cable    = f_void / f_cable_wost
+    f_void_eff      = f_void + max(f_gap, 0.0)
+    f_SC_cable      = f_sc      / f_cable_wost
+    f_Cu_cable      = f_cu      / f_cable_wost
+    f_He_pipe_cable = f_pipe    / f_cable_wost
+    f_void_cable    = f_void_eff / f_cable_wost
 
     # Cu_nonCu = 0: each strand is rendered as either pure SC or pure Cu.
     # The correct visual ratio is already ensured by f_SC_cable / f_Cu_cable
@@ -4690,7 +4706,7 @@ def fig_margins(results, save_dir=None):
 # =============================================================================
 # Figure 3 -- one-parameter feasibility scan (Monte-Carlo at each value)
 # =============================================================================
-def scan_feasibility(uq_file, scan_specs, n_samples=200, n_jobs=-1, combo=None, seed=0):
+def scan_feasibility(uq_file, scan_specs, n_samples=200, n_jobs=-1, combo=None, seed=0, verbose=10):
     """
     Sweep each design parameter and run a Monte-Carlo over all the other uncertain
     inputs at every value. A common LHS sample is reused across a parameter's scan
@@ -4719,7 +4735,11 @@ def scan_feasibility(uq_file, scan_specs, n_samples=200, n_jobs=-1, combo=None, 
             for i in range(n_samples):
                 tasks.append((deck_path, names, X[i], {**combo, p: x}))
 
-    rows = Parallel(n_jobs=n_jobs, verbose=0)(delayed(UQ._uq_worker)(*t) for t in tasks)
+    # Single tqdm bar in place of joblib's per-batch log lines. return_as
+    # 'generator' keeps submission order so the per-parameter slicing below holds.
+    _gen = Parallel(n_jobs=n_jobs, return_as="generator")(delayed(UQ._uq_worker)(*t) for t in tasks)
+    rows = list(tqdm(_gen, total=len(tasks), desc="Feasibility scan",
+                     unit="run", disable=(verbose == 0)))
 
     out, idx = {}, 0
     for p, (xs, nom) in grids.items():

@@ -25,22 +25,36 @@ Building blocks:
 Feasibility mirrors D0FUS_scan / D0FUS_genetic (Greenwald, Troyon, kink and
 radial-build closure) so "feasible" means exactly what the optimiser means.
 """
-import os
-import re
-import shutil
-import tempfile
-import itertools
-from datetime import datetime
-from dataclasses import replace as dc_replace
-from collections import Counter
+#%% Imports
 
-import numpy as np
+# Centralised imports: D0FUS_BIB/D0FUS_import.py exports all standard, scientific
+# and plotting names (os, re, shutil, datetime, numpy, dataclasses replace/asdict,
+# tqdm, ...). Path resolution mirrors the other EXE modules: D0FUS.py inserts the
+# project root in sys.path in normal usage; the fallback covers a standalone run
+# of this module.
+try:
+    from D0FUS_BIB.D0FUS_import import *
+except ModuleNotFoundError:
+    import sys, os
+    _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _project_root not in sys.path:
+        sys.path.insert(0, _project_root)
+    from D0FUS_BIB.D0FUS_import import *
+
+# --- Supplementary imports not (yet) exported by D0FUS_import.py -------------
+import itertools
+import tempfile
+from collections import Counter
 from scipy import stats
 from scipy.stats import qmc
 
+# --- Project-specific D0FUS dependencies -------------------------------------
 from D0FUS_EXE import D0FUS_run as RUN
 from D0FUS_BIB.D0FUS_physical_functions import f_volume
 from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
+
+# Backwards-compatible alias for dataclasses.replace, used throughout the module.
+dc_replace = replace
 
 
 # --- default uncertain set, documented as (family, *params); the file front end
@@ -459,8 +473,13 @@ def run_uq_from_file(path, n_override=None, n_jobs=-1, verbose=5):
 
     # Flatten (combo, sample) into one task list for balanced core utilisation.
     flat = [(combo, X[i]) for combo in combos for i in range(n)]
-    out = Parallel(n_jobs=n_jobs, verbose=verbose)(
+    # One updating tqdm bar instead of joblib's per-batch log lines. return_as
+    # 'generator' preserves submission order, so the index-based slicing below
+    # that maps results back to each model combo stays valid.
+    _gen = Parallel(n_jobs=n_jobs, return_as="generator")(
         delayed(_uq_worker)(deck_path, names, row, combo) for combo, row in flat)
+    out = list(tqdm(_gen, total=len(flat), desc="UQ Monte-Carlo",
+                    unit="run", disable=(verbose == 0)))
 
     results = {}
     for c_idx, combo in enumerate(combos):
@@ -535,7 +554,7 @@ def _write_summary(path, input_file, results, controls, scans=None):
 
 
 def main(input_file, save_figures=True, output_dir=None, n_override=None,
-         scan=True, scan_npts=11, scan_n=100, scan_frac=0.4, n_jobs=-1):
+         scan=True, scan_npts=11, scan_n=40, scan_frac=0.4, n_jobs=-1):
     """
     Run the full uncertainty study for an input file. Like the RUN / SCAN / GENETIC
     modes, it writes a timestamped folder under D0FUS_OUTPUTS/uncertainty/ containing a
@@ -577,6 +596,11 @@ def main(input_file, save_figures=True, output_dir=None, n_override=None,
                 if hasattr(base, p):
                     nomv = float(getattr(base, p))
                     specs[p] = (nomv * (1 - scan_frac), nomv * (1 + scan_frac), scan_npts)
+            # Report the scan workload up front: this single Parallel pass over
+            # (parameter, point, sample) tasks is the longest step of the UQ study.
+            n_scan = sum(s[2] + 1 for s in specs.values()) * scan_n
+            print(f"  Parameter feasibility scan: {len(specs)} params, ~{n_scan} runs "
+                  f"(longest step; progress bar follows)...", flush=True)
             scans = FIG.scan_feasibility(input_file, specs, n_samples=scan_n, n_jobs=n_jobs)
             FIG.fig_scan(scans, save_dir=fig_dir)
 

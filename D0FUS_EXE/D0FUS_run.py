@@ -2520,7 +2520,9 @@ def save_run_output(config: GlobalConfig,
         print(f"[{'I' if config.Zeff is not None else 'O'}] Z_eff (Effective charge, {'imposed' if config.Zeff is not None else 'computed from inventory+ash'}) : {_compute_Zeff_effective(config, f_alpha):.3f} [-]", file=out)
         print(f"[O] nbar  (Volume-averaged electron density)        : {nbar:.3f} [10²⁰ m⁻³]",     file=out)
         print(f"[O] nbar_line (Line-averaged electron density)      : {nbar_line:.3f} [10²⁰ m⁻³]", file=out)
-        print(f"[O] nG    (Greenwald density limit)                 : {nG:.3f} [10²⁰ m⁻³]",       file=out)
+        # nG from the results tuple is the limit-scaled value (Ip/πa² × Greenwald_limit);
+        # recompute the physical Greenwald density Ip/πa² for display.
+        print(f"[O] nG    (Greenwald density, Ip/πa²)               : {f_nG(Ip, config.a):.3f} [10²⁰ m⁻³]", file=out)
         print(f"[O] f_GW  (Greenwald fraction, nbar_line/(Ip/πa²))  : {nbar_line/(nG/config.Greenwald_limit):.3f} [-]",  file=out)
         print(f"[O] f_GW / f_GW_limit                               : {nbar_line/nG:.3f} [-]",     file=out)
         print(f"[O] pbar  (Volume-averaged pressure)                : {pbar:.3f} [MPa]",            file=out)
