@@ -20,7 +20,7 @@ sys.path.insert(0, project_root)
 
 # Import all necessary modules
 from D0FUS_BIB.D0FUS_parameterization import *
-from D0FUS_EXE import D0FUS_scan, D0FUS_run, D0FUS_genetic
+from D0FUS_EXE import D0FUS_scan, D0FUS_run, D0FUS_genetic, D0FUS_uncertainty
 
 #%% Mode detection
 
@@ -40,6 +40,15 @@ def detect_mode_from_input(input_file):
     
     with open(input_file, 'r', encoding='utf-8') as f:
         content = f.read()
+    
+    # UNCERTAINTY mode: an [UNCERTAINTY] section, or any tri()/norm()/unif()/envelope()
+    # marginal. Checked first so that optional map axes (a = [min, max, n]) do not make
+    # the file look like a SCAN.
+    if (re.search(r'^\s*\[\s*uncertainty\s*\]', content, re.MULTILINE | re.IGNORECASE)
+            or re.search(r'=\s*(tri|norm|unif|envelope)\s*\(', content, re.IGNORECASE)):
+        n_uncertain = len(re.findall(r'^\s*\w+\s*=\s*(?:tri|norm|unif|envelope)\s*\(',
+                                     content, re.MULTILINE | re.IGNORECASE))
+        return 'uncertainty', n_uncertain
     
     # Extract genetic algorithm parameters if present
     genetic_params = {}
@@ -239,11 +248,18 @@ Modes (detected automatically from input file format):
                        crossover_rate = 0.7     (default: 0.7)
                        mutation_rate = 0.2      (default: 0.2)
 
+    UNCERTAINTY mode:  Monte-Carlo robustness study around one design point
+                       An [UNCERTAINTY] section listing parameter ranges
+                       Example: H = tri(0.75, 1.5)
+                                betaN_limit = tri(2.8, 3.6)
+                                Scaling_Law = envelope(IPB98(y,2) | ITPA20)
+
 Detection rules:
     • [min, max] format (2 values) → OPTIMIZATION (need 2+ parameters)
     • [min, max, n] format (3 values) → SCAN (need exactly 2 parameters)
-    • No brackets → RUN
-    • Cannot mix formats in same file
+    • [UNCERTAINTY] section or tri()/norm()/unif()/envelope() → UNCERTAINTY
+    • No brackets (and no [UNCERTAINTY] section) → RUN
+    • Cannot mix scan and optimization formats in same file
 
 For help:
     python D0FUS.py --help
@@ -283,6 +299,9 @@ def select_input_file():
                 opt_params, genetic_params = params
                 param_names = list(opt_params.keys())
                 mode_str = f"GENETIC ({len(param_names)} params)"
+            elif mode == 'uncertainty':
+                mode_str = (f"UNCERTAINTY ({params} params)" if params
+                            else "UNCERTAINTY (Monte-Carlo)")
             else:
                 mode_str = "RUN"
             print(f"  {i}. {file.name:<30} [{mode_str}]")
@@ -389,6 +408,15 @@ def execute_with_mode_detection(input_file):
             
             # Run genetic optimization with specified or default parameters
             D0FUS_genetic.run_genetic_optimization(input_file, **ga_params)
+        
+        elif mode == 'uncertainty':
+            # UNCERTAINTY mode detected (Monte-Carlo robustness study)
+            print("\n" + "="*60)
+            print("Mode: UNCERTAINTY (Monte-Carlo robustness study)")
+            print(f"Input: {os.path.basename(input_file)}")
+            print("="*60 + "\n")
+            
+            D0FUS_uncertainty.main(input_file, save_figures=True)
     
     except ValueError as e:
         # Invalid number of brackets or parsing error

@@ -5857,7 +5857,7 @@ def f_heat_pol(R0, B0, P_sep, a, q95):
     M. Siccinio et al., Nuclear Fusion 59 (2019) 106026.
     """
     A = R0 / a
-    return (P_sep * B0) / (q95 * A * R0**2)
+    return (P_sep * B0) / (q95 * A * R0)
 
 
 def f_heat_PFU_Eich(P_sol, B_pol, R, eps, theta_deg):
