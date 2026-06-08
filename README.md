@@ -6,6 +6,14 @@
 
 # D0FUS
 
+<p align="center">
+  <img src="docs/figures/d0fus_capabilities_banner.png" alt="D0FUS capabilities" width="100%">
+</p>
+
+<p align="center">
+  <sub>Top: plasma geometry (Miller surfaces), kinetic profiles, safety factor, radiative cooling, and fusion reactivity. Bottom: radial build, superconductor critical current, TF and CS coil cross-sections, CICC conductors, and a multi-machine comparison.</sub>
+</p>
+
 **D0FUS** (Design 0-dimensional for Fusion Systems) is a Python tokamak systems code for fast 0D/1D design-space exploration, covering plasma physics, superconducting magnet engineering, and techno-economic assessment. It is developed at CEA-IRFM.
 
 The codebase weighs about 18 000 lines of pure Python distributed across five functional modules and a visualisation library, totalling 236 documented functions.
