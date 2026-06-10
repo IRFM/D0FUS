@@ -4018,8 +4018,11 @@ def build_conductor_from_run(run: dict, coil: str = "TF") -> dict:
     f_In    = run.get(f"f_In_{coil}", np.nan)
     sc_type = run.get("Supra_choice", "Nb3Sn")
 
-    # Steel asymmetry parameter: n = δ_S1/δ_S2 (1 = square, 0 = optimal)
-    n_cond = float(run.get(f"n_{coil}", 1.0))
+    # Steel asymmetry parameter: n = δ_S1/δ_S2 (1 = square, 0 = optimal).
+    # The run dict stores this as ``n_shape_TF`` / ``n_shape_CS`` (see
+    # _build_run_dict). The previous key ``n_{coil}`` never matched, so the
+    # aspect ratio silently stayed at 1.0 (square) for every run.
+    n_cond = float(run.get(f"n_shape_{coil}", 1.0))
 
     # Guard: fall back to static dict if any fraction is NaN or unphysical
     fallback = _CONDUCTOR_TF if coil == "TF" else _CONDUCTOR_CS
@@ -4028,8 +4031,16 @@ def build_conductor_from_run(run: dict, coil: str = "TF") -> dict:
         return fallback
     if not all(0.0 <= f <= 1.0 for f in fracs):
         return fallback
-    wost_sum = f_sc + f_cu + f_pipe + f_void + f_In
-    if abs(wost_sum - 1.0) > 0.05:
+
+    # The wost (non-steel) region is split into SIX area fractions that sum to
+    # one:  f_sc + f_cu + f_He_pipe + f_void + f_In + f_gap = 1.  The run dict
+    # only stores the first five; the sixth, f_gap (manufacturing / wrap gaps,
+    # passed to calculate_cable_current_density but not forwarded), is recovered
+    # here as the residual.  Earlier code summed only the five stored fractions
+    # and required the total to equal 1, so any deck with f_gap > 0 (the default
+    # 0.15) failed the check and silently reverted to the static Nb3Sn fallback.
+    f_gap = 1.0 - (f_sc + f_cu + f_pipe + f_void + f_In)
+    if not (-0.05 <= f_gap <= 1.0):
         return fallback
 
     # ── Jacket aspect ratio from δ_S1/δ_S2 geometry ──
@@ -4042,15 +4053,20 @@ def build_conductor_from_run(run: dict, coil: str = "TF") -> dict:
     # f_cable_total = wost_frac - f_insulation_total  (derived)
 
     # ── Level 2: renormalise wost fractions to cable-space ──
-    # cable-space = wost minus insulation → fraction of wost = (1 - f_In)
+    # cable-space = wost minus insulation → fraction of wost = (1 - f_In).
+    # f_gap is empty (non-conducting) area, so it is merged into the He void,
+    # which is rendered as the light-blue cable-space background.  This keeps
+    # the four Level-2 fractions summing to exactly one:
+    #   f_SC + f_Cu + f_He_pipe + f_void = 1
     f_cable_wost = 1.0 - f_In
     if f_cable_wost < 1e-6:
         return fallback
 
-    f_SC_cable      = f_sc   / f_cable_wost
-    f_Cu_cable      = f_cu   / f_cable_wost
-    f_He_pipe_cable = f_pipe / f_cable_wost
-    f_void_cable    = f_void / f_cable_wost
+    f_void_eff      = f_void + max(f_gap, 0.0)
+    f_SC_cable      = f_sc      / f_cable_wost
+    f_Cu_cable      = f_cu      / f_cable_wost
+    f_He_pipe_cable = f_pipe    / f_cable_wost
+    f_void_cable    = f_void_eff / f_cable_wost
 
     # Cu_nonCu = 0: each strand is rendered as either pure SC or pure Cu.
     # The correct visual ratio is already ensured by f_SC_cable / f_Cu_cable
@@ -4529,3 +4545,303 @@ if __name__ == "__main__":
     }
 
     plot_all(ITER_RUN, save_dir=_out)
+# =============================================================================
+# UNCERTAINTY-MODE FIGURES
+# Appended to support the D0FUS UNCERTAINTY (Monte-Carlo) execution mode.
+# =============================================================================
+"""
+D0FUS_uncertainty_figures.py -- decision-oriented plots for the uncertainty study.
+
+Figures, in the D0FUS figure style (matplotlib, tab: palette, 150 dpi, tight box).
+Each figure carries a one-line plain-language reading note so it stands on its own:
+
+  - fig_robustness : single decomposition bar of the whole Monte-Carlo. Green is
+    feasible, coloured shares are infeasible cases split by the binding limit, grey
+    did not converge. P(feasible) is over ALL samples (a non-converging corner counts
+    as a failure).
+  - fig_margins : headroom to each plasma limit (P5/P50/P95 of the normalised margin).
+  - scan_feasibility + fig_scan : one-parameter feasibility scans with a traffic-light
+    background, so a glance places the design value in a safe / marginal / unlikely zone.
+  - fig_models : impact of the model-form choices (confinement scaling, elongation, ...)
+    on feasibility and on a key physics output, one row per model combination.
+"""
+import os
+from collections import Counter
+
+import numpy as np
+import matplotlib
+import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
+
+_GREEN, _AMBER, _RED = 'tab:green', 'tab:orange', 'tab:red'
+_BIND_COLOR = {'greenwald': 'tab:blue', 'troyon': 'tab:red',
+               'kink': 'tab:purple', 'build': 'tab:brown'}
+_BIND_LABEL = {'greenwald': 'Greenwald-limited', 'troyon': 'Troyon-limited',
+               'kink': 'kink-limited', 'build': 'build infeasible'}
+# nice axis names for the scan
+_NICE = {'P_fus': 'fusion power  $P_{fus}$', 'R0': 'major radius  $R_0$',
+         'a': 'minor radius  $a$', 'Tbar': r'temperature  $\langle T \rangle$'}
+_UNIT = {'P_fus': '[MW]', 'R0': '[m]', 'a': '[m]', 'Tbar': '[keV]'}
+
+
+def _save(fig, save_dir, fname):
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+        fig.savefig(os.path.join(save_dir, f"{fname}.png"), dpi=150, bbox_inches='tight')
+    return fig
+
+
+def _zone_color(p):
+    return _GREEN if p >= 85 else (_AMBER if p >= 60 else _RED)
+
+
+# =============================================================================
+# Figure 1 -- robustness verdict (single decomposition bar)
+# =============================================================================
+def fig_robustness(results, save_dir=None):
+    """Decompose the Monte-Carlo into feasible / per-limit infeasible / non-converged."""
+    all_rows = [r for k in results for r in results[k]]
+    n = max(len(all_rows), 1)
+    conv = [r for r in all_rows if r.get('converged')]
+    feas = [r for r in conv if r.get('feasible')]
+    n_noconv = len(all_rows) - len(conv)
+    binding = Counter(r.get('binding') for r in conv if not r.get('feasible'))
+
+    seg = [('feasible', len(feas), _GREEN)]
+    for c in ['greenwald', 'troyon', 'kink', 'build']:
+        if binding.get(c, 0):
+            seg.append((_BIND_LABEL[c], binding[c], _BIND_COLOR[c]))
+    if n_noconv:
+        seg.append(('did not converge', n_noconv, 'lightgray'))
+
+    fig, ax = plt.subplots(figsize=(11, 3.4))
+    left = 0.0
+    for label, count, col in seg:
+        w = 100.0 * count / n
+        ax.barh(0, w, left=left, color=col, edgecolor='white', height=0.5)
+        if w >= 4:
+            ax.text(left + w / 2, 0, f'{w:.0f}%', ha='center', va='center',
+                    fontsize=11, fontweight='bold',
+                    color='white' if col != 'lightgray' else 'black')
+        left += w
+
+    p_feas = 100.0 * len(feas) / n
+    verdict = ('LARGELY FEASIBLE' if p_feas >= 85 else
+               'MARGINAL' if p_feas >= 60 else 'AT RISK')
+    ax.set_xlim(0, 100)
+    ax.set_ylim(-0.5, 0.55)
+    ax.set_yticks([])
+    ax.set_xlabel('share of Monte-Carlo samples [%]', fontsize=12)
+    ax.set_title(f'Design robustness: {p_feas:.0f}% feasible over N = {n} samples'
+                 f'  --  verdict: {verdict}', fontsize=13, fontweight='bold')
+
+    # plain-language reading note
+    if binding:
+        top = max(binding, key=binding.get)
+        cause = _BIND_LABEL.get(top, top).replace('-limited', ' limit').replace(' infeasible', '')
+        note = f"about {p_feas:.0f} designs out of 100 stay within every limit; " \
+               f"the rest are mostly held back by the {cause}"
+    else:
+        note = f"about {p_feas:.0f} designs out of 100 stay within every limit"
+    if n_noconv:
+        note += "; grey = solver did not converge at extreme corners"
+    ax.annotate(note, xy=(0.5, -0.55), xycoords='axes fraction', ha='center',
+                fontsize=10, color='dimgray')
+
+    ax.legend(handles=[Patch(color=c, label=l) for l, _, c in seg],
+              fontsize=9, ncol=len(seg), loc='upper center',
+              bbox_to_anchor=(0.5, -0.55))
+    plt.tight_layout()
+    return _save(fig, save_dir, 'uq_robustness')
+
+
+# =============================================================================
+# Figure 2 -- headroom to each limit (margin spread)
+# =============================================================================
+def fig_margins(results, save_dir=None):
+    """P5/P50/P95 of the normalised margin to each continuous-margin limit."""
+    rows = [r for k in results for r in results[k] if r.get('converged')]
+    margins = {
+        'Greenwald':  [r.get('gw_margin', np.nan) for r in rows],
+        'Troyon':     [r.get('troyon_margin', np.nan) for r in rows],
+        'Kink (q95)': [r.get('kink_margin', np.nan) for r in rows],
+    }
+    ynames = list(margins)
+    y = np.arange(len(ynames))
+
+    fig, ax = plt.subplots(figsize=(9.5, 4.2))
+    # safe side shading (everything right of the limit)
+    ax.axvspan(0, 1.0, color=_GREEN, alpha=0.05)
+    for yi, name in zip(y, ynames):
+        a = np.array([v for v in margins[name] if np.isfinite(v)])
+        if a.size == 0:
+            continue
+        p5, p50, p95 = np.percentile(a, [5, 50, 95])
+        col = _RED if p5 < 0 else (_AMBER if p5 < 0.05 else _GREEN)
+        ax.plot([p5, p95], [yi, yi], color=col, lw=8, alpha=0.45, solid_capstyle='round')
+        ax.plot(p50, yi, 'o', color=col, ms=11)
+        ax.text(p95 + 0.015, yi, f'P50={p50:+.2f}', va='center', fontsize=9.5)
+    ax.axvline(0, color='k', lw=1.4)
+    ax.annotate('at the limit', xy=(0, len(ynames) - 0.45), fontsize=9,
+                color='k', ha='center', va='bottom')
+    ax.set_yticks(y)
+    ax.set_yticklabels(ynames, fontsize=12)
+    ax.set_ylim(-0.7, len(ynames) - 0.2)
+    ax.set_xlabel('headroom to the limit     (0 = at the limit, further right = safer)',
+                  fontsize=11)
+    ax.set_title('Headroom to each plasma limit under uncertainty',
+                 fontsize=13, fontweight='bold')
+    ax.legend(handles=[Patch(color=_GREEN, label='comfortable margin'),
+                       Patch(color=_AMBER, label='tight margin'),
+                       Patch(color=_RED, label='margin can reach the limit')],
+              fontsize=9, ncol=3, loc='upper center', bbox_to_anchor=(0.5, -0.26))
+    ax.annotate('bar = P5 to P95 over the Monte-Carlo; touching the line on the left '
+                'means that limit can be crossed',
+                xy=(0.5, -0.44), xycoords='axes fraction', ha='center',
+                fontsize=9.5, color='dimgray')
+    plt.tight_layout()
+    return _save(fig, save_dir, 'uq_margins')
+
+
+# =============================================================================
+# Figure 3 -- one-parameter feasibility scan (Monte-Carlo at each value)
+# =============================================================================
+def scan_feasibility(uq_file, scan_specs, n_samples=200, n_jobs=-1, combo=None, seed=0, verbose=10):
+    """
+    Sweep each design parameter and run a Monte-Carlo over all the other uncertain
+    inputs at every value. A common LHS sample is reused across a parameter's scan
+    points (common random numbers) so the curve is smooth. The whole scan is evaluated
+    in ONE parallel pass over all (parameter, point, sample) tasks, which avoids the
+    overhead of opening a separate worker pool at every scan point.
+
+    scan_specs : {param: (lo, hi, n_points)}
+    Returns    : {param: (x_values, P_feasible[%], design_value)}
+    """
+    from joblib import Parallel, delayed
+    from D0FUS_EXE import D0FUS_uncertainty as UQ
+
+    base, spec, envelope, controls, deck_path = UQ.parse_uq_file(uq_file)
+    combo = combo or {}
+
+    grids, tasks = {}, []
+    for p, (lo, hi, npts) in scan_specs.items():
+        reduced = {k: v for k, v in spec.items() if k != p}    # exclude the scanned input
+        names = list(reduced.keys())
+        _, X = UQ.sample_lhs(reduced, n_samples, seed=seed)
+        xs = np.unique(np.concatenate([np.linspace(lo, hi, npts),
+                                       [float(getattr(base, p))]]))   # design value on grid
+        grids[p] = (xs, float(getattr(base, p)))
+        for x in xs:
+            for i in range(n_samples):
+                tasks.append((deck_path, names, X[i], {**combo, p: x}))
+
+    # Single tqdm bar in place of joblib's per-batch log lines. return_as
+    # 'generator' keeps submission order so the per-parameter slicing below holds.
+    _gen = Parallel(n_jobs=n_jobs, return_as="generator")(delayed(UQ._uq_worker)(*t) for t in tasks)
+    rows = list(tqdm(_gen, total=len(tasks), desc="Feasibility scan",
+                     unit="run", disable=(verbose == 0)))
+
+    out, idx = {}, 0
+    for p, (xs, nom) in grids.items():
+        pf = []
+        for _ in xs:
+            chunk = rows[idx:idx + n_samples]
+            idx += n_samples
+            feas = [r for r in chunk if r.get('converged') and r.get('feasible')]
+            pf.append(100.0 * len(feas) / n_samples)           # over all samples
+        out[p] = (xs, np.array(pf), nom)
+    return out
+
+
+def fig_scan(scan_results, save_dir=None):
+    """Four-panel feasibility scan with a traffic-light background; a vertical band
+    marks the design value of each parameter."""
+    params = list(scan_results)
+    ncols = 2
+    nrows = int(np.ceil(len(params) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5.7 * ncols, 3.9 * nrows))
+    axes = np.atleast_1d(axes).ravel()
+
+    for ax, p in zip(axes, params):
+        xs, pf, nom = scan_results[p]
+        # traffic-light zones
+        ax.axhspan(85, 105, color=_GREEN, alpha=0.10)
+        ax.axhspan(60, 85, color=_AMBER, alpha=0.10)
+        ax.axhspan(0, 60, color=_RED, alpha=0.10)
+        ax.plot(xs, pf, '-o', color='black', lw=2, ms=3, zorder=4)
+        # vertical band marking the design value
+        ax.axvline(nom, color='0.15', ls='--', lw=1.6, zorder=5)
+        ax.text(nom, 50, ' design value ', rotation=90, va='center', ha='center',
+                fontsize=8.5, color='0.15', zorder=6,
+                bbox=dict(boxstyle='round,pad=0.15', fc='white', ec='0.6', alpha=0.85))
+        ax.set_xlabel(f"{_NICE.get(p, p)}  {_UNIT.get(p, '')}", fontsize=11)
+        ax.set_ylabel('chance of staying feasible [%]', fontsize=10)
+        ax.set_ylim(0, 105)
+        ax.set_xlim(xs.min(), xs.max())
+
+    for ax in axes[len(params):]:
+        ax.axis('off')
+
+    plt.suptitle('How feasibility responds to each design choice',
+                 fontsize=14, fontweight='bold')
+    fig.legend(handles=[Patch(color=_GREEN, alpha=0.35, label='safe (>= 85%)'),
+                        Patch(color=_AMBER, alpha=0.35, label='marginal (60-85%)'),
+                        Patch(color=_RED, alpha=0.35, label='unlikely (< 60%)')],
+               loc='lower center', ncol=3, fontsize=9, frameon=False,
+               bbox_to_anchor=(0.5, -0.02))
+    plt.tight_layout(rect=[0, 0.04, 1, 0.96])
+    return _save(fig, save_dir, 'uq_scan_feasibility')
+
+
+# =============================================================================
+# Figure 4 -- impact of the physics models (envelope combinations)
+# =============================================================================
+def fig_models(results, qoi='Q', save_dir=None):
+    """
+    How the model-form choices (confinement scaling law, elongation model, ...) move
+    feasibility. One row per model combination: a wide spread between rows means the
+    model assumptions matter, a tight spread means they do not. (qoi kept for backward
+    compatibility; no longer plotted.)
+    """
+    combos = [k for k in results if k != ('nominal',)]
+    if not combos:
+        return None                              # no model envelope in this study
+
+    def _label(key):
+        d = dict(key)
+        order = ['Scaling_Law', 'Option_Kappa', 'Bootstrap_choice']
+        vals = [str(d[k]) for k in order if k in d]
+        vals += [str(v) for k, v in key if k not in order]
+        return '  ·  '.join(vals)
+
+    labels, p_feas = [], []
+    for k in combos:
+        rws = results[k]
+        n = max(len(rws), 1)
+        feas = [r for r in rws if r.get('converged') and r.get('feasible')]
+        labels.append(_label(k))
+        p_feas.append(100.0 * len(feas) / n)
+
+    order = np.argsort(p_feas)                    # worst feasibility at the bottom
+    labels = [labels[i] for i in order]
+    p_feas = [p_feas[i] for i in order]
+    y = np.arange(len(labels))
+
+    fig, ax = plt.subplots(figsize=(10, 0.7 * len(labels) + 2.2))
+    grays = [str(max(0.25, 0.85 - 0.6 * p / 100.0)) for p in p_feas]   # darker = higher
+    ax.barh(y, p_feas, color=grays, edgecolor='black', lw=0.8)
+    for yi, p in zip(y, p_feas):
+        ax.text(min(p + 1.5, 97), yi, f'{p:.0f}%', va='center', fontsize=10)
+    ax.axvline(85, color='0.3', ls=':', lw=1)
+    ax.set_xlim(0, 105)
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels, fontsize=11)
+    ax.set_xlabel('probability of staying feasible [%]', fontsize=11)
+    ax.set_title('Impact of the physics models on feasibility',
+                 fontsize=13, fontweight='bold')
+    ax.annotate('each row is one model combination (confinement scaling · elongation); '
+                'the spread shows how much the model assumptions drive feasibility',
+                xy=(0.5, -0.30 if len(labels) <= 4 else -0.18), xycoords='axes fraction',
+                ha='center', fontsize=9.5, color='dimgray')
+    plt.tight_layout()
+    return _save(fig, save_dir, 'uq_models')

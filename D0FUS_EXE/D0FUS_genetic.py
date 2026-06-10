@@ -157,7 +157,7 @@ from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  (registers '3d' projectio
 
 # Project-specific D0FUS imports (kept here because they describe this
 # module's direct dependencies inside the D0FUS source tree).
-from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG
+from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG, coerce_input_value
 from D0FUS_BIB.D0FUS_physical_functions import f_volume
 from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
 from D0FUS_BIB.D0FUS_cost_data import *
@@ -318,6 +318,34 @@ current_run_directory = None
 
 PENALTY_VALUE = 1e6
 
+# ---------------------------------------------------------------------------
+# Feasibility-first (epsilon-relaxed Deb) ranking parameters.
+#
+# With a purely multiplicative penalty a cheap but constraint-violating design
+# can outrank an expensive but feasible one (a large enough cost advantage
+# overcomes any finite penalty factor). The banded fitness assembled in
+# evaluate_individual removes that failure mode: any design whose aggregate
+# relative violation does not exceed EPSILON ranks ahead of any design that
+# does (feasibility-first, Deb 2000), while still-infeasible designs are
+# ordered by their total relative violation (Deb's third rule) so the search
+# keeps a smooth gradient toward the feasible boundary. This is the opposite of
+# a flat PENALTY_VALUE wall: near-boundary "bridge" designs are preserved.
+#
+#   EPSILON : aggregate relative violation tolerated inside the acceptable band
+#             [-]. A design is pushed into the rejected band only once it
+#             exceeds a limit by MORE than this margin, so it is not rejected
+#             for an infinitesimal overshoot. Set to 0.0 for strict Deb.
+#   FLOOR   : fitness threshold (in objective units) at which the infeasible
+#             band starts. It must sit above the largest objective value any
+#             feasible design can take and below PENALTY_VALUE. The default,
+#             0.1 * PENALTY_VALUE, clears the COE, C_invest, R0 and volume
+#             objectives with a wide margin while staying below the sentinel.
+#   GAIN    : slope of the violation gradient inside the infeasible band [-].
+# ---------------------------------------------------------------------------
+DEFAULT_FEASIBILITY_EPSILON   = 0.02                 # tolerated aggregate violation [-]
+DEFAULT_INFEASIBLE_FLOOR      = 0.1 * PENALTY_VALUE  # infeasible band threshold (obj. units)
+DEFAULT_FEASIBILITY_BAND_GAIN = 1.0                  # in-band violation gradient slope [-]
+
 #%% DEAP Setup
 if not hasattr(creator, "FitnessMin"):
     creator.create("FitnessMin", base.Fitness, weights=(-1.0,))
@@ -393,6 +421,23 @@ def _summarize_cloud_per_gen(ga_cloud):
 
 #%% Constraint Handling
 
+def _opt_float(value):
+    """Coerce an optional numeric tuning input to ``float``, preserving ``None``.
+
+    Input-file values for keys that are not ``GlobalConfig`` fields can reach the
+    optimiser as plain strings (the parser only type-coerces known dataclass
+    fields). This maps a *set* value to ``float`` and leaves an *unset* value
+    (``None``) untouched, so the caller's strengthened default is used. Any value
+    that cannot be parsed as a real number degrades gracefully to ``None``.
+    """
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def compute_stability_penalty(nbar_line, nG, betaT, betaN, q_kink,
                                q_min=DEFAULT_CONFIG.q_limit,
                                betaN_limit=DEFAULT_CONFIG.betaN_limit,
@@ -401,9 +446,28 @@ def compute_stability_penalty(nbar_line, nG, betaT, betaN, q_kink,
                                penalty_lin=10.0,
                                penalty_slope=20.0,
                                margin_width=0.05,
-                               margin_amplitude=0.15):
+                               margin_amplitude=0.15,
+                               # Ip-specific (strengthened) penalty knobs. Left None here;
+                               # resolved to a strengthened multiple of the shared
+                               # coefficients in the body, and overridable per input deck.
+                               Ip_penalty_step=None,
+                               Ip_penalty_lin=None,
+                               Ip_penalty_slope=None,
+                               Ip_margin_width=None,
+                               Ip_margin_amplitude=None):
     """
     Step + quadratic penalty for stability violations.
+
+    Plasma-current overshoot (Ip > Ip_limit) is penalised with its OWN,
+    stronger coefficients (Ip_penalty_step / Ip_penalty_lin / Ip_penalty_slope,
+    defaulting to about 2 to 2.5 times the shared coefficients), so the GA
+    stops favouring slightly over-current designs and instead consolidates the
+    rare Ip-feasible ones. The penalty keeps the same smooth, finite,
+    gradient-preserving step+quadratic shape (it is never a hard kill), so
+    near-boundary infeasible designs survive in the gene pool as bridges toward
+    the feasible region. All five Ip knobs are overridable from the input deck
+    (e.g. ``Ip_penalty_step = 6.0``); calibrate them against a given machine's
+    cost-versus-current leverage with ``test_Ip_penalty.py``.
 
     Design philosophy
     -----------------
@@ -473,6 +537,16 @@ def compute_stability_penalty(nbar_line, nG, betaT, betaN, q_kink,
     """
     violations = {}
     penalty_terms = []
+
+    # Resolve the Ip-specific coefficients. When not provided explicitly they
+    # fall back to a strengthened multiple of the shared coefficients, which
+    # keeps a single tuning origin while making the current ceiling markedly
+    # harder to cross than the density, beta and kink limits.
+    Ip_penalty_step     = (2.0 * penalty_step)  if Ip_penalty_step     is None else Ip_penalty_step
+    Ip_penalty_lin      = (2.5 * penalty_lin)   if Ip_penalty_lin      is None else Ip_penalty_lin
+    Ip_penalty_slope    = (2.5 * penalty_slope) if Ip_penalty_slope    is None else Ip_penalty_slope
+    Ip_margin_width     = margin_width          if Ip_margin_width     is None else Ip_margin_width
+    Ip_margin_amplitude = margin_amplitude      if Ip_margin_amplitude is None else Ip_margin_amplitude
     
     # Density limit: nbar_line < nG
     if nG > 0:
@@ -504,20 +578,28 @@ def compute_stability_penalty(nbar_line, nG, betaT, betaN, q_kink,
             margin_used = (beta_ratio - (1.0 - margin_width)) / margin_width
             penalty_terms.append(margin_amplitude * margin_used ** 3)
     
-    # Plasma-current ceiling: Ip must stay below Ip_limit (disruption headroom)
-    if Ip is not None and isinstance(Ip_limit, (int, float)) and Ip_limit > 0:
+    # Plasma-current ceiling: Ip must stay below Ip_limit (disruption headroom).
+    # Uses the STRONGER Ip-specific coefficients resolved above. The guard now
+    # also accepts NumPy scalar types and rejects non-finite limits, so a limit
+    # read as np.float64 / np.int64 is not silently treated as "no limit"
+    # (which would disable the penalty entirely).
+    if (Ip is not None
+            and isinstance(Ip_limit, (int, float, np.integer, np.floating))
+            and np.isfinite(Ip_limit) and Ip_limit > 0):
         ip_ratio = Ip / Ip_limit
         if ip_ratio > 1.0:
             excess = ip_ratio - 1.0
-            penalty = penalty_step + penalty_lin * excess + penalty_slope * excess ** 2
+            penalty = (Ip_penalty_step
+                       + Ip_penalty_lin * excess
+                       + Ip_penalty_slope * excess ** 2)
             penalty_terms.append(penalty)
             violations['Ip'] = {
                 'value': float(Ip), 'limit': float(Ip_limit),
                 'ratio': float(ip_ratio)
             }
-        elif ip_ratio > (1.0 - margin_width):
-            margin_used = (ip_ratio - (1.0 - margin_width)) / margin_width
-            penalty_terms.append(margin_amplitude * margin_used ** 3)
+        elif ip_ratio > (1.0 - Ip_margin_width):
+            margin_used = (ip_ratio - (1.0 - Ip_margin_width)) / Ip_margin_width
+            penalty_terms.append(Ip_margin_amplitude * margin_used ** 3)
     
     # Kink safety factor: q_kink > q_min  (q_kink = q* or q95)
     if q_kink < q_min:
@@ -598,6 +680,116 @@ def _safe_real(value):
         return np.nan
 
 
+def _total_relative_violation(violations, weights=None):
+    """
+    Aggregate constraint violations into a single dimensionless measure.
+
+    Each violated constraint contributes the magnitude of its relative
+    departure from the limit, ``|ratio - 1|``. For the upper limits (density,
+    beta, Ip) ``ratio`` is value / limit, so an overshoot gives ratio > 1; for
+    the lower q limit ``ratio`` is q_kink / q_min, so a deficit gives
+    ratio < 1. Taking the absolute value makes every violation contribute
+    positively. The contributions are summed (optionally weighted per
+    constraint), yielding a scalar that is exactly 0 for a strictly feasible
+    design and grows with the severity of the violation.
+
+    Parameters
+    ----------
+    violations : dict
+        The mapping returned by ``compute_stability_penalty``. Keys are
+        constraint names ('density', 'beta', 'Ip', 'q_kink'); each value holds
+        at least a 'ratio' entry.
+    weights : dict or None
+        Optional per-constraint weights (default 1.0 each). Increasing a weight
+        makes that constraint's violation count more heavily, i.e. the search
+        is pushed to cure it first. A weight of 0.0 removes that constraint
+        from the feasibility measure entirely (use with care).
+
+    Returns
+    -------
+    float
+        Total (weighted) relative violation, >= 0.0.
+    """
+    if not violations:
+        return 0.0
+    total = 0.0
+    for name, info in violations.items():
+        try:
+            ratio = float(info.get('ratio', 1.0))
+        except (TypeError, ValueError, AttributeError):
+            ratio = 1.0
+        w = 1.0 if weights is None else float(weights.get(name, 1.0))
+        total += w * abs(ratio - 1.0)
+    return total
+
+
+def compute_feasibility_fitness(raw_fitness, total_violation, objective,
+                                budget_multiplier=1.0,
+                                epsilon=DEFAULT_FEASIBILITY_EPSILON,
+                                infeasible_floor=DEFAULT_INFEASIBLE_FLOOR,
+                                band_gain=DEFAULT_FEASIBILITY_BAND_GAIN):
+    """
+    Map (objective value, aggregate violation) to a single MINIMISED fitness
+    enforcing epsilon-relaxed feasibility-first ranking.
+
+    The DEAP fitness is minimised (weights = (-1.0,)), so 'smaller is better'.
+    Two bands are produced.
+
+    Acceptable band (total_violation <= epsilon)
+        ``fitness = raw objective`` times the soft budget multiplier. The
+        design is ranked purely on objective merit. This band contains strictly
+        feasible designs (violation 0) and designs that exceed a limit by no
+        more than epsilon, so a design is not rejected for an infinitesimal
+        overshoot (epsilon is the breathing room; epsilon = 0 recovers strict
+        Deb). A clamp keeps the value strictly below ``infeasible_floor`` so an
+        acceptable design can never enter the infeasible band, even if
+        ``infeasible_floor`` were mis-set below the objective scale.
+
+    Infeasible band (total_violation > epsilon)
+        ``fitness = infeasible_floor * (1 + band_gain * (total_violation - epsilon))``.
+        Every value is >= ``infeasible_floor`` and therefore strictly worse
+        than any acceptable design. Within the band the value increases
+        monotonically with the violation (Deb's third rule), so the search
+        still separates a 2 % overshoot from a 40 % one and keeps climbing
+        toward the boundary; this is a slope, not a wall. The value is capped
+        just below PENALTY_VALUE so structurally invalid designs (returned as
+        PENALTY_VALUE elsewhere) remain the worst of all.
+
+    For the maximisation objective 'P_elec' (stored as raw_fitness = -P_elec,
+    a negative number) the acceptable-band value divides by the budget
+    multiplier and needs no clamp, a negative value being always below the
+    positive floor.
+
+    Notes
+    -----
+    Exact band ordering requires ``infeasible_floor`` to exceed the largest
+    objective value any feasible design can take. The default (1e5) clears the
+    COE, C_invest, R0 and volume objectives with margin and sits below
+    PENALTY_VALUE (1e6); the clamp keeps the ordering correct even outside that
+    assumption. Defensive guards also coerce epsilon and band_gain to be
+    non-negative and fall back to the default floor if a non-finite or
+    non-positive floor is supplied.
+    """
+    epsilon = max(0.0, float(epsilon))
+    band_gain = max(0.0, float(band_gain))
+    infeasible_floor = float(infeasible_floor)
+    if not (np.isfinite(infeasible_floor) and infeasible_floor > 0.0):
+        infeasible_floor = DEFAULT_INFEASIBLE_FLOOR
+
+    if total_violation <= epsilon:
+        if objective == 'P_elec':
+            return raw_fitness / budget_multiplier
+        fitness = raw_fitness * budget_multiplier
+        # An acceptable design must never reach the infeasible band.
+        return min(fitness, infeasible_floor * (1.0 - 1e-9))
+
+    # Infeasible band: strictly worse, ordered by violation, bounded below the
+    # hard PENALTY_VALUE sentinel so structurally invalid designs stay worst.
+    overshoot = total_violation - epsilon
+    fitness = infeasible_floor * (1.0 + band_gain * overshoot)
+    return min(fitness, PENALTY_VALUE * (1.0 - 1e-9))
+
+
 def evaluate_individual(individual, verbose=False):
     """
     Evaluate the fitness of a single individual.
@@ -653,7 +845,15 @@ def evaluate_individual(individual, verbose=False):
             nbar_line, nG, betaT, betaN, q_kink,
             q_min=q_lim,
             betaN_limit=static_inputs.get('betaN_limit', DEFAULT_CONFIG.betaN_limit),
-            Ip=Ip, Ip_limit=static_inputs.get('Ip_limit', DEFAULT_CONFIG.Ip_limit)
+            Ip=Ip, Ip_limit=static_inputs.get('Ip_limit', DEFAULT_CONFIG.Ip_limit),
+            # Optional per-deck overrides of the strengthened Ip penalty. Unset
+            # values arrive as None, so compute_stability_penalty applies its own
+            # strengthened Ip defaults. Calibrate with test_Ip_penalty.py.
+            Ip_penalty_step=_opt_float(static_inputs.get('Ip_penalty_step')),
+            Ip_penalty_lin=_opt_float(static_inputs.get('Ip_penalty_lin')),
+            Ip_penalty_slope=_opt_float(static_inputs.get('Ip_penalty_slope')),
+            Ip_margin_width=_opt_float(static_inputs.get('Ip_margin_width')),
+            Ip_margin_amplitude=_opt_float(static_inputs.get('Ip_margin_amplitude')),
         )
 
         # ── Compute fitness value based on selected objective ────────────
@@ -753,12 +953,41 @@ def evaluate_individual(individual, verbose=False):
             excess = (_C_inv - C_max) / C_max
             budget_multiplier = 1.0 + 3.0 * excess ** 2
 
-        if objective == 'P_elec':
-            # For maximisation (negative fitness), dividing by the penalty
-            # multipliers moves fitness toward zero, i.e. worsens it.
-            fitness = raw_fitness / (penalty_multiplier * budget_multiplier)
-        else:
-            fitness = raw_fitness * penalty_multiplier * budget_multiplier
+        # ── Feasibility-first (epsilon-relaxed Deb) fitness ──────────────
+        # The multiplicative stability penalty above is superseded here for
+        # RANKING: it is kept only to produce the `violations` map (and for
+        # backward-compatible diagnostics). Ranking now uses the banded scheme
+        # of compute_feasibility_fitness, so any design within the epsilon
+        # tolerance outranks any design outside it, while infeasible designs
+        # stay ordered by total relative violation (a smooth gradient, not a
+        # flat wall, so the rare near-boundary designs survive).
+        #
+        # NOTE: because ranking is banded, the Ip_penalty_step/lin/slope knobs
+        # no longer influence selection (they only shaped the now-superseded
+        # multiplier). To make a given limit count more heavily, weight its
+        # violation instead, e.g. `Ip_violation_weight = 2.0` in the deck.
+        def _wt(key):
+            v = _opt_float(static_inputs.get(key))
+            return 1.0 if v is None else v
+
+        _vw = {
+            'density': _wt('density_violation_weight'),
+            'beta':    _wt('beta_violation_weight'),
+            'Ip':      _wt('Ip_violation_weight'),
+            'q_kink':  _wt('q_kink_violation_weight'),
+        }
+        total_violation = _total_relative_violation(violations, weights=_vw)
+
+        _eps   = _opt_float(static_inputs.get('feasibility_epsilon'))
+        _floor = _opt_float(static_inputs.get('infeasible_floor'))
+        _gain  = _opt_float(static_inputs.get('feasibility_band_gain'))
+        fitness = compute_feasibility_fitness(
+            raw_fitness, total_violation, objective,
+            budget_multiplier=budget_multiplier,
+            epsilon=(DEFAULT_FEASIBILITY_EPSILON if _eps is None else _eps),
+            infeasible_floor=(DEFAULT_INFEASIBLE_FLOOR if _floor is None else _floor),
+            band_gain=(DEFAULT_FEASIBILITY_BAND_GAIN if _gain is None else _gain),
+        )
         return (fitness,)
 
     except Exception as _exc:
@@ -828,10 +1057,11 @@ def load_input_file(input_file):
                 # (e.g. a user might have 'a = 3.0' before 'a = [2, 4]').
                 if key in opt_ranges:
                     continue
-                try:
-                    static_inputs[key] = float(value)
-                except ValueError:
-                    static_inputs[key] = value
+                # Type-aware coercion shared with the run / scan loaders, so
+                # a boolean such as "False" is not silently kept as the
+                # truthy string "False", and optional fields decode "None"
+                # to the Python None.
+                static_inputs[key] = coerce_input_value(key, value)
 
     # Fill defaults from GlobalConfig dataclass fields
     for field_name, default_val in default_dict.items():

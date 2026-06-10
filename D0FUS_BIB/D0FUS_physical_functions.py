@@ -1075,7 +1075,7 @@ def f_sigmav(T):
     """
     DT fusion reactivity ⟨σv⟩ as a function of ion temperature  [m³ s⁻¹].
 
-    Parameterisation of Bosch & Hale (1992) for the D(d,n)⁴He reaction
+    Parameterisation of Bosch & Hale (1992) for the T(d,n)⁴He reaction
     (equivalent: D+T → α + n).  Valid range: 0.2–100 keV; maximum relative
     deviation from tabulated data < 0.35 %.
 
@@ -1094,9 +1094,9 @@ def f_sigmav(T):
 
     References
     ----------
-    Bosch & Hale, Nucl. Fusion 32, 611 (1992) — Table IV, DT branch.
+    Bosch & Hale, Nucl. Fusion 32, 611 (1992) — Table VII, DT branch.
     """
-    # Bosch & Hale fit coefficients for DT (Table IV)
+    # Bosch & Hale fit coefficients for DT (Table VII)
     Bg  = 34.3827           # Gamow constant  [keV^(1/2)]
     mc2 = 1124656.0         # Reduced mass energy  [keV]
     c1  =  1.17302e-9
@@ -1495,7 +1495,7 @@ def f_Bpol(q95, B_tor, a, R0, kappa=1.0):
     References
     ----------
     Freidberg et al., Phys. Plasmas 22 (2015) 070901 — q* for elliptical plasma.
-    Sauter & Medvedev, Fusion Eng. Des. 112 (2016) 633 — shaped q₉₅ formula.
+    Sauter, Fusion Eng. Des. 112 (2016) 633 — shaped q₉₅ formula.
     Wesson, Tokamaks, 4th ed. (2011), §3.2 — Ampere's law and q.
     """
     # Elongation correction: common factor from both derivations above
@@ -2617,7 +2617,7 @@ def _ln_Lambda_CD(Te_keV, ne_20):
     Piecewise formula in D0FUS units (T in keV, n in 10²⁰ m⁻³):
 
         T_e < 10 eV :  lnΛ = 23.0  − ln(√n_e [cm⁻³] / T_e [eV]^{3/2})
-        T_e ≥ 10 eV :  lnΛ = 24.15 − ln(√n_e [cm⁻³] / T_e [eV])
+        T_e ≥ 10 eV :  lnΛ = 24.0 − ln(√n_e [cm⁻³] / T_e [eV])
 
     Floored at 5 to prevent unphysical values in cold-edge regions.
     In reactor-grade core plasmas: lnΛ ~ 17–20.
@@ -2640,7 +2640,7 @@ def _ln_Lambda_CD(Te_keV, ne_20):
     if Te_eV < 10.0:
         lnL = 23.0  - np.log(ne_cm3**0.5 * Te_eV**(-1.5))
     else:
-        lnL = 24.15 - np.log(ne_cm3**0.5 * Te_eV**(-1.0))
+        lnL = 24.0 - np.log(ne_cm3**0.5 * Te_eV**(-1.0))
     return max(lnL, 5.0)
 
 
@@ -2857,7 +2857,7 @@ def f_etaCD_EC_physics(a, R0, Tbar, nbar, Z_eff, nu_T, nu_n, rho_EC,
 # ----------
 # Stix, Plasma Phys. 14 (1972) 367.
 # Cordey, Jones & Start, Nucl. Fusion 19 (1979) 249.
-# Lin-Liu & Hilton, Phys. Plasmas 4 (1997) 4179.
+# Lin-Liu & Hinton, Phys. Plasmas 4 (1997) 4179.
 # Artaud et al., Nucl. Fusion 58 (2018) 105001  (METIS).
 
 
@@ -2938,14 +2938,14 @@ def _cordey_velocity_integral(v_0, v_c, v_g):
 
 def _linliu_GZ(f_trap, Z_eff):
     """
-    Lin-Liu & Hilton trapped-particle CD correction G(Z, f_trap).
+    Lin-Liu & Hinton trapped-particle CD correction G(Z, f_trap).
 
     The full correction to driven current is:
         j_CD = j_free * (1 - (1 - G) / Z_eff)
 
     References
     ----------
-    Lin-Liu & Hilton, Phys. Plasmas 4 (1997) 4179, eq. 5-7.
+    Lin-Liu & Hinton, Phys. Plasmas 4 (1997) 4179, eq. 5-7.
     """
     f_pass = max(1.0 - f_trap, 0.01)
     xt = f_trap / f_pass
@@ -3023,7 +3023,7 @@ def f_etaCD_NBI_physics(A_beam, E_beam_keV, a, R0, Tbar, nbar, Z_eff,
     ----------
     Stix, Plasma Phys. 14 (1972) 367.
     Cordey, Jones & Start, Nucl. Fusion 19 (1979) 249.
-    Lin-Liu & Hilton, Phys. Plasmas 4 (1997) 4179.
+    Lin-Liu & Hinton, Phys. Plasmas 4 (1997) 4179.
     Artaud et al., Nucl. Fusion 58 (2018) 105001.
     """
     # Local plasma at deposition point
@@ -3823,7 +3823,7 @@ def _coulomb_logarithm(T_keV, ne):
     ln_lambda = np.where(
         T_safe < 10.0,
         23.0  - np.log(ne_cm3**0.5 * T_safe**(-1.5)),
-        24.15 - np.log(ne_cm3**0.5 * T_safe**(-1.0))
+        24.0 - np.log(ne_cm3**0.5 * T_safe**(-1.0))
     )
     return np.maximum(ln_lambda, 5.0)
 
@@ -3855,7 +3855,7 @@ def eta_spitzer(T_keV, ne, Z_eff=1.0):
 
     Coulomb logarithm (NRL Formulary):
         T < 10 eV:  ln(L) = 23 - ln(ne_cm3^0.5 * T_eV^-1.5)
-        T > 10 eV:  ln(L) = 24.15 - ln(ne_cm3^0.5 * T_eV^-1)
+        T > 10 eV:  ln(L) = 24.0 - ln(ne_cm3^0.5 * T_eV^-1)
 
     References:
         [1] L. Spitzer & R. Härm, Phys. Rev. 89, 977 (1953)
@@ -3880,13 +3880,18 @@ def eta_sauter(T_keV, ne, Z_eff, epsilon, q=2.0, R0=6.2):
     The effective trapped fraction interpolates between banana (low nu*) 
     and Pfirsch-Schlüter (high nu*) regimes.
 
-    Key relations (Sauter Eqs. 16a-b):
+    Key relations (Sauter Eqs. 13a-b):
         sigma_neo/sigma_Sp = 1 - (1+0.36/Z)*X + 0.59/Z*X^2 - 0.23/Z*X^3
-        f_t_eff = f_t / [1 + 0.26*(1-f_t)*sqrt(nu*)*(1+0.18*(Z-1)^0.5)
-                         + 0.18*(1-0.37*f_t)*nu*/sqrt(Z)]
+        f_t_eff = f_t / [1 + (0.55 - 0.1*f_t)*sqrt(nu*)
+                         + 0.45*(1-f_t)*nu*/Z^1.5]
 
-    Collisionality (Eq. 18c):
-        nu*_e = 0.012 * q*R*Z_eff*n_19*ln(L) / (eps^1.5 * T_keV^2)
+    Collisionality (Eq. 18b, with ln Lambda_e of Eq. 18d):
+        nu*_e = 6.921e-18 * q*R*n_e*Z_eff*ln(L_e) / (T_e[eV]^2 * eps^1.5)
+
+    Verified line by line against sigmaneo.m / nustar.m of Sauter's NEOS
+    repository (https://gitlab.epfl.ch/spc/public/NEOS).  Note: the 2002
+    erratum does not modify Eqs. 13 or 18; it only fixes the sign of the
+    alpha bootstrap coefficient and clarifies Z conventions.
 
     All four physics inputs (T_keV, ne, epsilon, q) accept either scalars
     or numpy arrays of identical shape; vectorisation is element-wise.
@@ -3896,8 +3901,6 @@ def eta_sauter(T_keV, ne, Z_eff, epsilon, q=2.0, R0=6.2):
         [2] O. Sauter et al., Erratum, Phys. Plasmas 9, 5140 (2002)
         [3] https://crppwww.epfl.ch/~sauter/neoclassical/
     """
-    ln_lambda = _coulomb_logarithm(T_keV, ne)
-
     # Geometric trapped fraction (Kim et al. PoF 1991).
     # Regularise epsilon at the magnetic axis: epsilon(rho=0) = 0 would
     # cause a division by zero in nu_star.  At epsilon -> 0: f_t -> 0
@@ -3908,20 +3911,25 @@ def eta_sauter(T_keV, ne, Z_eff, epsilon, q=2.0, R0=6.2):
     sqrt_eps = np.sqrt(eps_reg)
     f_t      = 1.46 * sqrt_eps * (1 - 0.54 * sqrt_eps)
 
-    # Electron collisionality.  T_keV is clamped from below to avoid
-    # 1/T^2 divergence when T -> 0 in the cold edge.
+    # Electron collisionality — Sauter (1999) Eq. (18b) with the Coulomb
+    # logarithm of Eq. (18d): ln Lambda_e = 31.3 - ln(sqrt(n_e)/T_e),
+    # n_e in m^-3 and T_e in eV.  Identical to _nu_e_star() used by the
+    # bootstrap module and to nustar.m in Sauter's open-source NEOS code
+    # (https://gitlab.epfl.ch/spc/public/NEOS).  T_keV is clamped from
+    # below to avoid the 1/T^2 divergence when T -> 0 in the cold edge.
     T_safe    = np.maximum(T_keV, 1e-4)
-    n_19      = ne / 1.0e19
-    nu_star_e = (0.012 * q * R0 * Z_eff * n_19 * ln_lambda
-                 / (eps_reg**1.5 * T_safe**2))
+    Te_eV     = T_safe * 1.0e3
+    ln_e      = 31.3 - np.log(np.sqrt(np.maximum(ne, 1.0)) / Te_eV)
+    nu_star_e = (6.921e-18 * q * R0 * ne * Z_eff * ln_e
+                 / (Te_eV**2 * eps_reg**1.5))
 
-    # Effective trapped fraction (Eq. 16b).
+    # Effective trapped fraction (Eq. 13b).
     sqrt_nu = np.sqrt(nu_star_e)
-    denom = (1.0 + 0.26*(1-f_t)*sqrt_nu*(1 + 0.18*(Z_eff-1)**0.5)
-             + 0.18*(1-0.37*f_t)*nu_star_e/np.sqrt(Z_eff))
+    denom = (1.0 + (0.55 - 0.1*f_t)*sqrt_nu
+             + 0.45*(1.0 - f_t)*nu_star_e / Z_eff**1.5)
     f_t_eff = f_t / denom
 
-    # Conductivity ratio (Eq. 16a).
+    # Conductivity ratio (Eq. 13a).
     X = f_t_eff
     sigma_ratio = 1.0 - (1.0+0.36/Z_eff)*X + 0.59/Z_eff*X**2 - 0.23/Z_eff*X**3
 
@@ -3947,8 +3955,6 @@ def eta_redl(T_keV, ne, Z_eff, epsilon, q=2.0, R0=6.2):
         [1] A. Redl et al., Phys. Plasmas 28, 022502 (2021)
         [2] Data: https://doi.org/10.5281/zenodo.4072358
     """
-    ln_lambda = _coulomb_logarithm(T_keV, ne)
-
     # Geometric trapped fraction.  Regularise epsilon at the magnetic
     # axis (see eta_sauter for rationale).  np.maximum makes the call
     # array-safe for the q-profile Picard iteration.
@@ -3956,11 +3962,15 @@ def eta_redl(T_keV, ne, Z_eff, epsilon, q=2.0, R0=6.2):
     sqrt_eps = np.sqrt(eps_reg)
     f_t      = 1.46 * sqrt_eps * (1 - 0.54 * sqrt_eps)
 
-    # Electron collisionality with T_keV clamp from below.
+    # Electron collisionality — Sauter (1999) Eq. (18b) with ln Lambda_e
+    # of Eq. (18d); Redl (2021) keeps the same nu*_e definition.
+    # Identical to _nu_e_star() (bootstrap module) and NEOS nustar.m.
+    # T_keV is clamped from below to avoid 1/T^2 divergence at the edge.
     T_safe    = np.maximum(T_keV, 1e-4)
-    n_19      = ne / 1.0e19
-    nu_star_e = (0.012 * q * R0 * Z_eff * n_19 * ln_lambda
-                 / (eps_reg**1.5 * T_safe**2))
+    Te_eV     = T_safe * 1.0e3
+    ln_e      = 31.3 - np.log(np.sqrt(np.maximum(ne, 1.0)) / Te_eV)
+    nu_star_e = (6.921e-18 * q * R0 * ne * Z_eff * ln_e
+                 / (Te_eV**2 * eps_reg**1.5))
 
     # Effective trapped fraction (Eq. 18).
     sqrt_nu = np.sqrt(nu_star_e)
@@ -5850,17 +5860,24 @@ def f_heat_pol(R0, B0, P_sep, a, q95):
     Returns
     -------
     heat : float
-        Poloidal heat load parameter [MW T m⁻²]
+        Poloidal heat load parameter P_sep·B₀/(q₉₅·A·R₀) [MW T m⁻¹]
+
+    Notes
+    -----
+    This is the EU-DEMO divertor-protection figure of merit (PROCESS
+    constraint 'psepbqarmax'); values ≲ 9.2 MW T m⁻¹ are considered
+    compatible with an ITER-class divertor.
 
     References
     ----------
     M. Siccinio et al., Nuclear Fusion 59 (2019) 106026.
     """
     A = R0 / a
-    return (P_sep * B0) / (q95 * A * R0**2)
+    return (P_sep * B0) / (q95 * A * R0)
 
 
-def f_heat_PFU_Eich(P_sol, B_pol, R, eps, theta_deg):
+def f_heat_PFU_Eich(P_sol, B_pol, R, eps, theta_deg,
+                    B0=None, f_outer_target=0.65):
     """
     Estimate the divertor peak heat flux using the Eich (2013) multi-machine
     SOL-width scaling law.
@@ -5880,45 +5897,78 @@ def f_heat_PFU_Eich(P_sol, B_pol, R, eps, theta_deg):
     eps : float
         Inverse aspect ratio ε = a/R (dimensionless)
     theta_deg : float
-        Grazing angle of field lines at the divertor target [°]
-        Typical range: 1–5° for vertical-target configurations.
+        Total field-line grazing angle on the divertor target [°]
+        Typical range: 1-5° for vertical-target configurations.
+    B0 : float or None
+        On-axis toroidal field [T], used for the field-line pitch B/B_θ at
+        the outer midplane.  If None, the pitch factor is set to 1 (legacy
+        poloidal-projection behaviour) and a UserWarning is issued, since
+        q_∥ is then NOT a parallel flux and is inconsistent with theta_deg.
+    f_outer_target : float
+        Fraction of P_sol carried to the analysed (outer) target [-].
+        Default 0.65, typical of lower single-null in/out asymmetry.
+        Set to 1.0 for a single-target worst-case estimate.
 
     Returns
     -------
     lambda_q : float
         SOL power e-folding decay length [m]
-    q_par0 : float
-        Peak parallel heat flux at the separatrix [MW m⁻²]
+    q_par_u : float
+        Peak parallel heat flux upstream (outer midplane separatrix) [MW m⁻²]
     q_target : float
         Peak perpendicular heat flux on the divertor target [MW m⁻²]
 
     Notes
     -----
-    Eich (2013) regression #15 (Table 3, all devices incl. spherical, R²=0.88).
-    NOT "fit 7": regression #7 has the form 0.67 B_tor^-0.71 q95^1.03 P_sol^0.05
-    R^0.08 and is a different functional family. The coefficients below are #15:
-        λ_q [mm] = 1.35 · R^{0.04} · B_pol^{-0.92} · ε^{0.42} · P_sol^{-0.02}
-    Peak parallel flux (toroidal symmetry over the outer midplane):
-        q_∥0 = P_sol / (2π R λ_q)
-    Projection onto the target surface (grazing incidence):
-        q_⊥ = q_∥0 · sin θ
+    Eich (2013) regression #15 (all devices incl. spherical tokamaks):
+        λ_q [mm] = 1.35 · P_sol^{-0.02} · R^{0.04} · B_pol^{-0.92} · ε^{0.42}
+    (The conventional-tokamak alternative in (B_tor, q95) form is
+        λ_q ∝ B_tor^{-0.77} · q95^{1.05} · P_sol^{0.09};   not used here.)
+
+    Upstream peak parallel flux.  The SOL power flows along B through the
+    annular cross-section 2π R λ_q (B_θ/B)|omp, hence
+        q_∥u = f_out · P_sol / (2π R λ_q) · (B/B_θ)|omp
+    with B_tor,omp = B0/(1+ε) and B = sqrt(B_tor,omp² + B_pol²).
+    Omitting the pitch factor B/B_θ (≈ 3-6 for conventional tokamaks)
+    underestimates q_∥u and is inconsistent with the use of the total
+    grazing angle θ below.
+
+    Projection onto the target surface (grazing incidence, attached):
+        q_⊥ = q_∥u · sin θ
 
     References
     ----------
     T. Eich et al., Nuclear Fusion 53 (2013) 093031.
+    P.C. Stangeby, Plasma Phys. Control. Fusion 60 (2018) 044022.
     """
     θ = np.deg2rad(theta_deg)
 
     # SOL power decay length: empirical multi-machine regression [mm → m]
     lambda_q = 1.35 * R**0.04 * B_pol**(-0.92) * eps**0.42 * P_sol**(-0.02) * 1e-3
 
-    # Peak parallel heat flux at the separatrix [MW m⁻²]
-    q_par0 = P_sol / (2 * np.pi * R * lambda_q)
+    # Outer-midplane poloidal-projection heat flux [MW m⁻²]
+    q_pol_omp = f_outer_target * P_sol / (2 * np.pi * R * lambda_q)
+
+    # Field-line pitch factor (B/B_θ)|omp
+    if B0 is None:
+        warnings.warn(
+            "f_heat_PFU_Eich: B0 not provided — pitch factor B/B_theta set "
+            "to 1 (legacy poloidal projection). q_par_u is then NOT a "
+            "parallel heat flux; pass B0 for the physical estimate.",
+            UserWarning, stacklevel=2
+        )
+        pitch = 1.0
+    else:
+        B_tor_omp = B0 / (1.0 + eps)
+        pitch = np.sqrt(B_tor_omp**2 + B_pol**2) / B_pol
+
+    # Peak parallel heat flux at the upstream separatrix [MW m⁻²]
+    q_par_u = q_pol_omp * pitch
 
     # Perpendicular target heat flux accounting for grazing incidence [MW m⁻²]
-    q_target = q_par0 * np.sin(θ)
+    q_target = q_par_u * np.sin(θ)
 
-    return lambda_q, q_par0, q_target
+    return lambda_q, q_par_u, q_target
 
 
 # =============================================================================
@@ -6005,6 +6055,7 @@ def _two_point_core(q_par_u_SI, p_u, f_cooling, f_mom, gamma_sheath, m_f):
 
 
 def f_heat_two_point(P_sol, B_pol, R0, eps, q95, n_sep, theta_deg,
+                     B0=None, f_outer_target=0.65,
                      f_cooling=0.0, f_mom=0.0,
                      gamma_sheath=7.0, kappa0e=2000.0, eps_pot=15.0,
                      q_dep_limit=5.0, flux_expansion=1.0,
@@ -6014,7 +6065,8 @@ def f_heat_two_point(P_sol, B_pol, R0, eps, q95, n_sep, theta_deg,
 
     Chain (Stangeby 2018):
       1. λ_q from Eich (2013) regression #15 → upstream parallel flux
-         q_∥u = P_sol / (2π R₀ λ_q).
+         q_∥u = f_out · P_sol / (2π R₀ λ_q) · (B/B_θ)|omp,
+         with B_tor,omp = B0/(1+ε) and B = sqrt(B_tor,omp² + B_pol²).
       2. Upstream electron temperature from Spitzer–Härm conduction (Eq. 38),
          T_eu = (7 q_∥u L / 2 κ₀ₑ)^(2/7), connection length L = π R₀ q₉₅.
       3. Upstream total pressure p_u = 2 n_sep e T_eu  (T_i=T_e, M_u=0, Z=1; Eq. 20).
@@ -6038,7 +6090,13 @@ def f_heat_two_point(P_sol, B_pol, R0, eps, q95, n_sep, theta_deg,
     eps : float       Inverse aspect ratio a/R₀ [-].
     q95 : float       Safety factor at ψ_N = 0.95 [-].
     n_sep : float     Upstream (separatrix) electron density [m⁻³].
-    theta_deg : float Field-line incidence angle on the target [deg].
+    theta_deg : float Total field-line incidence angle on the target [deg].
+    B0 : float or None  On-axis toroidal field [T] for the pitch (B/B_θ)|omp.
+        If None, pitch = 1 (legacy poloidal projection) with a UserWarning;
+        the whole 2PM chain is then biased optimistic by (B/B_θ)^(2/7) on T_eu
+        and ~(B/B_θ)² on T_et.
+    f_outer_target : float  Fraction of P_sol routed to the analysed (outer)
+        target [-]. Default 0.65 (typical LSN asymmetry); 1.0 = worst case.
     f_cooling : float Volumetric power-loss fraction along the flux tube (Eq. 18),
         input not predicted. 0 = attached.
     f_mom : float     Volumetric momentum-loss fraction (Eq. 19). 0 = attached.
@@ -6054,6 +6112,9 @@ def f_heat_two_point(P_sol, B_pol, R0, eps, q95, n_sep, theta_deg,
     -------
     dict with keys:
         'lambda_q'        SOL power width [m].
+        'q_pol_omp'       Poloidal-projection flux f_out·P_sol/(2πR₀λ_q) [MW/m²].
+        'pitch_B_over_Bpol'  Field-line pitch (B/B_θ)|omp applied to q_∥u [-].
+        'f_outer_target'  Outer-target power-sharing fraction used [-].
         'q_par_u'         Upstream parallel heat flux [MW/m²].
         'T_eu'            Upstream electron temperature [eV].
         'T_et'            Target electron temperature [eV] (capped at T_eu).
@@ -6072,9 +6133,25 @@ def f_heat_two_point(P_sol, B_pol, R0, eps, q95, n_sep, theta_deg,
     """
     s = np.sin(np.deg2rad(theta_deg))
 
-    # 1. SOL width and upstream parallel flux
+    # 1. SOL width and upstream parallel flux.
+    #    q_∥u = f_out · P_sol/(2π R λ_q) · (B/B_θ)|omp — the pitch factor is
+    #    mandatory: the Spitzer-Härm relation in step 2 requires the TRUE
+    #    parallel flux (Stangeby 2018). B_tor,omp = B0/(1+ε).
     lambda_q = 1.35 * R0**0.04 * B_pol**(-0.92) * eps**0.42 * P_sol**(-0.02) * 1e-3
-    q_par_u = P_sol / (2.0 * np.pi * R0 * lambda_q)              # [MW/m²]
+    q_pol_omp = f_outer_target * P_sol / (2.0 * np.pi * R0 * lambda_q)  # [MW/m²]
+    if B0 is None:
+        warnings.warn(
+            "f_heat_two_point: B0 not provided — pitch factor B/B_theta set "
+            "to 1 (legacy poloidal projection). T_eu and all downstream 2PM "
+            "quantities are then underestimated; pass B0 for the physical "
+            "estimate.",
+            UserWarning, stacklevel=2
+        )
+        pitch = 1.0
+    else:
+        B_tor_omp = B0 / (1.0 + eps)
+        pitch = np.sqrt(B_tor_omp**2 + B_pol**2) / B_pol
+    q_par_u = q_pol_omp * pitch                                  # [MW/m²]
     q_par_u_SI = q_par_u * 1e6                                   # [W/m²]
 
     # 2. Upstream temperature, Spitzer conduction (Eq. 38), L = π R₀ q₉₅
@@ -6105,6 +6182,9 @@ def f_heat_two_point(P_sol, B_pol, R0, eps, q95, n_sep, theta_deg,
 
     return {
         'lambda_q':        lambda_q,
+        'q_pol_omp':       q_pol_omp,
+        'pitch_B_over_Bpol': pitch,
+        'f_outer_target':  f_outer_target,
         'q_par_u':         q_par_u,
         'T_eu':            T_eu,
         'T_et':            T_et,
@@ -6548,10 +6628,14 @@ def f_Get_parameter_scaling_law(Scaling_Law):
         'L-mode OK':  dict(C_SL=0.023,  α_δ=0,    α_M=0.2,  α_κ=0.64,
                            α_ε=-0.06, α_R=1.78,  α_B=0.03,
                            α_n=0.4,   α_I=0.96,  α_P=-0.73),
-        # Yushmanov et al. (1990), NF 30, 1999 — Eq. 19
-        'ITER89-P':   dict(C_SL=0.048,  α_δ=0,    α_M=0.5,  α_κ=0.5,
-                           α_ε=0.3,   α_R=1.2,   α_B=0.2,
-                           α_n=0.08,  α_I=0.85,  α_P=-0.5),
+        # Yushmanov et al. (1990), NF 30, 1999 — ITER89-P L-mode scaling.
+        # Published form: 0.048 I^0.85 R^1.2 a^0.3 κ^0.5 n̄20^0.1 B^0.2 M^0.5 P^-0.5
+        # Converted to the D0FUS (R, ε, n̄19) convention:
+        #   R^1.2 a^0.3 = R^1.5 ε^0.3   and   n̄20^0.1 = 10^-0.1 · n̄19^0.1
+        #   → C_SL = 0.048 × 10^-0.1 = 0.0381
+        'ITER89-P':   dict(C_SL=0.0381, α_δ=0,    α_M=0.5,  α_κ=0.5,
+                           α_ε=0.3,   α_R=1.5,   α_B=0.2,
+                           α_n=0.1,   α_I=0.85,  α_P=-0.5),
     }
 
     if Scaling_Law not in _registry:

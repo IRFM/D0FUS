@@ -29,7 +29,7 @@ from D0FUS_BIB.D0FUS_physical_functions import *
 from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
 from D0FUS_BIB.D0FUS_cost_data import *
 from D0FUS_EXE.D0FUS_run import run, load_config_from_file, _PROFILE_PRESETS, _compute_Zeff_effective
-from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG
+from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG, coerce_input_value
 
 #%% Output Parameter Registry
 
@@ -1045,14 +1045,9 @@ def load_scan_parameters(input_file):
                 if param_name in scan_param_names:
                     continue
                 
-                try:
-                    param_value = float(param_value)
-                    if param_value.is_integer():
-                        param_value = int(param_value)
-                except ValueError:
-                    pass
-                
-                fixed_params[param_name] = param_value
+                # Type-aware coercion shared with the run / genetic loaders.
+                fixed_params[param_name] = coerce_input_value(
+                    param_name, param_value)
     
     if len(scan_params) != 2:
         raise ValueError(f"Expected exactly 2 scan parameters, found {len(scan_params)}")
