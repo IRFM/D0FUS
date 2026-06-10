@@ -2,6 +2,18 @@
 Radial Build functions definition for the D0FUS - Design 0-dimensional for FUsion Systems project
 Created on: Dec 2023
 Author: Auclair Timothe
+
+Reference
+---------
+The Academic (thin-cylinder) and Refined (thick-cylinder + winding pack)
+TF/CS models implemented here are derived and benchmarked in:
+    Auclair T., Boudes B., Duchateau J.-L., Nardon E., Pittaluga L.,
+    Sarazin Y., Sutcliffe F. & Torre A. (2026), "Impact of mechanical
+    constraints on tokamak design and implications for high field power
+    plants", submitted to Nuclear Fusion, arXiv:2606.07201.
+    https://arxiv.org/abs/2606.07201
+Equation and appendix numbers quoted in the docstrings below refer to
+this paper unless stated otherwise.
 """
 
 #%% Import
@@ -147,7 +159,8 @@ def _solve_graded_wp(R_ext, B_max, J_max, sigma_max, omega, n, ln_term,
     B_max : float       Peak toroidal field at R_ext [T].
     J_max : float       Engineering current density (non-steel) [A/m²].
     sigma_max : float   Allowable Tresca stress [Pa].
-    omega : float       Fraction of vertical tension on inboard leg [-].
+    omega : float       WP share of the vertical tension f_z,WP [-]
+                        (Auclair et al. 2026, Table 1 and Eqs. 23, 45).
     n : float           Conductor geometry factor for γ(α, n).
     ln_term : float     ln((R_0 + a + b) / R_ext).
     dR : float          Radial integration step [m].
@@ -1256,7 +1269,7 @@ def get_copper_properties(T, B, RRR):
 
 def compute_quench_integral(T_op, T_hotspot, B, RRR, n_steps=200):
     """
-    Joule integral Z(T) = ∫(Cp/ρ)dT for Maddock criterion.
+    Joule integral Z(T) = ∫(Cp/ρ)dT for the adiabatic hot-spot criterion.
     
     Parameters
     ----------
@@ -1278,7 +1291,9 @@ def compute_quench_integral(T_op, T_hotspot, B, RRR, n_steps=200):
         
     Reference
     ---------
-    Maddock et al. (1969), Eq. 12
+    Wilson M.N., "Superconducting Magnets", Oxford (1983), Sec. 9.5
+        (adiabatic hot-spot temperature / Z-function).
+    Iwasa Y., "Case Studies in Superconducting Magnets", 2nd ed. (2009).
     """
     temp_array = np.linspace(T_op, T_hotspot, n_steps)
     
@@ -1397,7 +1412,7 @@ def calculate_t_dump(E_mag, I_cond, V_max, N_sub, tau_h):
         - Coil inductance: L = 2 × E_mag / I_cond²
         - Discharge time constant: τ_dis = L / (N_sub × R_dump)
     
-    The effective time for Maddock criterion:
+    The effective time for the adiabatic hot-spot criterion:
         t_dump = τ_h + τ_dis / 2
     
     Parameters
@@ -1449,7 +1464,8 @@ def calculate_t_dump(E_mag, I_cond, V_max, N_sub, tau_h):
 def size_cable_fractions(J_non_Cu, B_peak, T_op, t_dump,
                          T_hotspot, f_He_pipe, f_void, f_In, RRR, f_gap=0.0):
     """
-    Calculate cable composition based on quench protection (Maddock criterion).
+    Calculate cable composition based on quench protection
+    (adiabatic hot-spot criterion).
 
     The non-steel cross-section ("wost") of a CICC-like conductor is
     decomposed into three zones at the top level:
@@ -1510,7 +1526,8 @@ def size_cable_fractions(J_non_Cu, B_peak, T_op, t_dump,
 
     References
     ----------
-    [1] Maddock et al. (1969) - Adiabatic hot-spot criterion
+    [1] Wilson M.N., "Superconducting Magnets", Oxford (1983), Sec. 9.5
+        - adiabatic hot-spot criterion
     [2] Mitchell et al. (2008) - ITER magnet design
     """
     # Joule integral from T_op to T_hotspot
@@ -3155,7 +3172,8 @@ def f_TF_academic(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg,
     R0 : float
         Major radius [m].
     σ_TF : float
-        Yield strength of the TF steel [Pa].
+        Design allowable stress of the TF steel (Tresca limit, typically
+        ~2/3 of the 4 K yield strength per ITER SDC-IC conventions) [Pa].
     J_max_TF : float
         Maximum current density of the chosen Supra + Cu + He [A/m²].
     B_max_TF : float
@@ -3197,6 +3215,17 @@ def f_TF_academic(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg,
         Radial stress in the nose [Pa].
     Steel_fraction : float
         Nose / total thickness ratio [-].
+
+    References
+    ----------
+    Auclair T., Boudes B., Duchateau J.-L., Nardon E., Pittaluga L.,
+    Sarazin Y., Sutcliffe F. & Torre A. (2026), "Impact of mechanical
+    constraints on tokamak design and implications for high field power
+    plants", submitted to Nuclear Fusion, arXiv:2606.07201.
+    https://arxiv.org/abs/2606.07201
+        Thin-cylinder model: Section 2; F_z derivation: Appendix C;
+        first-order thickness expressions: Appendix A.
+    Freidberg J.P. et al., Phys. Plasmas 22 (2015) 070901.
     """
 
     # Apply safety factor on the steel mechanical allowable.
@@ -3261,14 +3290,27 @@ def f_TF_academic(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg,
 
     # 9. Mechanical option choice: "bucking" or "wedging"
     if Choice_Buck_Wedg in ("Bucking", "Plug"):
-        # Thickness c2 for bucking, valid if R1 >> c
+        # Bucking, thin-shell closed form (paper, Appendix A.2): the nose
+        # reacts the inboard tension in series with the radial magnetic
+        # pressure P (Tresca: σ_z + σ_r ≤ σ_TF → σ_z ≤ σ_TF − P), with the
+        # equal inboard/outboard tension split (factor 1/2) and zero
+        # clamping hard-coded, as in the paper:
+        #   c_Nose = B0²R0² ln(R2/R1) / (4 μ0 R1 (σ_TF − P)).
+        # Note: coef_inboard_tension and F_CClamp therefore affect only
+        # the REPORTED σ_z below, not the sizing itself.
         c_Nose = (B0**2 * R0**2) * math.log(R2 / R1) / (2 * μ0 * 2 * R1 * (σ_TF - P))
         σ_r = P  # Radial stress
         σ_z = T / (2 * np.pi * R1 * c_Nose)  # Axial stress
         σ_theta = 0
 
     elif Choice_Buck_Wedg == "Wedging":
-        # Thickness c2 for wedging, valid if R1 >> c
+        # Wedging, thin-shell closed form (paper, Appendix A.1): Tresca
+        # superposition of the hoop demand ("1" term) and the tension
+        # demand ("ln/2" term), with the equal inboard/outboard split
+        # (factor 1/2) and zero clamping hard-coded, as in the paper:
+        #   c_Nose = B0²R0² / (2 μ0 R1 σ_TF) × (1 + ln(R2/R1)/2).
+        # Note: coef_inboard_tension and F_CClamp therefore affect only
+        # the REPORTED σ_z below, not the sizing itself.
         c_Nose = (B0**2 * R0**2) / (2 * μ0 * R1 * σ_TF) * (1 + math.log(R2 / R1) / 2)
         σ_theta = P * R1 / c_Nose  # Circumferential stress
         σ_z = T / (2 * np.pi * R1 * c_Nose)  # Axial stress
@@ -3292,7 +3334,7 @@ def f_TF_academic(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg,
 #%% Refined model
 
 def Winding_Pack_refined(R_0, a, b, sigma_max, J_max, B_max, omega, n,
-                       grading=False, delta_port=0.0):
+                       grading=False, delta_port=0.0, F_CClamp=0.0):
 
     """
     Computes the winding pack thickness and stress ratio under Tresca criterion.
@@ -3341,9 +3383,14 @@ def Winding_Pack_refined(R_0, a, b, sigma_max, J_max, B_max, omega, n,
         sigma_max: Maximum allowable Tresca stress [Pa]
         J_max: Maximum engineering current density [A/m²]
         B_max: Peak magnetic field [T]
-        omega: Scaling factor for axial load [dimensionless].
-            Fraction of total vertical tension borne by the inboard leg.
-            Typical: 0.4-0.6 depending on coil shape and support structure.
+        omega: WP share of the vertical tension, f_z_WP [dimensionless].
+            This is the parameter f_z,WP of Auclair et al. (2026), Table 1
+            and Eq. 23: the fraction of the inboard-leg tension carried by
+            the winding-pack steel, the complement (1 - f_z_WP) being
+            reacted by the nose. The equal inboard/outboard split of the
+            total vertical force (factor 1/2) is hard-coded in the 2 mu0
+            denominator of Eq. 23. Typical: 0.4-0.6; total inboard
+            thickness is weakly sensitive to it (paper, Appendix M).
         n: Geometric factor for gamma (steel area fraction) [dimensionless]
         grading: bool, optional
             If True, use radially graded α(R) model. Default: False.
@@ -3354,7 +3401,16 @@ def Winding_Pack_refined(R_0, a, b, sigma_max, J_max, B_max, omega, n,
             typically computed by Number_TF_coils(). Enters the F_z log
             argument as ln((R_0 + a + b + delta_port) / (R_0 - a - b)),
             increasing the predicted vertical tension. Default: 0.0
-            (matches Eq. 5 of the reference paper, slightly non-conservative).
+            (matches Eq. 5 of Auclair et al. (2026), arXiv:2606.07201,
+            slightly non-conservative).
+        F_CClamp: float, optional
+            External clamping (pre-compression) force [N], subtracted from
+            the TOTAL vertical separating force N_coil x F_z before the
+            WP/nose tension partition, F_z' = F_z - F_z_PC, following the
+            pre-compression convention of Auclair et al. (2026) and the
+            same convention as f_TF_academic. Implemented as a rescaling
+            of the logarithmic tension term. Clipped so that the residual
+            tension cannot become negative. Default: 0.0.
 
     Returns:
         winding_pack_thickness: R_ext - R_sep [m]
@@ -3392,6 +3448,15 @@ def Winding_Pack_refined(R_0, a, b, sigma_max, J_max, B_max, omega, n,
     if ln_term <= 0:
         return np.nan, np.nan, np.nan, np.nan, np.nan
         # raise ValueError("Invalid logarithmic term: ensure R_0 + a + b > R_0 - a - b")
+
+    # Clamping (pre-compression) offset: F_z' = F_z - F_CClamp, applied to
+    # the total vertical force N_coil x F_z = pi B_max^2 R_ext^2 ln_term / mu0
+    # (thin-shell B0 R0 = B_max R_ext). Since every tension term downstream
+    # (ungraded and graded) is linear in ln_term, the offset is implemented
+    # as a rescaling of ln_term, clipped at zero tension.
+    if F_CClamp > 0.0:
+        F_z_tot = np.pi * B_max**2 * R_ext**2 * ln_term / μ0
+        ln_term = ln_term * max(0.0, 1.0 - F_CClamp / F_z_tot)
 
     # === Ungraded analytical solution ===
     # Always computed: used directly when grading=False, and as the
@@ -3545,7 +3610,7 @@ def Winding_Pack_refined(R_0, a, b, sigma_max, J_max, B_max, omega, n,
     return result_graded if c_graded <= c_ungraded else result_ungraded
 
 def Nose_refined(R_ext_Nose, sigma_max, omega, B_max, R_0, a, b,
-               coef_inboard_tension, delta_port=0.0):
+               coef_inboard_tension, delta_port=0.0, F_CClamp=0.0):
     """
     Compute the inner radius of the TF nose (inner structural casing).
 
@@ -3563,8 +3628,9 @@ def Nose_refined(R_ext_Nose, sigma_max, omega, B_max, R_0, a, b,
     sigma_max : float
         Maximum allowable Tresca stress [Pa].
     omega : float
-        Fraction of vertical tension carried by the inboard leg [-].
-        Typical: 0.4–0.6 depending on coil shape and support structure.
+        WP share of the vertical tension f_z,WP [-] (Auclair et al. 2026,
+        Table 1). The nose reacts the complementary share (1 - f_z,WP)
+        of the inboard-leg tension. Typical: 0.4-0.6.
     B_max : float
         Peak magnetic field at the TF inboard conductor (R0 - a - b) [T].
     R_0 : float
@@ -3574,8 +3640,15 @@ def Nose_refined(R_ext_Nose, sigma_max, omega, B_max, R_0, a, b,
     b : float
         Radial build from plasma edge to TF inner face [m].
     coef_inboard_tension : float
-        Correction factor for inboard tension distribution [-].
-        Accounts for non-uniform current distribution across the WP.
+        Inboard share of the total vertical force N_coil x F_z [-].
+        Must be kept at 0.5 to remain consistent with the equal
+        inboard/outboard split hard-coded in the WP sigma_z (Eq. 23,
+        2 mu0 denominator); exposed for sensitivity studies only.
+    F_CClamp : float, optional
+        External clamping (pre-compression) force [N], subtracted from the
+        TOTAL vertical separating force before the WP/nose partition
+        (same convention as Winding_Pack_refined and f_TF_academic).
+        Default: 0.0.
     delta_port : float, optional
         Additional radial margin between the blanket outer edge and the
         TF outer-leg conductor [m], driven by toroidal-ripple and minimum
@@ -3599,6 +3672,14 @@ def Nose_refined(R_ext_Nose, sigma_max, omega, B_max, R_0, a, b,
     # location (R_0 + a + b + delta_port), not just the blanket outer edge,
     # to capture the ripple and port-access margin (see Number_TF_coils()).
     log_term = np.log((R_0 + a + b + delta_port) / (R_0 - a - b))
+
+    # Clamping (pre-compression) offset, consistent with Winding_Pack_refined:
+    # F_z' = F_z - F_CClamp on the total vertical force, with the same
+    # thin-shell evaluation B0 R0 = B_max (R_0 - a - b). The nose tension
+    # term below is linear in log_term, so the offset is a rescaling.
+    if F_CClamp > 0.0:
+        F_z_tot = np.pi * B_max**2 * (R_0 - a - b)**2 * log_term / μ0
+        log_term = log_term * max(0.0, 1.0 - F_CClamp / F_z_tot)
     
     # Compute the full expression under the square root
     term_intermediate = (R_ext_Nose**2 / sigma_max) * (2 * P + (1 - omega) * (B_max**2 * coef_inboard_tension / μ0) * log_term)
@@ -3622,15 +3703,21 @@ def f_TF_refined(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n
     a : Minor radius (m)
     b : 1rst Wall + Breeding Blanket + Neutron Shield + Gaps (m)
     R0 : Major radius (m)
-    σ_TF : Yield strength of the TF steel (Pa)
+    σ_TF : Design allowable stress of the TF steel (Tresca limit) (Pa)
     J_max_TF : Maximum current density of the chosen Supra + Cu + He (A/m²)
     B_max_TF : Maximum magnetic field (T)
     Choice_Buck_Wedg : Mechanical configuration ('Bucking', 'Wedging', 'Plug')
-    omega : Fraction of vertical tension on inboard leg [-]
+    omega : WP share of the vertical tension f_z,WP [-]
+        (Auclair et al. 2026, Table 1 and Eq. 23)
     n : Conductor geometry factor for γ(α, n) [-]
     c_BP : Backplate thickness (m)
-    coef_inboard_tension : Inboard tension correction [-]
-    F_CClamp : Clamping force [N]
+    coef_inboard_tension : Inboard share of the total vertical force [-]
+        (keep 0.5 for consistency with the WP sigma_z; see Nose_refined)
+    F_CClamp : Clamping (pre-compression) force [N], subtracted from the
+        total vertical separating force N_coil x F_z before the WP/nose
+        tension partition (F_z' = F_z - F_z_PC, pre-compression convention
+        of Auclair et al. 2026). Propagated to both Winding_Pack_refined
+        and Nose_refined.
     TF_grading : bool, optional
         If True, use radially graded α(R) in the WP. Default: False.
     delta_port : float, optional
@@ -3673,14 +3760,14 @@ def f_TF_refined(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n
     
     if Choice_Buck_Wedg == "Wedging":
         
-        c_WP, σ_r, σ_z, σ_theta, Steel_fraction  = Winding_Pack_refined( R0, a, b, σ_TF, J_max_TF, B_max_TF, omega, n, grading=TF_grading, delta_port=delta_port)
+        c_WP, σ_r, σ_z, σ_theta, Steel_fraction  = Winding_Pack_refined( R0, a, b, σ_TF, J_max_TF, B_max_TF, omega, n, grading=TF_grading, delta_port=delta_port, F_CClamp=F_CClamp)
         
         # Vérification que c_WP est valide
         if c_WP is None or np.isnan(c_WP) or c_WP < 0:
             return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
         c_Nose = R0 - a - b - c_WP - Nose_refined(R0 - a - b - c_WP, σ_TF, omega, B_max_TF, R0, a, b,
-                                          coef_inboard_tension, delta_port=delta_port)
+                                          coef_inboard_tension, delta_port=delta_port, F_CClamp=F_CClamp)
 
         # Vérification que c_Nose est valide
         if c_Nose is None or np.isnan(c_Nose) or c_Nose < 0:
@@ -3701,7 +3788,7 @@ def f_TF_refined(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n
     
     elif Choice_Buck_Wedg == "Bucking" or Choice_Buck_Wedg == "Plug":
         
-        c_WP, σ_r, σ_z, σ_theta, Steel_fraction = Winding_Pack_refined(R0, a, b, σ_TF, J_max_TF, B_max_TF, omega, n, grading=TF_grading, delta_port=delta_port)
+        c_WP, σ_r, σ_z, σ_theta, Steel_fraction = Winding_Pack_refined(R0, a, b, σ_TF, J_max_TF, B_max_TF, omega, n, grading=TF_grading, delta_port=delta_port, F_CClamp=F_CClamp)
         
         c = c_WP
         c_Nose = 0
@@ -4307,7 +4394,12 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
 
     References
     ----------
-    [Auclair et al. NF 2026]
+    Auclair T., Boudes B., Duchateau J.-L., Nardon E., Pittaluga L.,
+    Sarazin Y., Sutcliffe F. & Torre A. (2026), "Impact of mechanical
+    constraints on tokamak design and implications for high field power
+    plants", submitted to Nuclear Fusion, arXiv:2606.07201.
+    https://arxiv.org/abs/2606.07201
+        CS models: Section 3; Psi_CS determination: Appendix E.
 
     config : GlobalConfig
         Global design configuration. Used to access: Gap, I_cond, V_max,
@@ -4628,7 +4720,12 @@ def f_sigma_z_CS_axial(J_smear, R_i, R_e, h):
 
     References
     ----------
-    Auclair T. (2026), "Analytical axial stress at CS midplane", internal note.
+    Auclair T., Boudes B., Duchateau J.-L., Nardon E., Pittaluga L.,
+    Sarazin Y., Sutcliffe F. & Torre A. (2026), "Impact of mechanical
+    constraints on tokamak design and implications for high field power
+    plants", submitted to Nuclear Fusion, arXiv:2606.07201.
+    https://arxiv.org/abs/2606.07201
+        Appendix G: "Axial stress at the CS midplane".
     """
     def calL(zeta):
         # Logarithmic geometry factor for the on-axis field of a thick solenoid
@@ -4689,8 +4786,13 @@ def f_CS_refined(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_C
 
     References
     ----------
-    [Auclair et al. NF 2026]
-    
+    Auclair T., Boudes B., Duchateau J.-L., Nardon E., Pittaluga L.,
+    Sarazin Y., Sutcliffe F. & Torre A. (2026), "Impact of mechanical
+    constraints on tokamak design and implications for high field power
+    plants", submitted to Nuclear Fusion, arXiv:2606.07201.
+    https://arxiv.org/abs/2606.07201
+        CS models: Section 3; Psi_CS determination: Appendix E.
+
     config : GlobalConfig
         Global design configuration. Used to access: Gap, I_cond, V_max,
         f_He_pipe, f_void, f_In, T_hotspot, RRR, Marge_T_He, Marge_T_Nb3Sn,
@@ -4954,7 +5056,12 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
 
     References
     ----------
-    [Auclair et al. NF 2026]
+    Auclair T., Boudes B., Duchateau J.-L., Nardon E., Pittaluga L.,
+    Sarazin Y., Sutcliffe F. & Torre A. (2026), "Impact of mechanical
+    constraints on tokamak design and implications for high field power
+    plants", submitted to Nuclear Fusion, arXiv:2606.07201.
+    https://arxiv.org/abs/2606.07201
+        CS models: Section 3; Psi_CS determination: Appendix E.
 
     config : GlobalConfig
         Global design configuration. Used to access: Gap, I_cond, V_max,
