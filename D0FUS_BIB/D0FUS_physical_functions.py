@@ -6,8 +6,9 @@ Author: Auclair Timothe
 
 #%% Imports
 
-import warnings
-warnings.filterwarnings("ignore", category=RuntimeWarning)
+# All standard / third-party imports are centralised in D0FUS_import.py,
+# including the NumPy floating-point error policy that replaces the former
+# module-wide RuntimeWarning filter (see the note there).
 
 # When imported as a module (normal usage in production)
 if __name__ != "__main__":
@@ -30,8 +31,6 @@ else:
 
 # Explicit scipy import for the three-point shaping profiles below.
 # Kept local to this section so the rest of the module is unaffected.
-from scipy.interpolate import PchipInterpolator
-
 """
 Tokamak plasma cross-section geometry for D0FUS
 =====================================================================
@@ -658,6 +657,13 @@ if __name__ == "__main__":
     import D0FUS_BIB.D0FUS_figures as figs
     figs.plot_volume_comparison(R0=6.2, a=2.0)
 
+if __name__ == "__main__":
+    # ITER plasma volume anchor — 831 m³ (Shimada et al., NF 47 (2007) S1).
+    # Analytic shaped-torus vs true separatrix: 6 % tolerance.
+    _V = f_plasma_volume(6.2, 2.0, 1.85, 0.485)
+    assert abs(_V/831. - 1) < 0.06, _V
+    print(f"OK  Volume ITER: {_V:.0f} m³ vs 831 publié")
+
 def f_first_wall_surface(R0, a, kappa_edge, delta_edge=0.0,
                          geometry_model='Academic', N_theta=2000):
     """
@@ -1122,6 +1128,16 @@ def f_sigmav(T):
     return float(sigmav[0]) if scalar else sigmav
 
 
+if __name__ == "__main__":
+    # DT reactivity anchors — Bosch & Hale, NF 32 (1992) 611, Table VII fit.
+    # Coefficients cross-checked against cfspopcon 8.0.0 (machine precision);
+    # values consistent with Table VIII (1.136e-16 cm³/s at 10 keV).
+    for _T, _sv in {1.0: 6.8569e-27, 10.0: 1.1362e-22, 20.0: 4.3302e-22}.items():
+        assert abs(f_sigmav(_T)/_sv - 1) < 5e-4, (_T, f_sigmav(_T))
+    _Tg = np.linspace(20., 150., 600)
+    assert 55 < _Tg[np.argmax(f_sigmav(_Tg))] < 75   # peak ≈ 64 keV (Wesson)
+    print("OK  Bosch-Hale ⟨σv⟩: 3 ancres Table VIII + pic ≈ 64 keV")
+
 # =============================================================================
 # Required electron density for a target fusion power
 # =============================================================================
@@ -1356,6 +1372,211 @@ def f_nG(Ip, a):
     """
     return Ip / (np.pi * a**2)
 
+
+def f_n_limit_giacomin(P_sol, R0, a, kappa, B0, q_edge, A_ion=2.0, alpha_GR=3.3):
+    """
+    First-principles edge density limit — Giacomin et al. (2022), Eq. (12).
+
+    Power-dependent maximum density achievable near the separatrix before
+    the edge pressure-gradient collapse leading to MARFE onset and a
+    density-limit disruption (L-mode disruptive limit):
+
+        n_lim [10²⁰ m⁻³] = α · A^(1/6) · a^(3/14) · P_SOL^(10/21)
+                           · R0^(−43/42) · q^(−22/21) · (1+κ²)^(−1/3) · B_T^(2/3)
+
+    The fitted prefactor α = 3.3 ± 0.3 (R² ≈ 0.8) is a single value across
+    the AUG / JET / TCV multi-machine database of the reference paper.
+
+    Parameters
+    ----------
+    P_sol : float
+        Power crossing the separatrix [MW].
+    R0 : float
+        Major radius [m].
+    a : float
+        Minor radius [m].
+    kappa : float
+        Plasma elongation [-].
+    B0 : float
+        On-axis toroidal field [T].
+    q_edge : float
+        Edge safety factor [-]. The reference paper uses q ≈ q95 in its
+        machine examples (q = 3 for ITER and SPARC, q = 4 for C-Mod).
+    A_ion : float, optional
+        Main-ion mass number [-]. Default 2.0 (deuterium), the value of
+        the fitting database; reproduces the paper predictions exactly
+        (ITER: 2.5e20 m⁻³ at P_SOL = 50 MW; SPARC: 8.7e20 at 28 MW).
+        Use 2.5 for a D-T plasma (+4% via the A^(1/6) dependence).
+    alpha_GR : float, optional
+        Fitted numerical prefactor. Default 3.3.
+
+    Returns
+    -------
+    n_lim : float
+        Maximum near-separatrix electron density [10²⁰ m⁻³].
+
+    Notes
+    -----
+    This is an EDGE density limit (validated against edge Thomson data at
+    MARFE onset), NOT a line-averaged one. Comparison with the D0FUS
+    line-averaged density requires an edge-to-average conversion, e.g.
+    through the n_sep / n̄ anchoring factor f_n_sep (see f_density_limit).
+    Derived for L-mode disruptive limits; for an H-mode reactor it bounds
+    the post H-L back-transition operating point.
+
+    References
+    ----------
+    Giacomin M., Pau A., Ricci P., Sauter O., Eich T. et al.,
+        Phys. Rev. Lett. 128 (2022) 185003 (arXiv:2204.02911), Eq. (12).
+    """
+    return (alpha_GR * A_ion**(1.0/6.0) * a**(3.0/14.0) * P_sol**(10.0/21.0)
+            * R0**(-43.0/42.0) * q_edge**(-22.0/21.0)
+            * (1.0 + kappa**2)**(-1.0/3.0) * B0**(2.0/3.0))
+
+
+def f_n_limit_zanca(P_tot, Ip, a, Z_eff, Z_i=1.0, f0=0.5):
+    """
+    Power-balance density limit — Zanca et al. (2019), Eq. (20).
+
+    Radiative-collapse limit on the LINE-AVERAGED density for additionally
+    heated L-mode tokamaks, derived from a 1D power balance with impurity
+    and neutral radiation losses:
+
+        n_lim [10²⁰ m⁻³] = 0.4 · Z_eff^(4/9) · (f0 + Z_eff − Z_i)^(−5/9)
+                           · (P_tot / Ip)^(4/9) · n_GW^(8/9)
+
+    with P_tot the TOTAL heating power [MW] (not P_sep; includes alpha,
+    auxiliary and Ohmic heating), Ip in MA, and n_GW = Ip/(πa²) the
+    Greenwald density [10²⁰ m⁻³].
+
+    Parameters
+    ----------
+    P_tot : float
+        Total plasma heating power [MW].
+    Ip : float
+        Plasma current [MA].
+    a : float
+        Minor radius [m].
+    Z_eff : float
+        Effective plasma charge [-].
+    Z_i : float, optional
+        Main-ion charge number [-]. Default 1.0 (hydrogen isotopes).
+    f0 : float, optional
+        Effective neutral-deuterium concentration parameter [%].
+        Default 0.5, the value assumed in the original paper and in
+        subsequent multi-machine comparisons.
+
+    Returns
+    -------
+    n_lim : float
+        Maximum line-averaged electron density [10²⁰ m⁻³].
+
+    References
+    ----------
+    Zanca P., Sattin F., Escande D.F. & JET Contributors,
+        Nucl. Fusion 59 (2019) 126011, Eq. (20).
+    Manz P., Eich T., Grover O. et al., Nucl. Fusion 63 (2023) 076026,
+        Eq. (7) — formula restatement and AUG validation; source of the
+        f0 = 0.5 convention.
+    """
+    nGW = f_nG(Ip, a)
+    return (0.4 * Z_eff**(4.0/9.0) * (f0 + Z_eff - Z_i)**(-5.0/9.0)
+            * (P_tot / Ip)**(4.0/9.0) * nGW**(8.0/9.0))
+
+
+def f_density_limit(model, Ip, a, P_sol=None, P_tot=None, R0=None, kappa=None,
+                    B0=None, q_edge=None, Z_eff=None, f_n_sep_line=0.20,
+                    A_ion=2.0, alpha_GR=3.3, f0=0.5, Z_i=1.0):
+    """
+    Model-selectable density limit dispatcher.
+
+    Returns the density limit of the selected model expressed as an
+    equivalent cap on the LINE-AVERAGED density (the quantity disciplined
+    in D0FUS and used by the feasibility constraints), together with the
+    native-convention value and metadata.
+
+    Models
+    ------
+    'greenwald' : n̄_line < n_GW = Ip/(πa²)
+                  (Greenwald, PPCF 44, R27 (2002)).
+    'giacomin'  : edge limit of Giacomin et al. PRL 128 (2022) 185003,
+                  Eq. (12); converted to a line-averaged cap through the
+                  edge anchoring n_sep = f_n_sep_line · n̄_line:
+                      n̄_line_max = n_lim_edge / f_n_sep_line.
+                  Requires P_sol, R0, kappa, B0, q_edge.
+    'zanca'     : line-averaged limit of Zanca et al. NF 59 (2019) 126011,
+                  Eq. (20). Requires P_tot and Z_eff.
+
+    Parameters
+    ----------
+    model : str
+        'greenwald', 'giacomin' or 'zanca'.
+    Ip : float          Plasma current [MA].
+    a : float           Minor radius [m].
+    P_sol : float       Power crossing the separatrix [MW] (giacomin).
+    P_tot : float       Total heating power [MW] (zanca).
+    R0, kappa, B0, q_edge : float
+        Geometry, on-axis field and edge safety factor (giacomin).
+    Z_eff : float       Effective charge (zanca).
+    f_n_sep_line : float
+        Separatrix-to-line-average density ratio n_sep/n̄_line [-] used to
+        convert the edge limit into a line-averaged cap (giacomin only).
+    A_ion, alpha_GR, f0, Z_i : float
+        Model coefficients (see the individual functions).
+
+    Returns
+    -------
+    n_limit_line : float
+        Equivalent cap on the line-averaged density [10²⁰ m⁻³].
+    n_limit_native : float
+        Limit in the model native convention [10²⁰ m⁻³]
+        (edge density for 'giacomin', line-averaged otherwise).
+    convention : str
+        'line-averaged' or 'edge (near-separatrix)'.
+
+    Caution
+    -------
+    The edge-to-line conversion for 'giacomin' uses the OPERATING-POINT
+    separatrix anchoring n_sep = f_n_sep_line · n̄_line. Near the density
+    limit the edge density profile flattens and n_sep/n̄ rises (typically
+    towards 0.4-0.5), so the converted line-averaged cap returned here is
+    an OPTIMISTIC upper bound. For a conservative assessment, pass a
+    density-limit-relevant f_n_sep_line rather than the nominal one.
+    """
+    if model == 'greenwald':
+        nl = f_nG(Ip, a)
+        return nl, nl, 'line-averaged'
+    elif model == 'giacomin':
+        if any(v is None for v in (P_sol, R0, kappa, B0, q_edge)):
+            raise ValueError("f_density_limit('giacomin') requires "
+                             "P_sol, R0, kappa, B0 and q_edge.")
+        nl_edge = f_n_limit_giacomin(P_sol, R0, a, kappa, B0, q_edge,
+                                     A_ion=A_ion, alpha_GR=alpha_GR)
+        return nl_edge / f_n_sep_line, nl_edge, 'edge (near-separatrix)'
+    elif model == 'zanca':
+        if P_tot is None or Z_eff is None:
+            raise ValueError("f_density_limit('zanca') requires P_tot and Z_eff.")
+        nl = f_n_limit_zanca(P_tot, Ip, a, Z_eff, Z_i=Z_i, f0=f0)
+        return nl, nl, 'line-averaged'
+    else:
+        raise ValueError(f"Unknown density_limit_model '{model}'. "
+                         "Choose from: 'greenwald', 'giacomin', 'zanca'.")
+
+
+if __name__ == "__main__":
+    # Density-limit anchors.
+    # Greenwald, PPCF 44 (2002) R27: n_GW = Ip/(πa²), exact for ITER 15 MA.
+    assert abs(f_nG(15., 2.) - 15/(4*np.pi)) < 1e-12
+    # Giacomin et al., PRL 128 (2022) 185003, Eq. 12 — the paper's own
+    # machine predictions (A = 2): ITER 2.5e20, SPARC 8.7e20 (rounding tol).
+    assert abs(f_n_limit_giacomin(50., 6.2, 2., 1.8, 5.3, 3.) - 2.5) < 0.15
+    assert abs(f_n_limit_giacomin(28., 1.85, .57, 2., 12.2, 3.) - 8.7) < 0.5
+    # Zanca et al., NF 59 (2019) 126011, Eq. 20 (as in Manz NF 63 (2023)
+    # 076026, Eq. 7) — algebraic identity at an ITER-like point.
+    _zref = (0.4*1.7**(4/9)*(0.5+1.7-1)**(-5/9)*(50/15)**(4/9)
+             * f_nG(15., 2.)**(8/9))
+    assert abs(f_n_limit_zanca(50., 15., 2., Z_eff=1.7) - _zref) < 1e-12
+    print("OK  Limites de densité: Greenwald exact, Giacomin 2.5/8.7, Zanca identité")
 
 if __name__ == "__main__":
 
@@ -2209,6 +2430,14 @@ def f_P_bremsstrahlung(nbar, Tbar, Z_eff, V, nu_n=0.0, nu_T=0.0,
     return C_B * Z_eff * nbar**2 * Tbar**0.5 * V * f_peak * 1e-6
 
 
+if __name__ == "__main__":
+    # Bremsstrahlung constant — Wesson, Tokamaks, Sec. 4.25 (5.35e-37 SI;
+    # same in the NRL Formulary). Flat unit plasma (n = 1e20 m⁻³, T = 1 keV,
+    # Z_eff = 1, V = 1 m³) → 5.35e3 W = 5.35e-3 MW.
+    assert abs(f_P_bremsstrahlung(1., 1., 1., 1., nu_n=0., nu_T=0.)
+               / 5.35e-3 - 1) < 0.02
+    print("OK  Bremsstrahlung: constante Wesson 5.35e-37 (plasma plat unité)")
+
 def f_P_line_radiation(nbar, f_imp, L_z, V):
     """
     Volume-integrated impurity line radiation power.
@@ -2386,6 +2615,336 @@ def f_P_line_radiation_profile(impurity, f_imp, nbar, Tbar, nu_n, nu_T, V,
 # relative error vs the original piecewise polynomials — negligible compared
 # to the ~factor-2 uncertainty in the underlying ADAS atomic data.
 # ══════════════════════════════════════════════════════════════════════════════
+
+# ── SOL-range radiative cooling rates for the Lengyel detachment model ──────
+# Non-coronal equilibrium Lz(Te) for the standard seeding species, valid from
+# 1 eV to 2 keV, i.e. covering the scrape-off-layer temperature range where
+# the Mavrin (2018) core tables above (validity 0.1-100 keV) cannot be used:
+# clamping them below 100 eV would miss the low-Z radiation peaks
+# (N: ~10 eV, Ar: ~18 eV, Ne: ~33 eV) and bias the Lengyel integral by an
+# order of magnitude.
+# Provenance: computed from OpenADAS ADF11 rate coefficients through the
+# open-source `radas` package (the atomic-data generator of cfspopcon),
+# NON-CORONAL equilibrium ionisation balance at the cfspopcon reference
+# residence parameter ne·τ = 5e16 m⁻³ s (SPARC PRD convention), evaluated
+# at n_e = 1e20 m⁻³ (log-interpolated on the 17-point ADF11 density grid).
+# The finite-ne·τ balance enhances low-Z radiation above the coronal peak,
+# which is essential for the Lengyel integral: the coronal limit
+# underestimates L_INT by a factor 1.5-3.5 for these species. The coronal
+# limit of the same pipeline was cross-validated against the Mavrin (2018)
+# tables on the 0.1-2 keV overlap (agreement within 1-5%), validating the
+# atomic-data chain. 40-point log-spaced grid; log-log interpolation.
+_LZ_SOL_TE_EV = np.array([
+        1.0000e+00, 1.2152e+00, 1.4767e+00, 1.7944e+00,
+        2.1806e+00, 2.6498e+00, 3.2200e+00, 3.9128e+00,
+        4.7548e+00, 5.7780e+00, 7.0213e+00, 8.5322e+00,
+        1.0368e+01, 1.2599e+01, 1.5310e+01, 1.8605e+01,
+        2.2608e+01, 2.7473e+01, 3.3385e+01, 4.0569e+01,
+        4.9299e+01, 5.9907e+01, 7.2798e+01, 8.8463e+01,
+        1.0750e+02, 1.3063e+02, 1.5874e+02, 1.9290e+02,
+        2.3441e+02, 2.8485e+02, 3.4614e+02, 4.2063e+02,
+        5.1114e+02, 6.2113e+02, 7.5478e+02, 9.1720e+02,
+        1.1146e+03, 1.3544e+03, 1.6458e+03, 2.0000e+03,
+])
+
+_LZ_SOL_TABLES = {
+    "N": np.array([
+        5.0025e-36, 2.4353e-35, 7.7385e-35, 2.0810e-34,
+        5.4433e-34, 1.3119e-33, 2.8754e-33, 5.8246e-33,
+        1.0667e-32, 1.7410e-32, 2.5772e-32, 3.5402e-32,
+        4.6050e-32, 5.5408e-32, 5.7195e-32, 4.8543e-32,
+        3.5276e-32, 2.3917e-32, 1.6212e-32, 1.1381e-32,
+        8.3808e-33, 6.4927e-33, 5.3281e-33, 4.7196e-33,
+        4.5987e-33, 4.9061e-33, 5.5201e-33, 6.2480e-33,
+        6.8995e-33, 7.3460e-33, 7.5283e-33, 7.4650e-33,
+        7.2343e-33, 6.9200e-33, 6.5775e-33, 6.2418e-33,
+        5.9343e-33, 5.6604e-33, 5.4153e-33, 5.1949e-33,
+    ]),
+    "Ne": np.array([
+        9.8517e-40, 1.8370e-38, 2.1898e-37, 1.5661e-36,
+        6.5299e-36, 1.7311e-35, 4.3615e-35, 1.4131e-34,
+        4.8459e-34, 1.3634e-33, 3.0661e-33, 5.8667e-33,
+        9.8720e-33, 1.5104e-32, 2.2047e-32, 3.0526e-32,
+        3.8913e-32, 4.5949e-32, 5.1670e-32, 5.5754e-32,
+        5.6399e-32, 5.1888e-32, 4.3802e-32, 3.5452e-32,
+        2.8413e-32, 2.2840e-32, 1.8641e-32, 1.5594e-32,
+        1.3512e-32, 1.2277e-32, 1.1747e-32, 1.1657e-32,
+        1.1688e-32, 1.1647e-32, 1.1592e-32, 1.1931e-32,
+        1.3563e-32, 1.3806e-32, 1.0545e-32, 9.5416e-33,
+    ]),
+    "Ar": np.array([
+        2.0544e-37, 1.8181e-36, 1.1460e-35, 5.8612e-35,
+        2.5789e-34, 8.6531e-34, 2.2022e-33, 4.9495e-33,
+        1.1326e-32, 2.4691e-32, 4.6854e-32, 7.7604e-32,
+        1.1441e-31, 1.5159e-31, 1.8221e-31, 2.0334e-31,
+        2.1204e-31, 1.9803e-31, 1.6204e-31, 1.1892e-31,
+        8.3509e-32, 5.9904e-32, 4.5672e-32, 3.7829e-32,
+        3.4596e-32, 3.4943e-32, 3.7724e-32, 4.1327e-32,
+        4.4139e-32, 4.5117e-32, 4.3905e-32, 4.0746e-32,
+        3.6349e-32, 3.1582e-32, 2.7162e-32, 2.3401e-32,
+        2.0366e-32, 1.7990e-32, 1.6155e-32, 1.4728e-32,
+    ]),
+}
+
+
+def get_Lz_SOL(impurity, Te_eV):
+    """
+    SOL-range non-coronal radiative cooling rate Lz(Te) [W m³].
+
+    Non-coronal equilibrium (ne·τ = 5e16 m⁻³ s, n_e = 1e20 m⁻³), matching
+    the cfspopcon SPARC PRD reference convention; complements get_Lz
+    (Mavrin 2018 coronal, core range 0.1-100 keV) below 100 eV, where the
+    Lengyel detachment integral lives. See the provenance note on the
+    _LZ_SOL_TABLES block above. Temperatures are clipped to the
+    [1 eV, 2 keV] table range.
+
+    Parameters
+    ----------
+    impurity : str
+        Seeding species: 'N', 'Ne' or 'Ar'.
+    Te_eV : float or array
+        Electron temperature [eV].
+
+    Returns
+    -------
+    Lz : float or array
+        Radiative cooling rate [W m³].
+    """
+    if impurity not in _LZ_SOL_TABLES:
+        raise ValueError(
+            f"get_Lz_SOL: unsupported seeding species '{impurity}'. "
+            f"Supported: {sorted(_LZ_SOL_TABLES)}.")
+    Te = np.clip(np.asarray(Te_eV, dtype=float), _LZ_SOL_TE_EV[0], _LZ_SOL_TE_EV[-1])
+    lz = np.exp(np.interp(np.log(Te), np.log(_LZ_SOL_TE_EV),
+                          np.log(_LZ_SOL_TABLES[impurity])))
+    return float(lz) if np.ndim(Te_eV) == 0 else lz
+
+
+def f_L_INT(impurity, T_start_eV, T_stop_eV, n_pts=300):
+    """
+    Lengyel weighted cooling integral L_INT = ∫ Lz(T) √T dT  [W m³ eV^1.5].
+
+    Evaluated by trapezoidal quadrature of the SOL-range coronal cooling
+    rate (get_Lz_SOL) on a log-spaced temperature grid between the target
+    and upstream temperatures.
+
+    Parameters
+    ----------
+    impurity : str
+        Seeding species: 'N', 'Ne' or 'Ar'.
+    T_start_eV, T_stop_eV : float
+        Lower (target) and upper (upstream separatrix) electron
+        temperatures [eV].
+    n_pts : int, optional
+        Quadrature points. Default 300.
+
+    Returns
+    -------
+    L_INT : float
+        Weighted cooling integral [W m³ eV^1.5].
+    """
+    T_lo = max(float(T_start_eV), _LZ_SOL_TE_EV[0])
+    T_hi = min(float(T_stop_eV), _LZ_SOL_TE_EV[-1])
+    if T_hi <= T_lo:
+        return 0.0
+    T = np.logspace(np.log10(T_lo), np.log10(T_hi), n_pts)
+    return float(np.trapezoid(get_Lz_SOL(impurity, T) * np.sqrt(T), T))
+
+
+def f_lengyel_concentration(q_par_u, n_u, T_u_eV, T_t_eV, impurity,
+                            f_pwr_loss, kappa_e0=2600.0,
+                            lengyel_factor=4.3):
+    """
+    Required SOL impurity concentration for a given power-loss fraction —
+    Lengyel model.
+
+    Integrating the parallel heat-conduction equation with impurity line
+    radiation as the only volumetric loss, under constant total pressure
+    along the flux tube (n T = n_u T_u), yields:
+
+        c_z = [q_∥u² − ((1 − f_loss) q_∥u)²]
+              / [2 κ_e0 (n_u T_u)² L_INT] / C_Lengyel
+
+    with L_INT = ∫_{T_t}^{T_u} Lz(T) √T dT (see f_L_INT) and
+    q_∥t = (1 − f_loss) q_∥u the residual parallel flux at the target.
+
+    Parameters
+    ----------
+    q_par_u : float
+        Upstream peak parallel heat flux [MW m⁻²] (as returned by
+        f_heat_two_point / f_heat_PFU_Eich; converted internally to SI).
+    n_u : float
+        Upstream (separatrix) electron density [m⁻³].
+    T_u_eV : float
+        Upstream separatrix electron temperature [eV].
+    T_t_eV : float
+        Target electron temperature [eV].
+    impurity : str
+        Seeding species: 'N', 'Ne' or 'Ar'.
+    f_pwr_loss : float
+        SOL power-loss fraction to be radiated, 0 ≤ f < 1 (e.g. the
+        f_pwr_loss_req diagnostic of f_heat_two_point).
+    kappa_e0 : float, optional
+        Spitzer-Härm parallel electron heat conductivity constant
+        [W m⁻¹ eV⁻⁷ᐟ²], q_∥ = −κ_e0 T^{5/2} ∇_∥T. Default 2600
+        (cfspopcon SPARC PRD reference value).
+    lengyel_factor : float, optional
+        Calibration divisor C_Lengyel correcting the known systematic
+        overestimation of the Lengyel model against SOLPS (Moulton et al.
+        2021). Default 4.3 (cfspopcon SPARC PRD reference value).
+
+    Returns
+    -------
+    c_z : float
+        Required impurity concentration n_z/n_e in the SOL [-].
+
+    Notes
+    -----
+    Non-coronal Lz at ne·τ = 5e16 m⁻³ s is used (cfspopcon reference
+    convention, consistent with the Moulton calibration factor); this is
+    the standard 0D / system-code level of fidelity. The model does not enforce consistency between c_z and the
+    assumed (T_u, T_t) pair; D0FUS uses the two-point-model temperatures.
+
+    References
+    ----------
+    Lengyel L.L., IPP Report 1/191, Max-Planck-Institut für Plasmaphysik
+        (1981) — "Analysis of Radiating Plasma Boundary Layers".
+    Moulton D. et al., Nucl. Fusion 61 (2021) 046029 — Lengyel/SOLPS
+        comparison motivating the calibration factor.
+    Body T. et al., cfspopcon (github.com/cfs-energy/cfspopcon) —
+        reference implementation and default coefficients.
+    """
+    if not (0.0 <= f_pwr_loss < 1.0):
+        raise ValueError("f_pwr_loss must satisfy 0 <= f < 1.")
+    q_u_SI = q_par_u * 1e6                              # [W m^-2]
+    L_int = f_L_INT(impurity, T_t_eV, T_u_eV)           # [W m^3 eV^1.5]
+    if L_int <= 0.0:
+        return np.inf
+    num = q_u_SI**2 - ((1.0 - f_pwr_loss) * q_u_SI)**2
+    den = 2.0 * kappa_e0 * (n_u * T_u_eV)**2 * L_int
+    return num / den / lengyel_factor
+
+
+# Mavrin 2018 average charge state <Z>(Te) polynomial coefficients.
+# Same reference as the Lz tables below:
+#   A.A. Mavrin, "Improved fits of coronal radiative cooling rates for
+#   high-temperature plasmas", Radiat. Eff. Defects Solids 173 (2018) 388,
+#   DOI: 10.1080/10420150.2018.1462361.
+# Coefficients cross-checked against the open-source TORAX implementation
+# (google-deepmind/torax, torax/_src/physics/charge_states.py).
+# Convention: per species, a list of rows of 5 polynomial coefficients in
+# DESCENDING degree (numpy.polyval order) evaluated on X = log10(Te[keV]);
+# the row is selected by the temperature interval boundaries [keV] in
+# _MAVRIN_ZAVG_TBOUNDS via searchsorted. Validity range: 0.1-100 keV.
+# He, Li and Be are fully stripped above 0.1 keV and handled separately.
+_MAVRIN_ZAVG_COEFFS = {
+    "C": [
+        [-7.2007e00, -1.2217e01, -7.3521e00, -1.7632e00, 5.8588e00],
+        [0.0000e00, 0.0000e00, 0.0000e00, 0.0000e00, 6.0000e00],
+    ],
+    "N": [
+        [0.0000e00, 3.3818e00, 1.8861e00, 1.5668e-01, 6.9728e00],
+        [0.0000e00, 0.0000e00, 0.0000e00, 0.0000e00, 7.0000e00],
+    ],
+    "O": [
+        [0.0000e00, -1.8560e01, -3.8664e01, -2.2093e01, 4.0451e00],
+        [-4.3092e00, -4.6261e-01, -3.7050e-02, 8.0180e-02, 7.9878e00],
+        [0.0000e00, 0.0000e00, 0.0000e00, 0.0000e00, 8.0000e00],
+    ],
+    "Ne": [
+        [-2.5303e01, -6.4696e01, -5.3631e01, -1.3242e01, 8.9737e00],
+        [-7.0678e00, 3.6868e00, -8.0723e-01, 2.1413e-01, 9.9532e00],
+        [0.0000e00, 0.0000e00, 0.0000e00, 0.0000e00, 1.0000e01],
+    ],
+    "Ar": [
+        [6.8717e00, -1.1595e01, -4.3776e01, -2.0781e01, 1.3171e01],
+        [-4.8830e-02, 1.8455e00, 2.5023e00, 1.1413e00, 1.5986e01],
+        [-5.9213e-01, 3.5667e00, -8.0048e00, 7.9986e00, 1.4948e01],
+    ],
+    "Kr": [
+        [1.3630e02, 4.6320e02, 5.6890e02, 3.0638e02, 7.7040e01],
+        [-1.0279e02, 6.8446e01, 1.5744e01, 1.5186e00, 2.4728e01],
+        [-2.4682e00, 1.3215e01, -2.5703e01, 2.3443e01, 2.5368e01],
+    ],
+    "Xe": [
+        [5.8178e02, 1.9967e03, 2.5189e03, 1.3973e03, 3.0532e02],
+        [8.6824e01, -2.9061e01, -4.8384e01, 1.6271e01, 3.2616e01],
+        [4.0756e02, -9.0008e02, 6.6739e02, -1.7259e02, 4.8066e01],
+        [-1.0019e01, 7.3261e01, -1.9931e02, 2.4056e02, -5.7527e01],
+    ],
+    "W": [
+        [1.6823e01, 3.4582e01, 2.1027e01, 1.6518e01, 2.6703e01],
+        [-2.5887e02, -1.0577e01, 2.5532e02, -7.9611e01, 3.6902e01],
+        [1.5119e01, -8.4207e01, 1.5985e02, -1.0011e02, 6.3795e01],
+    ],
+}
+
+# Temperature interval boundaries [keV] separating the coefficient rows above.
+_MAVRIN_ZAVG_TBOUNDS = {
+    "C": [0.7], "N": [0.7], "O": [0.3, 1.5], "Ne": [0.5, 2.0],
+    "Ar": [0.6, 3.0], "Kr": [0.447, 4.117], "Xe": [0.3, 1.5, 8.0],
+    "W": [1.5, 4.0],
+}
+
+# Light species fully stripped above 0.1 keV (Mavrin 2018 provides no fit).
+_FULLY_STRIPPED_Z = {"He": 2.0, "Li": 3.0, "Be": 4.0}
+
+
+def get_Z_mean(impurity, Te_keV):
+    """
+    Coronal-equilibrium average charge state <Z>(Te) of an impurity species.
+
+    Piecewise polynomial fits to ADAS coronal-equilibrium data from
+    Mavrin (2018), evaluated on X = log10(Te[keV]). Same reference and
+    species coverage as the Lz cooling-rate tables (get_Lz), making the
+    Z_eff / dilution / radiation chain fully consistent.
+
+    Parameters
+    ----------
+    impurity : str
+        Species symbol. Fitted: 'C','N','O','Ne','Ar','Kr','Xe','W'.
+        'He','Li','Be' are treated as fully stripped (<Z> = Z_nuclear).
+    Te_keV : float or array
+        Electron temperature [keV]. Clipped to the fit validity range
+        [0.1, 100] keV to avoid extrapolation.
+
+    Returns
+    -------
+    Z_mean : float or array
+        Average charge state [-].
+
+    References
+    ----------
+    Mavrin A.A., Radiat. Eff. Defects Solids 173 (2018) 388,
+        DOI: 10.1080/10420150.2018.1462361.
+    Coefficients cross-checked against the TORAX implementation
+        (google-deepmind/torax, charge_states.py).
+    """
+    if impurity in _FULLY_STRIPPED_Z:
+        Z_full = _FULLY_STRIPPED_Z[impurity]
+        out = np.full_like(np.asarray(Te_keV, dtype=float), Z_full)
+        return float(out) if np.ndim(Te_keV) == 0 else out
+    if impurity not in _MAVRIN_ZAVG_COEFFS:
+        raise ValueError(
+            f"Unknown impurity '{impurity}' for get_Z_mean. Supported: "
+            f"{sorted(_FULLY_STRIPPED_Z) + sorted(_MAVRIN_ZAVG_COEFFS)}.")
+    Te = np.clip(np.asarray(Te_keV, dtype=float), 0.1, 100.0)
+    X = np.log10(Te)
+    bounds = np.asarray(_MAVRIN_ZAVG_TBOUNDS[impurity])
+    coeffs = np.asarray(_MAVRIN_ZAVG_COEFFS[impurity])
+    idx = np.searchsorted(bounds, Te)
+    Z = np.empty_like(X)
+    for k in np.unique(idx):
+        m = (idx == k)
+        Z[m] = np.polyval(coeffs[k], X[m])
+    # Physical clamping: 0 <= <Z> <= Z_nuclear (last row constant term for
+    # fully-stripped high-T rows of light species; for heavy species use a
+    # nuclear-charge chart).
+    Z_nuc = {"C": 6, "N": 7, "O": 8, "Ne": 10, "Ar": 18, "Kr": 36,
+             "Xe": 54, "W": 74}[impurity]
+    Z = np.clip(Z, 0.0, Z_nuc)
+    return float(Z) if np.ndim(Te_keV) == 0 else Z
+
 
 # Mavrin 2018 polynomial coefficients (frozen reference data)
 _MAVRIN_LZ_COEFFS = {
@@ -2609,6 +3168,33 @@ Kim et al., Phys. Fluids B 3 (1991) 2050 — trapped particle correction.
 Gormezano et al. (ITER PIPB Ch. 6), Nucl. Fusion 47 (2007) S285.
 """
 
+
+if __name__ == "__main__":
+    # Atomic-data anchors.
+    # Mavrin (2018) ⟨Z⟩(T_e) — coefficients cross-checked against TORAX
+    # (google-deepmind/torax, charge_states.py): Ne fully stripped > 5 keV;
+    # W(8.9 keV) = 53.06 (hand evaluation of the interval-3 polynomial).
+    assert get_Z_mean('Ne', 8.9) == 10.0
+    assert abs(get_Z_mean('W', 8.9) - 53.06) < 0.05
+    # Frozen non-coronal SOL Lz tables (OpenADAS/radas, ne·τ = 5e16 m⁻³s,
+    # cfspopcon SPARC-PRD convention): peak integrity at freezing time, and
+    # the ONE-SIDED invariant Lz_nc ≥ Lz_coronal on the 0.1-2 keV overlap
+    # (finite ne·τ keeps line-radiating states alive; N reaches ×50 at
+    # 1-2 keV where coronal N is fully stripped — no convergence expected).
+    for _sp, (_Tp, _Lp) in {'N': (13.2, 5.745e-32), 'Ne': (49.8, 5.642e-32),
+                            'Ar': (22.6, 2.121e-31)}.items():
+        _Tt = np.logspace(0, 3, 600); _lz = get_Lz_SOL(_sp, _Tt)
+        _k = int(np.argmax(_lz))
+        assert abs(_lz[_k]/_Lp - 1) < 0.05 and 1/1.6 < _Tt[_k]/_Tp < 1.6, _sp
+        for _Tk in (0.1, 0.5, 2.0):
+            assert get_Lz_SOL(_sp, _Tk*1e3)/get_Lz(_sp, _Tk) > 0.95, (_sp, _Tk)
+    # Lengyel — frozen cfspopcon SPARC-PRD regression point (chain validated
+    # to 0.3 % over five decades of q_par, 2026-06 review): Ar,
+    # q = 9.101 GW/m², f_loss = 0.988, T_u = 280.1 eV, T_t = 25 eV,
+    # n_u = 2.1e19 m⁻³ → c_z = 0.7569.
+    _cz = f_lengyel_concentration(9101., 2.1e19, 280.1, 25.0, 'Ar', 0.988)
+    assert abs(_cz/0.7569 - 1) < 0.02, _cz
+    print("OK  Données atomiques: Mavrin ⟨Z⟩, tables Lz SOL gelées, ancre Lengyel")
 
 def _ln_Lambda_CD(Te_keV, ne_20):
     """
@@ -3752,6 +4338,24 @@ def f_P_thresh(nbar, B0, a, R0, kappa, M_ion, Ip=None,
 
 
 if __name__ == "__main__":
+    # L-H threshold anchors — Martin, JPCS 123 (2008) 012033, against the
+    # PUBLISHED ITER predictions of Table 5 in the ITPA TC-26 paper
+    # (NF 2026, 10.1088/1741-4326/ae39f2): 52.3 MW @ 0.5e20 and
+    # 86.0 MW @ 1.0e20 (deuterium, full field). Tol 10 % (Ramanujan-ellipse
+    # surface vs the true ITER LCFS ≈ 680 m²).
+    for _n20, _Pref in ((0.5, 52.3), (1.0, 86.0)):
+        _P = P_Thresh_Martin(_n20, 5.3, 2.0, 6.2, 1.85, 2.0)
+        assert abs(_P/_Pref - 1) < 0.10, (_n20, _P)
+    # 'New_S' (TC-26 draft 2017, Delabie) sits within the published 1σ of
+    # TC-26(Bt): P/S = (0.0441±0.0025)·B^(0.580±0.039)·n^(1.08±0.03)·
+    # (2/M)^(0.975±0.032). Updating to the published central values
+    # (~2-4 % on P_LH) is a deliberate maintainer decision.
+    _b = P_Thresh_New_S(1., 1., 2., 6.2, 1.7, 2.)
+    assert abs(np.log2(P_Thresh_New_S(1., 2., 2., 6.2, 1.7, 2.)/_b) - 0.580) < 0.04
+    assert abs(np.log2(P_Thresh_New_S(2., 1., 2., 6.2, 1.7, 2.)/_b) - 1.08) < 0.04
+    print("OK  Martin 2008: ancres ITER publiées 52.3/86.0 MW; New_S dans le 1σ TC-26")
+
+if __name__ == "__main__":
 
     # ITER Q=10 DT baseline — Shimada et al., Nucl. Fusion 47 (2007) S1
     # M_eff = 2.5 for DT already included; isotope factor P_LH ∝ 1/M applied.
@@ -4570,6 +5174,16 @@ def _nu_e_star(n_e, T_e, q, R0, epsilon, Z_eff):
     ln_Lambda = 31.3 - np.log(np.sqrt(n_e) / T_e)
     return 6.921e-18 * q * R0 * n_e * Z_eff * ln_Lambda / (T_e**2 * epsilon**1.5)
 
+
+if __name__ == "__main__":
+    # Collisionality identity — Sauter, Angioni & Lin-Liu, Phys. Plasmas 6
+    # (1999) 2834, Eq. 18b with lnΛ_e of Eq. 18d. NB: the helper takes T_e
+    # in eV. ITER core ν*_e ≈ 0.03 (banana regime).
+    _ne, _Te = 1.0e20, 8900.0
+    _lnL = 31.3 - np.log(np.sqrt(_ne)/_Te)
+    _nref = 6.921e-18 * 3.0 * 6.2 * _ne * 1.7 * _lnL / (_Te**2 * (2/6.2)**1.5)
+    assert abs(float(_nu_e_star(_ne, _Te, 3.0, 6.2, 2/6.2, 1.7))/_nref - 1) < 1e-6
+    print(f"OK  Collisionnalité Sauter: identité Eq. 18b (ν*_e,ITER = {_nref:.3f})")
 
 def _nu_i_star(n_i, T_i, q, R0, epsilon):
     """Ion collisionality [Eq. 18c]."""
@@ -5971,6 +6585,15 @@ def f_heat_PFU_Eich(P_sol, B_pol, R, eps, theta_deg,
     return lambda_q, q_par_u, q_target
 
 
+if __name__ == "__main__":
+    # SOL width anchor — Eich et al., NF 53 (2013) 093031, Table 6,
+    # regression #15: λq [mm] = 1.35 P_SOL⁻⁰·⁰² R⁰·⁰⁴ Bpol⁻⁰·⁹² (a/R)⁰·⁴².
+    # Closed anchor: the paper's own ITER evaluation gives λq = 0.73 mm
+    # (P_SOL = 100 MW, Bpol,MP = 1.185 T, R = 6.2 m, a = 2 m). Tol 8 %.
+    _lam, _, _ = f_heat_PFU_Eich(100., 1.185, 6.2, 2/6.2, 3.0, B0=5.3)
+    assert abs(_lam*1e3/0.73 - 1) < 0.08, _lam*1e3
+    print(f"OK  Eich #15: λq,ITER = {_lam*1e3:.2f} mm vs 0.73 publié")
+
 # =============================================================================
 # Refined divertor exhaust — two-point model (Stangeby 2018)
 # =============================================================================
@@ -6649,6 +7272,26 @@ def f_Get_parameter_scaling_law(Scaling_Law):
 
 
 # ── Global energy and confinement descriptors ─────────────────────────────────
+
+if __name__ == "__main__":
+    # Confinement-scaling registry vs published exponents (exact equality).
+    # IPB98(y,2): ITER Physics Basis, NF 39 (1999) 2175 / Doyle, NF 47
+    # (2007) S18. ITPA20: Verdoolaege, NF 61 (2021) 076006. ITER89-P:
+    # Yushmanov, NF 30 (1990) 1999 — C(n19) = 0.048·10⁻⁰·¹ (published n20
+    # prefactor converted to the D0FUS n19 convention).
+    assert f_Get_parameter_scaling_law('IPB98(y,2)') == \
+        (0.0562, 0, 0.19, 0.78, 0.58, 1.97, 0.15, 0.41, 0.93, -0.69)
+    assert f_Get_parameter_scaling_law('ITPA20') == \
+        (0.053, 0.36, 0.2, 0.8, 0.35, 1.71, 0.22, 0.24, 0.98, -0.669)
+    assert abs(f_Get_parameter_scaling_law('ITER89-P')[0] - 0.048*10**-0.1) < 2e-4
+    # IPB98 at the ITER Q=10 point reproduces the published τ_E ≈ 3.7 s
+    # (Ip = 15, B = 5.3, n19 = 10.1, M = 2.5, R = 6.2, κ_x = 1.70,
+    # P_loss = 87 MW; tol 8 %: κ convention + P_loss definition spread).
+    _Csl,_ad,_aM,_ak,_ae,_aR,_aB,_an,_aI,_aP = f_Get_parameter_scaling_law('IPB98(y,2)')
+    _tau = (_Csl * 15**_aI * 5.3**_aB * 10.1**_an * 2.5**_aM * 6.2**_aR
+            * (2/6.2)**_ae * 1.70**_ak * 87.0**_aP)
+    assert abs(_tau/3.7 - 1) < 0.08, _tau
+    print(f"OK  Lois de confinement: exposants publiés exacts; τ_IPB98,ITER = {_tau:.2f} s vs 3.7")
 
 def f_tauE(pbar, V, P_Alpha, P_Aux, P_Ohm, P_rad):
     """
@@ -7902,3 +8545,25 @@ if __name__ == "__main__":
 #%%
 
 # print("D0FUS_physical_functions loaded")
+
+
+if __name__ == "__main__":
+    # ─────────────────────────────────────────────────────────────────────
+    # General ITER check: the shipped reference deck must reproduce the
+    # frozen 2026-06 values (anti-drift guard; intentional physics changes
+    # must update these anchors). Skipped gracefully if the deck is absent.
+    # Indices follow the save_run_output tuple map.
+    # ─────────────────────────────────────────────────────────────────────
+    try:
+        from D0FUS_EXE.D0FUS_run import load_config_from_file, run
+        _deck = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), 'D0FUS_INPUTS', '1_run_ITER.txt')
+        _res = run(load_config_from_file(_deck), verbose=0)
+        _frozen = {0: 5.300, 3: 3.144, 5: 9.982, 8: 14.968, 13: 1.012,
+                   14: 1.191, 16: 1.635, 20: 3.598, 23: 73.522}
+        for _i, _v in _frozen.items():
+            assert abs(float(_res[_i])/_v - 1) < 5e-3, (_i, float(_res[_i]), _v)
+        assert abs(float(_res[4])/1e6/340.15 - 1) < 5e-3      # W_th [MJ]
+        print("OK  Deck ITER complet: 10 valeurs gelées 2026-06, dérive < 0.5 %")
+    except FileNotFoundError:
+        print("--  Deck ITER absent : test général sauté")

@@ -55,13 +55,14 @@ gif_fps        = 8
 
 a       : [1.5, 3]              # Minor radius [m]          (ITER: 2.0)
 R0      : [5.0, 7.0]              # Major radius [m]          (ITER: 6.2)
-Bmax_TF : [7.0, 15.0]            # Peak field on TF [T]      (ITER: 11.8)
-Tbar    : [5.0, 10.0]             # Volume-avg temperature [keV] (ITER: 8.9)
+Bmax_TF : [7.0, 15.0]            # WP front-face field [T]   (ITER: 10.6, see run deck)
+Tbar    : [5.0, 10.0]             # Volume-avg temperature [keV] (ITER benchmark: 7.75)
 
 # ── 1b. Fixed primary parameters ────────────────────────────────────────────
 
 P_fus    = 500                     # Fusion power [MW] — ITER design target
-b        = 1.4                     # Blanket + shield thickness [m]
+b        = 1.10                    # Inboard stack per published ITER build [m]
+                                   # [Sborchia08; Mitchell11; Libeyre09]
 Bmax_CS_adm  = 15.0                    # Maximum admissible CS conductor field [T]
 H        = 1.0                     # H98(y,2) confinement enhancement [-]
 
@@ -200,7 +201,7 @@ L_min       = 3.6                  # Equatorial port width [m]
 # EXPECTED GA BEHAVIOUR
 # ══════════════════════════════════════════════════════════════════════════════
 #
-# The ITER reference point (R0=6.2, a=2.0, Bmax=11.8, Tbar=8.9) should
+# The ITER reference point (R0=6.2, a=2.0, Bmax=10.6, Tbar=7.75) should
 # appear near the Pareto front.  The GA may find:
 #   - Slightly more compact designs (lower R0) at higher Bmax
 #   - Lower COE at higher Tbar (improved Q) if stability allows

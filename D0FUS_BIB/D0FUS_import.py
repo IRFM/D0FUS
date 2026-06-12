@@ -16,6 +16,7 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 #%% Standard Library Imports
 
+import itertools
 import json
 import math
 import multiprocessing
@@ -25,14 +26,29 @@ import shutil
 import sys
 import time
 import traceback
+import tempfile
 import warnings
 import importlib
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
 #%% Scientific Computing Libraries
 
 import numpy as np
+
+# ── NumPy floating-point error policy ────────────────────────────────────────
+# Root-finding and optimisation drivers (brentq bracketing, differential
+# evolution, GA evaluation) routinely probe unphysical corners of parameter
+# space; the resulting divide-by-zero / invalid-value / overflow floating-point
+# warnings are pure numerical noise handled through NaN returns downstream.
+# Silencing them HERE, at the NumPy level only, replaces the former module-wide
+# warnings.filterwarnings("ignore", RuntimeWarning), which had the harmful side
+# effect of also swallowing genuine physics warnings emitted with
+# warnings.warn(...) (validity-domain violations, missing-argument fallbacks).
+# Those now reach the user.
+np.seterr(divide='ignore', invalid='ignore', over='ignore')
+
 import pandas as pd
 import sympy as sp
 from typing import List, Tuple
@@ -83,6 +99,15 @@ from typing import Optional, Dict, List, Tuple
 #%% Standard Library (deferred)
 
 import argparse
+
+#%% Parallel Computing
+
+from joblib import Parallel, delayed
+
+#%% Statistics (uncertainty-quantification mode)
+
+from scipy import stats
+from scipy.stats import qmc
 
 #%% Genetic Algorithm Libraries
 

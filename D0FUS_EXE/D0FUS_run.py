@@ -12,9 +12,10 @@ well-suited for parametric scans and genetic-algorithm optimisation.
 
 #%% Standard imports
 
+# Bootstrap imports only: sys/os are required to make the package importable
+# before D0FUS_import.py (which centralises every other import) is reachable.
 import sys
 import os
-from dataclasses import replace as dc_replace, asdict
 
 # Add parent directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -25,7 +26,10 @@ from D0FUS_BIB.D0FUS_radial_build_functions import *
 from D0FUS_BIB.D0FUS_physical_functions import *
 from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
 from D0FUS_BIB.D0FUS_cost_data import *
-from scipy.optimize import brentq
+
+# Backwards-compatible alias for dataclasses.replace (exported by D0FUS_import
+# through the wildcard chain above), used throughout this module.
+dc_replace = replace
 
 
 #%% Profile preset table
@@ -154,10 +158,12 @@ def load_config_from_file(filepath: str,
 #%% Core calculation
 # ---------------------------------------------------------------------------
 
-# Coronal-equilibrium mean ion charges <Z> for the supported impurities.
-# Fixed (temperature-independent) approximation, shared with the fuel-dilution
-# term computed inside run().  Low/mid-Z species are fully stripped at reactor
-# temperatures (<Z> = nuclear Z); high-Z species (W) carry a mid-range value.
+# Coronal-equilibrium mean ion charges <Z>.
+# SUPERSEDED for the Z_eff / dilution chain by the temperature-dependent
+# Mavrin (2018) fits get_Z_mean(species, Tbar) (D0FUS_physical_functions),
+# which share the reference and species coverage of the get_Lz cooling-rate
+# tables. Kept only as a documented reference of the former fixed values
+# (representative of Tbar ~ 5-10 keV; e.g. W: 46 vs Mavrin 53 at 8.9 keV).
 _Z_CORONAL_MEAN = {'Be': 4, 'C': 6, 'N': 7, 'Ne': 10, 'Ar': 18, 'Kr': 34, 'Xe': 44, 'W': 46}
 
 
@@ -212,9 +218,74 @@ def _compute_Zeff_effective(config, f_alpha):
     if getattr(config, 'Zeff', None) is not None:
         return float(config.Zeff)
     species, conc = _parse_impurity_inventory(config)
-    Z1 = sum(_Z_CORONAL_MEAN.get(s, 10) * c for s, c in zip(species, conc))
-    Z2 = sum(_Z_CORONAL_MEAN.get(s, 10) ** 2 * c for s, c in zip(species, conc))
+    # Temperature-dependent coronal mean charges <Z>(Tbar) — Mavrin (2018)
+    # fits, consistent with the get_Lz radiation tables.
+    Z1 = sum(get_Z_mean(s, config.Tbar) * c for s, c in zip(species, conc))
+    Z2 = sum(get_Z_mean(s, config.Tbar) ** 2 * c for s, c in zip(species, conc))
     return 1.0 + 2.0 * float(f_alpha) - Z1 + Z2
+
+
+def resolve_Tbar(config: GlobalConfig, verbose: int = 0) -> GlobalConfig:
+    """
+    Resolve the volume-averaged temperature according to config.Tbar_mode.
+
+    'manual'    : returns the configuration unchanged.
+    'greenwald' : solves Tbar with brentq so that the converged design sits
+        at the requested Greenwald fraction
+            g(Tbar) = nbar_line(Tbar) / (Ip(Tbar) / pi a^2) - f_GW_target = 0
+        over the bracket [Tbar_min, Tbar_max]. Each iteration is one full
+        run() at Tbar_mode='manual' (typically ~10 iterations). If the
+        bracket does not enclose a sign change, a coarse pre-scan looks for
+        an enclosing sub-bracket and a clear error is raised otherwise.
+
+    Returns the configuration with the solved Tbar and Tbar_mode='manual',
+    so that downstream consumers (run, printing, figures, the other
+    execution modes) see a fully resolved design.
+    """
+    mode = str(getattr(config, 'Tbar_mode', 'manual')).lower()
+    if mode != 'greenwald':
+        return config
+    target = float(config.f_GW_target)
+    T_lo, T_hi = float(config.Tbar_min), float(config.Tbar_max)
+
+    def g(T):
+        # Probe evaluations may legitimately fail at extreme temperatures
+        # (e.g. radiation exceeding heating near Tbar_max); these failures
+        # are handled through the NaN return below, so the corresponding
+        # physics RuntimeWarnings are suppressed for the probes only.
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', RuntimeWarning)
+            res = run(dc_replace(config, Tbar=float(T), Tbar_mode='manual'),
+                      verbose=0)
+        nbl, Ip = float(res[13]), float(res[8])
+        if not (np.isfinite(nbl) and np.isfinite(Ip) and Ip > 0):
+            return np.nan
+        return nbl / f_nG(Ip, config.a) - target
+
+    g_lo, g_hi = g(T_lo), g(T_hi)
+    if not (np.isfinite(g_lo) and np.isfinite(g_hi) and g_lo * g_hi < 0):
+        # Coarse pre-scan for an enclosing sub-bracket (handles solver
+        # failures at the bracket edges and non-monotonic corners).
+        Ts = np.linspace(T_lo, T_hi, 13)
+        gs = np.array([g(T) for T in Ts])
+        ok = np.isfinite(gs)
+        sub = None
+        for k in range(len(Ts) - 1):
+            if ok[k] and ok[k + 1] and gs[k] * gs[k + 1] < 0:
+                sub = (Ts[k], Ts[k + 1])
+                break
+        if sub is None:
+            raise ValueError(
+                f"resolve_Tbar: no Tbar in [{T_lo}, {T_hi}] keV reaches "
+                f"f_GW = {target} (g spans "
+                f"[{np.nanmin(gs):+.3f}, {np.nanmax(gs):+.3f}]). "
+                f"Adjust f_GW_target or the [Tbar_min, Tbar_max] bracket.")
+        T_lo, T_hi = sub
+    T_star = brentq(g, T_lo, T_hi, xtol=1e-3, rtol=1e-5)
+    if verbose:
+        print(f"resolve_Tbar: f_GW = {target} reached at "
+              f"Tbar = {T_star:.3f} keV")
+    return dc_replace(config, Tbar=float(T_star), Tbar_mode='manual')
 
 
 def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
@@ -262,6 +333,12 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # ── Resolve configuration ─────────────────────────────────────────────────
     if config is None:
         config = DEFAULT_CONFIG
+    # Resolve Tbar when the deck prescribes a Greenwald fraction instead of a
+    # temperature (Tbar_mode = 'greenwald'). resolve_Tbar returns a config
+    # with Tbar_mode='manual', so the recursive run() calls inside the solve
+    # do not re-enter this branch.
+    if str(getattr(config, 'Tbar_mode', 'manual')).lower() == 'greenwald':
+        config = resolve_Tbar(config, verbose=verbose)
         
     # Unpack every field into local names so the downstream physics code
     # is unchanged (no 'config.X' references scattered throughout).
@@ -295,6 +372,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     betaN_limit               = config.betaN_limit   # Used in D0FUS_scan.py check_radial_build
     q_limit                   = config.q_limit        # Used in D0FUS_scan.py check_radial_build
     Greenwald_limit           = config.Greenwald_limit
+    density_limit_model       = config.density_limit_model
     ms                        = config.ms
     Atomic_mass               = config.Atomic_mass
     Zeff_override             = config.Zeff   # None -> compute Z_eff from inventory + ash;
@@ -447,12 +525,15 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     imp_species_list, imp_conc_list = _parse_impurity_list(
         config.impurity_species, config.f_imp_core)
 
-    _Z_CORONAL = _Z_CORONAL_MEAN   # module-level table (single source of truth)
-    f_imp_dilution = sum(_Z_CORONAL.get(s, 10) * c
+    # Temperature-dependent coronal mean charges <Z>(Tbar) — Mavrin (2018)
+    # fits (get_Z_mean), consistent with the get_Lz radiation tables and
+    # with _compute_Zeff_effective. Unknown species now raise a clear error
+    # instead of silently defaulting to Z = 10.
+    f_imp_dilution = sum(get_Z_mean(s, Tbar) * c
                          for s, c in zip(imp_species_list, imp_conc_list))
     # Impurity Z^2 moment sum_j <Z_j>^2 c_j, reused below to build the effective
     # Z_eff = Z_eff_fuel + Zeff_imp_Z2 when config.Zeff is None (computed mode).
-    Zeff_imp_Z2 = sum(_Z_CORONAL.get(s, 10) ** 2 * c
+    Zeff_imp_Z2 = sum(get_Z_mean(s, Tbar) ** 2 * c
                       for s, c in zip(imp_species_list, imp_conc_list))
 
     # ── Profile peaking factors ───────────────────────────────────────────────
@@ -1785,7 +1866,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     heat_par_solution   = f_heat_par(R0, B0_solution, P_sep_solution)
     heat_pol_solution   = f_heat_pol(R0, B0_solution, P_sep_solution, a, q95_solution)
     lambda_q_Eich_m, q_parallel0_Eich, q_target_Eich = f_heat_PFU_Eich(
-        P_sep_solution, B_pol_solution, R0, a / R0, theta_deg)
+        P_sep_solution, B_pol_solution, R0, a / R0, theta_deg,
+        B0=B0_solution)
 
     # ── Refined divertor exhaust: two-point model (Stangeby 2018) ─────────────
     # D0FUS density profiles vanish at the LCFS by construction (tanh edge), so
@@ -1799,6 +1881,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     divertor_solution = f_heat_two_point(
         P_sep_solution, B_pol_solution, R0, a / R0, q95_solution,
         n_sep_solution, theta_deg,
+        B0=B0_solution,
         f_cooling=f_cooling_div, f_mom=f_mom_div,
         q_dep_limit=q_dep_limit, flux_expansion=flux_expansion)
     divertor_solution['n_sep']            = n_sep_solution
@@ -1967,6 +2050,25 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         f_In_CS      = result_J_CS['f_In']
     else:
         f_sc_CS = f_cu_CS = f_He_pipe_CS = f_void_CS = f_He_CS = f_In_CS = np.nan
+
+    # ── Density limit, model-selectable ──────────────────────────────────────
+    # Evaluated here (after the power balance and exhaust blocks) because the
+    # Giacomin and Zanca limits are power-dependent. nG_solution, consumed by
+    # the results tuple and the downstream feasibility constraints
+    # (nbar_line < nG), is overridden with the selected model cap so that the
+    # GA / scan / figures machinery inherits the choice transparently.
+    # The native Greenwald density Ip/(pi a^2) remains available as nG_raw.
+    _f_n_sep_line = f_n_sep * (nbar_solution / nbar_line_solution)  # n_sep/n̄_line
+    _P_tot_heat   = P_Alpha + P_Aux_solution + P_Ohm_solution       # [MW]
+    n_DL_line, n_DL_native, n_DL_convention = f_density_limit(
+        density_limit_model, Ip_solution, a,
+        P_sol=P_sep_solution, P_tot=_P_tot_heat,
+        R0=R0, kappa=κ, B0=B0_solution, q_edge=q95_solution,
+        Z_eff=Zeff, f_n_sep_line=_f_n_sep_line,
+        A_ion=config.Atomic_mass,
+        alpha_GR=config.alpha_giacomin, f0=config.f0_zanca)
+    if density_limit_model != 'greenwald':
+        nG_solution = n_DL_line * Greenwald_limit
 
     # Component volumes (Pappus centroid theorem, rectangular cross-sections)
     (V_BB, V_TF, V_CS, V_FI) = f_volume(a, b, c, d, R0, κ)
@@ -2520,11 +2622,32 @@ def save_run_output(config: GlobalConfig,
         print(f"[{'I' if config.Zeff is not None else 'O'}] Z_eff (Effective charge, {'imposed' if config.Zeff is not None else 'computed from inventory+ash'}) : {_compute_Zeff_effective(config, f_alpha):.3f} [-]", file=out)
         print(f"[O] nbar  (Volume-averaged electron density)        : {nbar:.3f} [10²⁰ m⁻³]",     file=out)
         print(f"[O] nbar_line (Line-averaged electron density)      : {nbar_line:.3f} [10²⁰ m⁻³]", file=out)
-        # nG from the results tuple is the limit-scaled value (Ip/πa² × Greenwald_limit);
-        # recompute the physical Greenwald density Ip/πa² for display.
-        print(f"[O] nG    (Greenwald density, Ip/πa²)               : {f_nG(Ip, config.a):.3f} [10²⁰ m⁻³]", file=out)
-        print(f"[O] f_GW  (Greenwald fraction, nbar_line/(Ip/πa²))  : {nbar_line/(nG/config.Greenwald_limit):.3f} [-]",  file=out)
-        print(f"[O] f_GW / f_GW_limit                               : {nbar_line/nG:.3f} [-]",     file=out)
+        # nG from the results tuple is the effective cap of the SELECTED
+        # density-limit model scaled by the margin factor Greenwald_limit
+        # (n_DL_line × Greenwald_limit); recompute the physical Greenwald
+        # density Ip/πa² for display, regardless of the selected model.
+        nG_raw_disp = f_nG(Ip, config.a)
+        print(f"[O] nG    (Greenwald density, Ip/πa²)               : {nG_raw_disp:.3f} [10²⁰ m⁻³]", file=out)
+        print(f"[O] f_GW  (Greenwald fraction, nbar_line/(Ip/πa²))  : {nbar_line/nG_raw_disp:.3f} [-]",  file=out)
+        print(f"[I] density_limit_model                             : {config.density_limit_model}", file=out)
+        if config.density_limit_model != 'greenwald':
+            # Recompute the selected limit from the tuple values for display
+            # (same call as in run(); P_tot = P_alpha + P_aux + P_Ohm with
+            # P_aux + P_Ohm = P_fus / Q by the D0FUS definition of Q).
+            _Pfus_disp = config.P_fus
+            _Ptot_disp = f_P_alpha(_Pfus_disp) + (_Pfus_disp / Q if Q > 0 else 0.0)
+            _fnsl_disp = config.f_n_sep * (nbar / nbar_line)
+            n_DL_line_d, n_DL_native_d, n_DL_conv_d = f_density_limit(
+                config.density_limit_model, Ip, config.a,
+                P_sol=P_sep, P_tot=_Ptot_disp,
+                R0=config.R0, kappa=κ, B0=B0, q_edge=q95,
+                Z_eff=_compute_Zeff_effective(config, f_alpha),
+                f_n_sep_line=_fnsl_disp, A_ion=config.Atomic_mass,
+                alpha_GR=config.alpha_giacomin, f0=config.f0_zanca)
+            print(f"[O] n_DL  ({config.density_limit_model} limit, native: {n_DL_conv_d}) : {n_DL_native_d:.3f} [10²⁰ m⁻³]", file=out)
+            print(f"[O] n_DL  (line-averaged equivalent cap)            : {n_DL_line_d:.3f} [10²⁰ m⁻³]", file=out)
+            print(f"[O] f_DL  (nbar_line / n_DL_line)                   : {nbar_line/n_DL_line_d:.3f} [-]", file=out)
+        print(f"[O] f_DL / f_DL_limit (feasibility ratio, {config.density_limit_model}) : {nbar_line/nG:.3f} [-]", file=out)
         print(f"[O] pbar  (Volume-averaged pressure)                : {pbar:.3f} [MPa]",            file=out)
         print(f"[O] f_He  (Helium ash fraction)                     : {f_alpha*100:.3f} [%]",      file=out)
         print(f"[O] tau_alpha (Alpha-particle confinement time)     : {tau_alpha:.3f} [s]",         file=out)
@@ -2550,6 +2673,27 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] P_sep·B0 / R0  (Parallel heat flux proxy)       : {heat_par:.3f} [MW·T/m]", file=out)
         print(f"[O] P_sep·B0 / (q95·R0·A)  (Poloidal heat flux)     : {heat_pol:.3f} [MW·T/m]", file=out)
         print(f"[O] Gamma_n  (Neutron wall load)                    : {Gamma_n:.3f} [MW/m²]",   file=out)
+        # ── Lengyel detachment diagnostic (indicative only) ───────────────
+        # Required SOL impurity concentration to radiate the two-point-model
+        # power-loss fraction, recomputed from the divertor dict.
+        _dimp = getattr(config, 'detachment_impurity', '')
+        if _dimp and isinstance(divertor_out, dict) and 'q_par_u' in divertor_out:
+            try:
+                _fpl = min(max(float(divertor_out['f_pwr_loss_req']), 0.0), 0.9999)
+                # Lower integral bound: DESIRED post-seeding target
+                # temperature (config), not the operating 2PM T_et, which
+                # is capped at T_u in the sheath-limited regime.
+                _Tt_des = float(getattr(config, 'lengyel_T_target_eV', 25.0))
+                _cz_req = f_lengyel_concentration(
+                    float(divertor_out['q_par_u']), float(divertor_out['n_sep']),
+                    float(divertor_out['T_eu']), _Tt_des,
+                    _dimp, _fpl)
+                print(f"[O] c_z_req ({_dimp}, Lengyel, f_loss={_fpl:.3f}, T_t={_Tt_des:.0f} eV) : {_cz_req*100:.3f} [%] of n_e (SOL)", file=out)
+                _core_inv = dict(zip(*_parse_impurity_inventory(config)))
+                if _dimp in _core_inv:
+                    print(f"[I] c_{_dimp} core seeding (deck inventory)             : {_core_inv[_dimp]*100:.3f} [%]", file=out)
+            except (ValueError, KeyError, TypeError) as _e:
+                print(f"[O] c_z_req (Lengyel)                               : n/a ({_e})", file=out)
         print("=========================================================================", file=out)
 
         # ── Runaway Electron Indicators (post-convergence diagnostic) ─────────
@@ -2882,6 +3026,10 @@ def main(input_file: str = None, save_figures: bool = False,
         print("=" * 73 + "\n")
 
     try:
+        # Resolve the f_GW-prescribed temperature here (not only inside
+        # run) so that save_run_output receives the resolved configuration
+        # and reports the solved Tbar instead of the deck placeholder.
+        config     = resolve_Tbar(config, verbose=max(verbose, 1))
         results    = run(config, verbose=verbose)
         output_dir = os.path.join(os.path.dirname(__file__), '..', 'D0FUS_OUTPUTS')
         os.makedirs(output_dir, exist_ok=True)

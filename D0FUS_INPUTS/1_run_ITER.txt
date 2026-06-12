@@ -1,5 +1,19 @@
 # ══════════════════════════════════════════════════════════════════════════════
-# D0FUS Input Parameters — ITER 15 MA DT Q=10 Baseline (Scenario 2)
+# D0FUS Input Parameters — ITER 15 MA DT Q=10 Q=10 Baseline (benchmark conventions)
+#
+# Canonical ITER deck, aligned on the published machine (thesis Chapter 2).
+# Three convention-driven choices:
+#   b       = 1.10  : inboard stack per the published ITER radial build
+#                     [Sborchia 2008; Mitchell 2011; Libeyre 2009]
+#   Bmax_TF = 10.60 : D0FUS references the TF peak field at the WP FRONT FACE
+#                     (R0 - a - b). ITER quotes 11.8 T ON THE CONDUCTOR, deeper
+#                     in the WP (R = 2.78 m), where the front-face field is
+#                     10.6 T. This input reproduces B0 = 5.30 T exactly.
+#                     Coil thicknesses at conductor-peak field are benchmarked
+#                     separately (envelope-anchored, thesis Sec. 2.1.2).
+#   Tbar_mode = greenwald, f_GW_target = 0.85 : the ITER operating point is
+#                     specified by its Greenwald fraction; Tbar is solved
+#                     (7.75 keV) instead of imposed.
 # ══════════════════════════════════════════════════════════════════════════════
 #
 # References (primary):
@@ -45,12 +59,12 @@ R0    = 6.2                     # Major radius [m]
 a     = 2.0                     # Minor radius [m]
                                 # [Shimada07] Table 2: A = R0/a = 3.1
 
-b     = 1.0                     # Blanket + shield radial thickness [m]
+b     = 1.10                     # Blanket + shield radial thickness [m]
                                 # ITER shielding block + breeding blanket radial build.
                                 # [Casper14] Fig. 1 radial build; includes recent
                                 # increase in inboard shielding block thickness [Kim18] §2.
 
-Bmax_TF  = 11.80               # Peak field on TF conductor [T]
+Bmax_TF  = 10.60               # Field at the WP front face [T] (see header)
                                 # [Shimada07] Table 2: B0 = 5.3 T at R = 6.2 m
                                 # Peak field on inner-leg: Bmax ≈ B0 × R0/(R0−a−Δr) ≈ 11.8 T
 
@@ -59,6 +73,9 @@ Bmax_CS_adm  = 15.0                 # Maximum admissible CS conductor field [T]
                                 # to allow design exploration at higher CS utilisation.
 
 Tbar  = 8.9                     # Volume-averaged temperature [keV]
+                                # (ignored in greenwald mode, solved = 7.75)
+Tbar_mode    = greenwald        # Solve Tbar for the target Greenwald fraction
+f_GW_target  = 0.85             # ITER Q=10 operating point [Shimada07]
                                 # [Kim18] §3, Fig. 2(b): <Te> ~ 9 keV at flat-top
                                 # [Shimada07] §3.1: tau_E = 3.7 s at Q=10 conditions
                                 # Consistent with T0 ~ 22–24 keV, T_ped ~ 4.7 keV [Kim18]

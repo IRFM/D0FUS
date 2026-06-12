@@ -43,19 +43,26 @@ P_fus = 500                     # Fusion power [MW]
 a = [1, 3, 15]               # Minor radius scan [m]
 R0 = [3, 9, 15]              # Major radius scan [m]
 
-b     = 1.4                     # Blanket + shield radial thickness [m]
+b     = 1.10                    # Inboard stack per published ITER build [m]
+                                # [Sborchia08; Mitchell11; Libeyre09]
                                 # ITER shielding block + breeding blanket radial build.
                                 # [Casper14] Fig. 1 radial build; includes recent
                                 # increase in inboard shielding block thickness [Kim18] §2.
 
-Bmax_TF  = 11.80               # Peak field on TF conductor [T]
+Bmax_TF  = 10.60               # Field at the WP FRONT FACE [T] — D0FUS convention.
+                                # ITER quotes 11.8 T on the conductor deeper in the
+                                # WP (R=2.78 m), where the front-face field is 10.6 T;
+                                # this input reproduces B0 = 5.30 T exactly.
                                 # [Shimada07] Table 2: B0 = 5.3 T at R = 6.2 m
                                 # Peak field on inner-leg: Bmax ≈ B0 × R0/(R0−a−Δr) ≈ 11.8 T
 
 Bmax_CS_adm  = 15.0                 # Maximum admissible CS conductor field [T]
                                 # Relaxed from ITER Nb3Sn limit (13.5 T, Libeyre09).
 
-Tbar  = 8.9                     # Volume-averaged temperature [keV]
+Tbar  = 7.75                    # Volume-averaged temperature [keV]
+                                # = value solved by the greenwald mode at f_GW = 0.85
+                                # (benchmark point); kept manual here to avoid the
+                                # nested Tbar solve in batch modes.
                                 # [Kim18] §3, Fig. 2(b): <Te> ~ 9 keV at flat-top
                                 # [Shimada07] §3.1: tau_E = 3.7 s at Q=10 conditions
                                 # Consistent with T0 ~ 22–24 keV, T_ped ~ 4.7 keV [Kim18]

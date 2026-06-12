@@ -4483,19 +4483,8 @@ def plot_port_access(
     _save_or_show(fig, save_dir, "port_access")
 
 
-if __name__ == "__main__":
-
-    parser = argparse.ArgumentParser(
-        description="D0FUS_figures.py — stand-alone smoke test.\n"
-                    "Renders all figures interactively by default.\n"
-                    "Pass --save-dir to write PNG files instead.")
-    parser.add_argument("--save-dir", default=None,
-                        help="Directory to save PNG figures (suppresses interactive display)")
-    args = parser.parse_args()
-
-    _out = args.save_dir
-    if _out is not None:
-        os.makedirs(_out, exist_ok=True)
+def demo_run_dict():
+    """ITER Q=10 reference run-dict used by the stand-alone figure demo."""
 
     # ITER Q=10 reference case — Shimada et al., Nucl. Fusion 47 (2007) S1
     ITER_RUN = {
@@ -4544,7 +4533,144 @@ if __name__ == "__main__":
         "e_shield":    0.50,
     }
 
-    plot_all(ITER_RUN, save_dir=_out)
+    return ITER_RUN
+
+
+# =============================================================================
+# FIGURE REGISTRY & STAND-ALONE CATALOGUE
+# =============================================================================
+
+def build_figure_registry():
+    """
+    Auto-populated catalogue of every figure function in this module.
+
+    A figure function is any module-level callable named plot_* or fig_*.
+    The one-line description is the first line of its docstring. The
+    category is inferred from the first positional argument, following the
+    module conventions:
+      run dict        -> 'run'          (rendered by plot_all on a run dict)
+      results         -> 'uncertainty'  (Monte-Carlo robustness figures)
+      names           -> 'uncertainty'  (Sobol indices figure)
+      scan_results    -> 'scan'
+      anything else   -> 'standalone'   (parametric / validation figures
+                                         taking explicit physics arguments)
+
+    Returns
+    -------
+    dict : name -> dict(func, description, category, signature)
+    """
+    import inspect as _inspect
+    registry = {}
+    for name, obj in sorted(globals().items()):
+        if not callable(obj) or not (name.startswith('plot_')
+                                     or name.startswith('fig_')):
+            continue
+        try:
+            sig = _inspect.signature(obj)
+            params = list(sig.parameters)
+        except (TypeError, ValueError):
+            sig, params = None, []
+        doc = (_inspect.getdoc(obj) or '').strip().split('\n')
+        desc = doc[0] if doc and doc[0] else '(no description)'
+        first = params[0] if params else ''
+        if name == 'plot_all':
+            cat = 'meta'
+        elif first == 'run':
+            cat = 'run'
+        elif first in ('results', 'names'):
+            cat = 'uncertainty'
+        elif first == 'scan_results' or 'scan' in name:
+            cat = 'scan'
+        else:
+            cat = 'standalone'
+        registry[name] = dict(func=obj, description=desc, category=cat,
+                              signature=str(sig) if sig else '(?)')
+    return registry
+
+
+_CATEGORY_ORDER = ('meta', 'run', 'standalone', 'scan', 'uncertainty')
+_CATEGORY_LABEL = {
+    'meta':        'META — full catalogue renderer',
+    'run':         'RUN-DICT FIGURES — rendered from a D0FUS run dict',
+    'standalone':  'STANDALONE FIGURES — parametric / validation '
+                   '(explicit physics arguments)',
+    'scan':        'SCAN FIGURES — rendered from scan-mode outputs',
+    'uncertainty': 'UNCERTAINTY FIGURES — rendered from UQ / Sobol outputs',
+}
+
+
+def print_figure_catalog(registry=None):
+    """Print the grouped figure catalogue (name + one-line description)."""
+    registry = registry or build_figure_registry()
+    width = max(len(n) for n in registry)
+    print("=" * 78)
+    print(f"D0FUS figure catalogue — {len(registry)} functions")
+    print("=" * 78)
+    for cat in _CATEGORY_ORDER:
+        entries = {n: e for n, e in registry.items() if e['category'] == cat}
+        if not entries:
+            continue
+        print(f"\n── {_CATEGORY_LABEL[cat]}")
+        for name, e in entries.items():
+            print(f"  {name:<{width}}  {e['description']}")
+    print("\nUsage: --list (catalogue only) | --only name1,name2 | --save-dir DIR")
+    print("=" * 78)
+
+
+def _standalone_main():
+    parser = argparse.ArgumentParser(
+        description="D0FUS_figures.py — stand-alone figure catalogue.\n"
+                    "Prints the catalogue, then renders the full demo "
+                    "sequence (plot_all on the ITER reference run dict) "
+                    "interactively by default.")
+    parser.add_argument("--save-dir", default=None,
+                        help="Directory to save PNG figures "
+                             "(suppresses interactive display)")
+    parser.add_argument("--list", action="store_true",
+                        help="Print the figure catalogue and exit")
+    parser.add_argument("--only", default=None,
+                        help="Comma-separated figure names to render "
+                             "(run-dict figures use the ITER demo dict; "
+                             "standalone figures need all-default arguments)")
+    args = parser.parse_args()
+
+    registry = build_figure_registry()
+    print_figure_catalog(registry)
+    if args.list:
+        return
+
+    _out = args.save_dir
+    if _out is not None:
+        os.makedirs(_out, exist_ok=True)
+
+    if args.only:
+        wanted = [w.strip() for w in args.only.split(',') if w.strip()]
+        run = demo_run_dict()
+        for name in wanted:
+            if name not in registry:
+                print(f"  [skip] unknown figure '{name}' (see catalogue above)")
+                continue
+            e = registry[name]
+            print(f"  rendering {name} ...")
+            try:
+                if e['category'] in ('run', 'meta'):
+                    e['func'](run, save_dir=_out)
+                else:
+                    # Standalone figures: only callable here when every
+                    # physics argument has a default; pass save_dir when the
+                    # signature accepts it, otherwise call bare.
+                    try:
+                        e['func'](save_dir=_out)
+                    except TypeError:
+                        e['func']()
+            except TypeError:
+                print(f"  [skip] {name} requires explicit arguments: "
+                      f"{name}{e['signature']} — call it from Python or "
+                      f"through its execution mode.")
+        return
+
+    plot_all(demo_run_dict(), save_dir=_out)
+
 # =============================================================================
 # UNCERTAINTY-MODE FIGURES
 # Appended to support the D0FUS UNCERTAINTY (Monte-Carlo) execution mode.
@@ -4565,13 +4691,62 @@ Each figure carries a one-line plain-language reading note so it stands on its o
   - fig_models : impact of the model-form choices (confinement scaling, elongation, ...)
     on feasibility and on a key physics output, one row per model combination.
 """
-import os
-from collections import Counter
+def fig_sobol(names, sobol, meta, save_dir=None, show=False):
+    """
+    Sobol sensitivity bar charts: one panel per analysed QoI, horizontal bars
+    for the first-order (S1, filled) and total (ST, hatched outline) indices
+    of every uncertain parameter, per envelope combo (one figure per combo).
 
-import numpy as np
-import matplotlib
-import matplotlib.pyplot as plt
-from matplotlib.patches import Patch
+    Parameters mirror the return values of
+    D0FUS_uncertainty.run_sobol_from_file.
+    """
+    figs = []
+    for label, per_out in sobol.items():
+        outputs = [k for k in per_out if np.isfinite(per_out[k]['ST']).any()]
+        if not outputs:
+            continue
+        ncol = min(3, len(outputs))
+        nrow = int(np.ceil(len(outputs) / ncol))
+        fig, axes = plt.subplots(nrow, ncol,
+                                 figsize=(4.2 * ncol, 0.6 * len(names) * nrow + 1.8),
+                                 squeeze=False)
+        y = np.arange(len(names))
+        for k, out_key in enumerate(outputs):
+            ax = axes[k // ncol][k % ncol]
+            idx = per_out[out_key]
+            order = np.argsort(np.nan_to_num(idx['ST']))
+            ax.barh(y - 0.18, idx['ST'][order], height=0.36, color='lightsteelblue',
+                    edgecolor='navy', hatch='//', label='ST (total)')
+            ax.barh(y + 0.18, idx['S1'][order], height=0.36, color='steelblue',
+                    label='S1 (first order)')
+            ax.set_yticks(y)
+            ax.set_yticklabels([names[j] for j in order], fontsize=8)
+            ax.axvline(0.0, color='k', lw=0.6)
+            ax.set_xlim(left=min(0.0, np.nanmin(idx['S1']) - 0.05),
+                        right=max(1.0, np.nanmax(idx['ST']) + 0.05))
+            _std = idx.get('std', None)
+            ax.set_title(out_key if _std is None
+                         else f"{out_key}  (std = {_std:.3g})", fontsize=10)
+            ax.grid(axis='x', alpha=0.3)
+            if k == 0:
+                ax.legend(fontsize=8, loc='lower right')
+        for k in range(len(outputs), nrow * ncol):
+            axes[k // ncol][k % ncol].axis('off')
+        fig.suptitle(f"Sobol indices — combo [{label}]  "
+                     f"(N={meta['n_base']}, {meta['n_eval']} evaluations)",
+                     fontsize=11)
+        fig.tight_layout(rect=(0, 0, 1, 0.96))
+        if save_dir is not None:
+            safe = label.replace(' ', '').replace(',', '_').replace('=', '-')
+            fig.savefig(os.path.join(save_dir, f"sobol_{safe}.png"), dpi=170)
+        figs.append(fig)
+        if not show:
+            plt.close(fig)
+    return figs
+
+
+# (os, Counter, numpy, matplotlib, pyplot and Patch are all exported by
+#  D0FUS_import.py through the wildcard import at the top of this module.)
 
 _GREEN, _AMBER, _RED = 'tab:green', 'tab:orange', 'tab:red'
 _BIND_COLOR = {'greenwald': 'tab:blue', 'troyon': 'tab:red',
@@ -4717,7 +4892,6 @@ def scan_feasibility(uq_file, scan_specs, n_samples=200, n_jobs=-1, combo=None, 
     scan_specs : {param: (lo, hi, n_points)}
     Returns    : {param: (x_values, P_feasible[%], design_value)}
     """
-    from joblib import Parallel, delayed
     from D0FUS_EXE import D0FUS_uncertainty as UQ
 
     base, spec, envelope, controls, deck_path = UQ.parse_uq_file(uq_file)
@@ -4845,3 +5019,6 @@ def fig_models(results, qoi='Q', save_dir=None):
                 ha='center', fontsize=9.5, color='dimgray')
     plt.tight_layout()
     return _save(fig, save_dir, 'uq_models')
+
+if __name__ == "__main__":
+    _standalone_main()

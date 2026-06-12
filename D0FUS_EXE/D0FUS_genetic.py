@@ -37,7 +37,9 @@ Constraints
 -----------
 Stability and engineering constraints are enforced multiplicatively on
 the fitness through compute_stability_penalty and check_radial_build:
-  - Greenwald density limit             nbar_line < nG
+  - Density limit (model-selectable)    nbar_line < nG
+    where nG is the effective cap of config.density_limit_model
+    ('greenwald' | 'giacomin' | 'zanca') scaled by Greenwald_limit
   - Normalised beta limit               betaT     < betaN
   - Kink safety factor                  q_kink    > q_limit  (q* or q95)
   - Sheffield capital-cost ceiling      C_invest  < C_invest_max
@@ -149,11 +151,9 @@ except ModuleNotFoundError:
 # this module is self-contained and does not require any change to
 # D0FUS_import.py. If D0FUS_import.py is later extended to cover these,
 # the duplicate imports are harmless (Python caches the modules).
-import multiprocessing
-import traceback
-from dataclasses import replace, asdict
-from matplotlib.animation import FuncAnimation, PillowWriter
-from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  (registers '3d' projection)
+# (multiprocessing, traceback, dataclasses.replace/asdict, FuncAnimation,
+#  PillowWriter and the Axes3D 3d-projection registration are all provided
+#  by the D0FUS_import wildcard above.)
 
 # Project-specific D0FUS imports (kept here because they describe this
 # module's direct dependencies inside the D0FUS source tree).
@@ -209,7 +209,7 @@ _IDX = {
     'I_Ohm':      11,
     'nbar':       12,   # Volume-averaged density [10²⁰ m⁻³]
     'nbar_line':  13,   # Line-averaged density  [10²⁰ m⁻³]
-    'nG':         14,   # Greenwald density limit [10²⁰ m⁻³]
+    'nG':         14,   # Density limit, model-selectable effective cap [10²⁰ m⁻³]
     'pbar':       15,   # Volume-averaged pressure [MPa]
     'betaN':      16,   # Normalized beta [% m T / MA]
     'betaT':      17,   # Toroidal beta (fraction, ×100 for %)
@@ -1235,6 +1235,8 @@ def _evaluate_for_joblib(args):
     tuple of float
         Fitness tuple as returned by evaluate_individual.
     """
+    # Bootstrap imports only (see module header); aliased to match the
+    # worker idiom of D0FUS_scan._run_scan_point.
     import os as _os
     import sys as _sys
 
@@ -2330,6 +2332,8 @@ def _eval_scan_point_for_joblib(args):
     -------
     (idx, fitness) : tuple
     """
+    # Bootstrap imports only (see module header); aliased to match the
+    # worker idiom of D0FUS_scan._run_scan_point.
     import os as _os
     import sys as _sys
 
