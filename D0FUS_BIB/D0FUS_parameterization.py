@@ -98,6 +98,17 @@ class GlobalConfig:
     Bmax_CS_adm  : float = 25.0    # Peak magnetic field allowed on the CS [T]
     P_fus : float = 2000.0         # Total fusion power [MW]
     Tbar  : float = 14.0           # Volume-averaged electron temperature T_e [keV]
+    Tbar_mode : str = 'manual'
+    # Temperature prescription mode:
+    #   'manual'    : Tbar above is used directly (historical behaviour).
+    #   'greenwald' : Tbar is SOLVED by scalar root-finding (brentq) so that
+    #                 the converged operating point sits at the requested
+    #                 Greenwald fraction f_GW_target = nbar_line / (Ip/pi a^2).
+    #                 The search bracket is [Tbar_min, Tbar_max]; the solve
+    #                 wraps the full run() (one design solve per iteration).
+    f_GW_target : float = 0.85   # Target Greenwald fraction (Tbar_mode='greenwald') [-]
+    Tbar_min    : float = 4.0    # Lower Tbar bracket for the f_GW solve [keV]
+    Tbar_max    : float = 30.0   # Upper Tbar bracket for the f_GW solve [keV]
     tau_i_e : float = 1.0          # Ion-to-electron temperature ratio T_i/T_e [-]
                                    # 1.0 -> single-temperature plasma (T_i = T_e).
                                    # Prescribed: T_i(rho) = tau_i_e * T_e(rho),
@@ -171,7 +182,18 @@ class GlobalConfig:
     #   kink_parameter='q_star' → q_limit ≈ 2.0–2.5  (Freidberg 2015: q*>2)
     #   kink_parameter='q95'    → q_limit ≈ 3.0–3.5  (ITER/EU-DEMO practice)
     q_limit         : float = 3.0  # Kink safety factor threshold [-]
-    Greenwald_limit : float = 1.0  # Greenwald density fraction limit [-]
+    Greenwald_limit : float = 1.0  # Density-limit fraction (margin) applied to the
+                                   # selected density-limit model [-]
+    density_limit_model : str = 'greenwald'
+    # Density-limit model used by the feasibility constraint (nbar_line < limit):
+    #   'greenwald' : n_GW = Ip/(pi a^2)            [Greenwald, PPCF 44 (2002) R27]
+    #   'giacomin'  : power-dependent edge limit    [Giacomin et al., PRL 128 (2022)
+    #                 185003, Eq. 12], converted to a line-averaged cap through
+    #                 n_sep = f_n_sep_line * nbar_line.
+    #   'zanca'     : power-balance line-avg limit  [Zanca et al., NF 59 (2019)
+    #                 126011, Eq. 20].
+    alpha_giacomin : float = 3.3   # Giacomin fitted prefactor (3.3 +/- 0.3)
+    f0_zanca       : float = 0.5   # Zanca effective neutral concentration [%]
     Ip_limit        : float = None # Upper bound on plasma current [MA]; None = no ceiling (GA)
     ms              : float = 0.3  # Vertical stability margin parameter [-]
 
@@ -193,6 +215,17 @@ class GlobalConfig:
     # concentrations n_imp/n_e. Empty string = disabled (pure D-T).
     # Typical: W 1e-5–5e-4, Ar/Ne 1e-3–5e-3.
     impurity_species : str = ''     # Comma-separated species: 'W', 'W, Ne', '' = none
+    detachment_impurity : str = 'Ne'
+    # Seeding species used by the Lengyel detachment diagnostic ('N', 'Ne'
+    # or 'Ar'; '' disables the diagnostic). The required SOL concentration
+    # to radiate the two-point-model power-loss fraction f_pwr_loss_req is
+    # reported in the run output (diagnostic only, no constraint).
+    lengyel_T_target_eV : float = 25.0
+    # Desired post-seeding target electron temperature [eV] for the Lengyel
+    # integral lower bound (cfspopcon SPARC PRD convention: 25 eV). This is
+    # the DESIRED detached/low-recycling target condition, deliberately
+    # decoupled from the two-point-model operating T_et (which can be
+    # sheath-limited at T_u when the operating point is unmitigated).
     f_imp_core       : str = ''     # Matching concentrations: '5e-5', '1e-5, 3e-3'
     # Core/edge radiation boundary for τ_E and P_sep convention.
     # ρ < rho_rad_core → subtracted from P_heat (core). ρ > → edge (divertor load).

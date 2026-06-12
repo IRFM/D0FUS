@@ -13,6 +13,14 @@ to study and their envelopes, plus a [CONTROLS] section.
     model-form list envelope(A | B).
   * Adding two scan axes  a = [min, max, n]  to the design point turns the study
     into the (a, R0) feasibility map (planned).
+  * Setting  analysis = sobol  in [CONTROLS] switches the study from forward
+    Monte-Carlo propagation to a variance-based Sobol sensitivity analysis
+    (Saltelli A/B/AB_i design on scrambled Sobol sequences; first-order and
+    total indices via the Saltelli-2010 and Jansen-1999 estimators, validated
+    against the analytic Ishigami benchmark). n_samples is then the BASE
+    sample size N (rounded up to a power of two) and the run costs N(d+2)
+    model evaluations. Optional key:  sobol_outputs = Q, COE, ...  selects
+    the analysed QoIs.
 
 Building blocks:
   - evaluate(config): one in-memory solver call (no file I/O, no figures)
@@ -41,12 +49,8 @@ except ModuleNotFoundError:
         sys.path.insert(0, _project_root)
     from D0FUS_BIB.D0FUS_import import *
 
-# --- Supplementary imports not (yet) exported by D0FUS_import.py -------------
-import itertools
-import tempfile
-from collections import Counter
-from scipy import stats
-from scipy.stats import qmc
+# (itertools, tempfile, Counter, scipy.stats and scipy.stats.qmc are exported
+#  by D0FUS_import.py.)
 
 # --- Project-specific D0FUS dependencies -------------------------------------
 from D0FUS_EXE import D0FUS_run as RUN
@@ -222,6 +226,187 @@ def sample_lhs(spec, n, seed=0):
     for j, name in enumerate(names):
         out[:, j] = _marginal_ppf(unit[:, j], spec[name])
     return names, out
+
+
+# =============================================================================
+# Sobol sensitivity analysis (variance decomposition)
+# =============================================================================
+# Saltelli sampling + Jansen/Saltelli-2010 estimators, implemented internally
+# on top of scipy.stats.qmc.Sobol (no extra dependency). Activated from the
+# deck with  analysis = sobol  in the [CONTROLS] section; n_samples is then
+# the BASE sample size N and the total model-evaluation count is N(d+2).
+#
+# References:
+#   Sobol I.M., Math. Comput. Simul. 55 (2001) 271 — variance decomposition.
+#   Jansen M.J.W., Comput. Phys. Commun. 117 (1999) 35 — total-index estimator.
+#   Saltelli A. et al., Comput. Phys. Commun. 181 (2010) 259 — first-order
+#       estimator (Table 2) and the A/B/AB_i radial design used here.
+
+
+def sample_saltelli(spec, n_base, seed=0):
+    """
+    Saltelli A/B/AB_i radial design mapped through the declared marginals.
+
+    A scrambled Sobol sequence of dimension 2d is split into the two
+    independent base matrices A and B (Saltelli 2010); AB_i is A with its
+    i-th column replaced by B's. n_base is rounded UP to the next power of
+    two, as required for the balance properties of the Sobol sequence.
+
+    Returns
+    -------
+    names : list of str           Parameter names (column order).
+    X_all : ndarray (N(d+2), d)   Stacked rows [A; B; AB_1; ...; AB_d] in
+                                  physical units.
+    n : int                       Effective base sample size (power of two).
+    """
+    names = list(spec.keys())
+    d = len(names)
+    m = int(np.ceil(np.log2(max(n_base, 4))))
+    n = 2 ** m
+    unit = qmc.Sobol(d=2 * d, scramble=True, seed=seed).random_base2(m)
+    A_u, B_u = unit[:, :d], unit[:, d:]
+    blocks_u = [A_u, B_u] + [np.column_stack([B_u[:, j] if j == i else A_u[:, j]
+                                              for j in range(d)])
+                             for i in range(d)]
+    X_all = np.vstack(blocks_u)
+    for j, name in enumerate(names):
+        X_all[:, j] = _marginal_ppf(X_all[:, j], spec[name])
+    return names, X_all, n
+
+
+def sobol_indices(YA, YB, YAB):
+    """
+    First-order and total Sobol indices from the radial-design outputs.
+
+    Estimators (Y centred on the mean of [YA, YB], V = population variance
+    of [YA, YB]):
+        S1_i = mean(YB * (YAB_i - YA)) / V        (Saltelli 2010, Table 2)
+        ST_i = mean((YA - YAB_i)**2) / (2 V)      (Jansen 1999)
+
+    Rows where YA, YB or YAB_i is non-finite (failed solver samples) are
+    dropped pair-wise for index i; the per-index valid count is returned so
+    that high failure rates (which degrade the QMC balance) are visible.
+
+    Parameters
+    ----------
+    YA, YB : ndarray (N,)         Model outputs on the A and B blocks.
+    YAB : ndarray (d, N)          Outputs on the AB_i blocks.
+
+    Returns
+    -------
+    S1, ST : ndarray (d,)         First-order and total indices.
+    n_valid : ndarray (d,)        Valid sample count per index.
+    """
+    YA = np.asarray(YA, float)
+    YB = np.asarray(YB, float)
+    YAB = np.asarray(YAB, float)
+    d = YAB.shape[0]
+    S1 = np.full(d, np.nan)
+    ST = np.full(d, np.nan)
+    n_valid = np.zeros(d, dtype=int)
+    base_mask = np.isfinite(YA) & np.isfinite(YB)
+    for i in range(d):
+        m = base_mask & np.isfinite(YAB[i])
+        n_valid[i] = int(m.sum())
+        if n_valid[i] < 8:
+            continue
+        yA, yB, yAB = YA[m], YB[m], YAB[i][m]
+        mu = 0.5 * (yA.mean() + yB.mean())
+        yA, yB, yAB = yA - mu, yB - mu, yAB - mu
+        V = 0.5 * (np.mean(yA**2) + np.mean(yB**2))
+        if V <= 0:
+            continue
+        S1[i] = np.mean(yB * (yAB - yA)) / V
+        ST[i] = 0.5 * np.mean((yA - yAB)**2) / V
+    return S1, ST, n_valid
+
+
+# Default QoIs analysed by the Sobol mode (overridable with the [CONTROLS]
+# key  sobol_outputs = Q, COE, beta_N  ...).
+SOBOL_DEFAULT_OUTPUTS = ('Q', 'COE', 'beta_N', 'B0', 'P_sep', 'd_TF', 'd_CS')
+
+
+def run_sobol_from_file(path, n_override=None, n_jobs=-1, verbose=5):
+    """
+    Parse a self-contained UNCERTAINTY deck and run the Sobol analysis for
+    every envelope combo. Reuses the Monte-Carlo worker (_uq_worker) and the
+    joblib/loky parallel machinery.
+
+    Returns
+    -------
+    names : list of str
+    sobol : dict  combo_label -> {output: dict(S1, ST, n_valid)}
+    meta : dict   n_base, n_eval, outputs, controls
+    """
+    base, spec, envelope, controls, deck_path = parse_uq_file(path)
+    n_req = n_override or controls.get('n_samples', 256)
+    names, X_all, n = sample_saltelli(spec, n_req, seed=controls.get('seed', 0))
+    d = len(names)
+    outputs = controls.get('sobol_outputs', None)
+    if isinstance(outputs, str):
+        outputs = tuple(o.strip() for o in outputs.split(',') if o.strip())
+    if not outputs:
+        outputs = SOBOL_DEFAULT_OUTPUTS
+
+    if envelope:
+        keys = list(envelope.keys())
+        combos = [dict(zip(keys, vals))
+                  for vals in itertools.product(*envelope.values())]
+    else:
+        combos = [None]
+
+    n_eval = X_all.shape[0]
+    if verbose:
+        print(f"SOBOL: d = {d} parameters, base N = {n} "
+              f"(requested {n_req}, rounded to a power of two), "
+              f"{n_eval} model evaluations per combo, "
+              f"{len(combos)} envelope combo(s).")
+
+    sobol = {}
+    for combo in combos:
+        label = ', '.join(f'{k}={v}' for k, v in combo.items()) if combo else 'base'
+        rows = Parallel(n_jobs=n_jobs, verbose=verbose)(
+            delayed(_uq_worker)(deck_path, names, X_all[i], combo)
+            for i in range(n_eval))
+        n_conv = sum(1 for r in rows if r.get('converged', False))
+        per_out = {}
+        for out_key in outputs:
+            Y = np.array([float(r.get(out_key, np.nan))
+                          if r.get('converged', False) else np.nan
+                          for r in rows])
+            YA, YB = Y[:n], Y[n:2*n]
+            YAB = Y[2*n:].reshape(d, n)
+            S1, ST, n_valid = sobol_indices(YA, YB, YAB)
+            per_out[out_key] = dict(S1=S1, ST=ST, n_valid=n_valid,
+                                    mean=float(np.nanmean(Y)),
+                                    std=float(np.nanstd(Y)))
+        sobol[label] = per_out
+        if verbose:
+            print(f"  combo [{label}] done ({n_conv}/{n_eval} converged)")
+        if n_conv < 0.8 * n_eval:
+            warnings.warn(
+                f"SOBOL combo [{label}]: only {n_conv}/{n_eval} samples "
+                f"converged. Non-converged samples are censored pair-wise, "
+                f"which degrades the quasi-Monte-Carlo balance and BIASES the "
+                f"indices towards the feasible region; consider tightening "
+                f"the uncertain ranges around the design point.",
+                UserWarning, stacklevel=2)
+    meta = dict(n_base=n, n_eval=n_eval, outputs=tuple(outputs),
+                controls=controls)
+    return names, sobol, meta
+
+
+def _write_sobol_csv(path, names, sobol, meta):
+    """Plain CSV: combo, output, parameter, S1, ST, n_valid."""
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write("combo,output,output_mean,output_std,parameter,S1,ST,n_valid\n")
+        for label, per_out in sobol.items():
+            for out_key, idx in per_out.items():
+                for j, name in enumerate(names):
+                    f.write(f"{label},{out_key},{idx['mean']:.6g},"
+                            f"{idx['std']:.6g},{name},"
+                            f"{idx['S1'][j]:.6f},{idx['ST'][j]:.6f},"
+                            f"{idx['n_valid'][j]}\n")
 
 
 # =============================================================================
@@ -563,6 +748,35 @@ def main(input_file, save_figures=True, output_dir=None, n_override=None,
     if output_dir is None:
         output_dir = os.path.normpath(os.path.join(
             os.path.dirname(os.path.abspath(input_file)), '..', 'D0FUS_OUTPUTS'))
+
+    # ── Sobol sensitivity analysis branch ([CONTROLS] analysis = sobol) ──
+    _controls_probe = parse_uq_file(input_file)[3]
+    if str(_controls_probe.get('analysis', 'mc')).lower() == 'sobol':
+        names, sobol, meta = run_sobol_from_file(
+            input_file, n_override=n_override, n_jobs=n_jobs, verbose=5)
+        print("\n  SOBOL indices (S1 = first-order, ST = total):")
+        for label, per_out in sobol.items():
+            print(f"  combo [{label}]")
+            for out_key, idx in per_out.items():
+                order = np.argsort(idx['ST'])[::-1]
+                top = ', '.join(f"{names[j]}: S1={idx['S1'][j]:.2f}/ST={idx['ST'][j]:.2f}"
+                                for j in order)
+                print(f"    {out_key:10s} (mean={idx['mean']:.3g}, "
+                      f"std={idx['std']:.3g})  {top}")
+        if save_figures:
+            from D0FUS_BIB import D0FUS_figures as FIG
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_path = os.path.join(output_dir, 'uncertainty',
+                                       f"Sobol_D0FUS_{timestamp}")
+            os.makedirs(output_path, exist_ok=True)
+            _write_sobol_csv(os.path.join(output_path, 'sobol_indices.csv'),
+                             names, sobol, meta)
+            with open(os.path.join(output_path, 'deck_copy.txt'), 'w',
+                      encoding='utf-8') as f:
+                f.write(open(input_file, encoding='utf-8').read())
+            FIG.fig_sobol(names, sobol, meta, save_dir=output_path)
+            print(f"  Sobol outputs written to {output_path}")
+        return names, sobol, meta
 
     names, X, results, controls = run_uq_from_file(
         input_file, n_override=n_override, n_jobs=n_jobs, verbose=5)

@@ -8,16 +8,15 @@ Allows user to choose any two output parameters for iso-contours visualization.
 Adapted to the GlobalConfig / dc_replace architecture of D0FUS_run (v2).
 """
 #%% Imports
+# Bootstrap imports only: sys/os are required to make the package importable
+# before D0FUS_import.py (which centralises every other import) is reachable.
 import sys
 import os
-import warnings
-from dataclasses import replace as dc_replace, asdict
 
 # joblib is always installed in Spyder/scientific Python environments.
 # It uses loky+cloudpickle internally, which serializes functions by bytecode
 # rather than by module reference — making parallel execution robust to module
 # reloads within the same session (e.g. repeated %runfile in Spyder/IPython).
-from joblib import Parallel, delayed
 
 # Add parent directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -30,6 +29,9 @@ from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
 from D0FUS_BIB.D0FUS_cost_data import *
 from D0FUS_EXE.D0FUS_run import run, load_config_from_file, _PROFILE_PRESETS, _compute_Zeff_effective
 from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG, coerce_input_value
+
+# Backwards-compatible alias for dataclasses.replace (from D0FUS_import).
+dc_replace = replace
 
 #%% Output Parameter Registry
 
@@ -1387,8 +1389,9 @@ def _run_scan_point(args):
     -------
     tuple : (y, x, results_tuple, re_dict, exc_str)
     """
-    import os, sys, warnings
-    import numpy as np
+    # Bootstrap imports only (see module header): everything else comes from
+    # the module globals re-created when the worker re-imports D0FUS_scan.
+    import os, sys
 
     # Make the D0FUS package importable in the worker process.
     _parent = os.path.normpath(

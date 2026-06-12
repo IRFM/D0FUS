@@ -20,7 +20,7 @@ sys.path.insert(0, project_root)
 
 # Import all necessary modules
 from D0FUS_BIB.D0FUS_parameterization import *
-from D0FUS_EXE import D0FUS_scan, D0FUS_run, D0FUS_genetic, D0FUS_uncertainty
+from D0FUS_EXE import D0FUS_scan, D0FUS_run, D0FUS_genetic, D0FUS_uncertainty, D0FUS_popcon
 
 #%% Mode detection
 
@@ -41,6 +41,11 @@ def detect_mode_from_input(input_file):
     with open(input_file, 'r', encoding='utf-8') as f:
         content = f.read()
     
+    # POPCON mode: a [POPCON] section. Checked first so that the grid triples
+    # nbar_line/Tbar = [min, max, n] do not make the file look like a SCAN.
+    if re.search(r'^\s*\[\s*popcon\s*\]', content, re.MULTILINE | re.IGNORECASE):
+        return 'popcon', None
+
     # UNCERTAINTY mode: an [UNCERTAINTY] section, or any tri()/norm()/unif()/envelope()
     # marginal. Checked first so that optional map axes (a = [min, max, n]) do not make
     # the file look like a SCAN.
@@ -354,6 +359,12 @@ def execute_with_mode_detection(input_file):
             print("="*60 + "\n")
             D0FUS_run.main(input_file, save_figures=True)
         
+        elif mode == 'popcon':
+            print("\n" + "="*60)
+            print("Mode: POPCON (operating-space contour map)")
+            print(f"Input: {os.path.basename(input_file)}")
+            print("="*60 + "\n")
+            D0FUS_popcon.main(input_file, save_figures=True)
         elif mode == 'scan':
             # SCAN mode detected
             param_names = [p[0] for p in params]
