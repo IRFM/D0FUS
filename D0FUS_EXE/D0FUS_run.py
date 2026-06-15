@@ -730,7 +730,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     f_In_TF      = result_J_TF['f_In']
 
     # ── On-axis magnetic field and alpha power ────────────────────────────────
-    B0_solution = f_B0(Bmax_TF, a, b, R0)
+    B0_solution = f_B0(Bmax_TF, a, b, R0, b_cover=c_BP)
     P_Alpha     = f_P_alpha(P_fus)
 
     # =========================================================================

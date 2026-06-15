@@ -49,7 +49,12 @@ b     = 1.10                    # Inboard stack per published ITER build [m]
                                 # [Casper14] Fig. 1 radial build; includes recent
                                 # increase in inboard shielding block thickness [Kim18] §2.
 
-Bmax_TF  = 10.60               # Field at the WP FRONT FACE [T] — D0FUS convention.
+Bmax_TF  = 11.50               # Peak field at the TF conductor [T]. The field decays
+                               #   as 1/R from the conductor, through the c_BP backplate
+                               #   cover, down to B0 on axis (see f_B0). Chosen as a
+                               #   physics / radial-build compromise (ITER coil-field
+                               #   values are not jointly self-consistent in a 0D build);
+                               #   gives B0 = 5.62 T and reproduces the TF thickness.
                                 # ITER quotes 11.8 T on the conductor deeper in the
                                 # WP (R=2.78 m), where the front-face field is 10.6 T;
                                 # this input reproduces B0 = 5.30 T exactly.
@@ -102,7 +107,7 @@ Option_Kappa          = Wenninger    # Wenninger elongation scaling (κ vs A)
                                      # Yields κ ≈ 1.85 at A = 3.1, consistent with
                                      # [Shimada07] Table 2: κ_sep = 1.85, κ_95 = 1.70
 
-Option_q95            = Sauter       # Sauter (2016) q₉₅ formula with LCFS shaping values
+Option_q95            = ITER_1989    # ITER-1989 guideline q95 formula
 
 # ── 2b. Plasma geometry model ────────────────────────────────────────────────
 
@@ -201,7 +206,8 @@ r_synch     = 0.6               # Synchrotron wall reflectivity [-]
                                 # ITER first wall (Be-coated) has moderate reflectivity
                                 # Default EU-DEMO value; acceptable for ITER.
 
-C_Alpha     = 5.0               # Helium ash confinement parameter [-]
+C_Alpha     = 6.0                  # He confinement ratio tau_He*/tau_E [-]
+rho_rad_core = 0.85                # Core/edge radiation boundary (P_loss convention) [-]
                                 # τ_He* / τ_E ≈ 5 (standard assumption)
 
 # Impurity mix: full-W wall (ITER re-baseline 2024) + Ne seeding.
@@ -292,7 +298,7 @@ Marge_T_Nb3Sn  = 1.5            # Nb3Sn temperature margin [K]
                                 # [Corato16]: conservative Nb3Sn operating margin
 
 f_He_pipe      = 0.10           # He cooling pipe/channel fraction in conductor [-]
-f_void         = 0.33           # Interstitial void fraction in strand bundle [-]
+f_void         = 0.30          # Interstitial void fraction in strand bundle [-]
                                 # NOTE: class-level attributes, not dataclass fields.
                                 # Add ': float' annotation in GlobalConfig to enable
                                 # input-file override.

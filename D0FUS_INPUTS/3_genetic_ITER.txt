@@ -55,7 +55,7 @@ gif_fps        = 8
 
 a       : [1.5, 3]              # Minor radius [m]          (ITER: 2.0)
 R0      : [5.0, 7.0]              # Major radius [m]          (ITER: 6.2)
-Bmax_TF : [7.0, 15.0]            # WP front-face field [T]   (ITER: 10.6, see run deck)
+Bmax_TF : [7.0, 15.0]            # Peak field at the TF conductor [T] (ITER ref ~11.5)
 Tbar    : [5.0, 10.0]             # Volume-avg temperature [keV] (ITER benchmark: 7.75)
 
 # ── 1b. Fixed primary parameters ────────────────────────────────────────────
@@ -75,7 +75,7 @@ Scaling_Law           = IPB98(y,2)
 L_H_Scaling_choice    = Martin
 Bootstrap_choice      = Sauter-Redl    # Sauter (1999/2002) + Redl (2021) refit
 Option_Kappa          = Wenninger
-Option_q95            = Sauter
+Option_q95            = ITER_1989  # ITER-1989 guideline q95 formula
 
 # ── 2b. Plasma geometry ─────────────────────────────────────────────────────
 
@@ -109,7 +109,8 @@ Greenwald_limit = 1.0
 Zeff        = 1.65                 # ITER target Zeff
 Atomic_mass = 2.5                  # D-T
 r_synch     = 0.6                  # Be/W first-wall reflectivity
-C_Alpha     = 5.0
+C_Alpha     = 6.0                  # He confinement ratio tau_He*/tau_E [-]
+rho_rad_core = 0.85                # Core/edge radiation boundary (P_loss convention) [-]
 
 # Impurity mix: full-W wall + Ne seeding (self-consistent with Zeff = 1.65)
 #   dZeff(W)  ~ 46*45*2e-5 ~ 0.04
@@ -154,7 +155,7 @@ T_helium       = 4.5               # Supercritical He [K]
 Marge_T_He     = 0.3
 Marge_T_Nb3Sn  = 1.5
 f_He_pipe      = 0.10              # He cooling pipe fraction [-]
-f_void         = 0.33              # Strand bundle void fraction [-]
+f_void         = 0.30           # Strand bundle void fraction [-]
 f_In           = 0.15
 
 Eps            = -6e-3             # Nb3Sn effective axial strain
