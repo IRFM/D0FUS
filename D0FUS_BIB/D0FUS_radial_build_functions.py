@@ -5164,6 +5164,57 @@ def _offset_contour(R: np.ndarray, Z: np.ndarray, d: float) -> tuple:
     return R_off, Z_off
 
 
+def _radial_interp_contour(
+    R_in: np.ndarray, Z_in: np.ndarray,
+    R_out: np.ndarray, Z_out: np.ndarray,
+    R_center: float, f: float,
+    n_theta: int = 500,
+) -> tuple:
+    """
+    Radial (polar) interpolation between two star-shaped closed contours.
+
+    Both contours are resampled onto a common poloidal-angle grid around
+    (R_center, 0) and their radii are linearly blended:
+        r(theta) = (1-f)*r_in(theta) + f*r_out(theta)
+
+    Used to construct intermediate boundary contours that subdivide the
+    breeding-blanket annulus (between the FW-outer and BB-outer contours,
+    which belong to different shape families — Miller ellipse vs.
+    Princeton-D offset) into named sub-layers for plotting.
+
+    Parameters
+    ----------
+    R_in, Z_in   : ndarray  Inner boundary contour (f=0).
+    R_out, Z_out : ndarray  Outer boundary contour (f=1).
+    R_center     : float    Centre about which both contours are star-shaped
+                             (e.g. the plasma major radius R0).
+    f            : float    Interpolation fraction in [0, 1].
+    n_theta      : int      Number of points on the output contour.
+
+    Returns
+    -------
+    R, Z : ndarray  Closed contour at fraction f between R_in/Z_in and R_out/Z_out.
+    """
+    theta = np.linspace(0.0, 2.0 * np.pi, n_theta, endpoint=False)
+
+    def _radius_profile(R, Z):
+        ang = np.mod(np.arctan2(Z, R - R_center), 2.0 * np.pi)
+        r   = np.hypot(R - R_center, Z)
+        order  = np.argsort(ang)
+        ang_s, r_s = ang[order], r[order]
+        ang_ext = np.concatenate([ang_s, ang_s[:1] + 2.0 * np.pi])
+        r_ext   = np.concatenate([r_s,   r_s[:1]])
+        return np.interp(theta, ang_ext, r_ext)
+
+    r_in  = _radius_profile(R_in,  Z_in)
+    r_out = _radius_profile(R_out, Z_out)
+    r_mid = (1.0 - f) * r_in + f * r_out
+
+    R_mid = R_center + r_mid * np.cos(theta)
+    Z_mid = r_mid * np.sin(theta)
+    return R_mid, Z_mid
+
+
 def f_TF_cross_section(a: float, b: float, R0: float,
                        c: float, Delta_TF: float) -> tuple:
     """
@@ -5644,6 +5695,82 @@ def f_blanket_masses(
     M_divertor = V_divertor * rho_divertor
     M_total_blanket = M_FW + M_BB + M_shield + M_VV + M_divertor
     return M_FW, M_BB, M_shield, M_VV, M_divertor, M_total_blanket
+
+
+def f_TBR(delta_BB_ib: float, Blanket_choice: str) -> float:
+    """
+    Tritium breeding ratio from a saturation-curve fit to the breeder-zone
+    thickness.
+
+        TBR(delta_BZ) = TBR_max * (1 - exp(-delta_BZ / delta_e))
+        delta_e       = delta_BB_sat / ln(20)
+        delta_BZ      = f_width_BZ * delta_BB_ib
+
+    delta_e is set so that TBR reaches 95% of TBR_max at delta_BZ = delta_BB_sat.
+    TBR_max, delta_BB_sat and the breeder-zone width fraction f_width_BZ
+    (first entry of 'sublayers') are taken from BLANKET_CONCEPTS[Blanket_choice].
+
+    Parameters
+    ----------
+    delta_BB_ib    : float  Inboard breeding-blanket thickness [m].
+    Blanket_choice : str    Concept key (see BLANKET_CONCEPTS).
+
+    Returns
+    -------
+    TBR : float  Achieved tritium breeding ratio [-].
+    """
+    concept   = material_blanket(Blanket_choice)
+    f_BZ      = concept['sublayers'][0]['f_width']
+    delta_BZ  = f_BZ * max(delta_BB_ib, 0.0)
+    delta_e   = concept['delta_BB_sat'] / np.log(20.0)
+    return concept['TBR_max'] * (1.0 - np.exp(-delta_BZ / delta_e))
+
+
+def f_blanket_sublayers(
+    V_BB: float, delta_BB_ib: float, delta_BB_ob: float,
+    Blanket_choice: str,
+) -> list:
+    """
+    Subdivide the breeding-blanket (BB) volume into concept-specific sub-layers.
+
+    Each sub-layer's volume and IB/OB thickness are taken as the same fraction
+    f_width of the total BB volume / thickness (smeared 0D split — consistent
+    with the single-thickness 'b' treatment used elsewhere in the radial
+    build).  Sub-layer masses therefore sum exactly to V_BB * rho_BB_effective.
+
+    Parameters
+    ----------
+    V_BB           : float  Total breeding-blanket volume [m³] (e.g. V_BB_eff).
+    delta_BB_ib    : float  Inboard BB thickness [m].
+    delta_BB_ob    : float  Outboard BB thickness [m].
+    Blanket_choice : str    Concept key (see BLANKET_CONCEPTS).
+
+    Returns
+    -------
+    list of dict, one per sub-layer (ordered FW-side -> shield-side), each with:
+        name     : str    Sub-layer label.
+        f_width  : float  Fraction of BB thickness/volume [-].
+        rho      : float  Effective density [kg/m³].
+        delta_ib : float  Sub-layer IB thickness [m].
+        delta_ob : float  Sub-layer OB thickness [m].
+        V        : float  Sub-layer volume [m³].
+        M        : float  Sub-layer mass [kg].
+    """
+    concept = material_blanket(Blanket_choice)
+    layers  = []
+    for sub in concept['sublayers']:
+        f = sub['f_width']
+        V = f * V_BB
+        layers.append({
+            'name':     sub['name'],
+            'f_width':  f,
+            'rho':      sub['rho'],
+            'delta_ib': f * delta_BB_ib,
+            'delta_ob': f * delta_BB_ob,
+            'V':        V,
+            'M':        V * sub['rho'],
+        })
+    return layers
 
 
 def f_cable_length(

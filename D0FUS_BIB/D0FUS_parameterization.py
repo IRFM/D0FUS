@@ -364,6 +364,14 @@ class GlobalConfig:
     delta_VV         : float = 0.15   # Vacuum vessel [m]
     delta_gap_TF     : float = 0.05   # VV→TF gap [m]
 
+    # ── Blanket concept selection ─────────────────────────────────────────────
+    # Selects the breeder/coolant/structure/multiplier combination and the
+    # breeding-blanket (BB) sub-layer breakdown from BLANKET_CONCEPTS below.
+    # Options: 'HCPB', 'HCLL', 'DCLL', 'SCLL', 'SCLV', 'F-LIB'
+    # Ref: "Infinity Two pilot plant blanket trade study",
+    #      J. Plasma Phys. 91, E79 (2025), doi:10.1017/S002237782500039X
+    Blanket_choice : str = 'HCPB'
+
     # ── Effective volumetric densities for radial-build mass estimates ────────
     # Smeared/homogenised values.  Defaults from BLANKET_MATERIAL_DENSITIES.
     rho_FW       : float = 7900.0    # First wall           [kg/m³]
@@ -583,6 +591,139 @@ BLANKET_MATERIAL_DENSITIES = {
     'divertor': 13000.0,   # [kg/m³]  W monoblocks + CuCrZr + steel structure
 }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Breeding-blanket concepts
+# ─────────────────────────────────────────────────────────────────────────────
+# Six concepts compared in the "Infinity Two pilot plant blanket trade study"
+# (J. Plasma Phys. 91, E79 (2025), doi:10.1017/S002237782500039X).
+#
+# Each entry also defines a breeding-blanket (BB) sub-layer breakdown used to
+# split the single BB volume/mass computed by f_radial_build_component_volumes
+# into named sub-elements (radial-build figures and mass tables).  Sub-layers
+# are ordered from the first wall (front) to the shield (back); 'f_width' are
+# fractions of the local BB thickness (IB and OB) and sum to 1.0.  'rho' are
+# smeared/homogenised effective densities [kg/m³] for that sub-layer.
+#
+# TBR_max and delta_BB_sat (front "breeder zone" thickness for ~95% of
+# TBR_max) feed the saturation-curve model f_TBR():
+#   TBR(delta_BZ) = TBR_max * (1 - exp(-delta_BZ / delta_e)),
+#   delta_e = delta_BB_sat / ln(20)
+# where delta_BZ = f_width[0] * delta_BB_ib (breeder-zone IB thickness).
+#
+# All numeric values are illustrative, smeared 0D estimates consistent with
+# the ranges reported in the reference study; they are not a substitute for
+# detailed neutronics.
+BLANKET_CONCEPTS = {
+    'HCPB': {
+        'label':       'Helium-Cooled Pebble Bed',
+        'breeder':     'Li4SiO4 (pebble bed)',
+        'multiplier':  'Be12Ti (pebble bed)',
+        'coolant':     'He',
+        'structure':   'EUROFER97',
+        'TBR_max':       1.46,   # [-]   saturated TBR (parametric study)
+        'delta_BB_sat':  0.50,   # [m]   breeder-zone thickness for ~saturated TBR
+        'M_blanket':     1.35,   # [-]   energy multiplication factor
+        'eta_T_range':  (0.30, 0.40),   # [-] net thermal efficiency range
+        'Li6_enrichment': 'Not required (natural Li)',
+        'shield_quality': 'Excellent (dense solid breeder)',
+        'VV_feasible':    True,
+        'sublayers': [
+            {'name': 'Breeder/Multiplier Zone (Li4SiO4 + Be12Ti)', 'f_width': 0.65, 'rho': 2700.0},
+            {'name': 'Manifold / Back Structure',                   'f_width': 0.35, 'rho': 7000.0},
+        ],
+    },
+    'HCLL': {
+        'label':       'Helium-Cooled Lithium-Lead',
+        'breeder':     'PbLi (eutectic, inherent multiplier)',
+        'multiplier':  'None (PbLi self-multiplies)',
+        'coolant':     'He',
+        'structure':   'EUROFER97',
+        'TBR_max':       1.38,   # [-]   mid-range (1.35-1.40)
+        'delta_BB_sat':  0.60,   # [m]
+        'M_blanket':     1.32,   # [-]
+        'eta_T_range':  (0.30, 0.35),
+        'Li6_enrichment': '90% required',
+        'shield_quality': 'Intermediate',
+        'VV_feasible':    True,
+        'sublayers': [
+            {'name': 'Breeder Zone (PbLi + stiffening plates)', 'f_width': 0.75, 'rho': 9000.0},
+            {'name': 'Manifold / Back Structure',               'f_width': 0.25, 'rho': 6500.0},
+        ],
+    },
+    'DCLL': {
+        'label':       'Dual-Coolant Lithium-Lead',
+        'breeder':     'PbLi (eutectic, inherent multiplier)',
+        'multiplier':  'None (PbLi self-multiplies); SiC flow-channel inserts',
+        'coolant':     'He (primary) + PbLi (secondary, self-cooled)',
+        'structure':   'EUROFER97 / F82H',
+        'TBR_max':       1.42,   # [-]
+        'delta_BB_sat':  0.70,   # [m]
+        'M_blanket':     1.32,   # [-]
+        'eta_T_range':  (0.30, 0.40),
+        'Li6_enrichment': '90% required',
+        'shield_quality': 'Lower than HCPB (thicker shielding needed)',
+        'VV_feasible':    True,
+        'sublayers': [
+            {'name': 'Breeder Zone (PbLi + SiC FCIs)', 'f_width': 0.92, 'rho': 8200.0},
+            {'name': 'Manifold / Back Structure',      'f_width': 0.08, 'rho': 6000.0},
+        ],
+    },
+    'SCLL': {
+        'label':       'Self-Cooled Lithium-Lead',
+        'breeder':     'PbLi (eutectic, inherent multiplier)',
+        'multiplier':  'Optional Be booster/reflector',
+        'coolant':     'Self-cooled (PbLi flow)',
+        'structure':   'SiC composite',
+        'TBR_max':       1.47,   # [-]   highest among liquid concepts
+        'delta_BB_sat':  0.45,   # [m]   most compact radial build
+        'M_blanket':     1.30,   # [-]
+        'eta_T_range':  (0.35, 0.45),
+        'Li6_enrichment': '90% required',
+        'shield_quality': 'Adequate (limited by liquid-metal moderation)',
+        'VV_feasible':    True,
+        'sublayers': [
+            {'name': 'Breeder Zone (PbLi + SiC)',  'f_width': 0.88, 'rho': 8500.0},
+            {'name': 'Manifold / Back Structure',  'f_width': 0.12, 'rho': 5500.0},
+        ],
+    },
+    'SCLV': {
+        'label':       'Self-Cooled Lithium-Vanadium',
+        'breeder':     'Li (pure liquid lithium, inherent multiplier)',
+        'multiplier':  'Optional external multiplier/reflector',
+        'coolant':     'Self-cooled (Li flow)',
+        'structure':   'V-4Cr-4Ti (vanadium alloy)',
+        'TBR_max':       1.47,   # [-]   equivalent to SCLL
+        'delta_BB_sat':  0.55,   # [m]   mid-range
+        'M_blanket':     1.35,   # [-]
+        'eta_T_range':  (0.35, 0.40),
+        'Li6_enrichment': 'Not required (natural Li)',
+        'shield_quality': 'Lower than solid breeders (thicker build needed)',
+        'VV_feasible':    False,   # oxidation/embrittlement concerns
+        'sublayers': [
+            {'name': 'Breeder Zone (Li + V-alloy structure)', 'f_width': 0.80, 'rho': 2200.0},
+            {'name': 'Manifold / Back Structure',             'f_width': 0.20, 'rho': 5000.0},
+        ],
+    },
+    'F-LIB': {
+        'label':       'FLiBe Liquid-Immersion Blanket',
+        'breeder':     'FLiBe (2:1 LiF-BeF2 molten salt)',
+        'multiplier':  'Be (inherent + optional additions)',
+        'coolant':     'Self-cooled (quasi-stagnant salt pool)',
+        'structure':   'Inconel-718 (not low-activation)',
+        'TBR_max':       1.09,   # [-]   lowest of all concepts (self-shielding)
+        'delta_BB_sat':  0.35,   # [m]   smallest radial builds
+        'M_blanket':     1.20,   # [-]
+        'eta_T_range':  (0.35, 0.40),
+        'Li6_enrichment': 'Optional (not yet optimised)',
+        'shield_quality': 'Superior moderation/absorption, but self-shielding limits breeding',
+        'VV_feasible':    False,   # VV not adequately shielded for 5-yr lifetime
+        'sublayers': [
+            {'name': 'Breeder Zone (FLiBe + Be)',  'f_width': 0.90, 'rho': 2200.0},
+            {'name': 'Manifold / Back Structure',  'f_width': 0.10, 'rho': 7500.0},
+        ],
+    },
+}
+
 
 def material_rho(Chosen_Steel: str, Supra_choice: str) -> dict:
     """
@@ -605,3 +746,55 @@ def material_rho(Chosen_Steel: str, Supra_choice: str) -> dict:
         'Cu':          COIL_MATERIAL_DENSITIES['Cu'],
         'insulation':  COIL_MATERIAL_DENSITIES['insulation'],
     }
+
+
+def material_blanket(Blanket_choice: str) -> dict:
+    """
+    Return the BLANKET_CONCEPTS entry for the given concept choice.
+
+    Parameters
+    ----------
+    Blanket_choice : str  Concept key ('HCPB', 'HCLL', 'DCLL', 'SCLL', 'SCLV', 'F-LIB').
+                          Falls back to 'HCPB' if not recognised.
+
+    Returns
+    -------
+    dict  Concept entry (label, breeder, coolant, structure, multiplier,
+          TBR_max, delta_BB_sat, M_blanket, eta_T_range, Li6_enrichment,
+          shield_quality, VV_feasible, sublayers).
+    """
+    return BLANKET_CONCEPTS.get(Blanket_choice, BLANKET_CONCEPTS['HCPB'])
+
+
+def rho_BB_effective(Blanket_choice: str) -> float:
+    """
+    Effective (sub-layer-weighted) breeding-blanket density [kg/m³].
+
+    rho_BB_eff = Σ f_width_i * rho_i  over the concept's BB sub-layers.
+    By construction, V_BB * rho_BB_eff equals the sum of the individual
+    sub-layer masses returned by f_blanket_sublayers().
+    """
+    concept = material_blanket(Blanket_choice)
+    return sum(layer['f_width'] * layer['rho'] for layer in concept['sublayers'])
+
+
+def M_blanket_effective(Blanket_choice: str) -> float:
+    """
+    Blanket energy multiplication factor [-] for the selected concept.
+
+    Returns BLANKET_CONCEPTS[Blanket_choice]['M_blanket'], used in place of
+    the generic GlobalConfig.M_blanket default in the power balance.
+    """
+    return material_blanket(Blanket_choice)['M_blanket']
+
+
+def eta_T_effective(Blanket_choice: str) -> float:
+    """
+    Thermal-to-electric conversion efficiency [-] for the selected concept.
+
+    Returns the midpoint of BLANKET_CONCEPTS[Blanket_choice]['eta_T_range'],
+    used in place of the generic GlobalConfig.eta_T default in the power
+    balance.
+    """
+    eta_lo, eta_hi = material_blanket(Blanket_choice)['eta_T_range']
+    return 0.5 * (eta_lo + eta_hi)

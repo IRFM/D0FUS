@@ -1964,7 +1964,7 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
         _C_invest_val = np.nan
         if config.cost_model != 'None' and np.isfinite(cost):
             try:
-                P_th_scan    = config.P_fus * config.M_blanket + P_CD
+                P_th_scan    = config.P_fus * M_blanket_effective(config.Blanket_choice) + P_CD
                 T_op_limit_s = res[132]
                 CF_s         = res[135]
                 t_bl_yr_s    = res[130]

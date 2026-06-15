@@ -62,8 +62,10 @@ if __name__ != "__main__":
         f_TF_cross_section,
         _sol_fw_miller_contours,
         _offset_contour,
+        _radial_interp_contour,
+        f_TBR,
     )
-    from .D0FUS_parameterization import DEFAULT_CONFIG, E_ELEM
+    from .D0FUS_parameterization import DEFAULT_CONFIG, E_ELEM, BLANKET_CONCEPTS
 
 # Standalone-execution imports (development / testing)
 else:
@@ -94,8 +96,10 @@ else:
         f_TF_cross_section,
         _sol_fw_miller_contours,
         _offset_contour,
+        _radial_interp_contour,
+        f_TBR,
     )
-    from D0FUS_BIB.D0FUS_parameterization import DEFAULT_CONFIG, E_ELEM
+    from D0FUS_BIB.D0FUS_parameterization import DEFAULT_CONFIG, E_ELEM, BLANKET_CONCEPTS
 
 
 # =============================================================================
@@ -2673,6 +2677,16 @@ def plot_assembly_side_view(
     R_sh_outer,  Z_sh_outer  = _offset_contour(R_tf_in, Z_tf_in, d_gTF + d_VV)
     R_BB_outer,  Z_BB_outer  = _offset_contour(R_tf_in, Z_tf_in, d_gTF + d_VV + d_sh)
 
+    # ── BB sub-layer breakdown (concept-specific) ─────────────────────────
+    # Sub-layer boundary contours are obtained by radial (polar) interpolation
+    # between the FW-outer (f=0) and BB-outer (f=1) contours at the cumulative
+    # sub-layer width fractions.  Ordered FW-side -> shield-side.
+    Blanket_choice = run.get("Blanket_choice", "HCPB")
+    _bb_concept    = BLANKET_CONCEPTS.get(Blanket_choice, BLANKET_CONCEPTS["HCPB"])
+    BB_sublayers   = _bb_concept["sublayers"]
+    _BB_SUBLAYER_COLORS = ["#E07820", "#8B5A2B", "#C9A66B", "#5A4632"]
+    _f_cum = np.cumsum([0.0] + [s["f_width"] for s in BB_sublayers])
+
     # ── Divertor polygon (shared helper) ─────────────────────────────────
     f_div = float(run.get("f_div_area_fraction", 0.08))
 
@@ -2717,7 +2731,19 @@ def plot_assembly_side_view(
     ax.fill(R_tf_in,      Z_tf_in,      fc=LAYER_COLORS["TF gap"],    ec="none", zorder=zbase)
     ax.fill(R_VV_outer,   Z_VV_outer,   fc=LAYER_COLORS["VV"],        ec="none", zorder=zbase+1)
     ax.fill(R_sh_outer,   Z_sh_outer,   fc=LAYER_COLORS["Shield"],    ec="none", zorder=zbase+2)
-    ax.fill(R_BB_outer,   Z_BB_outer,   fc=LAYER_COLORS["BB"],        ec="none", zorder=zbase+3)
+    # BB base fill: coloured as the back-most (shield-side) sub-layer.  Inner
+    # sub-layers are overpainted on top, FW-side first, each as a smaller
+    # "disk" bounded by the radially-interpolated sub-layer boundary contour
+    # (so smaller fractions paint last / on top of larger ones).
+    ax.fill(R_BB_outer, Z_BB_outer,
+            fc=_BB_SUBLAYER_COLORS[(len(BB_sublayers) - 1) % len(_BB_SUBLAYER_COLORS)],
+            ec="none", zorder=zbase+3)
+    for _i in range(len(BB_sublayers) - 1):
+        _R_sub, _Z_sub = _radial_interp_contour(
+            R_FW_outer, Z_FW_outer, R_BB_outer, Z_BB_outer, R0, _f_cum[_i + 1])
+        ax.fill(_R_sub, _Z_sub,
+                fc=_BB_SUBLAYER_COLORS[_i % len(_BB_SUBLAYER_COLORS)],
+                ec="none", zorder=zbase + 3 + (len(BB_sublayers) - _i) * 0.01)
     ax.fill(R_FW_outer,   Z_FW_outer,   fc=LAYER_COLORS["First wall"],ec="none", zorder=zbase+4)
     ax.fill(R_SOL_outer,  Z_SOL_outer,  fc=LAYER_COLORS["SOL"],       ec="none", zorder=zbase+5)
     ax.fill(R_lcfs,       Z_lcfs,       fc=col_plasma,                ec="none", zorder=zbase+6)
@@ -2755,16 +2781,26 @@ def plot_assembly_side_view(
     ax.text(R0, 0, "Plasma", color="#8B0030", fontsize=10, **lbl)
 
     # ── Layer legend ─────────────────────────────────────────────────────
+    # Fixed display order: plasma, SOL, first wall, divertor, BB sub-layers
+    # (FW-side -> shield-side), shield, VV, TF gap.
     from matplotlib.patches import Patch
     legend_elements = [
-        Patch(fc=c, ec="grey", lw=0.4, label=n)
-        for n, c in LAYER_COLORS.items() if c != "white"
-    ] + [
-        Patch(fc="white", ec="grey", lw=0.4, label="TF gap"),
         Patch(fc=col_plasma, ec="grey", lw=0.4, label="Plasma"),
+        Patch(fc=LAYER_COLORS["SOL"], ec="grey", lw=0.4, label="SOL"),
+        Patch(fc=LAYER_COLORS["First wall"], ec="grey", lw=0.4, label="First wall"),
+        Patch(fc=LAYER_COLORS["Divertor"], ec="grey", lw=0.4, label="Divertor"),
     ]
-    ax.legend(handles=legend_elements, loc="upper right", fontsize=8,
-              framealpha=0.9, edgecolor="grey", handlelength=1.2,
+    for _j, _sub in enumerate(BB_sublayers):
+        legend_elements.append(Patch(
+            fc=_BB_SUBLAYER_COLORS[_j % len(_BB_SUBLAYER_COLORS)],
+            ec="grey", lw=0.4, label=_sub["name"]))
+    legend_elements += [
+        Patch(fc=LAYER_COLORS["Shield"], ec="grey", lw=0.4, label="Shield"),
+        Patch(fc=LAYER_COLORS["VV"], ec="grey", lw=0.4, label="VV"),
+        Patch(fc="white", ec="grey", lw=0.4, label="TF gap"),
+    ]
+    ax.legend(handles=legend_elements, loc="center left", bbox_to_anchor=(1.01, 0.5),
+              fontsize=8, framealpha=0.9, edgecolor="grey", handlelength=1.2,
               borderpad=0.6, labelspacing=0.3)
 
     # ── Dimension annotations ────────────────────────────────────────────
@@ -2829,6 +2865,80 @@ def plot_assembly_side_view(
 
     plt.tight_layout()
     _save_or_show(fig, save_dir, "run_assembly_side_view")
+
+
+# ---------------------------------------------------------------------------
+# B2b — Breeding-blanket concept comparison
+# ---------------------------------------------------------------------------
+
+def plot_blanket_concepts_comparison(save_dir: str | None = None) -> None:
+    """
+    Compare the breeding-blanket concepts defined in BLANKET_CONCEPTS.
+
+    Left panel : TBR(delta_BZ) saturation curves
+                     TBR = TBR_max * (1 - exp(-delta_BZ / delta_e)),
+                     delta_e = delta_BB_sat / ln(20)
+                 for the breeder/multiplier-zone thickness delta_BZ, one
+                 curve per concept (dotted vertical line at delta_BB_sat).
+    Right panel: grouped bars comparing TBR_max and the blanket energy
+                 multiplication factor M_blanket across concepts.
+
+    This figure is independent of any specific run — it summarises the
+    concept database only.
+
+    Parameters
+    ----------
+    save_dir : str or None
+    """
+    concepts = list(BLANKET_CONCEPTS.keys())
+    colors   = plt.cm.tab10(np.linspace(0.0, 1.0, len(concepts)))
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5.5))
+
+    # ── Left: TBR(delta_BZ) saturation curves ───────────────────────────
+    delta_BZ = np.linspace(0.0, 1.2, 200)
+    for c, col in zip(concepts, colors):
+        concept   = BLANKET_CONCEPTS[c]
+        delta_e   = concept["delta_BB_sat"] / np.log(20.0)
+        TBR_curve = concept["TBR_max"] * (1.0 - np.exp(-delta_BZ / delta_e))
+        ax1.plot(delta_BZ, TBR_curve, color=col, lw=2, label=c)
+        ax1.axvline(concept["delta_BB_sat"], color=col, lw=0.8, ls=":", alpha=0.6)
+
+    ax1.axhline(1.0, color="grey", lw=1.0, ls="--", alpha=0.7)
+    ax1.set_xlabel(r"Breeder/multiplier-zone thickness  $\delta_{BZ}$  [m]", fontsize=11)
+    ax1.set_ylabel("Tritium breeding ratio (TBR)", fontsize=11)
+    ax1.set_title("TBR saturation curves", fontsize=12, fontweight="bold")
+    ax1.set_xlim(0, 1.2)
+    ax1.set_ylim(0, 1.6)
+    ax1.legend(fontsize=9, loc="lower right")
+    ax1.grid(alpha=0.3)
+
+    # ── Right: TBR_max and M_blanket comparison bars ────────────────────
+    x     = np.arange(len(concepts))
+    width = 0.38
+    TBR_max_vals = [BLANKET_CONCEPTS[c]["TBR_max"]   for c in concepts]
+    M_bl_vals    = [BLANKET_CONCEPTS[c]["M_blanket"] for c in concepts]
+
+    bars1 = ax2.bar(x - width / 2, TBR_max_vals, width, color="#4477AA", label="TBR_max")
+    ax2.axhline(1.0, color="grey", lw=1.0, ls="--", alpha=0.7)
+    ax2.set_ylabel("TBR$_{max}$  [-]", fontsize=11, color="#4477AA")
+    ax2.set_ylim(0, 1.6)
+    ax2.tick_params(axis="y", labelcolor="#4477AA")
+
+    ax2b  = ax2.twinx()
+    bars2 = ax2b.bar(x + width / 2, M_bl_vals, width, color="#CC6677", label="M_blanket")
+    ax2b.set_ylabel("$M_{blanket}$  [-]", fontsize=11, color="#CC6677")
+    ax2b.set_ylim(0, 1.6)
+    ax2b.tick_params(axis="y", labelcolor="#CC6677")
+
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(concepts, fontsize=10)
+    ax2.set_title(r"TBR$_{max}$ and energy multiplication $M_{blanket}$", fontsize=12, fontweight="bold")
+    ax2.legend([bars1, bars2], ["TBR_max", "M_blanket"], fontsize=9, loc="upper right")
+
+    fig.suptitle("Breeding-blanket concept comparison", fontsize=13, fontweight="bold")
+    plt.tight_layout()
+    _save_or_show(fig, save_dir, "blanket_concepts_comparison")
 
 
 # ---------------------------------------------------------------------------
@@ -3136,23 +3246,25 @@ def plot_run(
     save_dir: str | None = None,
 ) -> None:
     """
-    Render the run-specific figure set (10 figures).
+    Render the run-specific figure set (12 figures).
 
     This is the subset called after each D0FUS run.  It contains only the
     figures that depend on the current run configuration and results —
     no validation curves, no benchmarks, no scaling-law surveys.
 
     Figures produced:
-      [ 1/10]  Tokamak LCFS comparison (with D0FUS overlay)
-      [ 2/10]  Miller flux surfaces (run geometry)
-      [ 3/10]  Shaping profiles κ(ρ), δ(ρ)
-      [ 4/10]  Kinetic profiles n(ρ), T(ρ), p(ρ)
-      [ 5/10]  Safety factor q(ρ) and current decomposition
-      [ 6/10]  Radiation profiles
-      [ 7/10]  TF coil side view
-      [ 8/10]  CICC TF conductor
-      [ 9/10]  CS cross-section
-      [10/10]  CICC CS conductor
+      [ 1/12]  Tokamak LCFS comparison (with D0FUS overlay)
+      [ 2/12]  Miller flux surfaces (run geometry)
+      [ 3/12]  Shaping profiles κ(ρ), δ(ρ)
+      [ 4/12]  Kinetic profiles n(ρ), T(ρ), p(ρ)
+      [ 5/12]  Safety factor q(ρ) and current decomposition
+      [ 6/12]  Radiation profiles
+      [ 7/12]  Radial build assembly (CS / TF / blanket)
+      [ 8/12]  Breeding-blanket concept comparison
+      [ 9/12]  TF coil side view
+      [10/12]  CICC TF conductor
+      [11/12]  CS cross-section
+      [12/12]  CICC CS conductor
 
     Parameters
     ----------
@@ -3161,7 +3273,7 @@ def plot_run(
         If provided, figures are saved as PNG files.
         Pass ``None`` to display interactively.
     """
-    N = 11
+    N = 12
 
     def _p(i, label):
         print(f"  [{i:2d}/{N}] {label}")
@@ -3193,16 +3305,19 @@ def plot_run(
     _p(7, "Radial build assembly (CS / TF / blanket)")
     plot_assembly_side_view(run, save_dir=save_dir)
 
-    _p(8, "TF coil side view")
+    _p(8, "Breeding-blanket concept comparison")
+    plot_blanket_concepts_comparison(save_dir=save_dir)
+
+    _p(9, "TF coil side view")
     plot_TF_side_view(run, save_dir=save_dir)
 
-    _p(9, "CICC TF conductor")
+    _p(10, "CICC TF conductor")
     plot_CICC_cross_section(build_conductor_from_run(run, coil="TF"), save_dir=save_dir)
 
-    _p(10, "CS cross-section")
+    _p(11, "CS cross-section")
     plot_CS_cross_section(run, save_dir=save_dir)
 
-    _p(11, "CICC CS conductor")
+    _p(12, "CICC CS conductor")
     plot_CICC_cross_section(build_conductor_from_run(run, coil="CS"), save_dir=save_dir)
 
     print("Done.")

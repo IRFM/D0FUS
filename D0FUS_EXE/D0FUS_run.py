@@ -20,7 +20,9 @@ from dataclasses import replace as dc_replace, asdict
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # D0FUS modules
-from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG, material_rho
+from D0FUS_BIB.D0FUS_parameterization import (
+    GlobalConfig, DEFAULT_CONFIG, material_rho,
+    M_blanket_effective, eta_T_effective)
 from D0FUS_BIB.D0FUS_radial_build_functions import *
 from D0FUS_BIB.D0FUS_physical_functions import *
 from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
@@ -270,7 +272,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     T_hotspot                 = config.T_hotspot
     RRR                       = config.RRR
     Dump_resistor_subdivision = config.Dump_resistor_subdivision
-    eta_T                     = config.eta_T
+    eta_T                     = eta_T_effective(config.Blanket_choice)
     eta_WP                    = config.eta_WP_acad if config.CD_source == 'Academic' else config.eta_RF
     theta_deg                 = config.theta_deg
     ripple_adm                = config.ripple_adm
@@ -290,7 +292,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     A_beam                    = config.A_beam
     E_beam_keV                = config.E_beam_keV
     Plasma_geometry           = config.Plasma_geometry
-    M_blanket                 = config.M_blanket
+    M_blanket                 = M_blanket_effective(config.Blanket_choice)
 
     # Core/edge radiation boundary for P_loss convention.
     # Radiation emitted inside ρ < rho_rad_core is subtracted from P_heat
@@ -1963,7 +1965,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
      M_rb_VV, M_rb_divertor,
      M_rb_total) = f_blanket_masses(
         V_rb_FW, V_rb_BB, V_rb_shield, V_rb_VV, V_rb_divertor,
-        config.rho_FW, config.rho_BB, config.rho_shield,
+        config.rho_FW, rho_BB_effective(config.Blanket_choice), config.rho_shield,
         config.rho_VV, config.rho_divertor)
 
     cost_solution = (V_rb_BB + V_TF_one * N_TF + V_CS_geom) / P_fus   # legacy cost proxy [m^3/MW]
@@ -2337,6 +2339,7 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         "delta_shield":     config.delta_shield,
         "delta_VV":         config.delta_VV,
         "delta_gap_TF":     config.delta_gap_TF,
+        "Blanket_choice":   config.Blanket_choice,
         # Mechanical configuration key — consumed by _resolve_build() in figures
         # to decide whether the TF-CS gap is applied to the CS outer radius.
         "Choice_Buck_Wedg": config.Choice_Buck_Wedg,
@@ -2504,6 +2507,17 @@ def save_run_output(config: GlobalConfig,
     except Exception:
         N_TF_disp    = 16
         Delta_TF_disp = 0.0
+
+    # ── Blanket concept: TBR and BB sub-layer breakdown (display only) ────
+    _fixed_bb    = (config.delta_SOL + config.delta_FW + config.delta_shield
+                    + config.delta_VV + config.delta_gap_TF)
+    _delta_BB_ib = config.b - _fixed_bb
+    _delta_BB_ob = config.b + Delta_TF_disp - _fixed_bb
+    _blanket_concept = material_blanket(config.Blanket_choice)
+    _BB_sublayers     = f_blanket_sublayers(V_rb_BB, _delta_BB_ib, _delta_BB_ob, config.Blanket_choice)
+    _TBR_achieved     = f_TBR(_delta_BB_ib, config.Blanket_choice)
+    _M_blanket        = M_blanket_effective(config.Blanket_choice)
+    _eta_T            = eta_T_effective(config.Blanket_choice)
 
     # ── Magnetic stored energy and ampere-turns (display only) ────────────
     # TF bore geometry (same convention as run())
@@ -2711,6 +2725,22 @@ def save_run_output(config: GlobalConfig,
         print(f"[O]  ├ M_rb_divertor (divertor)                     : {M_rb_divertor/1e3:.1f} [t]", file=out)
         print(f"[O]  └ M_rb_total    (FW+BB+shield+VV+div)          : {M_rb_total/1e3:.1f} [t]",   file=out)
         print("-------------------------------------------------------------------------", file=out)
+        print(f"[I] Blanket_choice  ({_blanket_concept['label']})", file=out)
+        print(f"[I]  ├ Breeder / Multiplier  : {_blanket_concept['breeder']} / {_blanket_concept['multiplier']}", file=out)
+        print(f"[I]  ├ Coolant / Structure   : {_blanket_concept['coolant']} / {_blanket_concept['structure']}", file=out)
+        print(f"[I]  ├ 6Li enrichment        : {_blanket_concept['Li6_enrichment']}", file=out)
+        print(f"[I]  ├ Magnet shielding      : {_blanket_concept['shield_quality']}", file=out)
+        print(f"[I]  ├ VV feasible           : {_blanket_concept['VV_feasible']}", file=out)
+        print(f"[I]  └ M_blanket / eta_T     : {_M_blanket:.2f}  /  {_eta_T:.2f}  (eta_T_range = {_blanket_concept['eta_T_range']})", file=out)
+        print(f"[O] TBR_achieved  (delta_BB_ib = {_delta_BB_ib:.3f} m)        : {_TBR_achieved:.3f}  (TBR_max = {_blanket_concept['TBR_max']:.2f})", file=out)
+        print(f"[O] BB sub-layers  (delta_BB_ib = {_delta_BB_ib:.3f} m, delta_BB_ob = {_delta_BB_ob:.3f} m)", file=out)
+        for _i, _layer in enumerate(_BB_sublayers):
+            _branch = "├" if _i < len(_BB_sublayers) - 1 else "└"
+            print(f"[O]  {_branch} {_layer['name']:<45s}: "
+                  f"f={_layer['f_width']:.2f}  "
+                  f"d_ib={_layer['delta_ib']:.3f} m  d_ob={_layer['delta_ob']:.3f} m  "
+                  f"V={_layer['V']:.1f} m³  M={_layer['M']/1e3:.1f} t", file=out)
+        print("-------------------------------------------------------------------------", file=out)
         print(f"[O] Psi_PI      (Breakdown flux)                    : {ΨPI:.3f} [Wb]",      file=out)
         print(f"[O] Psi_RampUp  (Ramp-up flux)                      : {ΨRampUp:.3f} [Wb]",  file=out)
         print(f"[O] Psi_Plateau (Flat-top flux)                     : {Ψplateau:.3f} [Wb]", file=out)
@@ -2849,7 +2879,7 @@ def save_run_output(config: GlobalConfig,
             print("-------------------------------------------------------------------------", file=out)
             try:
                 # Derived quantities from D0FUS convergence
-                P_th = config.P_fus * config.M_blanket + P_CD   # total thermal [MW]
+                P_th = config.P_fus * M_blanket_effective(config.Blanket_choice) + P_CD   # total thermal [MW]
                 P_e  = max(P_elec, 1.0)                          # net electric [MWe]
                 S_FW = Surface                                   # first-wall surface [m^2]
 
@@ -2957,7 +2987,7 @@ def save_run_output(config: GlobalConfig,
 def _generate_run_figures(config: GlobalConfig, results: tuple,
                           output_path: str, verbose: int = 0) -> None:
     """
-    Generate and save run-specific figures (11) into output_path/figures/.
+    Generate and save run-specific figures (12) into output_path/figures/.
 
     Calls D0FUS_figures.plot_run() which produces only the figures that
     depend on the current run geometry and results.

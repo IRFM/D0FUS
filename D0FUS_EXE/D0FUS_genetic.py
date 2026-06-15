@@ -35,7 +35,7 @@ except ImportError:
     sys.exit(1)
 
 # Import D0FUS modules
-from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG
+from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG, M_blanket_effective
 from D0FUS_BIB.D0FUS_physical_functions import f_volume
 from D0FUS_BIB.D0FUS_radial_build_functions import Number_TF_coils, f_TF_cross_section
 from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
@@ -551,7 +551,7 @@ def evaluate_individual(individual, verbose=False):
                           f"Surface={Surface:.4g} kappa={κ:.4g}")
                 return (PENALTY_VALUE,)
 
-            P_th         = config.P_fus * config.M_blanket + P_CD
+            P_th         = config.P_fus * M_blanket_effective(config.Blanket_choice) + P_CD
             T_op_limit_g = _safe_real(output[_IDX['T_op_limit']])
             CF_g         = _safe_real(output[_IDX['CF']])
             t_bl_yr_g    = _safe_real(output[_IDX['t_life_bl_yr']])
@@ -1201,7 +1201,7 @@ def run_genetic_optimization(input_file,
         t_bl_yr_b      = final_output[_IDX['t_life_bl_yr']]
         t_div_yr_b     = final_output[_IDX['t_life_div_yr']]
         V_rb_BB_b      = final_output[_IDX['V_rb_BB']]
-        P_th_best      = config.P_fus * config.M_blanket + P_CD_best
+        P_th_best      = config.P_fus * M_blanket_effective(config.Blanket_choice) + P_CD_best
         _, _, Delta_TF_b = Number_TF_coils(config.R0, config.a, config.b, config.ripple_adm, config.L_min)
         _H_TF_b = 2.0 * (κ_best * config.a + config.b + c_TF)
         (V_blanket_b, V_TF_Pappus_b, V_CS_geom_b, V_FI_b) = f_volume(
