@@ -27,6 +27,166 @@ else:
     from D0FUS_BIB.D0FUS_import import *
     from D0FUS_BIB.D0FUS_parameterization import *
 
+if __name__ == "__main__":
+    # ════════════════════════════════════════════════════════════════════
+    # Executable verification suite
+    # ────────────────────────────────────────────────────────────────────
+    # Active only under direct execution:
+    #     python D0FUS_BIB/D0FUS_physical_functions.py
+    #
+    # Each function group below is followed by a __main__ block that
+    # (i)  re-evaluates the published anchors of its functions, and/or
+    # (ii) advances ONE step of a single coherent ITER chain, the same
+    #      machine from A to Z, mirroring the production solver of
+    #      D0FUS_EXE/D0FUS_run.py on the shipped deck
+    #      D0FUS_INPUTS/1_run_ITER.txt.
+    #
+    # Every block ends with a uniform comparison table and a PASS/FAIL
+    # verdict (_bench below). A global summary closes the file and exits
+    # with a non-zero status if any check failed, so the suite can serve
+    # as a regression guard.
+    # ════════════════════════════════════════════════════════════════════
+
+    _BENCH = {"checks": 0, "failed": [], "blocks": 0}
+
+    def _fmt(v):
+        """Compact numeric formatting for the verification tables."""
+        if isinstance(v, str):
+            return v
+        if v is None:
+            return "-"
+        av = abs(v)
+        if av != 0.0 and (av < 1e-3 or av >= 1e5):
+            return f"{v:.3e}"
+        return f"{v:.4g}"
+
+    def _bench(title, rows, notes=()):
+        """Print a uniform verification table with a PASS/FAIL verdict.
+
+        Parameters
+        ----------
+        title : str
+            Block title, printed as a section header.
+        rows : list of tuple
+            (quantity, value, reference, rel_tol, source) with:
+            - rel_tol = float : checked row, |value/reference - 1| < rel_tol;
+            - reference = (lo, hi) tuple : checked row, lo <= value <= hi;
+            - rel_tol = None (and reference not a tuple) : informative row,
+              printed but not counted.
+        notes : iterable of str, optional
+            Footnotes printed under the table.
+        """
+        _BENCH["blocks"] += 1
+        print(f"\n-- {title} " + "-" * max(2, 92 - len(title)))
+        print(f"  {'Quantity':<36} {'D0FUS':>11} {'Reference':>11} "
+              f"{'D [%]':>8} {'tol':>6}  Source")
+        print("  " + "-" * 94)
+        n_pass, n_chk = 0, 0
+        for qty, val, ref, tol, src in rows:
+            if tol is None and not isinstance(ref, tuple):
+                print(f"  {qty:<36} {_fmt(val):>11} {_fmt(ref):>11} "
+                      f"{'-':>8} {'info':>6}  {src}")
+                continue
+            n_chk += 1
+            _BENCH["checks"] += 1
+            if isinstance(ref, tuple):
+                lo, hi = ref
+                ok = bool(lo <= val <= hi)
+                dev_s, tol_s = ("in" if ok else "OUT"), "range"
+                ref_s = f"{_fmt(lo)}..{_fmt(hi)}"
+            else:
+                dev = val / ref - 1.0
+                ok = bool(abs(dev) < tol)
+                dev_s = f"{dev * 100:+.2f}"
+                tol_s = f"{tol * 100:g}%"
+                ref_s = _fmt(ref)
+            if ok:
+                n_pass += 1
+            else:
+                _BENCH["failed"].append((title, qty))
+            print(f"  {qty:<36} {_fmt(val):>11} {ref_s:>11} "
+                  f"{dev_s:>8} {tol_s:>6}  {src:<22} "
+                  f"{'ok' if ok else '** FAIL **'}")
+        for note in notes:
+            print(f"  . {note}")
+        if n_chk:
+            verdict = "PASSED" if n_pass == n_chk else "** FAILED **"
+            print(f"  -> {verdict} ({n_pass}/{n_chk} checks within tolerance)")
+
+    def _bench_summary():
+        """Global verdict over all blocks; non-zero exit on any failure."""
+        print("\n" + "=" * 96)
+        if not _BENCH["failed"]:
+            print(f"ALL TESTS PASSED - {_BENCH['checks']} checks "
+                  f"in {_BENCH['blocks']} blocks")
+        else:
+            print(f"{len(_BENCH['failed'])} CHECK(S) FAILED "
+                  f"out of {_BENCH['checks']}:")
+            for blk, qty in _BENCH["failed"]:
+                print(f"  - [{blk}] {qty}")
+            raise SystemExit(1)
+
+    # ────────────────────────────────────────────────────────────────────
+    # Shared ITER Q=10 reference case - single source of truth for the
+    # chain blocks below.
+    #
+    # ITER   : deck inputs, mirroring D0FUS_INPUTS/1_run_ITER.txt
+    #          (benchmark conventions: peak TF field referenced at the
+    #          winding-pack front face, published inboard stack
+    #          b = 1.10 m, Tbar solved by resolve_Tbar for the Greenwald
+    #          fraction f_GW = 0.85). The dict is progressively enriched
+    #          with the chain results (V, nbar, pbar, P_rad, tau_E, Ip...)
+    #          so that every block consumes the outputs of the previous
+    #          ones, exactly like the production solver.
+    # FROZEN : converged outputs of that deck (frozen 2026-06),
+    #          re-asserted by the final full-deck regression block. Chain
+    #          blocks read FROZEN only (i) to check consistency, and
+    #          (ii) as forward references where the file order places a
+    #          function after its first use (q95 for the bootstrap and
+    #          SOL blocks, I_Ohm for the ohmic-power block, f_alpha and
+    #          f_imp_dil for the density block); each forward reference
+    #          is then independently re-derived and closed by the chain
+    #          block that follows the corresponding definition.
+    #
+    # Published anchors: Shimada et al., Nucl. Fusion 47 (2007) S1
+    # (machine values) and Kim et al., Nucl. Fusion 58 (2018) 056013
+    # (flat-top heating mix and profiles), as documented in the deck.
+    # ────────────────────────────────────────────────────────────────────
+    ITER = dict(
+        # Geometry and field (deck section 1)
+        R0=6.2, a=2.0, b=1.10, Bmax_TF=10.60,
+        # Power and operation
+        P_fus=500.0,
+        P_NBI=33.0, P_ECRH=6.7, P_ICRH=10.0, P_LH=0.0,   # flat-top mix [Kim 2018]
+        P_aux=33.0 + 6.7 + 10.0,                          # = 49.7 MW
+        Tbar=7.754,            # solved by resolve_Tbar for f_GW_target = 0.85
+        H=1.0, M=2.5,
+        # Profiles (deck section 2c)
+        nu_n=0.01, nu_T=2.80,
+        rho_ped=0.95, n_ped_frac=0.99, T_ped_frac=0.55,
+        # Composition and radiation (deck section 4)
+        Zeff=1.65, imp={'W': 2e-5, 'Ne': 7e-3}, r_synch=0.6,
+        rho_rad_core=0.75, C_Alpha=5.0,
+        # Current-drive deposition (deck section 11)
+        A_beam=2, E_beam_keV=1000.0, rho_NBI=0.30, rho_EC=0.40,
+        angle_NBI_deg=20.0,
+    )
+
+    FROZEN = dict(
+        kappa=1.8792, kappa95=1.67785, delta=0.527517, delta95=0.351678,
+        V=847.587, S=687.331,
+        f_alpha=0.0297618, f_imp_dil=0.07103,
+        nbar=0.98561, nbar_line=1.01245, pbar=0.267547, nG=1.19112,
+        B0=5.300, W_th=340.154, betaT=0.023938, betaP=0.651514, betaN=1.63515,
+        P_Ohm=0.3910, I_Ohm=8.52244,
+        P_Brem=13.3005, P_syn=3.65678, P_line_core=24.9375, P_line=44.8641,
+        tauE=3.14385, Ip=14.9681, q95=3.59843, Ib=4.81601,
+        eta_LH=0.310283, eta_EC=0.0463759, eta_NBI=0.292349, I_CD=1.62962,
+        Q=9.98184, P_sep=87.8792, P_LH_th=73.522,
+        B_pol=0.715156, lambda_q_mm=1.12391, Gamma_n=0.58196,
+        tau_alpha=15.7193,
+    )
+
 #%% Geometry formulas
 
 # Explicit scipy import for the three-point shaping profiles below.
@@ -657,13 +817,6 @@ if __name__ == "__main__":
     import D0FUS_BIB.D0FUS_figures as figs
     figs.plot_volume_comparison(R0=6.2, a=2.0)
 
-if __name__ == "__main__":
-    # ITER plasma volume anchor — 831 m³ (Shimada et al., NF 47 (2007) S1).
-    # Analytic shaped-torus vs true separatrix: 6 % tolerance.
-    _V = f_plasma_volume(6.2, 2.0, 1.85, 0.485)
-    assert abs(_V/831. - 1) < 0.06, _V
-    print(f"OK  Volume ITER: {_V:.0f} m³ vs 831 publié")
-
 def f_first_wall_surface(R0, a, kappa_edge, delta_edge=0.0,
                          geometry_model='Academic', N_theta=2000):
     """
@@ -715,6 +868,47 @@ if __name__ == "__main__":
     # First wall surface area — Academic vs refined Miller
     import D0FUS_BIB.D0FUS_figures as figs
     figs.plot_first_wall_surface(R0=6.2, a=2.0)
+
+if __name__ == "__main__":
+    # ── ITER chain (1/12) - shaping and geometry ─────────────────────────
+    # Deck options: Option_Kappa = 'Wenninger' (shaping derived from the
+    # aspect ratio, NOT imposed), refined Miller geometry on the
+    # production grid (N_rho = 500, N_theta = 200).
+    # Published anchor: V = 831 m3 inside the true separatrix (Shimada
+    # 2007, Table 2); the analytic shaped torus carries a known +1.5 %
+    # bias at the published shaping (kappa = 1.85, delta = 0.485),
+    # tolerance 6 %.
+    _k = f_Kappa(ITER['R0'] / ITER['a'], 'Wenninger', 1.85, 0.3)
+    _k95 = f_Kappa_95(_k)
+    _d = f_Delta(_k)
+    _d95 = f_Delta_95(_d)
+    ITER_Vpd = precompute_Vprime(ITER['R0'], ITER['a'], _k, _d,
+                                 geometry_model='refined',
+                                 kappa_95=_k95, delta_95=_d95,
+                                 N_rho=500, N_theta=200)
+    _V = f_plasma_volume(ITER['R0'], ITER['a'], _k, _d, Vprime_data=ITER_Vpd)
+    _S = f_first_wall_surface(ITER['R0'], ITER['a'], _k, _d,
+                              geometry_model='refined')
+    _V_pub = f_plasma_volume(6.2, 2.0, 1.85, 0.485)   # analytic, published shaping
+    _kappa_a = _V / (2.0 * np.pi**2 * ITER['R0'] * ITER['a']**2)
+    ITER.update(kappa=_k, kappa95=_k95, delta=_d, delta95=_d95,
+                V=_V, S=_S, kappa_a=_kappa_a)
+    _bench("ITER chain 1/12 - shaping and geometry", [
+        ("kappa_sep (Wenninger)", _k, FROZEN['kappa'], 1e-3, "deck frozen"),
+        ("kappa_95", _k95, FROZEN['kappa95'], 1e-3, "deck frozen"),
+        ("delta_sep", _d, FROZEN['delta'], 1e-3, "deck frozen"),
+        ("delta_95", _d95, FROZEN['delta95'], 1e-3, "deck frozen"),
+        ("V analytic, published shaping [m3]", _V_pub, 831.0, 0.06, "Shimada 2007"),
+        ("V Miller, deck shaping [m3]", _V, FROZEN['V'], 5e-3, "deck frozen"),
+        ("V Miller, deck shaping [m3]", _V, 831.0, 0.06, "Shimada 2007"),
+        ("S first wall, Miller [m2]", _S, FROZEN['S'], 5e-3, "deck frozen"),
+        ("kappa_area = V/(2 pi^2 R0 a^2)", _kappa_a, None, None, "IPB98 convention"),
+    ], notes=[
+        "Published separatrix shaping: kappa = 1.85, delta = 0.485 "
+        "(Shimada 2007, Table 2); the Wenninger scaling at A = 3.1 "
+        "returns kappa = 1.879, delta = 0.528.",
+    ])
+
 
 #%% n, T, p and Pfus
 
@@ -1129,14 +1323,20 @@ def f_sigmav(T):
 
 
 if __name__ == "__main__":
-    # DT reactivity anchors — Bosch & Hale, NF 32 (1992) 611, Table VII fit.
-    # Coefficients cross-checked against cfspopcon 8.0.0 (machine precision);
-    # values consistent with Table VIII (1.136e-16 cm³/s at 10 keV).
-    for _T, _sv in {1.0: 6.8569e-27, 10.0: 1.1362e-22, 20.0: 4.3302e-22}.items():
-        assert abs(f_sigmav(_T)/_sv - 1) < 5e-4, (_T, f_sigmav(_T))
+    # ── Published anchors - D-T reactivity (Bosch & Hale 1992) ──────────
+    # Bosch & Hale, NF 32 (1992) 611, Table VII fit. Coefficients
+    # cross-checked against cfspopcon 8.0.0 (machine precision); values
+    # consistent with Table VIII (1.136e-16 cm3/s at 10 keV). The peak of
+    # the reactivity sits near 64 keV (Wesson, Tokamaks).
+    _sv_rows = [(f"<sigma v> at {_T:g} keV [m3/s]", f_sigmav(_T), _sv, 5e-4,
+                 "B&H 1992 Tab. VIII")
+                for _T, _sv in ((1.0, 6.8569e-27), (10.0, 1.1362e-22),
+                                (20.0, 4.3302e-22))]
     _Tg = np.linspace(20., 150., 600)
-    assert 55 < _Tg[np.argmax(f_sigmav(_Tg))] < 75   # peak ≈ 64 keV (Wesson)
-    print("OK  Bosch-Hale ⟨σv⟩: 3 ancres Table VIII + pic ≈ 64 keV")
+    _sv_rows.append(("peak position [keV]",
+                     float(_Tg[np.argmax(f_sigmav(_Tg))]),
+                     (55.0, 75.0), 1, "Wesson 2004"))
+    _bench("Published anchors - D-T reactivity (Bosch-Hale)", _sv_rows)
 
 # =============================================================================
 # Required electron density for a target fusion power
@@ -1564,75 +1764,68 @@ def f_density_limit(model, Ip, a, P_sol=None, P_tot=None, R0=None, kappa=None,
 
 
 if __name__ == "__main__":
-    # Density-limit anchors.
-    # Greenwald, PPCF 44 (2002) R27: n_GW = Ip/(πa²), exact for ITER 15 MA.
-    assert abs(f_nG(15., 2.) - 15/(4*np.pi)) < 1e-12
-    # Giacomin et al., PRL 128 (2022) 185003, Eq. 12 — the paper's own
-    # machine predictions (A = 2): ITER 2.5e20, SPARC 8.7e20 (rounding tol).
-    assert abs(f_n_limit_giacomin(50., 6.2, 2., 1.8, 5.3, 3.) - 2.5) < 0.15
-    assert abs(f_n_limit_giacomin(28., 1.85, .57, 2., 12.2, 3.) - 8.7) < 0.5
-    # Zanca et al., NF 59 (2019) 126011, Eq. 20 (as in Manz NF 63 (2023)
-    # 076026, Eq. 7) — algebraic identity at an ITER-like point.
-    _zref = (0.4*1.7**(4/9)*(0.5+1.7-1)**(-5/9)*(50/15)**(4/9)
-             * f_nG(15., 2.)**(8/9))
-    assert abs(f_n_limit_zanca(50., 15., 2., Z_eff=1.7) - _zref) < 1e-12
-    print("OK  Limites de densité: Greenwald exact, Giacomin 2.5/8.7, Zanca identité")
+    # ── Published anchors - operational density limits ───────────────────
+    # Greenwald, PPCF 44 (2002) R27: n_GW = Ip/(pi a^2), exact identity at
+    # the ITER 15 MA point. Giacomin et al., PRL 128 (2022) 185003,
+    # Eq. 12: the paper's own machine predictions (A = 2) are 2.5e20 for
+    # ITER and 8.7e20 for SPARC (rounding of the quoted inputs). Zanca et
+    # al., NF 59 (2019) 126011, Eq. 20 (as in Manz, NF 63 (2023) 076026,
+    # Eq. 7): algebraic identity at an ITER-like point.
+    _zref = (0.4 * 1.7**(4 / 9) * (0.5 + 1.7 - 1)**(-5 / 9) * (50 / 15)**(4 / 9)
+             * f_nG(15., 2.)**(8 / 9))
+    _bench("Published anchors - density limits", [
+        ("n_GW ITER identity [1e20 m-3]", f_nG(15., 2.), 15 / (4 * np.pi),
+         1e-12, "Greenwald 2002"),
+        ("n_lim Giacomin ITER [1e20 m-3]",
+         f_n_limit_giacomin(50., 6.2, 2., 1.8, 5.3, 3.), 2.5, 0.06,
+         "Giacomin 2022"),
+        ("n_lim Giacomin SPARC [1e20 m-3]",
+         f_n_limit_giacomin(28., 1.85, .57, 2., 12.2, 3.), 8.7, 0.06,
+         "Giacomin 2022"),
+        ("n_lim Zanca identity [1e20 m-3]",
+         f_n_limit_zanca(50., 15., 2., Z_eff=1.7), _zref, 1e-9,
+         "Zanca 2019"),
+    ])
 
 if __name__ == "__main__":
-
-    # ITER geometry and plasma parameters — Shimada et al., Nucl. Fusion 47 (2007) S1
-    R0_IT  = 6.2;   a_IT   = 2.0
-    kap_IT = 1.85;  del_IT = 0.50;  Ip_IT = 15.0   # MA
-    Pfus   = 500.0  # MW
-    Tbar   = 8.9    # keV
-    falpha = 0.06   # He-ash fraction — ITER Physics Basis (1999), Sec. 2.4
-
-    # H-mode pedestal profile parameters
-    # Density: nearly flat core, high pedestal — Coleman et al., Nucl. Fusion 65 (2025) 036039
-    # Temperature: moderate peaking — ITER Physics Basis (1999), Sec. 2.3
-    nu_n       = 0.1    # Density peaking exponent    [-]
-    nu_T       = 1.0    # Temperature peaking exponent [-]
-    rho_ped    = 0.94   # Normalised pedestal radius   [-]
-    n_ped_frac = 0.90   # n_ped / n_vol                [-]
-    T_ped_frac = 0.40   # T_ped / T_vol                [-]
-
-    # Academic mode
-    n_ac = f_nbar(Pfus, nu_n, nu_T, falpha, Tbar, R0_IT, a_IT, kap_IT,
-                  rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac)
-    p_ac = f_pbar(nu_n, nu_T, n_ac, Tbar,
-                  rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac)
-    nG   = f_nG(Ip_IT, a_IT)
-    V_ac = 2.0 * np.pi**2 * R0_IT * kap_IT * a_IT**2
-
-    # refined (Miller) mode — geometry functions defined in §1 above
-    k95 = f_Kappa_95(kap_IT)
-    d95 = f_Delta_95(del_IT)
-    Vpd = precompute_Vprime(R0_IT, a_IT, kap_IT, del_IT,
-                            geometry_model='refined',
-                            kappa_95=k95, delta_95=d95)
-    V_d0 = Vpd[2]
-    n_d0 = f_nbar(Pfus, nu_n, nu_T, falpha, Tbar, R0_IT, a_IT, kap_IT,
-                  rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
-                  Vprime_data=Vpd)
-    p_d0 = f_pbar(nu_n, nu_T, n_d0, Tbar,
-                  rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
-                  Vprime_data=Vpd)
-
-    # Console summary
-    print("\n── ITER reference: Academic vs refined — H-mode pedestal profile ──")
-    print(f"  Profile: nu_n={nu_n}, nu_T={nu_T}, rho_ped={rho_ped}, "
-          f"n_ped={n_ped_frac}, T_ped={T_ped_frac}")
-    print(f"  {'Quantity':<30} {'Academic':>10} {'refined':>10} {'ITER ref.':>10}")
-    print("  " + "─"*62)
-    print(f"  {'V  [m3]':<30} {V_ac:>10.1f} {V_d0:>10.1f} {'830':>10}")
-    print(f"  {'n_e  [1e20 m-3]':<30} {n_ac:>10.3f} {n_d0:>10.3f} {'1.01':>10}")
-    print(f"  {'p_bar  [MPa]':<30} {p_ac:>10.3f} {p_d0:>10.3f} {'0.28':>10}")
-    print(f"  {'n_G  [1e20 m-3]':<30} {nG:>10.3f} {nG:>10.3f} {'1.19':>10}")
-    print(f"  {'f_n = n_e/n_G  [-]':<30} {n_ac/nG:>10.3f} {n_d0/nG:>10.3f} {'0.85':>10}")
+    # ── ITER chain (2/12) - operating point: density and pressure ───────
+    # The deck specifies the operating point through the Greenwald
+    # fraction (Tbar_mode = greenwald, f_GW_target = 0.85): resolve_Tbar
+    # solves Tbar = 7.754 keV, used here as the chain input. Two forward
+    # references are taken from FROZEN and closed downstream:
+    #   - f_alpha (helium ash fraction), closed by chain 12;
+    #   - f_imp_dil = sum_j <Z_j> c_j (fuel dilution by the W + Ne mix),
+    #     closed by chain 4 where get_Z_mean is defined.
+    _n = f_nbar(ITER['P_fus'], ITER['nu_n'], ITER['nu_T'], FROZEN['f_alpha'],
+                ITER['Tbar'], ITER['R0'], ITER['a'], ITER['kappa'],
+                rho_ped=ITER['rho_ped'], n_ped_frac=ITER['n_ped_frac'],
+                T_ped_frac=ITER['T_ped_frac'],
+                Vprime_data=ITER_Vpd, f_imp=FROZEN['f_imp_dil'], tau_i_e=1.0)
+    _p = f_pbar(ITER['nu_n'], ITER['nu_T'], _n, ITER['Tbar'],
+                rho_ped=ITER['rho_ped'], n_ped_frac=ITER['n_ped_frac'],
+                T_ped_frac=ITER['T_ped_frac'],
+                Vprime_data=ITER_Vpd, tau_i_e=1.0)
+    _nl = f_nbar_line(_n, ITER['nu_n'], ITER['rho_ped'], ITER['n_ped_frac'])
+    _nl_flat = f_nbar_line(1.0, 0.0)   # analytic identity for a flat profile
+    ITER.update(nbar=_n, pbar=_p, nbar_line=_nl)
+    _bench("ITER chain 2/12 - operating point (density, pressure)", [
+        ("nbar volume-avg [1e20 m-3]", _n, FROZEN['nbar'], 1e-3, "deck frozen"),
+        ("nbar line-avg [1e20 m-3]", _nl, FROZEN['nbar_line'], 1e-3,
+         "deck frozen"),
+        ("nbar line-avg [1e20 m-3]", _nl, 1.01, 0.01, "Shimada 2007"),
+        ("pbar [MPa]", _p, FROZEN['pbar'], 1e-3, "deck frozen"),
+        ("flat-profile identity n_line/n_vol", _nl_flat, 1.0, 1e-9,
+         "analytic"),
+        ("f_GW at frozen Ip", _nl / f_nG(FROZEN['Ip'], ITER['a']), 0.85,
+         5e-3, "deck target"),
+    ], notes=[
+        "f_GW is re-closed in chain 11 with the chain Ip from the "
+        "scaling-law inversion.",
+    ])
 
 #%% B and beta
 
-def f_B0(Bmax, a, b, R0):
+def f_B0(Bmax, a, b, R0, b_cover=0.0):
     """
     Estimate the on-axis toroidal magnetic field B0 from the peak field at the
     TF coil inboard midplane, using the 1/R dependence of a toroidal solenoid.
@@ -1665,7 +1858,7 @@ def f_B0(Bmax, a, b, R0):
     Wesson, Tokamaks, 4th ed. (2011), §3.2.
     Freidberg, Plasma Physics and Fusion Energy (2007), §12.3.
     """
-    B0 = Bmax * (1.0 - (a + b) / R0)
+    B0 = Bmax * (1.0 - (a + b + b_cover) / R0)
     return B0
 
 def f_Bpol(q95, B_tor, a, R0, kappa=1.0):
@@ -2009,40 +2202,43 @@ def f_beta_fast_alpha(P_alpha_MW, Te_keV, ne_20, B0, V_m3, Z_eff=1.65,
 
 
 if __name__ == "__main__":
-
-    # ------------------------------------------------------------------
-    # ITER Q=10 reference — Shimada et al., Nucl. Fusion 47 (2007) S1
-    # Beta functions only; p_bar taken as given design values.
-    # ------------------------------------------------------------------
-    R0_IT  = 6.2;  a_IT  = 2.0;  kap_IT = 1.85;  Ip_IT = 15.0   # MA
-    Bmax   = 11.8  # Peak TF inboard field [T]
-    B0_IT  = 5.3   # On-axis field [T] — Shimada 2007, Table 1
-    b_IT   = R0_IT * (1.0 - B0_IT / Bmax) - a_IT   # Inboard radial build [m]
-
-    # Pressure inputs — from §2 ITER console block (H-mode pedestal profile)
-    p_ac = 0.260   # Academic mode [MPa]
-    p_d0 = 0.262   # refined mode  [MPa]
-
-    B0   = f_B0(Bmax, a_IT, b_IT, R0_IT)
-    res  = {}
-    for label, p in [('Academic', p_ac), ('refined', p_d0)]:
-        bT = f_beta_T(p, B0)
-        bP = f_beta_P(a_IT, kap_IT, p, Ip_IT)
-        b  = f_beta(bT, bP)
-        bN = f_beta_N(b, a_IT, B0, Ip_IT)
-        res[label] = (bT, bP, b, bN)
-
-    print(f"\n── ITER β  (B0={B0:.2f} T, b_inboard={b_IT:.3f} m) ────────────────────")
-    print(f"  {'Quantity':<24} {'Academic':>10} {'refined':>10} {'ITER ref.':>10}")
-    print("  " + "─"*56)
-    print(f"  {'beta_T  [%]':<24} {res['Academic'][0]*100:>10.3f} {res['refined'][0]*100:>10.3f} {'2.50':>10}")
-    print(f"  {'beta_P  [-]':<24} {res['Academic'][1]:>10.3f} {res['refined'][1]:>10.3f} {'0.65':>10}")
-    print(f"  {'beta  [%]':<24} {res['Academic'][2]*100:>10.3f} {res['refined'][2]*100:>10.3f} {'2.42':>10}")
-    print(f"  {'beta_N  [% m T/MA]':<24} {res['Academic'][3]:>10.3f} {res['refined'][3]:>10.3f} {'1.77':>10}")
-    print(f"  {'Troyon limit (< 2.8)':<24} "
-          f"{'OK' if res['Academic'][3]<2.8 else 'WARN':>10} "
-          f"{'OK' if res['refined'][3]<2.8 else 'WARN':>10}")
-
+    # ── ITER chain (3/12) - on-axis field, stored energy and beta ───────
+    # Field convention of the deck: Bmax_TF = 10.60 T is the peak field at
+    # the winding-pack FRONT FACE, at radius R0 - a - b with the published
+    # inboard stack b = 1.10 m. ITER quotes 11.8 T on the conductor,
+    # deeper inside the winding pack; both describe the same machine and
+    # the front-face convention reproduces B0 = 5.30 T exactly.
+    # W_th = (3/2) pbar V is evaluated inline (definition of f_W_th,
+    # re-checked through f_W_th in chain 11). Ip is a forward reference
+    # (FROZEN), closed by the scaling-law inversion of chain 11.
+    _B0 = f_B0(ITER['Bmax_TF'], ITER['a'], ITER['b'], ITER['R0'])
+    _W = 1.5 * ITER['pbar'] * 1e6 * ITER['V'] / 1e6        # [MJ]
+    _bT = f_beta_T(ITER['pbar'], _B0)
+    _bP = f_beta_P(ITER['a'], ITER['kappa'], ITER['pbar'], FROZEN['Ip'])
+    _bN = f_beta_N(f_beta(_bT, _bP), ITER['a'], _B0, FROZEN['Ip'])
+    # Fast-alpha pressure (Stix slowing-down), to be added to the thermal
+    # beta for MHD-limit comparisons. P_alpha = P_fus/5 = f_P_alpha
+    # (defined in the next section, re-checked in chain 7).
+    _bfa, _tau_se, _W_fast = f_beta_fast_alpha(
+        ITER['P_fus'] / 5.0, ITER['Tbar'], ITER['nbar'], _B0, ITER['V'],
+        Z_eff=ITER['Zeff'])
+    ITER.update(B0=_B0, W_th=_W, betaN=_bN)
+    _bench("ITER chain 3/12 - field, stored energy and beta", [
+        ("B0 on axis [T]", _B0, 5.30, 1e-3, "Shimada 2007"),
+        ("W_th [MJ]", _W, FROZEN['W_th'], 1e-3, "deck frozen"),
+        ("W_th [MJ]", _W, 350.0, 0.05, "Shimada 2007"),
+        ("beta_T [-]", _bT, FROZEN['betaT'], 2e-3, "deck frozen"),
+        ("beta_P [-]", _bP, FROZEN['betaP'], 2e-3, "deck frozen"),
+        ("beta_N [% m T/MA]", _bN, FROZEN['betaN'], 2e-3, "deck frozen"),
+        ("beta_N [% m T/MA]", _bN, "1.8", None, "Shimada 2007"),
+        ("Troyon margin beta_N", _bN, (0.0, 2.8), 1, "deck limit"),
+        ("beta_fast_alpha / beta_T [-]", _bfa / _bT, None, None,
+         "Stix slowing-down"),
+    ], notes=[
+        "beta_N solves below the published 1.8 because the deck-solved "
+        "temperature (7.75 keV) sits under the 8.9 keV design assumption; "
+        "the deviation follows the stored energy and density directly.",
+    ])
 
 #%% Power definitions
 
@@ -2431,12 +2627,15 @@ def f_P_bremsstrahlung(nbar, Tbar, Z_eff, V, nu_n=0.0, nu_T=0.0,
 
 
 if __name__ == "__main__":
-    # Bremsstrahlung constant — Wesson, Tokamaks, Sec. 4.25 (5.35e-37 SI;
-    # same in the NRL Formulary). Flat unit plasma (n = 1e20 m⁻³, T = 1 keV,
-    # Z_eff = 1, V = 1 m³) → 5.35e3 W = 5.35e-3 MW.
-    assert abs(f_P_bremsstrahlung(1., 1., 1., 1., nu_n=0., nu_T=0.)
-               / 5.35e-3 - 1) < 0.02
-    print("OK  Bremsstrahlung: constante Wesson 5.35e-37 (plasma plat unité)")
+    # ── Published anchor - bremsstrahlung constant ───────────────────────
+    # Wesson, Tokamaks, Sec. 4.25 (5.35e-37 W m3 in SI; same constant in
+    # the NRL Formulary). Flat unit plasma (n = 1e20 m-3, T = 1 keV,
+    # Z_eff = 1, V = 1 m3) radiates 5.35e3 W = 5.35e-3 MW.
+    _bench("Published anchor - bremsstrahlung constant (Wesson)", [
+        ("P_brem flat unit plasma [MW]",
+         f_P_bremsstrahlung(1., 1., 1., 1., nu_n=0., nu_T=0.),
+         5.35e-3, 0.02, "Wesson 2004"),
+    ])
 
 def f_P_line_radiation(nbar, f_imp, L_z, V):
     """
@@ -3092,29 +3291,62 @@ if __name__ == "__main__":
     figs.plot_Lz_cooling()
 
 if __name__ == "__main__":
-    # ITER Q=10 radiation budget — Shimada et al., NF 47 (2007) S1
-    R0, a, kap, B0, nbar, Z_eff, r_synch = 6.2, 2.0, 1.85, 5.3, 1.01, 1.6, 0.4
-    V = 2.0 * np.pi**2 * R0 * kap * a**2
-    T = 8.9  # keV
-
-    P_s  = f_P_synchrotron(T, R0, a, B0, nbar, kap, nu_n=0.1, nu_T=1.0, r_synch=r_synch)
-    P_b  = f_P_bremsstrahlung(nbar, T, Z_eff, V)
-    P_lW = f_P_line_radiation(nbar, 1e-5, get_Lz('W',  T), V)
-    P_lAr = f_P_line_radiation(nbar, 1e-3, get_Lz('Ar', T), V)
-    P_lNe = f_P_line_radiation(nbar, 3e-3, get_Lz('Ne', T), V)
-    P_tot = P_s + P_b + P_lW
-
-    print(f"\n── ITER radiation budget (academic, parabolic) {'─'*30}")
-    print(f"  {'Channel':<32} {'[MW]':>7}  {'Ref.':>10}")
-    print("  " + "─" * 53)
-    print(f"  {'Bremsstrahlung (Z_eff=1.6)':<32} {P_b:>7.1f}  {'20–25':>10}")
-    print(f"  {'Synchrotron (r_synch=0.4)':<32} {P_s:>7.1f}  {'3–6':>10}")
-    print(f"  {'W line (f_W=1e-5)':<32} {P_lW:>7.1f}  {'2–4':>10}")
-    print(f"  {'Ar line (f_Ar=1e-3)':<32} {P_lAr:>7.1f}  {'—':>10}")
-    print(f"  {'Ne line (f_Ne=3e-3)':<32} {P_lNe:>7.1f}  {'—':>10}")
-    print("  " + "─" * 53)
-    print(f"  {'Total (brem+sync+W)':<32} {P_tot:>7.1f}  {'~30':>10}")
-
+    # ── ITER chain (4/12) - radiation budget ─────────────────────────────
+    # Deck composition: W (2e-5) + Ne (7e-3) with the Zeff = 1.65
+    # override, wall reflectivity r_synch = 0.6, profile-integrated
+    # radiation with the core/edge split at rho_rad_core = 0.75 and
+    # coreradiationfraction = 1 (deck defaults).
+    # Convention: the bremsstrahlung term uses the FUEL effective charge
+    # Z_eff,fuel = 1 + 2 f_alpha - f_imp_dil (D, T, He only); the
+    # impurity contribution (line + recombination + impurity
+    # bremsstrahlung) is carried by the Mavrin cooling rates inside
+    # P_line. Term-by-term comparisons with published decompositions are
+    # therefore convention-dependent; the underlying pieces are anchored
+    # separately (Wesson constant above, Mavrin/TORAX block below).
+    # This block also closes the f_imp_dil forward reference of chain 2.
+    _fdil = sum(get_Z_mean(s, ITER['Tbar']) * c for s, c in ITER['imp'].items())
+    _zimp2 = sum(get_Z_mean(s, ITER['Tbar'])**2 * c
+                 for s, c in ITER['imp'].items())
+    _zf = 1.0 + 2.0 * FROZEN['f_alpha'] - _fdil
+    _Pb = f_P_bremsstrahlung(ITER['nbar'], ITER['Tbar'], _zf, ITER['V'],
+                             ITER['nu_n'], ITER['nu_T'],
+                             rho_ped=ITER['rho_ped'],
+                             n_ped_frac=ITER['n_ped_frac'],
+                             T_ped_frac=ITER['T_ped_frac'],
+                             Vprime_data=ITER_Vpd)
+    _Ps = f_P_synchrotron(ITER['Tbar'], ITER['R0'], ITER['a'], ITER['B0'],
+                          ITER['nbar'], ITER['kappa'], ITER['nu_n'],
+                          ITER['nu_T'], ITER['r_synch'],
+                          rho_ped=ITER['rho_ped'],
+                          n_ped_frac=ITER['n_ped_frac'],
+                          T_ped_frac=ITER['T_ped_frac'],
+                          Vprime_data=ITER_Vpd)
+    _Plc, _Plt = 0.0, 0.0
+    for _sp, _c in ITER['imp'].items():
+        _pc, _pt = f_P_line_radiation_profile(
+            _sp, _c, ITER['nbar'], ITER['Tbar'], ITER['nu_n'], ITER['nu_T'],
+            ITER['V'], rho_ped=ITER['rho_ped'],
+            n_ped_frac=ITER['n_ped_frac'], T_ped_frac=ITER['T_ped_frac'],
+            Vprime_data=ITER_Vpd, rho_core=ITER['rho_rad_core'], N=150)
+        _Plc += _pc
+        _Plt += _pt
+    _Prc = _Pb + _Ps + _Plc        # coreradiationfraction = 1 (deck default)
+    _Prt = _Pb + _Ps + _Plt
+    ITER.update(P_rad_core=_Prc, P_rad_tot=_Prt)
+    _bench("ITER chain 4/12 - radiation budget (W + Ne, pedestal profiles)", [
+        ("fuel dilution sum <Z_j> c_j [-]", _fdil, FROZEN['f_imp_dil'], 2e-3,
+         "deck frozen"),
+        ("Z_eff,fuel [-]", _zf, None, None, "convention"),
+        ("Z_eff computed (fuel + imp) [-]", _zf + _zimp2, "1.65", None,
+         "deck override"),
+        ("P_brem (fuel) [MW]", _Pb, FROZEN['P_Brem'], 2e-3, "deck frozen"),
+        ("P_synchrotron [MW]", _Ps, FROZEN['P_syn'], 2e-3, "deck frozen"),
+        ("P_line core (rho < 0.75) [MW]", _Plc, FROZEN['P_line_core'], 2e-3,
+         "deck frozen"),
+        ("P_line total [MW]", _Plt, FROZEN['P_line'], 2e-3, "deck frozen"),
+        ("P_rad,core -> tau_E, Ip [MW]", _Prc, None, None, "chain 11"),
+        ("P_rad,total -> P_sep [MW]", _Prt, None, None, "chain 6"),
+    ])
 
 #%% Current drive
 """
@@ -3170,31 +3402,41 @@ Gormezano et al. (ITER PIPB Ch. 6), Nucl. Fusion 47 (2007) S285.
 
 
 if __name__ == "__main__":
-    # Atomic-data anchors.
-    # Mavrin (2018) ⟨Z⟩(T_e) — coefficients cross-checked against TORAX
-    # (google-deepmind/torax, charge_states.py): Ne fully stripped > 5 keV;
-    # W(8.9 keV) = 53.06 (hand evaluation of the interval-3 polynomial).
-    assert get_Z_mean('Ne', 8.9) == 10.0
-    assert abs(get_Z_mean('W', 8.9) - 53.06) < 0.05
-    # Frozen non-coronal SOL Lz tables (OpenADAS/radas, ne·τ = 5e16 m⁻³s,
-    # cfspopcon SPARC-PRD convention): peak integrity at freezing time, and
-    # the ONE-SIDED invariant Lz_nc ≥ Lz_coronal on the 0.1-2 keV overlap
-    # (finite ne·τ keeps line-radiating states alive; N reaches ×50 at
-    # 1-2 keV where coronal N is fully stripped — no convergence expected).
+    # ── Published anchors - atomic data (Mavrin, SOL tables, Lengyel) ───
+    # Mavrin (2018) <Z>(T_e): coefficients cross-checked against TORAX
+    # (google-deepmind/torax, charge_states.py); Ne fully stripped above
+    # 5 keV; W(8.9 keV) = 53.06 (hand evaluation of the interval-3
+    # polynomial). Frozen non-coronal SOL L_z tables (OpenADAS/radas,
+    # ne tau = 5e16 m-3 s, cfspopcon SPARC-PRD convention): peak
+    # integrity at freezing time, and the one-sided invariant
+    # Lz_SOL >= Lz_coronal on the 0.1-2 keV overlap (the finite residence
+    # time keeps line-radiating charge states alive). Lengyel: frozen
+    # cfspopcon SPARC-PRD regression point (chain validated to 0.3 % over
+    # five decades of q_par, 2026-06 review).
+    _rows = [
+        ("<Z> Ne at 8.9 keV [-]", get_Z_mean('Ne', 8.9), 10.0, 1e-9,
+         "Mavrin 2018 / TORAX"),
+        ("<Z> W at 8.9 keV [-]", get_Z_mean('W', 8.9), 53.06, 1e-3,
+         "Mavrin 2018 / TORAX"),
+    ]
     for _sp, (_Tp, _Lp) in {'N': (13.2, 5.745e-32), 'Ne': (49.8, 5.642e-32),
                             'Ar': (22.6, 2.121e-31)}.items():
-        _Tt = np.logspace(0, 3, 600); _lz = get_Lz_SOL(_sp, _Tt)
-        _k = int(np.argmax(_lz))
-        assert abs(_lz[_k]/_Lp - 1) < 0.05 and 1/1.6 < _Tt[_k]/_Tp < 1.6, _sp
-        for _Tk in (0.1, 0.5, 2.0):
-            assert get_Lz_SOL(_sp, _Tk*1e3)/get_Lz(_sp, _Tk) > 0.95, (_sp, _Tk)
-    # Lengyel — frozen cfspopcon SPARC-PRD regression point (chain validated
-    # to 0.3 % over five decades of q_par, 2026-06 review): Ar,
-    # q = 9.101 GW/m², f_loss = 0.988, T_u = 280.1 eV, T_t = 25 eV,
-    # n_u = 2.1e19 m⁻³ → c_z = 0.7569.
-    _cz = f_lengyel_concentration(9101., 2.1e19, 280.1, 25.0, 'Ar', 0.988)
-    assert abs(_cz/0.7569 - 1) < 0.02, _cz
-    print("OK  Données atomiques: Mavrin ⟨Z⟩, tables Lz SOL gelées, ancre Lengyel")
+        _Tt = np.logspace(0, 3, 600)
+        _lz = get_Lz_SOL(_sp, _Tt)
+        _kk = int(np.argmax(_lz))
+        _rows.append((f"Lz_SOL {_sp} peak value [W m3]", float(_lz[_kk]),
+                      _Lp, 0.05, "frozen table"))
+        _rows.append((f"Lz_SOL {_sp} peak position ratio", float(_Tt[_kk]) / _Tp,
+                      (1 / 1.6, 1.6), 1, "frozen table"))
+        _rmin = min(get_Lz_SOL(_sp, _Tk * 1e3) / get_Lz(_sp, _Tk)
+                    for _Tk in (0.1, 0.5, 2.0))
+        _rows.append((f"invariant Lz_SOL/Lz_coronal {_sp}", float(_rmin),
+                      (0.95, 1e9), 1, "one-sided physics"))
+    _rows.append(("Lengyel c_z (Ar, SPARC point) [-]",
+                  f_lengyel_concentration(9101., 2.1e19, 280.1, 25.0, 'Ar',
+                                          0.988),
+                  0.7569, 0.02, "cfspopcon ref."))
+    _bench("Published anchors - atomic data and Lengyel chain", _rows)
 
 def _ln_Lambda_CD(Te_keV, ne_20):
     """
@@ -3658,75 +3900,61 @@ def f_etaCD_NBI_physics(A_beam, E_beam_keV, a, R0, Tbar, nbar, Z_eff,
 
 
 if __name__ == "__main__":
-    # ── NBCD physics model — validation against METIS reference ─────────
-    # Expected values from METIS zicd0.m benchmark (test_NBCD_physics.py).
-    # Tolerance: 2% (accounts for lnL formula difference NRL vs METIS).
-    print("\n── NBCD physics model (Stix/Cordey/Lin-Liu) ─────────────────────────")
-    _TOL = 0.02
-    _cases = [
-        #                 METIS ref (at local Te/ne from f_Tprof parabolic profile)
-        ("ITER 1MeV D",  0.3336, dict(A_beam=2, E_beam_keV=1000, a=2.0, R0=6.2,
-                              Tbar=8.9, nbar=1.0, Z_eff=1.65, nu_T=1.5, nu_n=0.3,
-                              rho_NBI=0.3, f_alpha=0.04, angle_NBI_deg=20.0)),
-        ("ARC 150keV D", 0.1147, dict(A_beam=2, E_beam_keV=150,  a=1.13, R0=3.3,
-                              Tbar=14.0, nbar=1.8, Z_eff=1.5, nu_T=1.2, nu_n=0.5,
-                              rho_NBI=0.4, f_alpha=0.06, angle_NBI_deg=25.0)),
-        ("EU-DEMO 1MeV", 0.4006, dict(A_beam=2, E_beam_keV=1000, a=2.88, R0=9.07,
-                              Tbar=12.0, nbar=0.8, Z_eff=1.6, nu_T=1.5, nu_n=0.3,
-                              rho_NBI=0.3, f_alpha=0.05, angle_NBI_deg=20.0)),
+    # ── Published anchors - NBCD physics model vs METIS ──────────────────
+    # Expected values from the METIS zicd0.m benchmark
+    # (test_NBCD_physics.py). Tolerance 2 % (lnLambda formula difference,
+    # NRL vs METIS). Perpendicular injection must drive zero current.
+    _nbcd_cases = [
+        ("ITER 1 MeV D", 0.3336, dict(A_beam=2, E_beam_keV=1000, a=2.0, R0=6.2,
+                              Tbar=8.9, nbar=1.0, Z_eff=1.65, nu_T=1.5,
+                              nu_n=0.3, rho_NBI=0.3, f_alpha=0.04,
+                              angle_NBI_deg=20.0)),
+        ("ARC 150 keV D", 0.1147, dict(A_beam=2, E_beam_keV=150, a=1.13,
+                              R0=3.3, Tbar=14.0, nbar=1.8, Z_eff=1.5,
+                              nu_T=1.2, nu_n=0.5, rho_NBI=0.4, f_alpha=0.06,
+                              angle_NBI_deg=25.0)),
+        ("EU-DEMO 1 MeV", 0.4006, dict(A_beam=2, E_beam_keV=1000, a=2.88,
+                              R0=9.07, Tbar=12.0, nbar=0.8, Z_eff=1.6,
+                              nu_T=1.5, nu_n=0.3, rho_NBI=0.3, f_alpha=0.05,
+                              angle_NBI_deg=20.0)),
     ]
-    print(f"  {'Case':<16s}  {'D0FUS':>8s}  {'METIS':>8s}  {'err':>6s}  status")
-    print("  " + "-" * 55)
-    _all_ok = True
-    for _name, _metis_ref, _kw in _cases:
-        _g = f_etaCD_NBI_physics(**_kw)
-        _err = abs(_g / _metis_ref - 1)
-        _ok = _err < _TOL
-        _all_ok = _all_ok and _ok
-        print(f"  {_name:<16s}  {_g:8.4f}  {_metis_ref:8.4f}  {_err*100:5.1f}%  {'PASS' if _ok else 'FAIL'}")
-    # Physics sanity checks
-    _g_perp, _ = f_etaCD_NBI_physics(2, 500, 2.0, 6.2, 10.0, 1.0, 1.65,
-                                      1.5, 0.3, 0.3, angle_NBI_deg=90.0), None
-    _ok_perp = abs(_g_perp) < 1e-6
-    _all_ok = _all_ok and _ok_perp
-    print(f"  {'perp. -> 0':<16s}  {_g_perp:8.1e}  {'0':>8s}  {'':>6s}  {'PASS' if _ok_perp else 'FAIL'}")
-    print("  " + "-" * 55)
-    print(f"  {'ALL PASS' if _all_ok else 'SOME FAILED'}")
-
+    _rows = [(f"gamma_NBI {_nm}", f_etaCD_NBI_physics(**_kw), _ref, 0.02,
+              "METIS zicd0.m")
+             for _nm, _ref, _kw in _nbcd_cases]
+    _g_perp = f_etaCD_NBI_physics(2, 500, 2.0, 6.2, 10.0, 1.0, 1.65,
+                                  1.5, 0.3, 0.3, angle_NBI_deg=90.0)
+    _rows.append(("gamma_NBI perpendicular limit", float(_g_perp),
+                  (-1e-6, 1e-6), 1, "physics limit"))
+    _bench("Published anchors - NBCD (Stix/Cordey/Lin-Liu) vs METIS", _rows)
 
 if __name__ == "__main__":
-    # ── ECCD physics model — validation against METIS reference ───────────
-    # Formula is identical to METIS zicd0.m lhmode=5 (Giruzzi 1987 + Lin-Liu).
-    # Tolerance: machine epsilon (same formula, no approximation).
-    print("\n── ECCD physics model (Giruzzi/Lin-Liu) ──────────────────────────")
-    _TOL_EC = 1e-10
-
-    # Reference values computed from the METIS formula at local Te
-    # (Te_local evaluated from parabolic profile at rho_EC)
+    # ── Published anchors - ECCD physics model vs METIS ──────────────────
+    # The formula is identical to METIS zicd0.m lhmode = 5 (Giruzzi 1987 +
+    # Lin-Liu trapped-particle correction): the reference is re-evaluated
+    # inline at the same local T_e, so the agreement must hold to machine
+    # precision. Physics ordering: HFS > top > LFS > 0.
     _ec_cases = [
-        # name,             theta_p, expected_gamma (from METIS at same Te_loc)
-        #                            Tbar=8.9, nu_T=1.0 => Te_loc(0.3) = 16.2 keV
-        ("ITER HFS 160°",   160.0,   dict(a=2.0, R0=6.2, Tbar=8.9, nbar=1.0,
-                                          Z_eff=1.65, nu_T=1.0, nu_n=0.3,
-                                          rho_EC=0.3)),
-        ("ITER LFS   0°",     0.0,   dict(a=2.0, R0=6.2, Tbar=8.9, nbar=1.0,
-                                          Z_eff=1.65, nu_T=1.0, nu_n=0.3,
-                                          rho_EC=0.3)),
-        ("ITER top  90°",    90.0,   dict(a=2.0, R0=6.2, Tbar=8.9, nbar=1.0,
-                                          Z_eff=1.65, nu_T=1.0, nu_n=0.3,
-                                          rho_EC=0.3)),
-        ("EU-DEMO HFS",     160.0,   dict(a=2.88, R0=9.07, Tbar=12.0, nbar=0.8,
-                                          Z_eff=1.6, nu_T=1.5, nu_n=0.3,
-                                          rho_EC=0.3)),
+        ("ITER HFS 160 deg", 160.0, dict(a=2.0, R0=6.2, Tbar=8.9, nbar=1.0,
+                                         Z_eff=1.65, nu_T=1.0, nu_n=0.3,
+                                         rho_EC=0.3)),
+        ("ITER LFS 0 deg", 0.0, dict(a=2.0, R0=6.2, Tbar=8.9, nbar=1.0,
+                                     Z_eff=1.65, nu_T=1.0, nu_n=0.3,
+                                     rho_EC=0.3)),
+        ("ITER top 90 deg", 90.0, dict(a=2.0, R0=6.2, Tbar=8.9, nbar=1.0,
+                                       Z_eff=1.65, nu_T=1.0, nu_n=0.3,
+                                       rho_EC=0.3)),
+        ("EU-DEMO HFS 160 deg", 160.0, dict(a=2.88, R0=9.07, Tbar=12.0,
+                                            nbar=0.8, Z_eff=1.6, nu_T=1.5,
+                                            nu_n=0.3, rho_EC=0.3)),
     ]
-    print(f"  {'Case':<18s}  {'γ_D0FUS':>8s}  {'θ_p':>5s}  status")
-    print("  " + "-" * 45)
-    _all_ok_ec = True
-
-    for _name, _theta, _kw in _ec_cases:
+    _rows = []
+    _g_by_case = {}
+    for _nm, _theta, _kw in _ec_cases:
         _g = f_etaCD_EC_physics(**_kw, theta_EC_pol_deg=_theta)
-        # Cross-check: compute METIS reference at same local Te
-        _Te_loc = max(float(f_Tprof(_kw['Tbar'], _kw['nu_T'], _kw['rho_EC'])), 0.1)
+        _g_by_case[_nm] = _g
+        # METIS reference evaluated inline at the same local T_e
+        _Te_loc = max(float(f_Tprof(_kw['Tbar'], _kw['nu_T'], _kw['rho_EC'])),
+                      0.1)
         _eps = abs(_kw['rho_EC']) * _kw['a'] / _kw['R0']
         _theta_r = np.radians(_theta)
         _mut = np.sqrt(max(_eps * (1 + np.cos(_theta_r))
@@ -3737,30 +3965,21 @@ if __name__ == "__main__":
         _fc = 1.0 - np.sqrt(2.0 * _eps / (1.0 + _eps))
         _g_metis = (_Te_loc / (_Te_loc + 100.0) * _Gt
                     * 6.0 / (1.0 + 4.0 * _fc + _kw['Z_eff']))
-        _err = abs(_g / _g_metis - 1.0) if abs(_g_metis) > 1e-15 else abs(_g)
-        _ok = _err < _TOL_EC
-        _all_ok_ec = _all_ok_ec and _ok
-        print(f"  {_name:<18s}  {_g:8.4f}  {_theta:5.0f}  {'PASS' if _ok else 'FAIL'}")
-
-    # Physics: HFS > top > LFS
-    _g_hfs = f_etaCD_EC_physics(a=2.0, R0=6.2, Tbar=8.9, nbar=1.0,
-                                 Z_eff=1.65, nu_T=1.0, nu_n=0.3,
-                                 rho_EC=0.3, theta_EC_pol_deg=180.0)
-    _g_top = f_etaCD_EC_physics(a=2.0, R0=6.2, Tbar=8.9, nbar=1.0,
-                                 Z_eff=1.65, nu_T=1.0, nu_n=0.3,
-                                 rho_EC=0.3, theta_EC_pol_deg=90.0)
-    _g_lfs = f_etaCD_EC_physics(a=2.0, R0=6.2, Tbar=8.9, nbar=1.0,
-                                 Z_eff=1.65, nu_T=1.0, nu_n=0.3,
-                                 rho_EC=0.3, theta_EC_pol_deg=0.0)
-    _ok_order = _g_hfs > _g_top > _g_lfs > 0
-    _all_ok_ec = _all_ok_ec and _ok_order
-    print(f"  {'HFS>top>LFS>0':<18s}  {'':>8s}  {'':>5s}  {'PASS' if _ok_order else 'FAIL'}"
-          f"  ({_g_hfs:.3f}>{_g_top:.3f}>{_g_lfs:.3f})")
-    print("  " + "-" * 45)
-    print(f"  {'ALL PASS' if _all_ok_ec else 'SOME FAILED'}")
-
-
-
+        _rows.append((f"gamma_EC {_nm}", _g, _g_metis, 1e-9, "METIS zicd0.m"))
+    _g_hfs = f_etaCD_EC_physics(a=2.0, R0=6.2, Tbar=8.9, nbar=1.0, Z_eff=1.65,
+                                nu_T=1.0, nu_n=0.3, rho_EC=0.3,
+                                theta_EC_pol_deg=180.0)
+    _g_top = f_etaCD_EC_physics(a=2.0, R0=6.2, Tbar=8.9, nbar=1.0, Z_eff=1.65,
+                                nu_T=1.0, nu_n=0.3, rho_EC=0.3,
+                                theta_EC_pol_deg=90.0)
+    _g_lfs = f_etaCD_EC_physics(a=2.0, R0=6.2, Tbar=8.9, nbar=1.0, Z_eff=1.65,
+                                nu_T=1.0, nu_n=0.3, rho_EC=0.3,
+                                theta_EC_pol_deg=0.0)
+    _rows.append(("ordering gamma_HFS/gamma_top", _g_hfs / _g_top,
+                  (1.0 + 1e-9, 100.0), 1, "trapping physics"))
+    _rows.append(("ordering gamma_top/gamma_LFS", _g_top / _g_lfs,
+                  (1.0 + 1e-9, 100.0), 1, "trapping physics"))
+    _bench("Published anchors - ECCD (Giruzzi/Lin-Liu) vs METIS", _rows)
 
 def f_etaCD_effective(config, a, R0, B0, nbar, Tbar, nu_n, nu_T, Z_eff,
                       rho_ped=1.0, n_ped_frac=0.0, T_ped_frac=0.0):
@@ -4055,56 +4274,71 @@ def f_PLH(eta_RF, f_RP, P_CD):
 
 
 if __name__ == "__main__":
-
-    # ------------------------------------------------------------------
-    # §6 Validation — CD figures of merit at ITER Q=10.
-    #
-    # Reference: Shimada et al., Nucl. Fusion 47 (2007) S1.
-    # ITER PIPB Ch.6 projections (Gormezano et al., NF 47 (2007) S285):
-    #   γ_LH ≈ 0.24,  γ_EC ≈ 0.20,  γ_NBI ≈ 0.15 MA/(MW m²)
-    # ------------------------------------------------------------------
-
-    kw = dict(a=2.0, R0=6.2, B0=5.3, nbar=1.01, Tbar=8.9,
-              nu_n=0.1, nu_T=1.0, Z_eff=1.6, beta_T=0.025,
-              rho_ped=0.94, n_ped_frac=0.80, T_ped_frac=0.40)
-
-    # LHCD: METIS mode 0 (Artaud 2018), no calibration constant
-    gLH = f_etaCD_LH_physics(kw['Tbar'], kw['Z_eff'])
-
-    # ECCD and NBCD: local T_e at ρ_dep = 0.3, with trapped-particle correction
-    gEC  = f_etaCD_EC_physics(kw['a'], kw['R0'], kw['Tbar'], kw['nbar'], kw['Z_eff'],
-                      kw['nu_T'], kw['nu_n'], rho_EC=0.3,
-                      rho_ped=kw['rho_ped'], n_ped_frac=kw['n_ped_frac'],
-                      T_ped_frac=kw['T_ped_frac'])
-    
-    # NBI reference: 0.20–0.40 (Gormezano 2007) spans all ITER scenarios.
-    # For Scenario 2 (Q=10, n̄ ~ 1.01×10²⁰ m⁻³, 15 MA), the lower end
-    # ~0.15–0.20 applies; the upper end (0.40) is Scenario 4 (Q=5,
-    # n̄ ~ 0.67×10²⁰ m⁻³) where lower density greatly increases efficiency.
-    # D0FUS result 0.163 is consistent with Q=10 conditions.
-    gNBI = f_etaCD_NBI_physics(2, 1000., kw['a'], kw['R0'], kw['Tbar'], kw['nbar'],
-                       kw['Z_eff'], kw['nu_T'], kw['nu_n'], rho_NBI=0.3,
-                       rho_ped=kw['rho_ped'], n_ped_frac=kw['n_ped_frac'],
-                       T_ped_frac=kw['T_ped_frac'])
-
-    P_EC, P_NBI = 20.0, 33.0   # absorbed CD power [MW]  — Shimada 2007
-    I_EC  = f_I_CD(kw['R0'], kw['nbar'], gEC,  P_EC)
-    I_NBI = f_I_CD(kw['R0'], kw['nbar'], gNBI, P_NBI * 0.95)  # 5% orbit loss
-
-    print("\n── CD figures of merit — ITER Q=10 (H-mode pedestal) " + "─"*18)
-    print(f"  {'Source':<18} {'γ [MA/(MW m²)]':>14}  {'I_CD [MA]':>10}"
-          f"  {'P_inj [MW]':>11}  {'ITER ref.':>10}")
-    print("  " + "─"*68)
-    print(f"  {'LHCD':<18} {gLH:>14.4f}  {'—':>10}  {'—':>11}  {'~0.33':>10}")
-    print(f"  {'ECCD (ρ=0.3)':<18} {gEC:>14.4f}  {I_EC:>10.3f}"
-          f"  {P_EC:>11.1f}  {'~0.20':>10}")
-    print(f"  {'NBCD D,1MeV':<18} {gNBI:>14.4f}  {I_NBI:>10.3f}"
-          f"  {P_NBI:>11.1f}  {'~0.15':>10}")
-    
-    # Current budget check (Eriksson et al., Nucl. Fusion 64 (2024) 126033):
-    #   Inductive ~ 10 MA, non-inductive ~ 5 MA (bootstrap dominant at ~3.5 MA),
-    #   I_NBI + I_EC ~ 1-2 MA. D0FUS total: 0.634 + 0.814 = 1.45 MA. Consistent.
-
+    # ── ITER chain (5/12) - current drive and current decomposition ─────
+    # Part A: PIPB-style figures of merit at the historical comparison
+    # point (rho = 0.3, Tbar = 8.9 keV) against the ITER Chapter 6
+    # projections (Gormezano et al., NF 47 (2007) S285), kept as
+    # informative context: gamma_LH ~ 0.24-0.33, gamma_EC ~ 0.20,
+    # gamma_NBI ~ 0.15-0.40 MA/(MW m2) across the ITER scenarios.
+    _kwq = dict(a=2.0, R0=6.2, Tbar=8.9, nbar=1.01, nu_n=0.1, nu_T=1.0,
+                Z_eff=1.6, rho_ped=0.94, n_ped_frac=0.80, T_ped_frac=0.40)
+    _gLH_pub = f_etaCD_LH_physics(_kwq['Tbar'], _kwq['Z_eff'])
+    _gEC_pub = f_etaCD_EC_physics(_kwq['a'], _kwq['R0'], _kwq['Tbar'],
+                                  _kwq['nbar'], _kwq['Z_eff'], _kwq['nu_T'],
+                                  _kwq['nu_n'], rho_EC=0.3,
+                                  rho_ped=_kwq['rho_ped'],
+                                  n_ped_frac=_kwq['n_ped_frac'],
+                                  T_ped_frac=_kwq['T_ped_frac'])
+    _gNBI_pub = f_etaCD_NBI_physics(2, 1000., _kwq['a'], _kwq['R0'],
+                                    _kwq['Tbar'], _kwq['nbar'], _kwq['Z_eff'],
+                                    _kwq['nu_T'], _kwq['nu_n'], rho_NBI=0.3,
+                                    rho_ped=_kwq['rho_ped'],
+                                    n_ped_frac=_kwq['n_ped_frac'],
+                                    T_ped_frac=_kwq['T_ped_frac'])
+    # Part B: chain evaluation at the deck point (Tbar = 7.754 keV,
+    # rho_EC = 0.40 for NTM control, rho_NBI = 0.30, 1 MeV D, 20 deg).
+    _eLH = f_etaCD_LH_physics(ITER['Tbar'], ITER['Zeff'])
+    _eEC = f_etaCD_EC_physics(ITER['a'], ITER['R0'], ITER['Tbar'],
+                              ITER['nbar'], ITER['Zeff'], ITER['nu_T'],
+                              ITER['nu_n'], ITER['rho_EC'],
+                              rho_ped=ITER['rho_ped'],
+                              n_ped_frac=ITER['n_ped_frac'],
+                              T_ped_frac=ITER['T_ped_frac'])
+    _eNBI = f_etaCD_NBI_physics(ITER['A_beam'], ITER['E_beam_keV'], ITER['a'],
+                                ITER['R0'], ITER['Tbar'], ITER['nbar'],
+                                ITER['Zeff'], ITER['nu_T'], ITER['nu_n'],
+                                ITER['rho_NBI'], f_alpha=FROZEN['f_alpha'],
+                                angle_NBI_deg=ITER['angle_NBI_deg'],
+                                rho_ped=ITER['rho_ped'],
+                                n_ped_frac=ITER['n_ped_frac'],
+                                T_ped_frac=ITER['T_ped_frac'])
+    _IEC = f_I_CD(ITER['R0'], ITER['nbar'], _eEC, ITER['P_ECRH'])
+    _INBI = f_I_CD(ITER['R0'], ITER['nbar'], _eNBI, ITER['P_NBI'])
+    _ICD = _IEC + _INBI            # ICRH drives no current (gamma_ICR = 0)
+    ITER.update(I_CD=_ICD)
+    _bench("ITER chain 5/12 - current drive (Multi: NBI + EC + IC)", [
+        ("gamma_LH, PIPB point [MA/(MW m2)]", _gLH_pub, "~0.24-0.33", None,
+         "Gormezano 2007"),
+        ("gamma_EC, PIPB point (rho=0.3)", _gEC_pub, "~0.20", None,
+         "Gormezano 2007"),
+        ("gamma_NBI, PIPB point", _gNBI_pub, "0.15-0.40", None,
+         "Gormezano 2007"),
+        ("eta_LH chain [MA/(MW m2)]", _eLH, FROZEN['eta_LH'], 2e-3,
+         "deck frozen"),
+        ("eta_EC chain (rho=0.40)", _eEC, FROZEN['eta_EC'], 2e-3,
+         "deck frozen"),
+        ("eta_NBI chain (1 MeV, 20 deg)", _eNBI, FROZEN['eta_NBI'], 2e-3,
+         "deck frozen"),
+        ("I_EC [MA]", _IEC, None, None, "P_EC = 6.7 MW"),
+        ("I_NBI [MA]", _INBI, None, None, "P_NBI = 33 MW"),
+        ("I_CD total [MA]", _ICD, FROZEN['I_CD'], 2e-3, "deck frozen"),
+    ], notes=[
+        "Chain efficiencies are lower than the PIPB-point values because "
+        "the deck deposits EC off-axis (rho = 0.40, NTM control) at the "
+        "solved Tbar = 7.75 keV.",
+        "Current budget context (Eriksson et al., NF 64 (2024) 126033): "
+        "inductive ~10 MA, non-inductive ~5 MA with bootstrap dominant.",
+    ])
 
 #%% L-H transition threshold
 
@@ -4338,44 +4572,55 @@ def f_P_thresh(nbar, B0, a, R0, kappa, M_ion, Ip=None,
 
 
 if __name__ == "__main__":
-    # L-H threshold anchors — Martin, JPCS 123 (2008) 012033, against the
-    # PUBLISHED ITER predictions of Table 5 in the ITPA TC-26 paper
-    # (NF 2026, 10.1088/1741-4326/ae39f2): 52.3 MW @ 0.5e20 and
-    # 86.0 MW @ 1.0e20 (deuterium, full field). Tol 10 % (Ramanujan-ellipse
-    # surface vs the true ITER LCFS ≈ 680 m²).
-    for _n20, _Pref in ((0.5, 52.3), (1.0, 86.0)):
-        _P = P_Thresh_Martin(_n20, 5.3, 2.0, 6.2, 1.85, 2.0)
-        assert abs(_P/_Pref - 1) < 0.10, (_n20, _P)
-    # 'New_S' (TC-26 draft 2017, Delabie) sits within the published 1σ of
-    # TC-26(Bt): P/S = (0.0441±0.0025)·B^(0.580±0.039)·n^(1.08±0.03)·
-    # (2/M)^(0.975±0.032). Updating to the published central values
-    # (~2-4 % on P_LH) is a deliberate maintainer decision.
-    _b = P_Thresh_New_S(1., 1., 2., 6.2, 1.7, 2.)
-    assert abs(np.log2(P_Thresh_New_S(1., 2., 2., 6.2, 1.7, 2.)/_b) - 0.580) < 0.04
-    assert abs(np.log2(P_Thresh_New_S(2., 1., 2., 6.2, 1.7, 2.)/_b) - 1.08) < 0.04
-    print("OK  Martin 2008: ancres ITER publiées 52.3/86.0 MW; New_S dans le 1σ TC-26")
+    # ── Published anchors - L-H power threshold ──────────────────────────
+    # Martin, JPCS 123 (2008) 012033, against the PUBLISHED ITER
+    # predictions of Table 5 in the ITPA TC-26 paper (NF 2026,
+    # 10.1088/1741-4326/ae39f2): 52.3 MW at 0.5e20 m-3 and 86.0 MW at
+    # 1.0e20 m-3 (deuterium, full field). Tolerance 10 %: D0FUS evaluates
+    # the plasma surface from the Ramanujan ellipse perimeter, the
+    # reference from the true ITER LCFS (~680 m2). The 'New_S' option
+    # (TC-26 draft 2017, Delabie) must sit within the published 1-sigma
+    # intervals of TC-26(Bt): P/S = (0.0441+-0.0025) B^(0.580+-0.039)
+    # n^(1.08+-0.03) (2/M)^(0.975+-0.032); updating to the published
+    # central values (2-4 % on P_LH) is a deliberate maintainer decision.
+    _b_ref = P_Thresh_New_S(1., 1., 2., 6.2, 1.7, 2.)
+    _bench("Published anchors - L-H threshold (Martin, New_S)", [
+        ("P_LH Martin, 0.5e20, D [MW]",
+         P_Thresh_Martin(0.5, 5.3, 2.0, 6.2, 1.85, 2.0), 52.3, 0.10,
+         "ITPA TC-26 2026"),
+        ("P_LH Martin, 1.0e20, D [MW]",
+         P_Thresh_Martin(1.0, 5.3, 2.0, 6.2, 1.85, 2.0), 86.0, 0.10,
+         "ITPA TC-26 2026"),
+        ("New_S exponent on B [-]",
+         float(np.log2(P_Thresh_New_S(1., 2., 2., 6.2, 1.7, 2.) / _b_ref)),
+         0.580, 0.07, "TC-26 1-sigma"),
+        ("New_S exponent on n [-]",
+         float(np.log2(P_Thresh_New_S(2., 1., 2., 6.2, 1.7, 2.) / _b_ref)),
+         1.08, 0.037, "TC-26 1-sigma"),
+    ])
 
 if __name__ == "__main__":
-
-    # ITER Q=10 DT baseline — Shimada et al., Nucl. Fusion 47 (2007) S1
-    # M_eff = 2.5 for DT already included; isotope factor P_LH ∝ 1/M applied.
-    # Metal-wall correction (W/Be vs C): ×~0.70 [Ryter et al., NF 53 (2013) 113003;
-    #   Maggi et al., NF 54 (2014) 023007] → best estimate ~50 MW.
-    p_IT = dict(nbar=1.0, B0=5.3, a=2.0, R0=6.2, kappa=1.7, Ip=15.0, M=2.5)
-    PM = P_Thresh_Martin(p_IT['nbar'], p_IT['B0'], p_IT['a'], p_IT['R0'],
-                         p_IT['kappa'], p_IT['M'])
-    PS = P_Thresh_New_S (p_IT['nbar'], p_IT['B0'], p_IT['a'], p_IT['R0'],
-                         p_IT['kappa'], p_IT['M'])
-    PI = P_Thresh_New_Ip(p_IT['nbar'], p_IT['B0'], p_IT['a'], p_IT['R0'],
-                         p_IT['kappa'], p_IT['Ip'], p_IT['M'])
-
-    print("\n── L-H power threshold — ITER Q=10 (DT, W/Be wall) ─────────────────────────")
-    print(f"  {'Scaling':<10} {'P_LH [MW]':>10}  {'ITER ref. [MW]':>14}")
-    print("  " + "─" * 72)
-    print(f"  {'Martin':<10} {PM:>10.1f}  {'~50':>14}")
-    print(f"  {'New_S':<10} {PS:>10.1f}  {'~50':>14}")
-    print(f"  {'New_Ip':<10} {PI:>10.1f}  {'~50':>14}")
-
+    # ── ITER chain (6/12) - L-H threshold and separatrix power ──────────
+    # The Martin scaling is evaluated with the LINE-averaged chain density
+    # and the D-T isotope mass M = 2.5 (P_LH proportional to 1/M), as in
+    # the production solver. P_sep = P_alpha + P_CD - P_rad,total
+    # (f_P_sep; P_Ohm is not included, matching D0FUS_run.py). The
+    # metal-wall correction (W/Be vs C, factor ~0.70: Ryter et al., NF 53
+    # (2013) 113003; Maggi et al., NF 54 (2014) 023007) yields the ~50 MW
+    # best estimate usually quoted for ITER.
+    _PLH = P_Thresh_Martin(ITER['nbar_line'], ITER['B0'], ITER['a'],
+                           ITER['R0'], ITER['kappa'], ITER['M'])
+    _Psep = f_P_sep(ITER['P_fus'], ITER['P_aux'], ITER['P_rad_tot'])
+    ITER.update(P_sep=_Psep, P_LH_th=_PLH)
+    _bench("ITER chain 6/12 - L-H threshold and P_sep", [
+        ("P_LH Martin (D-T, M=2.5) [MW]", _PLH, FROZEN['P_LH_th'], 2e-3,
+         "deck frozen"),
+        ("P_LH x 0.70 metal wall [MW]", 0.70 * _PLH, "~50", None,
+         "Ryter 2013 / Maggi 2014"),
+        ("P_sep [MW]", _Psep, FROZEN['P_sep'], 2e-3, "deck frozen"),
+        ("H-mode access P_sep/P_LH [-]", _Psep / _PLH, (1.0, 3.0), 1,
+         "operational"),
+    ])
 
 def f_P_LH_thresh(nbar, B0, a, R0, kappa, M_ion, Ip=None,
                   Option_PLH='Martin'):
@@ -4745,6 +4990,37 @@ def f_Vloop(I_Ohm, a, kappa, R0, Tbar, nbar, Z_eff, q95, nu_T, nu_n,
 # The duplicate definition that was previously here has been removed to avoid
 # silent name shadowing in Python's module namespace.
 
+if __name__ == "__main__":
+    # ── ITER chain (7/12) - ohmic power and resistivity models ──────────
+    # P_Ohm closes the power balance at the 0.4 MW level, negligible for
+    # ITER but the natural place to exercise the resistivity chain. The
+    # frozen I_Ohm and q95 are forward references, both closed by
+    # chain 12 (I_Ohm = Ip - I_bs - I_CD and the q95 inversion). The
+    # four implemented resistivity models are compared at the chain
+    # point: the neoclassical values (Sauter 1999; Redl 2021) must exceed
+    # Spitzer because trapped electrons cannot carry parallel current.
+    _Palpha = f_P_alpha(ITER['P_fus'])
+    _po = {m: f_P_Ohm(FROZEN['I_Ohm'], ITER['Tbar'], ITER['R0'], ITER['a'],
+                      ITER['kappa'], Z_eff=ITER['Zeff'], nbar=ITER['nbar'],
+                      eta_model=m, q95=FROZEN['q95'])
+           for m in ('old', 'spitzer', 'sauter', 'redl')}
+    ITER.update(P_alpha=_Palpha, P_Ohm=_po['sauter'])   # deck: eta_model=sauter
+    _bench("ITER chain 7/12 - ohmic power and resistivity models", [
+        ("P_alpha = P_fus Ea/(Ea+En) [MW]", _Palpha,
+         ITER['P_fus'] * E_ALPHA / (E_ALPHA + E_N), 1e-12, "definition"),
+        ("P_alpha approx P_fus/5 [MW]", _Palpha, 100.0, 1e-3, "rule of thumb"),
+        ("P_Ohm Sauter (deck) [MW]", _po['sauter'], FROZEN['P_Ohm'], 5e-3,
+         "deck frozen"),
+        ("P_Ohm Spitzer [MW]", _po['spitzer'], None, None, "model comparison"),
+        ("P_Ohm Redl [MW]", _po['redl'], None, None, "model comparison"),
+        ("P_Ohm Wesson 'old' [MW]", _po['old'], None, None, "model comparison"),
+        ("neoclassical enhancement Sauter/Spitzer",
+         _po['sauter'] / _po['spitzer'], (1.0, 5.0), 1, "trapped electrons"),
+        ("Sauter vs Redl consistency",
+         _po['sauter'] / _po['redl'], (0.7, 1.4), 1, "model agreement"),
+    ])
+
+
 def f_I_Ohm(Ip, Ib, I_CD):
     """
     Inductive (Ohmic) plasma current from the current balance.
@@ -4829,16 +5105,21 @@ def f_Q_multiaux(P_fus, P_LH, P_ECRH, P_NBI, P_ICRH, P_Ohm):
 
 
 if __name__ == "__main__":
-    # ITER Q=10 baseline: P_fus=500 MW, P_ECRH=20 MW, P_NBI=13 MW, P_Ohm~1.5 MW
-    # Reference: Shimada et al., Nucl. Fusion 47 (2007) S1; PIPB Ch.6 (Gormezano 2007)
-    Q_calc = f_Q_multiaux(P_fus=500.0, P_LH=20.0, P_ECRH=20.0,
-                          P_NBI=13.0, P_ICRH=0.0, P_Ohm=1.5)
+    # ── ITER chain (8/12) - fusion gain ──────────────────────────────────
+    # Q = P_fus / (P_aux + P_Ohm) with the flat-top heating mix of the
+    # deck (33 NBI + 6.7 EC + 10 IC = 49.7 MW [Kim 2018]) and the chain
+    # ohmic power from chain 4. The published design target is Q = 10
+    # with ~50 MW of auxiliary power (Shimada 2007).
+    _Q = f_Q_multiaux(P_fus=ITER['P_fus'], P_LH=ITER['P_LH'],
+                      P_ECRH=ITER['P_ECRH'], P_NBI=ITER['P_NBI'],
+                      P_ICRH=ITER['P_ICRH'], P_Ohm=ITER['P_Ohm'])
+    ITER.update(Q=_Q)
+    _bench("ITER chain 8/12 - fusion gain", [
+        ("Q = P_fus/(P_aux + P_Ohm) [-]", _Q, FROZEN['Q'], 2e-3,
+         "deck frozen"),
+        ("Q [-]", _Q, 10.0, 0.05, "Shimada 2007"),
+    ])
 
-    print("\n── Fusion gain Q — ITER Q=10 baseline ─────────────────────────────────────")
-    print(f"  {'Quantity':<30} {'D0FUS':>8}  {'ITER ref.':>10}")
-    print("  " + "─" * 64)
-    print(f"  {'Q  (500 MW / 54.5 MW ext)':<30} {Q_calc:>8.2f}  {'10':>10}")
-    
 # Historical model extracted from
 # D.J. Segal, A.J. Cerfon, J.P. Freidberg, "Steady state versus pulsed tokamak reactors",
 # Nuclear Fusion, 61(4), 045001, 2021.
@@ -4958,12 +5239,6 @@ def f_Segal_Ib(nu_n, nu_T, epsilon, kappa, n20, Tk, R0, I_M,
     I_b = f_B * I_M
 
     return I_b
-
-if __name__ == "__main__":
-    # ITER Q=10 baseline — Shimada et al., Nucl. Fusion 47 (2007) S1
-    Ib_Segal = f_Segal_Ib(nu_n=0.5, nu_T=1.0, epsilon=2.0/6.2, kappa=1.75,
-                          n20=1.01, Tk=8.9, R0=6.2, I_M=15.0)
-    
 
 """
 Neoclassical Bootstrap Current Model - Sauter et al. (1999)
@@ -5176,14 +5451,20 @@ def _nu_e_star(n_e, T_e, q, R0, epsilon, Z_eff):
 
 
 if __name__ == "__main__":
-    # Collisionality identity — Sauter, Angioni & Lin-Liu, Phys. Plasmas 6
-    # (1999) 2834, Eq. 18b with lnΛ_e of Eq. 18d. NB: the helper takes T_e
-    # in eV. ITER core ν*_e ≈ 0.03 (banana regime).
+    # ── Published anchor - electron collisionality identity ──────────────
+    # Sauter, Angioni & Lin-Liu, Phys. Plasmas 6 (1999) 2834, Eq. 18b
+    # with the Coulomb logarithm of Eq. 18d (helper takes T_e in eV).
+    # The ITER core sits deep in the banana regime, nu*_e ~ 0.03.
     _ne, _Te = 1.0e20, 8900.0
-    _lnL = 31.3 - np.log(np.sqrt(_ne)/_Te)
-    _nref = 6.921e-18 * 3.0 * 6.2 * _ne * 1.7 * _lnL / (_Te**2 * (2/6.2)**1.5)
-    assert abs(float(_nu_e_star(_ne, _Te, 3.0, 6.2, 2/6.2, 1.7))/_nref - 1) < 1e-6
-    print(f"OK  Collisionnalité Sauter: identité Eq. 18b (ν*_e,ITER = {_nref:.3f})")
+    _lnL = 31.3 - np.log(np.sqrt(_ne) / _Te)
+    _nref = 6.921e-18 * 3.0 * 6.2 * _ne * 1.7 * _lnL / (_Te**2 * (2 / 6.2)**1.5)
+    _bench("Published anchor - Sauter collisionality (Eq. 18b)", [
+        ("nu*_e identity, ITER core [-]",
+         float(_nu_e_star(_ne, _Te, 3.0, 6.2, 2 / 6.2, 1.7)), _nref, 1e-6,
+         "Sauter 1999"),
+        ("banana-regime check nu*_e", float(_nref), (0.0, 0.1), 1,
+         "ITER core"),
+    ])
 
 def _nu_i_star(n_i, T_i, q, R0, epsilon):
     """Ion collisionality [Eq. 18c]."""
@@ -6368,20 +6649,34 @@ def f_q_profile_refined(
 
 
 if __name__ == "__main__":
-    # Bootstrap comparison table — only Segal and Sauter-Redl remain.
-    # Ib_Segal was computed earlier (~line 4220) at module-level test time.
-    _bs_kw = dict(R0=6.2, a=2.0, kappa=1.75, B0=5.3,
-                  nbar=1.01, Tbar=8.9, q95=3.0,
-                  Z_eff=1.65, nu_n=0.1, nu_T=1.0,
-                  rho_ped=0.94, n_ped_frac=0.90, T_ped_frac=0.40)
-    Ib_SauterRedl = f_Sauter_Redl_Ib(**_bs_kw)
-
-    print("\n── Bootstrap current — ITER Q=10 baseline ───────────────────────────────────")
-    print(f"  {'Model':<20} {'I_bs [MA]':>10}  {'ITER ref. [MA]':>14}")
-    print("  " + "─" * 72)
-    print(f"  {'Segal (2021)':<20} {Ib_Segal:>10.2f}  {'3.0':>14}")
-    print(f"  {'Sauter-Redl (2021)':<20} {Ib_SauterRedl:>10.2f}  {'3.0':>14}")
-
+    # ── ITER chain (9/12) - bootstrap current ────────────────────────────
+    # Sauter-Redl evaluated at the chain operating point with the deck
+    # pedestal profiles. q95 is a forward reference (FROZEN), closed by
+    # chain 12 after f_q95 is defined. The production solver additionally
+    # refines the collisionality with the Picard q(rho) cache, worth
+    # ~0.2 % on I_bs, hence the 1 % tolerance. The Segal (2021) model is
+    # reported for model comparison at the same point.
+    _Ib = f_Sauter_Redl_Ib(ITER['R0'], ITER['a'], ITER['kappa'], ITER['B0'],
+                           ITER['nbar'], ITER['Tbar'], FROZEN['q95'],
+                           ITER['Zeff'], ITER['nu_n'], ITER['nu_T'],
+                           rho_ped=ITER['rho_ped'],
+                           n_ped_frac=ITER['n_ped_frac'],
+                           T_ped_frac=ITER['T_ped_frac'],
+                           Vprime_data=ITER_Vpd, kappa_95=ITER['kappa95'],
+                           tau_i_e=1.0)
+    _Ib_seg = f_Segal_Ib(ITER['nu_n'], ITER['nu_T'], ITER['a'] / ITER['R0'],
+                         ITER['kappa'], ITER['nbar'], ITER['Tbar'],
+                         ITER['R0'], FROZEN['Ip'],
+                         rho_ped=ITER['rho_ped'],
+                         n_ped_frac=ITER['n_ped_frac'],
+                         T_ped_frac=ITER['T_ped_frac'])
+    ITER.update(Ib=_Ib)
+    _bench("ITER chain 9/12 - bootstrap current (Sauter-Redl)", [
+        ("I_bs Sauter-Redl [MA]", _Ib, FROZEN['Ib'], 0.01, "deck frozen"),
+        ("bootstrap fraction I_bs/Ip [-]", _Ib / FROZEN['Ip'], None, None,
+         "chain"),
+        ("I_bs Segal (2021) [MA]", _Ib_seg, None, None, "model comparison"),
+    ])
 
 #%% Other parameters
 # ─────────────────────────────────────────────────────────────────────────────
@@ -6586,13 +6881,29 @@ def f_heat_PFU_Eich(P_sol, B_pol, R, eps, theta_deg,
 
 
 if __name__ == "__main__":
-    # SOL width anchor — Eich et al., NF 53 (2013) 093031, Table 6,
-    # regression #15: λq [mm] = 1.35 P_SOL⁻⁰·⁰² R⁰·⁰⁴ Bpol⁻⁰·⁹² (a/R)⁰·⁴².
-    # Closed anchor: the paper's own ITER evaluation gives λq = 0.73 mm
-    # (P_SOL = 100 MW, Bpol,MP = 1.185 T, R = 6.2 m, a = 2 m). Tol 8 %.
-    _lam, _, _ = f_heat_PFU_Eich(100., 1.185, 6.2, 2/6.2, 3.0, B0=5.3)
-    assert abs(_lam*1e3/0.73 - 1) < 0.08, _lam*1e3
-    print(f"OK  Eich #15: λq,ITER = {_lam*1e3:.2f} mm vs 0.73 publié")
+    # ── SOL width: published anchor and ITER chain (10/12) ──────────────
+    # Published anchor: Eich et al., NF 53 (2013) 093031, Table 6,
+    # regression #15: lambda_q [mm] = 1.35 P_SOL^-0.02 R^0.04 Bpol^-0.92
+    # (a/R)^0.42. Closed worked example: the paper's own ITER evaluation
+    # gives lambda_q = 0.73 mm (P_SOL = 100 MW, Bpol,MP = 1.185 T,
+    # R = 6.2 m, a = 2 m); tolerance 8 % (rounding of the quoted
+    # midplane poloidal field).
+    # Chain: B_pol from the q-inversion at the frozen q95 (closed by
+    # chain 12) and lambda_q at the chain P_sep.
+    _lam_pub, _, _ = f_heat_PFU_Eich(100., 1.185, 6.2, 2 / 6.2, 3.0, B0=5.3)
+    _Bpol = f_Bpol(FROZEN['q95'], ITER['B0'], ITER['a'], ITER['R0'],
+                   kappa=ITER['kappa'])
+    _lam, _, _ = f_heat_PFU_Eich(ITER['P_sep'], _Bpol, ITER['R0'],
+                                 ITER['a'] / ITER['R0'], FROZEN['q95'],
+                                 B0=ITER['B0'])
+    _bench("ITER chain 10/12 - SOL heat-flux width (Eich #15)", [
+        ("lambda_q paper inputs [mm]", _lam_pub * 1e3, 0.73, 0.08,
+         "Eich 2013"),
+        ("B_pol outer midplane [T]", _Bpol, FROZEN['B_pol'], 2e-3,
+         "deck frozen"),
+        ("lambda_q chain point [mm]", _lam * 1e3, FROZEN['lambda_q_mm'],
+         2e-3, "deck frozen"),
+    ])
 
 # =============================================================================
 # Refined divertor exhaust — two-point model (Stangeby 2018)
@@ -7274,24 +7585,36 @@ def f_Get_parameter_scaling_law(Scaling_Law):
 # ── Global energy and confinement descriptors ─────────────────────────────────
 
 if __name__ == "__main__":
-    # Confinement-scaling registry vs published exponents (exact equality).
+    # ── Published anchors - confinement-scaling registry ─────────────────
+    # The registry must store the published exponents EXACTLY:
     # IPB98(y,2): ITER Physics Basis, NF 39 (1999) 2175 / Doyle, NF 47
     # (2007) S18. ITPA20: Verdoolaege, NF 61 (2021) 076006. ITER89-P:
-    # Yushmanov, NF 30 (1990) 1999 — C(n19) = 0.048·10⁻⁰·¹ (published n20
-    # prefactor converted to the D0FUS n19 convention).
+    # Yushmanov, NF 30 (1990) 1999, with the prefactor converted to the
+    # D0FUS n19 convention: C(n19) = 0.048 x 10^-0.1 = 0.0381.
+    # Exact tuple equality is asserted (structural identity).
     assert f_Get_parameter_scaling_law('IPB98(y,2)') == \
         (0.0562, 0, 0.19, 0.78, 0.58, 1.97, 0.15, 0.41, 0.93, -0.69)
     assert f_Get_parameter_scaling_law('ITPA20') == \
         (0.053, 0.36, 0.2, 0.8, 0.35, 1.71, 0.22, 0.24, 0.98, -0.669)
-    assert abs(f_Get_parameter_scaling_law('ITER89-P')[0] - 0.048*10**-0.1) < 2e-4
-    # IPB98 at the ITER Q=10 point reproduces the published τ_E ≈ 3.7 s
-    # (Ip = 15, B = 5.3, n19 = 10.1, M = 2.5, R = 6.2, κ_x = 1.70,
-    # P_loss = 87 MW; tol 8 %: κ convention + P_loss definition spread).
-    _Csl,_ad,_aM,_ak,_ae,_aR,_aB,_an,_aI,_aP = f_Get_parameter_scaling_law('IPB98(y,2)')
-    _tau = (_Csl * 15**_aI * 5.3**_aB * 10.1**_an * 2.5**_aM * 6.2**_aR
-            * (2/6.2)**_ae * 1.70**_ak * 87.0**_aP)
-    assert abs(_tau/3.7 - 1) < 0.08, _tau
-    print(f"OK  Lois de confinement: exposants publiés exacts; τ_IPB98,ITER = {_tau:.2f} s vs 3.7")
+    # IPB98 at the ITER Q=10 point with the PUBLISHED loss-power
+    # convention (P = 87 MW, radiation NOT subtracted; kappa_x = 1.70,
+    # n19 = 10.1): tolerance 8 % covers the kappa-convention and P_loss
+    # definition spread between sources. The production (PROCESS-like)
+    # convention, which subtracts the core radiation, is exercised by
+    # chain 11.
+    _Csl, _ad, _aM, _ak, _ae, _aR, _aB, _an, _aI, _aP = \
+        f_Get_parameter_scaling_law('IPB98(y,2)')
+    _tau98 = (_Csl * 15**_aI * 5.3**_aB * 10.1**_an * 2.5**_aM * 6.2**_aR
+              * (2 / 6.2)**_ae * 1.70**_ak * 87.0**_aP)
+    _bench("Published anchors - confinement scaling laws", [
+        ("IPB98(y,2) / ITPA20 exponents", "exact", "published", None,
+         "registry assert"),
+        ("ITER89-P prefactor C(n19) [-]",
+         f_Get_parameter_scaling_law('ITER89-P')[0], 0.048 * 10**-0.1, 5e-3,
+         "Yushmanov 1990"),
+        ("tau_IPB98, published convention [s]", _tau98, 3.7, 0.08,
+         "IPB 1999"),
+    ])
 
 def f_tauE(pbar, V, P_Alpha, P_Aux, P_Ohm, P_rad):
     """
@@ -7439,6 +7762,57 @@ def f_Q(P_fus, P_CD, P_Ohm):
         )
         return np.inf
     return P_fus / P_heat
+
+
+if __name__ == "__main__":
+    # ── ITER chain (11/12) - stored energy, tau_E and plasma current ────
+    # Loss-power convention: D0FUS subtracts the CORE radiated power from
+    # the heating power, P_loss = P_alpha + P_aux + P_Ohm - P_rad,core,
+    # in BOTH tau_E and the scaling-law inversion for Ip (PROCESS-like
+    # convention; see the note in f_tauE). With this convention and the
+    # chain radiation budget, the module-level tau_E and Ip must land on
+    # the full-device values. The published tau_E = 3.7 s instead uses
+    # P_loss = 87 MW with no radiation subtracted: the same stored energy
+    # then gives W_th/87 = 3.91 s, bracketing the published value.
+    # The IPB98 inversion uses the area elongation kappa_a = V/(2 pi^2 R0
+    # a^2) and the LINE-averaged density (fitting conventions of the law).
+    _W = f_W_th(ITER['pbar'], ITER['V']) / 1e6                       # [MJ]
+    _tau = f_tauE(ITER['pbar'], ITER['V'], ITER['P_alpha'], ITER['P_aux'],
+                  ITER['P_Ohm'], ITER['P_rad_core'])
+    _Ploss = (ITER['P_alpha'] + ITER['P_aux'] + ITER['P_Ohm']
+              - ITER['P_rad_core'])
+    _Csl, _ad, _aM, _ak, _ae, _aR, _aB, _an, _aI, _aP = \
+        f_Get_parameter_scaling_law('IPB98(y,2)')
+    _Ip = f_Ip(_tau, ITER['R0'], ITER['a'], ITER['kappa_a'], ITER['delta'],
+               ITER['nbar_line'], ITER['B0'], ITER['M'],
+               ITER['P_alpha'], ITER['P_Ohm'], ITER['P_aux'],
+               ITER['P_rad_core'], ITER['H'], _Csl,
+               _ad, _aM, _ak, _ae, _aR, _aB, _an, _aI, _aP)
+    _nG = f_nG(_Ip, ITER['a'])
+    ITER.update(tauE=_tau, Ip=_Ip, W_th=_W)
+    _bench("ITER chain 11/12 - tau_E and plasma current (IPB98 inversion)", [
+        ("W_th [MJ]", _W, FROZEN['W_th'], 1e-3, "deck frozen"),
+        ("P_loss = P_heat - P_rad,core [MW]", _Ploss, None, None,
+         "convention"),
+        ("tau_E, core radiation subtracted [s]", _tau, FROZEN['tauE'], 1e-3,
+         "deck frozen"),
+        ("energy-balance closure W/(tau P_loss)",
+         f_W_th(ITER['pbar'], ITER['V']) / 1e6 / (_tau * _Ploss), 1.0, 1e-9,
+         "identity"),
+        ("tau_E, published convention [s]", _W / 87.0, "3.7", None,
+         "IPB 1999 (P=87 MW)"),
+        ("Ip from IPB98 inversion [MA]", _Ip, FROZEN['Ip'], 5e-3,
+         "deck frozen"),
+        ("Ip [MA]", _Ip, 15.0, 0.01, "Shimada 2007"),
+        ("n_GW at chain Ip [1e20 m-3]", _nG, FROZEN['nG'], 2e-3,
+         "deck frozen"),
+        ("f_GW = n_line/n_GW [-]", ITER['nbar_line'] / _nG, 0.85, 5e-3,
+         "deck target"),
+    ], notes=[
+        "Neither Ip nor the density is imposed: the deck receives the "
+        "geometry, B at the front face, P_fus, P_aux and f_GW = 0.85, and "
+        "the chain closes on the published 15 MA / 1.01e20 m-3 point.",
+    ])
 
 
 # ── Helium ash accumulation model ─────────────────────────────────────────────
@@ -8483,64 +8857,93 @@ def compute_RE_indicators(Ip, nbar, Tbar, a, R0, κ, Z_eff, li,
 # ── Validation ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    # Helium ash fraction f_alpha vs C_alpha — ITER Q=10 validation
-    # Console: q95, neutron wall load, f_alpha reference check
-    # Figure:  f_alpha(C_alpha) sensitivity curve — academic vs H-mode pedestal
+    # ── ITER chain (12/12) - q95, wall load and helium ash closure ───────
+    # q95: the Sauter (2016) formula at the chain Ip and LCFS shaping
+    # closes the forward reference used by chains 4, 9 and 10; the
+    # ITER-1989 guideline formula at the PUBLISHED 95 % shaping and 15 MA
+    # reproduces the ITER design value q95 = 3.0.
+    # Helium ash: f_alpha solves the Sarazin steady-state balance with
+    # the deck removal efficiency C_alpha = 5 (tau*_alpha = C_alpha
+    # tau_E) at the chain tau_E. The value must close on the f_alpha
+    # forward reference injected in chain 2, which is the convergence
+    # criterion of the production solver. The production solver evaluates
+    # the ash balance with the cylindrical volume weight even in refined
+    # geometry (see D0FUS_run.py); the chain mirrors that call exactly.
+    _q95 = f_q95(ITER['B0'], ITER['Ip'], ITER['R0'], ITER['a'],
+                 ITER['kappa'], ITER['delta'], ITER['kappa95'],
+                 ITER['delta95'], Option_q95='Sauter')
+    _q95_pub = f_q95(5.3, 15.0, 6.2, 2.0, 1.85, 0.485, 1.70, 0.33,
+                     Option_q95='ITER_1989')
+    _Gam = f_Gamma_n(ITER['a'], ITER['P_fus'], ITER['R0'], ITER['kappa'],
+                     S_wall=ITER['S'])
+    _fa = f_He_fraction(ITER['nbar'], ITER['Tbar'], ITER['tauE'],
+                        ITER['C_Alpha'], ITER['nu_T'],
+                        rho_ped=ITER['rho_ped'],
+                        T_ped_frac=ITER['T_ped_frac'], tau_i_e=1.0)
+    _ta = f_tau_alpha(ITER['nbar'], ITER['Tbar'], ITER['tauE'],
+                      ITER['C_Alpha'], ITER['nu_T'],
+                      rho_ped=ITER['rho_ped'],
+                      T_ped_frac=ITER['T_ped_frac'])
+    _IOhm = f_I_Ohm(ITER['Ip'], ITER['Ib'], ITER['I_CD'])
+    _bench("ITER chain 12/12 - q95, neutron wall load, helium ash", [
+        ("q95 Sauter, chain Ip [-]", _q95, FROZEN['q95'], 2e-3,
+         "deck frozen"),
+        ("q95 ITER-1989, published point [-]", _q95_pub, 3.0, 0.01,
+         "Uckan 1990"),
+        ("Gamma_n, Miller wall [MW/m2]", _Gam, FROZEN['Gamma_n'], 2e-3,
+         "deck frozen"),
+        ("Gamma_n [MW/m2]", _Gam, 0.57, 0.05, "Shimada 2007"),
+        ("f_He closure (C_alpha = 5) [-]", _fa, FROZEN['f_alpha'], 1e-3,
+         "solver fixed point"),
+        ("f_He, IPB exhaust assumption [%]", _fa * 100, "4.4", None,
+         "IPB 1999"),
+        ("tau*_alpha = C_alpha tau_E [s]", _ta, FROZEN['tau_alpha'], 1e-3,
+         "deck frozen"),
+        ("I_Ohm = Ip - I_bs - I_CD [MA]", _IOhm, FROZEN['I_Ohm'], 5e-3,
+         "deck frozen"),
+    ], notes=[
+        "The f_He closure is the global loop of the chain: chain 2 "
+        "injected the frozen f_alpha into the density solve, and the same "
+        "value re-emerges from the ash balance at the chain tau_E.",
+        "The IPB exhaust value (4.4 %) corresponds to the ITER Physics "
+        "Basis assumption at its own operating point.",
+        "The I_Ohm row closes the forward reference of chain 7 "
+        "(0.2 % residual inherited from the Picard q-profile cache of "
+        "the bootstrap step).",
+    ])
 
-    # ITER Q=10 reference parameters (Shimada et al., NF 47 (2007) S1)
-    # Shimada Table 1 reports ψ_N=0.95 values: κ₉₅=1.70, δ₉₅=0.33.
-    # LCFS values from ITER baseline (single-null): κ_edge≈1.85, δ_edge≈0.49.
-    _R0, _a               = 6.2, 2.0
-    _κ_edge, _δ_edge      = 1.85, 0.49     # LCFS shaping (Sauter formula)
-    _κ_95,   _δ_95        = 1.70, 0.33     # 95%-surface shaping (ITER_1989)
-    _B0, _Ip              = 5.3, 15.0
-    _nbar, _Tbar, _tauE   = 1.0, 8.9, 3.7
-    _P_fus, _nu_T, _C_α   = 500.0, 1.0, 5.0
-
-    _q95     = f_q95(_B0, _Ip, _R0, _a, _κ_edge, _δ_edge, _κ_95, _δ_95)
-    _Gamma_n = f_Gamma_n(_a, _P_fus, _R0, _κ_edge)
-    _f_alpha = f_He_fraction(_nbar, _Tbar, _tauE, _C_α, _nu_T)
-
-    print("\n── Safety factor q₉₅ — ITER Q=10 ──────────────────────────────────────────")
-    print(f"  {'Quantity':<20} {'D0FUS':>8}  {'ITER ref.':>10}")
-    print("  " + "─" * 58)
-    print(f"  {'q₉₅':<20} {_q95:>8.2f}  {'3.0':>10}")
-
-    print("\n── Neutron wall load Γ_n — ITER Q=10 ──────────────────────────────────────")
-    print(f"  {'Quantity':<20} {'D0FUS':>8}  {'ITER ref.':>10}")
-    print("  " + "─" * 58)
-    print(f"  {'Γ_n [MW/m²]':<20} {_Gamma_n:>8.3f}  {'0.57':>10}")
-
-    print("\n── Helium ash fraction f_α — ITER Q=10 ────────────────────────────────────")
-    print(f"  {'Quantity':<20} {'D0FUS':>8}  {'ITER ref.':>10}")
-    print("  " + "─" * 58)
-    print(f"  {f'f_α [%]  (C_α={_C_α:.0f})':<20} {_f_alpha*100:>8.1f}  {'5':>10}")
-
-    # ── Runaway electrons — ITER Q=10 ────────────────────────────────────────
-    # Hot-tail seed: Smith, Phys. Plasmas 15, 072502 (2008)
-    # Avalanche:     Breizman et al., Nucl. Fusion 59, 083001 (2019) Eq. 99
-
-    print("\n── Hot-tail seed — Stahl (2016) benchmark ──────────────────────────────────")
-    print(f"  {'Quantity':<20} {'D0FUS':>12}  {'Reference':>12}  Source")
-    print("  " + "─" * 58)
-    _f_RE_stahl = _hot_tail_fraction_local(
-        2.8e19, 3.1e3, 1.4e6, Te_final_eV=31.0, tau_TQ=0.3e-3, Z_eff=1.0)
-    print(f"  {'f_RE (local)':<20} {_f_RE_stahl:>12.3e}  {'4-5e-4':>12}  Stahl (2016) Fig.2(b)")
-
-    print("\n── Avalanche — Breizman (2019) Fig. 17 (li=1, Z=4, Ip=15 MA) ───────────────")
-    print(f"  lnΛ = ln(λ_D/λ_C) = {_coulomb_log_relativistic(1e20, 5.0):.2f}  "
-          f"(relativistic, ne=10²⁰, Te=5 eV)")
-    print(f"  {'I_RE0 [A]':<20} {'D0FUS [MA]':>12}  {'Eq.99 [MA]':>12}  {'Fig.17':>12}")
-    print("  " + "─" * 62)
-    for _ire0, _ref99, _fig17 in [(1.0, 3.306, "~2-3"), (1e3, 7.999, "~7-9"), (1e6, 13.002, "~12-14")]:
-        _ire_inf = f_RE_avalanche(15e6, _ire0, 1e20, 5.0, 1.0, 4)
-        print(f"  {_ire0:<20.0e} {_ire_inf/1e6:>12.3f}  {_ref99:>12.3f}  {_fig17:>12}")
+if __name__ == "__main__":
+    # ── Published anchors - runaway electrons ────────────────────────────
+    # Hot-tail seed: Smith & Verwichte model evaluated at the Stahl
+    # (2016) Fig. 2(b) point (informative: the figure quotes 4-5e-4).
+    # Avalanche: Breizman et al., NF 59 (2019) 083001, Eq. 99 at the
+    # Fig. 17 conditions (li = 1, Z = 4, Ip = 15 MA); the implementation
+    # must reproduce the analytic Eq. 99 values, and the Fig. 17 ranges
+    # are quoted for context.
+    _f_RE = _hot_tail_fraction_local(2.8e19, 3.1e3, 1.4e6, Te_final_eV=31.0,
+                                     tau_TQ=0.3e-3, Z_eff=1.0)
+    _re_rows = [
+        ("hot-tail f_RE (local) [-]", float(_f_RE), "4-5e-4", None,
+         "Stahl 2016 Fig. 2b"),
+        ("relativistic lnLambda (1e20, 5 eV)",
+         float(_coulomb_log_relativistic(1e20, 5.0)), None, None,
+         "Breizman 2019"),
+    ]
+    for _ire0, _ref99, _fig17 in ((1.0, 3.306, "~2-3"), (1e3, 7.999, "~7-9"),
+                                  (1e6, 13.002, "~12-14")):
+        _ire = f_RE_avalanche(15e6, _ire0, 1e20, 5.0, 1.0, 4) / 1e6
+        _re_rows.append((f"I_RE avalanche, seed {_ire0:.0e} A [MA]",
+                         float(_ire), _ref99, 1e-3, "Breizman Eq. 99"))
+        _re_rows.append((f"  Fig. 17 range, seed {_ire0:.0e} A [MA]",
+                         float(_ire), _fig17, None, "Breizman Fig. 17"))
+    _bench("Published anchors - runaway electrons (hot tail, avalanche)",
+           _re_rows)
 
     import D0FUS_BIB.D0FUS_figures as figs
     # plot_He_fraction takes separate ITER/DEMO removal efficiencies
-    # (C_Alpha_ITER=5.0, C_Alpha_DEMO=7.0 by default); the old single 'C_Alpha'
-    # keyword no longer exists. Defaults match the benchmark above (C_α = 5).
-    figs.plot_He_fraction(C_Alpha_ITER=_C_α)
+    # (C_Alpha_ITER=5.0, C_Alpha_DEMO=7.0 by default); defaults match the
+    # chain above (C_alpha = 5).
+    figs.plot_He_fraction(C_Alpha_ITER=ITER['C_Alpha'])
 
 #%%
 
@@ -8549,21 +8952,35 @@ if __name__ == "__main__":
 
 if __name__ == "__main__":
     # ─────────────────────────────────────────────────────────────────────
-    # General ITER check: the shipped reference deck must reproduce the
-    # frozen 2026-06 values (anti-drift guard; intentional physics changes
-    # must update these anchors). Skipped gracefully if the deck is absent.
-    # Indices follow the save_run_output tuple map.
+    # Full-device regression: the shipped reference deck must reproduce
+    # the frozen 2026-06 values (anti-drift guard; intentional physics
+    # changes must update these anchors AND the FROZEN dict at the top of
+    # this file). Skipped gracefully if the deck is absent. Indices
+    # follow the save_run_output tuple map of D0FUS_EXE/D0FUS_run.py.
     # ─────────────────────────────────────────────────────────────────────
     try:
         from D0FUS_EXE.D0FUS_run import load_config_from_file, run
         _deck = os.path.join(os.path.dirname(os.path.dirname(
             os.path.abspath(__file__))), 'D0FUS_INPUTS', '1_run_ITER.txt')
         _res = run(load_config_from_file(_deck), verbose=0)
-        _frozen = {0: 5.300, 3: 3.144, 5: 9.982, 8: 14.968, 13: 1.012,
-                   14: 1.191, 16: 1.635, 20: 3.598, 23: 73.522}
-        for _i, _v in _frozen.items():
-            assert abs(float(_res[_i])/_v - 1) < 5e-3, (_i, float(_res[_i]), _v)
-        assert abs(float(_res[4])/1e6/340.15 - 1) < 5e-3      # W_th [MJ]
-        print("OK  Deck ITER complet: 10 valeurs gelées 2026-06, dérive < 0.5 %")
+        _frozen_idx = [
+            (0, "B0 [T]", 5.300), (3, "tau_E [s]", 3.144),
+            (5, "Q [-]", 9.982), (8, "Ip [MA]", 14.968),
+            (9, "I_bs [MA]", 4.816), (13, "n_line [1e20 m-3]", 1.012),
+            (14, "n_GW [1e20 m-3]", 1.191), (16, "beta_N [-]", 1.635),
+            (20, "q95 [-]", 3.598), (23, "P_LH [MW]", 73.522),
+            (40, "f_alpha [-]", 0.029762),
+        ]
+        _rows = [(f"deck[{_i}] {_nm}", float(_res[_i]), _v, 5e-3,
+                  "frozen 2026-06") for _i, _nm, _v in _frozen_idx]
+        _rows.append(("deck[4] W_th [MJ]", float(_res[4]) / 1e6, 340.15,
+                      5e-3, "frozen 2026-06"))
+        _bench("Full-device regression - shipped ITER deck", _rows, notes=[
+            "Closes the chain: every forward reference (f_alpha, "
+            "f_imp_dil, q95, I_Ohm) and every chain output is "
+            "re-produced by the assembled solver on the shipped deck.",
+        ])
     except FileNotFoundError:
-        print("--  Deck ITER absent : test général sauté")
+        print("--  ITER deck not found: full-device regression skipped")
+
+    _bench_summary()
