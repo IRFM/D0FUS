@@ -5196,6 +5196,16 @@ def f_TF_cross_section(a: float, b: float, R0: float,
     R_bore   = R0 - a - b - c
     R_TF_out = R0 + a + b + Delta_TF + c
 
+    # Degenerate/non-viable geometry (e.g. R_bore <= 0): the Princeton-D ODE
+    # has k = 0.5*ln(R_TF_out/R_bore) undefined or non-positive, which would
+    # otherwise send solve_ivp into a non-terminating step-rejection loop on
+    # NaN derivatives. Short-circuit to NaN, consistent with how other
+    # non-viable design points are flagged.
+    if not (np.isfinite(R_bore) and np.isfinite(R_TF_out)) or R_bore <= 0:
+        _nan_pts = np.full(2, np.nan)
+        return (R_bore, R_TF_out, np.nan, np.nan, np.nan,
+                _nan_pts, _nan_pts, _nan_pts, _nan_pts)
+
     R_out, Z_out = _princeton_D_contour(R_bore, R_TF_out)
     R_in,  Z_in  = _offset_contour(R_out, Z_out, c)
 
