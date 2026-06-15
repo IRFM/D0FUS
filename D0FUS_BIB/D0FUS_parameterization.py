@@ -368,12 +368,9 @@ class GlobalConfig:
     Blanket_choice : str = 'HCPB'
 
     # ── Effective volumetric densities for radial-build mass estimates ────────
-    # Smeared/homogenised values.  Defaults from BLANKET_MATERIAL_DENSITIES.
-    # Breeder/structure/multiplier layer densities are concept-specific (see
-    # BLANKET_CONCEPTS[Blanket_choice]['radial_layers']).
-    rho_FW       : float = 7900.0    # First wall           [kg/m³]
-    rho_shield   : float = 5500.0    # Neutron shield (HT+LT) [kg/m³]
-    rho_VV       : float = 7500.0    # Vacuum vessel        [kg/m³]
+    # Plasma->TF radial_layers densities are derived per layer from their
+    # 'composition' (volume fractions) and BLANKET_MATERIAL_DENSITIES; see
+    # BLANKET_CONCEPTS[Blanket_choice]['radial_layers'].
     rho_divertor : float = 13000.0   # Divertor             [kg/m³]
 
     # ── 16. Component lifetime & availability model ───────────────────────────
@@ -577,14 +574,84 @@ COIL_MATERIAL_DENSITIES = {
     'insulation': 1900.0,   # [kg/m³]  GFRP CTD-101K
 }
 
-# Effective volumetric densities for radial-build components.
-# These are smeared/homogenised values for 0D mass estimates.
+# Volumetric mass densities [kg/m³] of the constituent materials appearing in
+# the per-layer 'composition' (volume-fraction) dicts of
+# BLANKET_CONCEPTS[...]['radial_layers'], digitised from figures 10-15
+# (Appendix A) of the reference study. f_radial_build_layers() combines these
+# with each layer's 'composition' to obtain an effective smeared density
+# rho = sum(frac_i * BLANKET_MATERIAL_DENSITIES[i]) and per-material
+# component masses. Values are room-temperature/handbook densities unless
+# noted; this is a 0D mass estimate, not a substitute for detailed material
+# property sets.
+#
+# Citations:
+#  - void, airSTP:  vacuum (0) and standard air at 15C/101.325 kPa (ISA),
+#       rho_air = 1.225 kg/m3 (CRC Handbook of Chemistry and Physics).
+#  - Water: liquid water at 4C reference, rho = 1000 kg/m3 (CRC Handbook).
+#  - EUROFER97, MF82H, BMF82H: RAFM steels of the same Fe-9Cr-W-V-Ta family;
+#       rho(EUROFER97) = 7750 kg/m3, e.g. Lindau et al., J. Nucl. Mater.
+#       336 (2005) 81; same value adopted for F82H-class steels (MF82H,
+#       boron-doped BMF82H).
+#  - SS316L: 316L austenitic stainless steel, rho = 7990 kg/m3 (CRC Handbook /
+#       standard mill data sheets).
+#  - Inconel718: rho = 8190 kg/m3 (Special Metals / ESPI Metals datasheet,
+#       https://www.espimetals.com/index.php/technical-data/91-inconel-718).
+#  - W: tungsten, rho = 19250 kg/m3 (CRC Handbook).
+#  - WC: tungsten carbide, rho = 15630 kg/m3 (CRC Handbook).
+#  - SiC: silicon carbide, theoretical/fully-dense rho = 3210 kg/m3
+#       (e.g. Schunk Technical Ceramics datasheet; ScienceDirect SiC overview).
+#  - Li4SiO4: lithium orthosilicate breeder ceramic, theoretical rho =
+#       2350 kg/m3 (Hernandez et al./KIT HCPB pebble fabrication studies,
+#       ScienceDirect S1738573323002139).
+#  - Li2TiO3: lithium titanate breeder ceramic, theoretical rho = 3430 kg/m3
+#       (INL TPBAR/ITER data compilation, inldigitallibrary.inl.gov
+#       Sort_146241.pdf).
+#  - Be12Ti: beryllide neutron multiplier, rho = 2288 kg/m3
+#       (Kawamura et al., J. Nucl. Mater.; ScienceDirect S0966979518301122,
+#       S0920379611002791).
+#  - Be: beryllium metal, rho = 1850 kg/m3 (CRC Handbook).
+#  - CaO: calcium oxide (Li ceramic-breeder additive), rho = 3340 kg/m3
+#       (CRC Handbook / standard chemistry references).
+#  - PbLi: Pb-15.7Li eutectic breeder/coolant, rho ~ 9800 kg/m3 from the
+#       correlation rho(kg/m3) = 10520.35 - 1.19051*T[K] at T ~ 600 K (327C)
+#       (Mas de les Valls et al., J. Nucl. Mater. 376 (2008) 353, "Lead-lithium
+#       eutectic material database for nuclear fusion technology").
+#  - Li: pure liquid lithium breeder (SCLV), rho = 485 kg/m3 at 500C
+#       (NASA thermophysical compilation of liquid lithium,
+#       ntrs.nasa.gov/api/citations/19680018893).
+#  - FLiBe: 2LiF-BeF2 molten-salt breeder, rho ~ 2020 kg/m3 from the
+#       correlation rho(kg/m3) = 2413 - 0.488*T[K] at T ~ 800 K (527C)
+#       (Romatoski & Forsberg review; Lee et al., J. Chem. Eng. Data 68
+#       (2023), doi:10.1021/acs.jced.2c00212, PMC9743087).
+#  - V4Cr4Ti: V-4Cr-4Ti vanadium structural alloy, rho = 6060 kg/m3, computed
+#       via rule-of-mixtures from elemental densities (V 6110, Cr 7190,
+#       Ti 4506 kg/m3) at the nominal 92/4/4 wt% composition (Smith et al.,
+#       J. Nucl. Mater. 233-237 (1996) 356, "Reference vanadium alloy
+#       V-4Cr-4Ti for fusion application").
+#  - HeT410P80: helium coolant at T = 410 C, P = 8.0 MPa, rho = 5.64 kg/m3
+#       from the ideal-gas law rho = P*M/(R*T) (M_He = 4.003 g/mol).
 BLANKET_MATERIAL_DENSITIES = {
-    'FW':       7900.0,    # [kg/m³]  EUROFER / 316L steel (steel-dominated)
-    'BB':       4500.0,    # [kg/m³]  effective (HCPB ~3500, WCLL ~6000; mid-range)
-    'shield':   5500.0,    # [kg/m³]  steel + borated-water mix (~60/40 by vol.)
-    'VV':       7500.0,    # [kg/m³]  double-wall 316L SS with water fill
-    'divertor': 13000.0,   # [kg/m³]  W monoblocks + CuCrZr + steel structure
+    'void':       0.0,       # vacuum / gap
+    'airSTP':     1.225,     # air, 15 C / 101.325 kPa
+    'Water':      1000.0,    # liquid water, 4 C reference
+    'EUROFER97':  7750.0,    # RAFM steel
+    'MF82H':      7750.0,    # RAFM steel (F82H-class)
+    'BMF82H':     7750.0,    # RAFM steel (boron-doped F82H-class)
+    'SS316L':     7990.0,    # 316L austenitic stainless steel
+    'Inconel718': 8190.0,    # Ni-based superalloy
+    'W':          19250.0,   # tungsten armour
+    'WC':         15630.0,   # tungsten carbide (shield)
+    'SiC':        3210.0,    # silicon carbide
+    'Li4SiO4':    2350.0,    # lithium orthosilicate breeder ceramic
+    'Li2TiO3':    3430.0,    # lithium titanate breeder ceramic
+    'Be12Ti':     2288.0,    # beryllide neutron multiplier
+    'Be':         1850.0,    # beryllium multiplier
+    'CaO':        3340.0,    # calcium oxide additive
+    'PbLi':       9800.0,    # Pb-15.7Li eutectic, ~327 C
+    'Li':         485.0,     # pure liquid lithium, ~500 C
+    'FLiBe':      2020.0,    # 2LiF-BeF2 molten salt, ~527 C
+    'V4Cr4Ti':    6060.0,    # vanadium structural alloy
+    'HeT410P80':  5.64,      # He coolant, 410 C / 8.0 MPa (ideal gas)
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -601,10 +668,13 @@ BLANKET_MATERIAL_DENSITIES = {
 # has been subtracted off (see radial_layers_effective()).  High/low-temperature
 # shield layers ('shield_HT' / 'shield_LT') use the DEFAULT_SHIELD_HT_WIDTH /
 # DEFAULT_SHIELD_LT_WIDTH defaults below where the source figures do not give a
-# value.  'gap' layers are voids (zero density).  'rho' for SOL/FW/shield_HT/
-# shield_LT/VV layers is taken from GlobalConfig (rho_FW, rho_shield, rho_VV) at
-# run time; only breeder/structure/multiplier layers carry their own concept-
-# specific smeared density here.
+# value.  Every layer carries a 'composition' dict (volume fractions, keys
+# into BLANKET_MATERIAL_DENSITIES, summing to 1.0) digitised from figures
+# 10-15 (Appendix A); f_radial_build_layers() derives each layer's effective
+# density, per-material component masses and total mass from this
+# composition.  Where a single radial_layers entry (e.g. the FW) aggregates
+# several figure sub-layers, 'composition' is the volume-weighted average
+# over those sub-layers.
 #
 # TBR_max and delta_BB_sat (breeder-zone thickness for ~95% of TBR_max) feed the
 # saturation-curve model f_TBR():
@@ -637,17 +707,30 @@ BLANKET_CONCEPTS = {
             {'name': 'Manifold / Back Structure',                   'f_width': 0.35, 'rho': 7000.0},
         ],
         'radial_layers': [
-            {'name': 'SOL',                                'role': 'SOL',       'width': 0.05},
-            {'name': 'First wall',                         'role': 'FW',        'width': 0.04},
-            {'name': 'Breeder/Multiplier Zone (Li4SiO4 + Be12Ti)', 'role': 'breeder', 'width': None, 'rho': 2700.0},
-            {'name': 'Back Wall',                          'role': 'structure', 'width': 0.10, 'rho': 7000.0},
-            {'name': 'Manifold',                           'role': 'structure', 'width': 0.15, 'rho': 7000.0},
-            {'name': 'High-Temp Shield',                   'role': 'shield_HT', 'width': DEFAULT_SHIELD_HT_WIDTH},
-            {'name': 'Gap',                                'role': 'gap',       'width': 0.02},
-            {'name': 'Vacuum Vessel',                      'role': 'VV',        'width': 0.10},
-            {'name': 'Gap',                                'role': 'gap',       'width': 0.02},
-            {'name': 'Low-Temp Shield',                    'role': 'shield_LT', 'width': DEFAULT_SHIELD_LT_WIDTH},
-            {'name': 'Gap',                                'role': 'gap',       'width': 0.10},
+            {'name': 'SOL',         'role': 'SOL',       'width': 0.05,
+             'composition': {'void': 1.0}},
+            {'name': 'First wall',  'role': 'FW',        'width': 0.04,
+             # 0.2cm W armour + 3.8cm MF82H/HeT410P80 structural (fig. 10), volume-weighted
+             'composition': {'W': 0.05, 'MF82H': 0.323, 'HeT410P80': 0.627}},
+            {'name': 'Breeder/Multiplier Zone (Li4SiO4 + Be12Ti)', 'role': 'breeder', 'width': None,
+             'composition': {'Li4SiO4': 0.063, 'Li2TiO3': 0.022, 'EUROFER97': 0.110,
+                              'Be12Ti': 0.539, 'HeT410P80': 0.266}},
+            {'name': 'Back Wall',   'role': 'structure', 'width': 0.10,
+             'composition': {'Li4SiO4': 0.063, 'Li2TiO3': 0.022, 'EUROFER97': 0.459, 'HeT410P80': 0.455}},
+            {'name': 'Manifold',    'role': 'structure', 'width': 0.15,
+             'composition': {'EUROFER97': 0.890, 'HeT410P80': 0.110}},
+            {'name': 'High-Temp Shield', 'role': 'shield_HT', 'width': DEFAULT_SHIELD_HT_WIDTH,
+             'composition': {'MF82H': 0.28, 'WC': 0.52, 'HeT410P80': 0.20}},
+            {'name': 'Gap',         'role': 'gap',       'width': 0.02,
+             'composition': {'void': 1.0}},
+            {'name': 'Vacuum Vessel', 'role': 'VV',      'width': 0.10,
+             'composition': {'SS316L': 0.76, 'HeT410P80': 0.24}},
+            {'name': 'Gap',         'role': 'gap',       'width': 0.02,
+             'composition': {'airSTP': 1.0}},
+            {'name': 'Low-Temp Shield', 'role': 'shield_LT', 'width': DEFAULT_SHIELD_LT_WIDTH,
+             'composition': {'SS316L': 0.39, 'BMF82H': 0.29, 'Water': 0.32}},
+            {'name': 'Gap',         'role': 'gap',       'width': 0.10,
+             'composition': {'airSTP': 1.0}},
         ],
     },
     'HCLL': {
@@ -668,17 +751,29 @@ BLANKET_CONCEPTS = {
             {'name': 'Manifold / Back Structure',               'f_width': 0.25, 'rho': 6500.0},
         ],
         'radial_layers': [
-            {'name': 'SOL',                                  'role': 'SOL',       'width': 0.05},
-            {'name': 'First wall',                           'role': 'FW',        'width': 0.04},
-            {'name': 'Breeder Zone (PbLi + stiffening plates)', 'role': 'breeder', 'width': None, 'rho': 9000.0},
-            {'name': 'Back Wall',                            'role': 'structure', 'width': 0.02, 'rho': 6500.0},
-            {'name': 'Manifold',                             'role': 'structure', 'width': 0.16, 'rho': 6500.0},
-            {'name': 'High-Temp Shield',                     'role': 'shield_HT', 'width': DEFAULT_SHIELD_HT_WIDTH},
-            {'name': 'Gap',                                  'role': 'gap',       'width': 0.02},
-            {'name': 'Vacuum Vessel',                        'role': 'VV',        'width': 0.10},
-            {'name': 'Gap',                                  'role': 'gap',       'width': 0.02},
-            {'name': 'Low-Temp Shield',                      'role': 'shield_LT', 'width': DEFAULT_SHIELD_LT_WIDTH},
-            {'name': 'Gap',                                  'role': 'gap',       'width': 0.10},
+            {'name': 'SOL',         'role': 'SOL',       'width': 0.05,
+             'composition': {'void': 1.0}},
+            {'name': 'First wall',  'role': 'FW',        'width': 0.04,
+             # 0.2cm W armour + 3.8cm MF82H/HeT410P80 structural (fig. 11), volume-weighted
+             'composition': {'W': 0.05, 'MF82H': 0.323, 'HeT410P80': 0.627}},
+            {'name': 'Breeder Zone (PbLi + stiffening plates)', 'role': 'breeder', 'width': None,
+             'composition': {'PbLi': 0.79, 'EUROFER97': 0.158, 'HeT410P80': 0.052}},
+            {'name': 'Back Wall',   'role': 'structure', 'width': 0.02,
+             'composition': {'EUROFER97': 0.698, 'HeT410P80': 0.302}},
+            {'name': 'Manifold',    'role': 'structure', 'width': 0.16,
+             'composition': {'EUROFER97': 0.85, 'HeT410P80': 0.10, 'PbLi': 0.05}},
+            {'name': 'High-Temp Shield', 'role': 'shield_HT', 'width': DEFAULT_SHIELD_HT_WIDTH,
+             'composition': {'MF82H': 0.28, 'WC': 0.52, 'HeT410P80': 0.20}},
+            {'name': 'Gap',         'role': 'gap',       'width': 0.02,
+             'composition': {'void': 1.0}},
+            {'name': 'Vacuum Vessel', 'role': 'VV',      'width': 0.10,
+             'composition': {'SS316L': 0.76, 'HeT410P80': 0.24}},
+            {'name': 'Gap',         'role': 'gap',       'width': 0.02,
+             'composition': {'airSTP': 1.0}},
+            {'name': 'Low-Temp Shield', 'role': 'shield_LT', 'width': DEFAULT_SHIELD_LT_WIDTH,
+             'composition': {'SS316L': 0.39, 'BMF82H': 0.29, 'Water': 0.32}},
+            {'name': 'Gap',         'role': 'gap',       'width': 0.10,
+             'composition': {'airSTP': 1.0}},
         ],
     },
     'DCLL': {
@@ -699,17 +794,29 @@ BLANKET_CONCEPTS = {
             {'name': 'Manifold / Back Structure',      'f_width': 0.08, 'rho': 6000.0},
         ],
         'radial_layers': [
-            {'name': 'SOL',                              'role': 'SOL',       'width': 0.05},
-            {'name': 'First wall',                       'role': 'FW',        'width': 0.04},
-            {'name': 'Breeder Zone (PbLi + SiC FCIs)',   'role': 'breeder',   'width': None, 'rho': 8200.0},
-            {'name': 'Back Wall',                        'role': 'structure', 'width': 0.02, 'rho': 6000.0},
-            {'name': 'Manifold',                         'role': 'structure', 'width': 0.06, 'rho': 6000.0},
-            {'name': 'High-Temp Shield',                 'role': 'shield_HT', 'width': DEFAULT_SHIELD_HT_WIDTH},
-            {'name': 'Gap',                              'role': 'gap',       'width': 0.02},
-            {'name': 'Vacuum Vessel',                    'role': 'VV',        'width': 0.10},
-            {'name': 'Gap',                              'role': 'gap',       'width': 0.02},
-            {'name': 'Low-Temp Shield',                  'role': 'shield_LT', 'width': DEFAULT_SHIELD_LT_WIDTH},
-            {'name': 'Gap',                              'role': 'gap',       'width': 0.10},
+            {'name': 'SOL',         'role': 'SOL',       'width': 0.05,
+             'composition': {'void': 1.0}},
+            {'name': 'First wall',  'role': 'FW',        'width': 0.04,
+             # 0.2cm W armour + 3.8cm MF82H/HeT410P80 structural (fig. 12), volume-weighted
+             'composition': {'W': 0.05, 'MF82H': 0.323, 'HeT410P80': 0.627}},
+            {'name': 'Breeder Zone (PbLi + SiC FCIs)', 'role': 'breeder',   'width': None,
+             'composition': {'PbLi': 0.77, 'SiC': 0.035, 'MF82H': 0.06, 'HeT410P80': 0.135}},
+            {'name': 'Back Wall',   'role': 'structure', 'width': 0.02,
+             'composition': {'MF82H': 0.80, 'HeT410P80': 0.20}},
+            {'name': 'Manifold',    'role': 'structure', 'width': 0.06,
+             'composition': {'MF82H': 0.30, 'HeT410P80': 0.70}},
+            {'name': 'High-Temp Shield', 'role': 'shield_HT', 'width': DEFAULT_SHIELD_HT_WIDTH,
+             'composition': {'MF82H': 0.28, 'WC': 0.52, 'HeT410P80': 0.20}},
+            {'name': 'Gap',         'role': 'gap',       'width': 0.02,
+             'composition': {'void': 1.0}},
+            {'name': 'Vacuum Vessel', 'role': 'VV',      'width': 0.10,
+             'composition': {'SS316L': 0.76, 'HeT410P80': 0.24}},
+            {'name': 'Gap',         'role': 'gap',       'width': 0.02,
+             'composition': {'airSTP': 1.0}},
+            {'name': 'Low-Temp Shield', 'role': 'shield_LT', 'width': DEFAULT_SHIELD_LT_WIDTH,
+             'composition': {'SS316L': 0.39, 'BMF82H': 0.29, 'Water': 0.32}},
+            {'name': 'Gap',         'role': 'gap',       'width': 0.10,
+             'composition': {'airSTP': 1.0}},
         ],
     },
     'SCLL': {
@@ -730,14 +837,22 @@ BLANKET_CONCEPTS = {
             {'name': 'Manifold / Back Structure',  'f_width': 0.12, 'rho': 5500.0},
         ],
         'radial_layers': [
-            {'name': 'SOL',                       'role': 'SOL',       'width': 0.05},
-            {'name': 'Breeder Zone (PbLi + SiC)', 'role': 'breeder',   'width': None, 'rho': 8500.0},
-            {'name': 'High-Temp Shield',          'role': 'shield_HT', 'width': DEFAULT_SHIELD_HT_WIDTH},
-            {'name': 'Gap',                       'role': 'gap',       'width': 0.02},
-            {'name': 'Vacuum Vessel',             'role': 'VV',        'width': 0.10},
-            {'name': 'Gap',                       'role': 'gap',       'width': 0.02},
-            {'name': 'Low-Temp Shield',           'role': 'shield_LT', 'width': DEFAULT_SHIELD_LT_WIDTH},
-            {'name': 'Gap',                       'role': 'gap',       'width': 0.10},
+            {'name': 'SOL',         'role': 'SOL',       'width': 0.05,
+             'composition': {'void': 1.0}},
+            {'name': 'Breeder Zone (PbLi + SiC)', 'role': 'breeder',   'width': None,
+             'composition': {'PbLi': 0.696, 'SiC': 0.222, 'void': 0.082}},
+            {'name': 'High-Temp Shield', 'role': 'shield_HT', 'width': DEFAULT_SHIELD_HT_WIDTH,
+             'composition': {'MF82H': 0.28, 'WC': 0.52, 'HeT410P80': 0.20}},
+            {'name': 'Gap',         'role': 'gap',       'width': 0.02,
+             'composition': {'void': 1.0}},
+            {'name': 'Vacuum Vessel', 'role': 'VV',      'width': 0.10,
+             'composition': {'SS316L': 0.76, 'HeT410P80': 0.24}},
+            {'name': 'Gap',         'role': 'gap',       'width': 0.02,
+             'composition': {'airSTP': 1.0}},
+            {'name': 'Low-Temp Shield', 'role': 'shield_LT', 'width': DEFAULT_SHIELD_LT_WIDTH,
+             'composition': {'SS316L': 0.39, 'BMF82H': 0.29, 'Water': 0.32}},
+            {'name': 'Gap',         'role': 'gap',       'width': 0.10,
+             'composition': {'airSTP': 1.0}},
         ],
     },
     'SCLV': {
@@ -758,15 +873,25 @@ BLANKET_CONCEPTS = {
             {'name': 'Manifold / Back Structure',             'f_width': 0.20, 'rho': 5000.0},
         ],
         'radial_layers': [
-            {'name': 'SOL',                                    'role': 'SOL',        'width': 0.05},
-            {'name': 'First wall',                             'role': 'FW',         'width': 0.032},
-            {'name': 'Gap',                                    'role': 'gap',        'width': 0.01},
-            {'name': 'Breeder Zone (Li + V-alloy structure)',  'role': 'breeder',    'width': None, 'rho': 2200.0},
-            {'name': 'Multiplier (Be)',                        'role': 'multiplier', 'width': 0.01, 'rho': 1850.0},
-            {'name': 'High-Temp Shield',                       'role': 'shield_HT',  'width': DEFAULT_SHIELD_HT_WIDTH},
-            {'name': 'Vacuum Vessel',                          'role': 'VV',         'width': 0.10},
-            {'name': 'Low-Temp Shield',                        'role': 'shield_LT',  'width': DEFAULT_SHIELD_LT_WIDTH},
-            {'name': 'Gap',                                    'role': 'gap',        'width': 0.10},
+            {'name': 'SOL',         'role': 'SOL',        'width': 0.05,
+             'composition': {'void': 1.0}},
+            {'name': 'First wall',  'role': 'FW',         'width': 0.032,
+             # 0.2cm W armour + 1cm V4Cr4Ti structural + 2cm Li coolant channel (fig. 14), volume-weighted
+             'composition': {'W': 0.0625, 'V4Cr4Ti': 0.3625, 'CaO': 0.0125, 'Li': 0.5625}},
+            {'name': 'Gap',         'role': 'gap',        'width': 0.01,
+             'composition': {'void': 1.0}},
+            {'name': 'Breeder Zone (Li + V-alloy structure)', 'role': 'breeder',    'width': None,
+             'composition': {'V4Cr4Ti': 0.08, 'CaO': 0.02, 'Li': 0.90}},
+            {'name': 'Multiplier (Be)', 'role': 'multiplier', 'width': 0.01,
+             'composition': {'Be': 1.0}},
+            {'name': 'High-Temp Shield', 'role': 'shield_HT',  'width': DEFAULT_SHIELD_HT_WIDTH,
+             'composition': {'MF82H': 0.28, 'WC': 0.52, 'HeT410P80': 0.20}},
+            {'name': 'Vacuum Vessel', 'role': 'VV',         'width': 0.10,
+             'composition': {'SS316L': 0.76, 'HeT410P80': 0.24}},
+            {'name': 'Low-Temp Shield', 'role': 'shield_LT',  'width': DEFAULT_SHIELD_LT_WIDTH,
+             'composition': {'SS316L': 0.39, 'BMF82H': 0.29, 'Water': 0.32}},
+            {'name': 'Gap',         'role': 'gap',        'width': 0.10,
+             'composition': {'airSTP': 1.0}},
         ],
     },
     'F-LIB': {
@@ -787,16 +912,27 @@ BLANKET_CONCEPTS = {
             {'name': 'Manifold / Back Structure',  'f_width': 0.10, 'rho': 7500.0},
         ],
         'radial_layers': [
-            {'name': 'SOL',                       'role': 'SOL',        'width': 0.05},
-            {'name': 'First wall',                'role': 'FW',         'width': 0.032},
-            {'name': 'Multiplier (Be)',           'role': 'multiplier', 'width': 0.01, 'rho': 1850.0},
-            {'name': 'Vacuum Vessel',             'role': 'VV',         'width': 0.03},
-            {'name': 'Breeder Zone (FLiBe + Be)', 'role': 'breeder',    'width': None, 'rho': 2200.0},
-            {'name': 'Back Wall',                 'role': 'structure',  'width': 0.06, 'rho': 7500.0},
-            {'name': 'High-Temp Shield',          'role': 'shield_HT',  'width': DEFAULT_SHIELD_HT_WIDTH},
-            {'name': 'Gap',                       'role': 'gap',        'width': 0.01},
-            {'name': 'Low-Temp Shield',           'role': 'shield_LT',  'width': DEFAULT_SHIELD_LT_WIDTH},
-            {'name': 'Gap',                       'role': 'gap',        'width': 0.02},
+            {'name': 'SOL',         'role': 'SOL',        'width': 0.05,
+             'composition': {'void': 1.0}},
+            {'name': 'First wall',  'role': 'FW',         'width': 0.032,
+             # 0.2cm W armour + 1cm Inconel718 structural + 2cm FLiBe coolant channel (fig. 15), volume-weighted
+             'composition': {'W': 0.0625, 'Inconel718': 0.3125, 'FLiBe': 0.625}},
+            {'name': 'Multiplier (Be)', 'role': 'multiplier', 'width': 0.01,
+             'composition': {'Be': 1.0}},
+            {'name': 'Vacuum Vessel', 'role': 'VV',         'width': 0.03,
+             'composition': {'Inconel718': 1.0}},
+            {'name': 'Breeder Zone (FLiBe + Be)', 'role': 'breeder',    'width': None,
+             'composition': {'FLiBe': 1.0}},
+            {'name': 'Back Wall',   'role': 'structure',  'width': 0.06,
+             'composition': {'Inconel718': 0.99, 'FLiBe': 0.01}},
+            {'name': 'High-Temp Shield', 'role': 'shield_HT',  'width': DEFAULT_SHIELD_HT_WIDTH,
+             'composition': {'MF82H': 0.28, 'WC': 0.52, 'HeT410P80': 0.20}},
+            {'name': 'Gap',         'role': 'gap',        'width': 0.01,
+             'composition': {'airSTP': 1.0}},
+            {'name': 'Low-Temp Shield', 'role': 'shield_LT',  'width': DEFAULT_SHIELD_LT_WIDTH,
+             'composition': {'SS316L': 0.39, 'BMF82H': 0.29, 'Water': 0.32}},
+            {'name': 'Gap',         'role': 'gap',        'width': 0.02,
+             'composition': {'airSTP': 1.0}},
         ],
     },
 }

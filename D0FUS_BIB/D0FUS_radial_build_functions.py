@@ -5314,9 +5314,6 @@ def f_radial_build_layers(
     R_tf_in: np.ndarray,
     Z_tf_in: np.ndarray,
     Blanket_choice: str,
-    rho_FW: float,
-    rho_shield: float,
-    rho_VV: float,
     N_theta: int = 500,
 ) -> dict:
     """
@@ -5344,16 +5341,17 @@ def f_radial_build_layers(
     Parameters
     ----------
     R_tf_in, Z_tf_in : ndarray  TF inner-face Princeton-D contour (from f_TF_cross_section).
-    rho_FW, rho_shield, rho_VV : float  GlobalConfig densities [kg/m³] for the
-        FW, shield_HT/shield_LT and VV layer roles.  Breeder/structure/
-        multiplier layers use their concept-specific 'rho' from BLANKET_CONCEPTS.
 
     Returns
     -------
     dict with keys:
         layers       — list of per-layer dicts (name, role, width, rho,
-                        delta_ib, delta_ob, V, V_eff, M, R_inner/Z_inner,
-                        R_outer/Z_outer), in plasma -> TF order.
+                        composition, component_masses, delta_ib, delta_ob, V,
+                        V_eff, M, R_inner/Z_inner, R_outer/Z_outer), in
+                        plasma -> TF order.  'rho' is derived from
+                        'composition' (volume fractions) and
+                        BLANKET_MATERIAL_DENSITIES; 'component_masses' gives
+                        the mass [kg] of each constituent material.
         V_total      — sum of all layer volumes [m³]
         V_divertor   — divertor volume (fraction of FW+breeder+structure+multiplier) [m³]
         delta_BB_ib, delta_BB_ob — breeder-layer IB/OB thicknesses [m]
@@ -5414,12 +5412,13 @@ def f_radial_build_layers(
         L['V_eff'] = (L['V'] * (1.0 - f_div_area_fraction)
                        if L['role'] in _DIV_ROLES else L['V'])
 
-    # ── Densities and masses ─────────────────────────────────────────────────
-    _RHO_BY_ROLE = {'SOL': 0.0, 'gap': 0.0, 'FW': rho_FW,
-                    'shield_HT': rho_shield, 'shield_LT': rho_shield, 'VV': rho_VV}
+    # ── Densities and masses from per-layer material composition ────────────
     for L in layers:
-        L['rho'] = _RHO_BY_ROLE.get(L['role'], L.get('rho'))
-        L['M']   = L['V_eff'] * L['rho']
+        comp = L['composition']
+        L['rho'] = sum(frac * BLANKET_MATERIAL_DENSITIES[mat] for mat, frac in comp.items())
+        L['component_masses'] = {mat: L['V_eff'] * frac * BLANKET_MATERIAL_DENSITIES[mat]
+                                  for mat, frac in comp.items()}
+        L['M'] = sum(L['component_masses'].values())
 
     return {
         'layers':      layers,

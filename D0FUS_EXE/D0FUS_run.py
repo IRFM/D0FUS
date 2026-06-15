@@ -1948,9 +1948,6 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         R_tf_in=_R_in,
         Z_tf_in=_Z_in,
         Blanket_choice=config.Blanket_choice,
-        rho_FW=config.rho_FW,
-        rho_shield=config.rho_shield,
-        rho_VV=config.rho_VV,
     )
     _BB_ROLES     = ('breeder', 'structure', 'multiplier')
     _SHIELD_ROLES = ('shield_HT', 'shield_LT')
@@ -2516,7 +2513,6 @@ def save_run_output(config: GlobalConfig,
         f_div_area_fraction=config.f_div_area_fraction,
         R_tf_in=_R_in_disp, Z_tf_in=_Z_in_disp,
         Blanket_choice=config.Blanket_choice,
-        rho_FW=config.rho_FW, rho_shield=config.rho_shield, rho_VV=config.rho_VV,
     )
     _delta_BB_ib = _rb_disp['delta_BB_ib']
     _delta_BB_ob = _rb_disp['delta_BB_ob']
@@ -2742,11 +2738,20 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] TBR_achieved  (delta_BB_ib = {_delta_BB_ib:.3f} m)        : {_TBR_achieved:.3f}  (TBR_max = {_blanket_concept['TBR_max']:.2f})", file=out)
         print(f"[O] Radial build layers  (plasma → TF, delta_BB_ib = {_delta_BB_ib:.3f} m, delta_BB_ob = {_delta_BB_ob:.3f} m)", file=out)
         for _i, _layer in enumerate(_RB_layers):
-            _branch = "├" if _i < len(_RB_layers) - 1 else "└"
-            print(f"[O]  {_branch} {_layer['name']:<45s}: "
-                  f"role={_layer['role']:<10s}  "
+            _last   = _i == len(_RB_layers) - 1
+            _branch = "├" if not _last else "└"
+            _cont   = "│" if not _last else " "
+            print(f"[O]  {_branch} {_layer['name']:<28s}: "
                   f"d_ib={_layer['delta_ib']:.3f} m  d_ob={_layer['delta_ob']:.3f} m  "
-                  f"V={_layer['V']:.1f} m³  M={_layer['M']/1e3:.1f} t", file=out)
+                  f"V={_layer['V']:.1f} m³  M={_layer['M']/1e3:.1f} t  "
+                  f"rho={_layer['rho']:.1f} kg/m³", file=out)
+            _comp_masses = _layer['component_masses']
+            _materials   = list(_comp_masses)
+            for _j, _mat in enumerate(_materials):
+                _mbranch = "├" if _j < len(_materials) - 1 else "└"
+                _frac    = _layer['composition'][_mat]
+                print(f"[O]  {_cont}    {_mbranch} {_mat:<12s}: "
+                      f"{_frac*100:5.1f} vol%  {_comp_masses[_mat]/1e3:.2f} t", file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[O] Psi_PI      (Breakdown flux)                    : {ΨPI:.3f} [Wb]",      file=out)
         print(f"[O] Psi_RampUp  (Ramp-up flux)                      : {ΨRampUp:.3f} [Wb]",  file=out)

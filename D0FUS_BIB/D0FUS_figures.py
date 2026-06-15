@@ -2656,9 +2656,6 @@ def plot_assembly_side_view(
         f_div_area_fraction=f_div_area_fraction,
         R_tf_in=R_tf_in, Z_tf_in=Z_tf_in,
         Blanket_choice=Blanket_choice,
-        rho_FW=DEFAULT_CONFIG.rho_FW,
-        rho_shield=DEFAULT_CONFIG.rho_shield,
-        rho_VV=DEFAULT_CONFIG.rho_VV,
     )
     _layers = _rb["layers"]
 
