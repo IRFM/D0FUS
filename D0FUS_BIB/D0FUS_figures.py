@@ -60,9 +60,8 @@ if __name__ != "__main__":
         F_CIRCE0D, compute_von_mises_stress,
         calculate_E_mag_TF,
         f_TF_cross_section,
-        _sol_fw_miller_contours,
+        f_radial_build_layers,
         _offset_contour,
-        _radial_interp_contour,
         f_TBR,
     )
     from .D0FUS_parameterization import DEFAULT_CONFIG, E_ELEM, BLANKET_CONCEPTS
@@ -94,9 +93,8 @@ else:
         F_CIRCE0D, compute_von_mises_stress,
         calculate_E_mag_TF,
         f_TF_cross_section,
-        _sol_fw_miller_contours,
+        f_radial_build_layers,
         _offset_contour,
-        _radial_interp_contour,
         f_TBR,
     )
     from D0FUS_BIB.D0FUS_parameterization import DEFAULT_CONFIG, E_ELEM, BLANKET_CONCEPTS
@@ -2300,7 +2298,8 @@ def _resolve_build(run: dict) -> dict:
 
     Returns a flat dict with keys: b, c_TF, c_CS, N_TF, Gap, H_TF,
     R_TF_in, R_TF_out, R_CS_ext, R_CS_int,
-    e_fw, e_blanket, e_shield, e_gap.
+    e_fw, e_blanket, e_shield, e_gap,
+    Blanket_choice, f_kappa_SOL, f_div_area_fraction.
     """
     R0         = float(run["R0"])
     a          = float(run["a"])
@@ -2340,16 +2339,10 @@ def _resolve_build(run: dict) -> dict:
     e_shield   = float(run.get("e_shield",  max(b * 0.38, 0.3)))
     e_gap      = max(b - e_fw - e_blanket - e_shield, 0.0)
 
-    # Sublayer widths and SOL/FW shape parameters
-    d_SOL       = float(run.get("delta_SOL", run.get("delta_gap_plasma", 0.10)))
-    f_kappa_sol = float(run.get("f_kappa_SOL", 0.10))
-    d_FW        = float(run.get("delta_FW",         0.05))
-    d_sh   = float(run.get("delta_shield",     0.30))
-    d_VV   = float(run.get("delta_VV",         0.15))
-    d_gTF  = float(run.get("delta_gap_TF",     0.05))
-    fixed  = d_SOL + d_FW + d_sh + d_VV + d_gTF
-    d_BB_ib = max(b            - fixed, 0.01)
-    d_BB_ob = max(b + Delta_TF - fixed, 0.01)
+    # Concept-specific radial-build parameters (see f_radial_build_layers)
+    Blanket_choice      = run.get("Blanket_choice", "HCPB")
+    f_kappa_SOL         = float(run.get("f_kappa_SOL", 0.25))
+    f_div_area_fraction = float(run.get("f_div_area_fraction", 0.08))
 
     return dict(
         b=b, c_TF=c_TF, c_CS=c_CS, N_TF=N_TF, Gap=Gap, Delta_TF=Delta_TF,
@@ -2357,9 +2350,8 @@ def _resolve_build(run: dict) -> dict:
         R_TF_in=R_TF_in, R_TF_out=R_TF_out,
         R_CS_ext=R_CS_ext, R_CS_int=R_CS_int,
         e_fw=e_fw, e_blanket=e_blanket, e_shield=e_shield, e_gap=e_gap,
-        d_SOL=d_SOL, f_kappa_sol=f_kappa_sol, d_FW=d_FW,
-        d_sh=d_sh, d_VV=d_VV, d_gTF=d_gTF,
-        d_BB_ib=d_BB_ib, d_BB_ob=d_BB_ob,
+        Blanket_choice=Blanket_choice, f_kappa_SOL=f_kappa_SOL,
+        f_div_area_fraction=f_div_area_fraction,
     )
 
 
@@ -2652,43 +2644,45 @@ def plot_assembly_side_view(
     b_out       = b + Delta_TF
     V_blkt      = float(run.get("V_blanket", float("nan")))
 
-    # ── Sublayer thicknesses ─────────────────────────────────────────────
-    d_SOL       = bd["d_SOL"];  f_kappa_sol = bd["f_kappa_sol"];  d_FW = bd["d_FW"]
-    d_sh        = bd["d_sh"];   d_VV  = bd["d_VV"];  d_gTF = bd["d_gTF"]
-    d_BB_ib     = bd["d_BB_ib"];  d_BB_ob = bd["d_BB_ob"]
+    # ── Concept-specific radial-build layers (plasma → TF) ────────────────
+    Blanket_choice      = bd["Blanket_choice"]
+    f_kappa_SOL         = bd["f_kappa_SOL"]
+    f_div_area_fraction = bd["f_div_area_fraction"]
+
+    _rb = f_radial_build_layers(
+        a=a, b=b, κ=kappa_edge, δ=delta_edge, R0=R0,
+        Delta_TF=Delta_TF,
+        f_kappa_SOL=f_kappa_SOL,
+        f_div_area_fraction=f_div_area_fraction,
+        R_tf_in=R_tf_in, Z_tf_in=Z_tf_in,
+        Blanket_choice=Blanket_choice,
+        rho_FW=DEFAULT_CONFIG.rho_FW,
+        rho_shield=DEFAULT_CONFIG.rho_shield,
+        rho_VV=DEFAULT_CONFIG.rho_VV,
+    )
+    _layers = _rb["layers"]
 
     # ── Colour palette ───────────────────────────────────────────────────
     col_plasma  = "#FFD0DA"   # light pink — distinct from white gaps
-    LAYER_COLORS = {
+    col_divertor = "#9B2335"
+    ROLE_COLORS = {
         "SOL":        "#ADD8E6",   # scrape-off layer — light blue
-        "First wall": "#4A505A",
-        "BB":         "#E07820",
-        "Shield":     "#2E8B57",
+        "FW":         "#4A505A",
+        "breeder":    "#E07820",
+        "structure":  "#8B5A2B",
+        "multiplier": "#C9A66B",
+        "shield_HT":  "#2E8B57",
+        "shield_LT":  "#5FBF8F",
         "VV":         "#6C7A89",
-        "TF gap":     "white",
-        "Divertor":   "#9B2335",
+        "gap":        "white",
     }
 
-    # ── SOL/FW outer: Miller ellipses from the physics source of truth ────────
-    R_SOL_outer, Z_SOL_outer, R_FW_outer, Z_FW_outer = _sol_fw_miller_contours(
-        R0, a, kappa_edge, delta_edge, d_SOL, f_kappa_sol, d_FW)
-    # TF-side layers: inward offsets of the TF inner face (same shape family)
-    R_VV_outer,  Z_VV_outer  = _offset_contour(R_tf_in, Z_tf_in, d_gTF)
-    R_sh_outer,  Z_sh_outer  = _offset_contour(R_tf_in, Z_tf_in, d_gTF + d_VV)
-    R_BB_outer,  Z_BB_outer  = _offset_contour(R_tf_in, Z_tf_in, d_gTF + d_VV + d_sh)
-
-    # ── BB sub-layer breakdown (concept-specific) ─────────────────────────
-    # Sub-layer boundary contours are obtained by radial (polar) interpolation
-    # between the FW-outer (f=0) and BB-outer (f=1) contours at the cumulative
-    # sub-layer width fractions.  Ordered FW-side -> shield-side.
-    Blanket_choice = run.get("Blanket_choice", "HCPB")
-    _bb_concept    = BLANKET_CONCEPTS.get(Blanket_choice, BLANKET_CONCEPTS["HCPB"])
-    BB_sublayers   = _bb_concept["sublayers"]
-    _BB_SUBLAYER_COLORS = ["#E07820", "#8B5A2B", "#C9A66B", "#5A4632"]
-    _f_cum = np.cumsum([0.0] + [s["f_width"] for s in BB_sublayers])
-
-    # ── Divertor polygon (shared helper) ─────────────────────────────────
-    f_div = float(run.get("f_div_area_fraction", 0.08))
+    # ── Divertor polygon ────────────────────────────────────────────────
+    # Spans the inner boundary of the first, and the outer boundary of the
+    # last, layer whose volume carries a divertor fraction (FW, breeder,
+    # structure, multiplier — see f_radial_build_layers).
+    _DIV_ROLES = ("FW", "breeder", "structure", "multiplier")
+    _div_idx   = [i for i, L in enumerate(_layers) if L["role"] in _DIV_ROLES]
 
     def _bottom_arc(R, Z, frac):
         n = len(R); ds = np.hypot(np.diff(np.r_[R, R[0]]), np.diff(np.r_[Z, Z[0]]))
@@ -2700,10 +2694,14 @@ def plot_assembly_side_view(
             if af >= tgt and ab >= tgt: break
         return np.array(sorted(set(idx)))
 
-    _di_in  = _bottom_arc(R_SOL_outer, Z_SOL_outer, f_div)
-    _di_out = _bottom_arc(R_BB_outer,  Z_BB_outer,  f_div)
-    R_div_poly = np.concatenate([R_SOL_outer[_di_in],  R_BB_outer[_di_out][::-1]])
-    Z_div_poly = np.concatenate([Z_SOL_outer[_di_in],  Z_BB_outer[_di_out][::-1]])
+    if _div_idx:
+        _L_in, _L_out = _layers[_div_idx[0]], _layers[_div_idx[-1]]
+        _di_in  = _bottom_arc(_L_in["R_inner"],  _L_in["Z_inner"],  f_div_area_fraction)
+        _di_out = _bottom_arc(_L_out["R_outer"], _L_out["Z_outer"], f_div_area_fraction)
+        R_div_poly = np.concatenate([_L_in["R_inner"][_di_in],  _L_out["R_outer"][_di_out][::-1]])
+        Z_div_poly = np.concatenate([_L_in["Z_inner"][_di_in],  _L_out["Z_outer"][_di_out][::-1]])
+    else:
+        R_div_poly = np.array([]);  Z_div_poly = np.array([])
 
     # ── Colours ─────────────────────────────────────────────────────────
     col_cs_bg  = "#C8C8C8"
@@ -2726,51 +2724,44 @@ def plot_assembly_side_view(
     # 2 — TF winding pack body (outermost shape black)
     ax.fill(R_tf_out, Z_tf_out, fc=col_tf, ec="none", zorder=5)
 
-    # 3 — Paint layers: overpaint from outside in.
+    # 3 — Paint layers: overpaint from outside (TF) in (plasma).  Every layer's
+    # 'outer' contour bounds the area from the origin out to that layer's
+    # TF-side boundary, so painting TF-most layers first and plasma-most
+    # layers last gives the correct overpainting order for any concept-
+    # specific layer count/order.
     zbase = 6
-    ax.fill(R_tf_in,      Z_tf_in,      fc=LAYER_COLORS["TF gap"],    ec="none", zorder=zbase)
-    ax.fill(R_VV_outer,   Z_VV_outer,   fc=LAYER_COLORS["VV"],        ec="none", zorder=zbase+1)
-    ax.fill(R_sh_outer,   Z_sh_outer,   fc=LAYER_COLORS["Shield"],    ec="none", zorder=zbase+2)
-    # BB base fill: coloured as the back-most (shield-side) sub-layer.  Inner
-    # sub-layers are overpainted on top, FW-side first, each as a smaller
-    # "disk" bounded by the radially-interpolated sub-layer boundary contour
-    # (so smaller fractions paint last / on top of larger ones).
-    ax.fill(R_BB_outer, Z_BB_outer,
-            fc=_BB_SUBLAYER_COLORS[(len(BB_sublayers) - 1) % len(_BB_SUBLAYER_COLORS)],
-            ec="none", zorder=zbase+3)
-    for _i in range(len(BB_sublayers) - 1):
-        _R_sub, _Z_sub = _radial_interp_contour(
-            R_FW_outer, Z_FW_outer, R_BB_outer, Z_BB_outer, R0, _f_cum[_i + 1])
-        ax.fill(_R_sub, _Z_sub,
-                fc=_BB_SUBLAYER_COLORS[_i % len(_BB_SUBLAYER_COLORS)],
-                ec="none", zorder=zbase + 3 + (len(BB_sublayers) - _i) * 0.01)
-    ax.fill(R_FW_outer,   Z_FW_outer,   fc=LAYER_COLORS["First wall"],ec="none", zorder=zbase+4)
-    ax.fill(R_SOL_outer,  Z_SOL_outer,  fc=LAYER_COLORS["SOL"],       ec="none", zorder=zbase+5)
-    ax.fill(R_lcfs,       Z_lcfs,       fc=col_plasma,                ec="none", zorder=zbase+6)
-    # Divertor: bottom arc between SOL outer (FW inner) and BB outer (shield inner)
-    ax.fill(R_div_poly, Z_div_poly, fc=LAYER_COLORS["Divertor"], ec="none", zorder=zbase+7)
+    N_layers = len(_layers)
+    for _j, _L in enumerate(reversed(_layers)):
+        ax.fill(_L["R_outer"], _L["Z_outer"],
+                fc=ROLE_COLORS.get(_L["role"], "white"),
+                ec="none", zorder=zbase + _j)
+    ax.fill(R_lcfs, Z_lcfs, fc=col_plasma, ec="none", zorder=zbase + N_layers)
+    if R_div_poly.size:
+        ax.fill(R_div_poly, Z_div_poly, fc=col_divertor, ec="none", zorder=zbase + N_layers + 1)
+
+    zline = zbase + N_layers + 2
 
     # 4 — Contour lines: TF outer face and TF inner face only (no LCFS contour)
-    ax.plot(R_tf_out, Z_tf_out, color=col_line, lw=1.8, zorder=zbase+8)
-    ax.plot(R_tf_in,  Z_tf_in,  color=col_line, lw=1.0, zorder=zbase+8)
+    ax.plot(R_tf_out, Z_tf_out, color=col_line, lw=1.8, zorder=zline)
+    ax.plot(R_tf_in,  Z_tf_in,  color=col_line, lw=1.0, zorder=zline)
     for R_edge in (R_CS_int, R_CS_ext):
-        ax.plot([R_edge, R_edge], [-h_cs, h_cs], color=col_line, lw=0.8, zorder=zbase+8)
-    ax.plot([0, R_CS_ext], [-h_cs, -h_cs], color=col_line, lw=0.8, zorder=zbase+8)
-    ax.plot([0, R_CS_ext], [ h_cs,  h_cs], color=col_line, lw=0.8, zorder=zbase+8)
+        ax.plot([R_edge, R_edge], [-h_cs, h_cs], color=col_line, lw=0.8, zorder=zline)
+    ax.plot([0, R_CS_ext], [-h_cs, -h_cs], color=col_line, lw=0.8, zorder=zline)
+    ax.plot([0, R_CS_ext], [ h_cs,  h_cs], color=col_line, lw=0.8, zorder=zline)
 
     # 5 — White gap strip between CS outer face and TF bore
     gap_width = R_bore - R_CS_ext
     if gap_width > 0:
         ax.add_patch(plt.Rectangle(
             (R_CS_ext, -h_cs), gap_width, H_CS,
-            fc="white", ec="none", zorder=zbase+9))
+            fc="white", ec="none", zorder=zline+1))
 
     # 6 — Axes
     ax.axvline(0, color=col_line, lw=0.5, ls="-.", alpha=0.5, zorder=1)
     ax.axhline(0, color=col_line, lw=0.4, ls="-.", alpha=0.4, zorder=1)
 
     # ── Component labels ─────────────────────────────────────────────────
-    lbl_z = zbase + 10
+    lbl_z = zline + 2
     lbl = dict(ha="center", va="center", fontweight="bold", zorder=lbl_z)
     ax.text((R_CS_int + R_CS_ext) / 2, h_cs * 0.55,
             "CS", color="white", fontsize=9, **lbl)
@@ -2781,24 +2772,23 @@ def plot_assembly_side_view(
     ax.text(R0, 0, "Plasma", color="#8B0030", fontsize=10, **lbl)
 
     # ── Layer legend ─────────────────────────────────────────────────────
-    # Fixed display order: plasma, SOL, first wall, divertor, BB sub-layers
-    # (FW-side -> shield-side), shield, VV, TF gap.
+    # Display order: plasma, then every radial-build layer plasma -> TF (with
+    # "Divertor" inserted right after the first divertor-affected layer).
+    # Duplicate (role, name) pairs (e.g. repeated "Gap" layers) are shown once.
     from matplotlib.patches import Patch
-    legend_elements = [
-        Patch(fc=col_plasma, ec="grey", lw=0.4, label="Plasma"),
-        Patch(fc=LAYER_COLORS["SOL"], ec="grey", lw=0.4, label="SOL"),
-        Patch(fc=LAYER_COLORS["First wall"], ec="grey", lw=0.4, label="First wall"),
-        Patch(fc=LAYER_COLORS["Divertor"], ec="grey", lw=0.4, label="Divertor"),
-    ]
-    for _j, _sub in enumerate(BB_sublayers):
-        legend_elements.append(Patch(
-            fc=_BB_SUBLAYER_COLORS[_j % len(_BB_SUBLAYER_COLORS)],
-            ec="grey", lw=0.4, label=_sub["name"]))
-    legend_elements += [
-        Patch(fc=LAYER_COLORS["Shield"], ec="grey", lw=0.4, label="Shield"),
-        Patch(fc=LAYER_COLORS["VV"], ec="grey", lw=0.4, label="VV"),
-        Patch(fc="white", ec="grey", lw=0.4, label="TF gap"),
-    ]
+    legend_elements = [Patch(fc=col_plasma, ec="grey", lw=0.4, label="Plasma")]
+    _seen = set()
+    _div_inserted = not _div_idx
+    for _i, _L in enumerate(_layers):
+        _key = (_L["role"], _L["name"])
+        if _key not in _seen:
+            _seen.add(_key)
+            legend_elements.append(Patch(
+                fc=ROLE_COLORS.get(_L["role"], "white"),
+                ec="grey", lw=0.4, label=_L["name"]))
+        if not _div_inserted and _i == _div_idx[0]:
+            legend_elements.append(Patch(fc=col_divertor, ec="grey", lw=0.4, label="Divertor"))
+            _div_inserted = True
     ax.legend(handles=legend_elements, loc="center left", bbox_to_anchor=(1.01, 0.5),
               fontsize=8, framealpha=0.9, edgecolor="grey", handlelength=1.2,
               borderpad=0.6, labelspacing=0.3)

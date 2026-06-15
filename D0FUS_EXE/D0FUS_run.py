@@ -1932,41 +1932,44 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     V_TF_one  = _A_cross_TF * 2.0 * np.pi * R_bore_TF / float(N_TF)
     V_CS_geom = f_V_CS(a, b, c, d, R0, κ, Gap, Choice_Buck_Wedg)
 
-    # ── Radial build component volumes ────────────────────────────────────────
+    # ── Radial build layer volumes ────────────────────────────────────────────
     # All boundaries are real 3D contours; volumes via exact _moment_area integrals.
-    # SOL/FW: Miller ellipses.  BB/shield/VV/gap_TF: Princeton-D offsets from TF inner face.
-    # No Pappus approximation; no post-hoc scaling.
+    # Concept-specific layer stack (BLANKET_CONCEPTS[...]['radial_layers']) split
+    # around the single 'breeder' layer: plasma-side layers use cumulative Miller
+    # ellipses, TF-side layers use cumulative Princeton-D offsets, breeder fills
+    # the remaining shell.  No Pappus approximation; no post-hoc scaling.
     V_blanket = f_V_blanket(a, b, R0, κ, δ, Delta_TF,
                             R_outer=_R_in, Z_outer=_Z_in)
-    _rb = f_radial_build_component_volumes(
+    _rb = f_radial_build_layers(
         a=a, b=b, κ=κ, δ=δ, R0=R0,
         Delta_TF=Delta_TF,
-        Surface=Surface_solution,
-        delta_SOL=config.delta_SOL,
         f_kappa_SOL=config.f_kappa_SOL,
-        delta_FW=config.delta_FW,
-        delta_shield=config.delta_shield,
-        delta_VV=config.delta_VV,
-        delta_gap_TF=config.delta_gap_TF,
         f_div_area_fraction=config.f_div_area_fraction,
         R_tf_in=_R_in,
         Z_tf_in=_Z_in,
+        Blanket_choice=config.Blanket_choice,
+        rho_FW=config.rho_FW,
+        rho_shield=config.rho_shield,
+        rho_VV=config.rho_VV,
     )
-    V_rb_SOL      = _rb['V_SOL']
-    V_rb_FW       = _rb['V_FW_eff']
-    V_rb_BB       = _rb['V_BB_eff']
-    V_rb_shield   = _rb['V_shield']
-    V_rb_VV       = _rb['V_VV']
-    V_rb_gap_TF   = _rb['V_gap_TF']
+    _BB_ROLES     = ('breeder', 'structure', 'multiplier')
+    _SHIELD_ROLES = ('shield_HT', 'shield_LT')
+
+    V_rb_SOL      = sum(L['V']     for L in _rb['layers'] if L['role'] == 'SOL')
+    V_rb_FW       = sum(L['V_eff'] for L in _rb['layers'] if L['role'] == 'FW')
+    V_rb_BB       = sum(L['V_eff'] for L in _rb['layers'] if L['role'] in _BB_ROLES)
+    V_rb_shield   = sum(L['V']     for L in _rb['layers'] if L['role'] in _SHIELD_ROLES)
+    V_rb_VV       = sum(L['V']     for L in _rb['layers'] if L['role'] == 'VV')
+    V_rb_gap_TF   = sum(L['V']     for L in _rb['layers'] if L['role'] == 'gap')
     V_rb_divertor = _rb['V_divertor']
 
-    # ── Radial build component masses ─────────────────────────────────────────
-    (M_rb_FW, M_rb_BB, M_rb_shield,
-     M_rb_VV, M_rb_divertor,
-     M_rb_total) = f_blanket_masses(
-        V_rb_FW, V_rb_BB, V_rb_shield, V_rb_VV, V_rb_divertor,
-        config.rho_FW, rho_BB_effective(config.Blanket_choice), config.rho_shield,
-        config.rho_VV, config.rho_divertor)
+    # ── Radial build layer masses ─────────────────────────────────────────────
+    M_rb_FW       = sum(L['M'] for L in _rb['layers'] if L['role'] == 'FW')
+    M_rb_BB       = sum(L['M'] for L in _rb['layers'] if L['role'] in _BB_ROLES)
+    M_rb_shield   = sum(L['M'] for L in _rb['layers'] if L['role'] in _SHIELD_ROLES)
+    M_rb_VV       = sum(L['M'] for L in _rb['layers'] if L['role'] == 'VV')
+    M_rb_divertor = V_rb_divertor * config.rho_divertor
+    M_rb_total    = M_rb_FW + M_rb_BB + M_rb_shield + M_rb_VV + M_rb_divertor
 
     cost_solution = (V_rb_BB + V_TF_one * N_TF + V_CS_geom) / P_fus   # legacy cost proxy [m^3/MW]
 
@@ -2333,12 +2336,7 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         "Delta_TF":        Delta_TF,   # Extra outboard radial clearance from port-access constraint [m]
         "Gap":             config.Gap,
         # ── Radial build sublayer widths ──────────────────────────────────────
-        "delta_SOL":   config.delta_SOL,
         "f_kappa_SOL": config.f_kappa_SOL,
-        "delta_FW":    config.delta_FW,
-        "delta_shield":     config.delta_shield,
-        "delta_VV":         config.delta_VV,
-        "delta_gap_TF":     config.delta_gap_TF,
         "Blanket_choice":   config.Blanket_choice,
         # Mechanical configuration key — consumed by _resolve_build() in figures
         # to decide whether the TF-CS gap is applied to the CS outer radius.
@@ -2508,13 +2506,22 @@ def save_run_output(config: GlobalConfig,
         N_TF_disp    = 16
         Delta_TF_disp = 0.0
 
-    # ── Blanket concept: TBR and BB sub-layer breakdown (display only) ────
-    _fixed_bb    = (config.delta_SOL + config.delta_FW + config.delta_shield
-                    + config.delta_VV + config.delta_gap_TF)
-    _delta_BB_ib = config.b - _fixed_bb
-    _delta_BB_ob = config.b + Delta_TF_disp - _fixed_bb
+    # ── Blanket concept: TBR and radial-build layer breakdown (display only) ──
+    _, _, _, _, _, _, _, _R_in_disp, _Z_in_disp = f_TF_cross_section(
+        config.a, config.b, config.R0, c, Delta_TF_disp)
+    _rb_disp = f_radial_build_layers(
+        a=config.a, b=config.b, κ=κ, δ=δ, R0=config.R0,
+        Delta_TF=Delta_TF_disp,
+        f_kappa_SOL=config.f_kappa_SOL,
+        f_div_area_fraction=config.f_div_area_fraction,
+        R_tf_in=_R_in_disp, Z_tf_in=_Z_in_disp,
+        Blanket_choice=config.Blanket_choice,
+        rho_FW=config.rho_FW, rho_shield=config.rho_shield, rho_VV=config.rho_VV,
+    )
+    _delta_BB_ib = _rb_disp['delta_BB_ib']
+    _delta_BB_ob = _rb_disp['delta_BB_ob']
     _blanket_concept = material_blanket(config.Blanket_choice)
-    _BB_sublayers     = f_blanket_sublayers(V_rb_BB, _delta_BB_ib, _delta_BB_ob, config.Blanket_choice)
+    _RB_layers        = _rb_disp['layers']
     _TBR_achieved     = f_TBR(_delta_BB_ib, config.Blanket_choice)
     _M_blanket        = M_blanket_effective(config.Blanket_choice)
     _eta_T            = eta_T_effective(config.Blanket_choice)
@@ -2695,14 +2702,14 @@ def save_run_output(config: GlobalConfig,
         print(f"[O]  ├ V_cu_CS     (copper stabiliser)              : {V_cu_CS:.3f} [m³]",   file=out)
         print(f"[O]  ├ V_He_CS     (helium, pipe+void)              : {V_He_CS:.3f} [m³]",   file=out)
         print(f"[O]  └ V_In_CS     (insulation)                     : {V_In_CS:.3f} [m³]",   file=out)
-        print(f"[O] Blanket components volumes (Pappus, LCFS→TF inner face, IB/OB asymmetric)", file=out)
+        print(f"[O] Blanket components volumes (LCFS→TF inner face, exact body-of-revolution)", file=out)
         print(f"[O]  ├ V_SOL        (scrape-off layer, all around)  : {V_rb_SOL:.1f} [m³]", file=out)
         print(f"[O]  ├ V_FW         (first wall, excl. divertor)    : {V_rb_FW:.1f} [m³]", file=out)
-        print(f"[O]  ├ V_BB         (breeding blanket, excl. div.)  : {V_rb_BB:.1f} [m³]", file=out)
+        print(f"[O]  ├ V_BB         (breeder/structure/multip., excl. div.) : {V_rb_BB:.1f} [m³]", file=out)
         print(f"[O]  ├ V_divertor   (divertor, f_div={config.f_div_area_fraction:.2f})          : {V_rb_divertor:.1f} [m³]", file=out)
-        print(f"[O]  ├ V_shield     (neutron shield, all around)    : {V_rb_shield:.1f} [m³]", file=out)
+        print(f"[O]  ├ V_shield     (HT+LT shield, all around)      : {V_rb_shield:.1f} [m³]", file=out)
         print(f"[O]  ├ V_VV         (vacuum vessel, all around)     : {V_rb_VV:.1f} [m³]", file=out)
-        print(f"[O]  └ V_gap_TF     (VV→TF gap, all around)         : {V_rb_gap_TF:.1f} [m³]", file=out)
+        print(f"[O]  └ V_gap        (gaps/voids, all around)        : {V_rb_gap_TF:.1f} [m³]", file=out)
         print("-------------------------------------------------------------------------", file=out)
         _rho = material_rho(config.Chosen_Steel, config.Supra_choice)
         print(f"[O] TF coil masses  (total all N_TF coils, {config.Chosen_Steel} / {config.Supra_choice})", file=out)
@@ -2719,8 +2726,8 @@ def save_run_output(config: GlobalConfig,
         print(f"[O]  └ M_total_CS                                   : {M_total_CS/1e3:.1f} [t]", file=out)
         print(f"[O] Blanket components masses", file=out)
         print(f"[O]  ├ M_rb_FW       (first wall, excl. div.)       : {M_rb_FW/1e3:.1f} [t]",      file=out)
-        print(f"[O]  ├ M_rb_BB       (breeding blanket, excl. div.) : {M_rb_BB/1e3:.1f} [t]",      file=out)
-        print(f"[O]  ├ M_rb_shield   (neutron shield)               : {M_rb_shield/1e3:.1f} [t]",   file=out)
+        print(f"[O]  ├ M_rb_BB       (breeder/structure/multip., excl. div.) : {M_rb_BB/1e3:.1f} [t]", file=out)
+        print(f"[O]  ├ M_rb_shield   (HT+LT shield)                 : {M_rb_shield/1e3:.1f} [t]",   file=out)
         print(f"[O]  ├ M_rb_VV       (vacuum vessel)                : {M_rb_VV/1e3:.1f} [t]",      file=out)
         print(f"[O]  ├ M_rb_divertor (divertor)                     : {M_rb_divertor/1e3:.1f} [t]", file=out)
         print(f"[O]  └ M_rb_total    (FW+BB+shield+VV+div)          : {M_rb_total/1e3:.1f} [t]",   file=out)
@@ -2733,11 +2740,11 @@ def save_run_output(config: GlobalConfig,
         print(f"[I]  ├ VV feasible           : {_blanket_concept['VV_feasible']}", file=out)
         print(f"[I]  └ M_blanket / eta_T     : {_M_blanket:.2f}  /  {_eta_T:.2f}  (eta_T_range = {_blanket_concept['eta_T_range']})", file=out)
         print(f"[O] TBR_achieved  (delta_BB_ib = {_delta_BB_ib:.3f} m)        : {_TBR_achieved:.3f}  (TBR_max = {_blanket_concept['TBR_max']:.2f})", file=out)
-        print(f"[O] BB sub-layers  (delta_BB_ib = {_delta_BB_ib:.3f} m, delta_BB_ob = {_delta_BB_ob:.3f} m)", file=out)
-        for _i, _layer in enumerate(_BB_sublayers):
-            _branch = "├" if _i < len(_BB_sublayers) - 1 else "└"
+        print(f"[O] Radial build layers  (plasma → TF, delta_BB_ib = {_delta_BB_ib:.3f} m, delta_BB_ob = {_delta_BB_ob:.3f} m)", file=out)
+        for _i, _layer in enumerate(_RB_layers):
+            _branch = "├" if _i < len(_RB_layers) - 1 else "└"
             print(f"[O]  {_branch} {_layer['name']:<45s}: "
-                  f"f={_layer['f_width']:.2f}  "
+                  f"role={_layer['role']:<10s}  "
                   f"d_ib={_layer['delta_ib']:.3f} m  d_ob={_layer['delta_ob']:.3f} m  "
                   f"V={_layer['V']:.1f} m³  M={_layer['M']/1e3:.1f} t", file=out)
         print("-------------------------------------------------------------------------", file=out)

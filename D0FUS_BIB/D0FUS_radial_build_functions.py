@@ -5164,57 +5164,6 @@ def _offset_contour(R: np.ndarray, Z: np.ndarray, d: float) -> tuple:
     return R_off, Z_off
 
 
-def _radial_interp_contour(
-    R_in: np.ndarray, Z_in: np.ndarray,
-    R_out: np.ndarray, Z_out: np.ndarray,
-    R_center: float, f: float,
-    n_theta: int = 500,
-) -> tuple:
-    """
-    Radial (polar) interpolation between two star-shaped closed contours.
-
-    Both contours are resampled onto a common poloidal-angle grid around
-    (R_center, 0) and their radii are linearly blended:
-        r(theta) = (1-f)*r_in(theta) + f*r_out(theta)
-
-    Used to construct intermediate boundary contours that subdivide the
-    breeding-blanket annulus (between the FW-outer and BB-outer contours,
-    which belong to different shape families — Miller ellipse vs.
-    Princeton-D offset) into named sub-layers for plotting.
-
-    Parameters
-    ----------
-    R_in, Z_in   : ndarray  Inner boundary contour (f=0).
-    R_out, Z_out : ndarray  Outer boundary contour (f=1).
-    R_center     : float    Centre about which both contours are star-shaped
-                             (e.g. the plasma major radius R0).
-    f            : float    Interpolation fraction in [0, 1].
-    n_theta      : int      Number of points on the output contour.
-
-    Returns
-    -------
-    R, Z : ndarray  Closed contour at fraction f between R_in/Z_in and R_out/Z_out.
-    """
-    theta = np.linspace(0.0, 2.0 * np.pi, n_theta, endpoint=False)
-
-    def _radius_profile(R, Z):
-        ang = np.mod(np.arctan2(Z, R - R_center), 2.0 * np.pi)
-        r   = np.hypot(R - R_center, Z)
-        order  = np.argsort(ang)
-        ang_s, r_s = ang[order], r[order]
-        ang_ext = np.concatenate([ang_s, ang_s[:1] + 2.0 * np.pi])
-        r_ext   = np.concatenate([r_s,   r_s[:1]])
-        return np.interp(theta, ang_ext, r_ext)
-
-    r_in  = _radius_profile(R_in,  Z_in)
-    r_out = _radius_profile(R_out, Z_out)
-    r_mid = (1.0 - f) * r_in + f * r_out
-
-    R_mid = R_center + r_mid * np.cos(theta)
-    Z_mid = r_mid * np.sin(theta)
-    return R_mid, Z_mid
-
-
 def f_TF_cross_section(a: float, b: float, R0: float,
                        c: float, Delta_TF: float) -> tuple:
     """
@@ -5355,190 +5304,129 @@ def f_V_blanket(a: float, b: float, R0: float,
     return 2.0 * np.pi * (_moment_area(R_outer, Z_outer) - _moment_area(R_in, Z_in))
 
 
-# ── Radial build component volumes ──────────────────────────────────────────
+# ── Radial build layer volumes ────────────────────────────────────────────
 
-def _f_sublayer_volume(
-    delta_ib: float, delta_ob: float,
-    t_ib:     float, t_ob:     float,
-    a: float, κ: float, R0: float,
-) -> float:
-    """
-    Volume of one sublayer of the radial build using the rectangular Pappus model.
-
-    The torus cross-section is split into three contributions:
-      IB  — inner straight leg
-      OB  — outer leg
-      TB  — top+bottom arcs connecting IB to OB
-
-    Parameters
-    ----------
-    delta_ib, delta_ob : float  IB and OB layer thicknesses [m].
-    t_ib,    t_ob      : float  Cumulative depth at the inner boundary on IB/OB [m].
-    a                  : float  Plasma minor radius [m].
-    κ                  : float  Plasma elongation [-].
-    R0                 : float  Plasma major radius [m].
-
-    Notes
-    -----
-    For the symmetric case (delta_ib=delta_ob=δ, t_ib=t_ob=t) the result
-    reduces exactly to the f_volume Pappus formula:
-        V = 8π R0 δ [a(1+κ) + 2t + δ]
-    """
-    # IB contribution: inner-leg strip
-    R_ib = R0 - a - t_ib - delta_ib / 2.0
-    H_ib = κ * a + t_ib + delta_ib / 2.0
-    V_ib = 4.0 * np.pi * R_ib * H_ib * delta_ib
-
-    # OB contribution: outer-leg strip
-    R_ob = R0 + a + t_ob + delta_ob / 2.0
-    H_ob = κ * a + t_ob + delta_ob / 2.0
-    V_ob = 4.0 * np.pi * R_ob * H_ob * delta_ob
-
-    # Top/bottom arcs: average thickness + average cumulative depth
-    delta_tb = 0.5 * (delta_ib + delta_ob)
-    t_avg    = 0.5 * (t_ib    + t_ob)
-    V_tb     = 8.0 * np.pi * R0 * (a + t_avg + delta_tb / 2.0) * delta_tb
-
-    return V_ib + V_ob + V_tb
-
-
-def _sol_fw_miller_contours(
-    R0: float, a: float, κ: float, δ: float,
-    delta_SOL: float, f_kappa_SOL: float, delta_FW: float,
-    n_theta: int = 500,
-) -> tuple:
-    """
-    Miller-ellipse contours for the SOL outer and FW outer boundaries.
-
-    Both share the plasma triangularity δ and elongation κ_sol = κ·(1 + f_kappa_SOL).
-    Minor radius is expanded by delta_SOL (SOL) or delta_SOL+delta_FW (FW).
-
-    Parameters
-    ----------
-    R0, a        : float  Major and minor plasma radii [m].
-    κ            : float  Plasma LCFS elongation [-].
-    δ            : float  Plasma LCFS triangularity [-].
-    delta_SOL    : float  SOL width at IB and OB midplane [m].
-    f_kappa_SOL  : float  Elongation increase factor: κ_sol = κ·(1+f) [-].
-    delta_FW     : float  First wall width at IB and OB midplane [m].
-    n_theta      : int    Poloidal resolution.
-
-    Returns
-    -------
-    R_SOL, Z_SOL, R_FW, Z_FW : ndarray  Closed contour arrays.
-    """
-    theta     = np.linspace(0.0, 2.0 * np.pi, n_theta, endpoint=False)
-    kappa_sol = κ * (1.0 + f_kappa_SOL)
-    cos_t     = np.cos(theta + np.arcsin(δ) * np.sin(theta))
-    sin_t     = np.sin(theta)
-
-    a_sol = a + delta_SOL
-    a_fw  = a + delta_SOL + delta_FW
-
-    R_SOL = R0 + a_sol * cos_t;  Z_SOL = kappa_sol * a_sol * sin_t
-    R_FW  = R0 + a_fw  * cos_t;  Z_FW  = kappa_sol * a_fw  * sin_t
-    return R_SOL, Z_SOL, R_FW, Z_FW
-
-
-def f_radial_build_component_volumes(
+def f_radial_build_layers(
     a: float, b: float, κ: float, δ: float, R0: float,
     Delta_TF: float,
-    Surface: float,
-    delta_SOL:        float,
-    f_kappa_SOL:      float,
-    delta_FW:         float,
-    delta_shield:     float,
-    delta_VV:         float,
-    delta_gap_TF:     float,
+    f_kappa_SOL: float,
     f_div_area_fraction: float,
     R_tf_in: np.ndarray,
     Z_tf_in: np.ndarray,
+    Blanket_choice: str,
+    rho_FW: float,
+    rho_shield: float,
+    rho_VV: float,
     N_theta: int = 500,
 ) -> dict:
     """
-    Exact volumes of all radial build components from plasma LCFS to TF inner face.
+    Exact volumes/masses of every layer in the concept-specific radial build,
+    from the plasma LCFS to the TF inner face.
+
+    The layer stack (BLANKET_CONCEPTS[Blanket_choice]['radial_layers'], ordered
+    plasma -> TF) is split around its single 'breeder' layer:
+
+      - Layers between the LCFS and the breeder (SOL, FW, and any concept-
+        specific layers in between, e.g. F-LIB's multiplier+VV) are bounded by
+        cumulative Miller ellipses (κ·(1+f_kappa_SOL), same δ, expanding minor
+        radius by each layer's width in turn).
+      - Layers between the breeder and the TF inner face (shields, VV, gaps,
+        structure) are bounded by cumulative _offset_contour() shells of the
+        TF inner face, built up TF-side first.
+      - The breeder layer fills the remaining shell between the two stacks —
+        its thickness is the residual of b (radial_layers_effective()).
 
     Every layer boundary is an actual 3D contour; volumes are computed via the
-    exact body-of-revolution formula V = 2π ∫∫ R dA (_moment_area).
-
-    Layer stack from plasma outward:
-      LCFS → SOL → FW → BB → shield → VV → gap_TF → TF inner face
-
-    Boundaries:
-      SOL outer / FW outer  : Miller ellipses (κ·(1+f_kappa_SOL), same δ, ±width)
-      BB outer              : _offset_contour(TF_inner, d_gap_TF + d_VV + d_shield)
-      shield outer          : _offset_contour(TF_inner, d_gap_TF + d_VV)
-      VV outer              : _offset_contour(TF_inner, d_gap_TF)
-      TF inner face         : Princeton-D (passed in as R_tf_in / Z_tf_in)
-
-    No Pappus approximation, no post-hoc scaling.  V_total equals f_V_blanket
-    to within numerical integration error.
+    exact body-of-revolution formula V = 2π ∫∫ R dA (_moment_area).  No Pappus
+    approximation, no post-hoc scaling: sum(V) equals f_V_blanket to within
+    numerical integration error, for any concept-specific layer count/order.
 
     Parameters
     ----------
     R_tf_in, Z_tf_in : ndarray  TF inner-face Princeton-D contour (from f_TF_cross_section).
+    rho_FW, rho_shield, rho_VV : float  GlobalConfig densities [kg/m³] for the
+        FW, shield_HT/shield_LT and VV layer roles.  Breeder/structure/
+        multiplier layers use their concept-specific 'rho' from BLANKET_CONCEPTS.
 
     Returns
     -------
     dict with keys:
-        V_SOL, V_FW, V_BB, V_shield, V_VV, V_gap_TF  — layer volumes [m³]
-        V_FW_eff, V_BB_eff   — FW/BB excluding divertor fraction [m³]
-        V_divertor           — divertor volume [m³]
-        delta_BB_ib, delta_BB_ob  — IB/OB BB thicknesses [m]
-        V_total              — sum of all 6 layers [m³]
+        layers       — list of per-layer dicts (name, role, width, rho,
+                        delta_ib, delta_ob, V, V_eff, M, R_inner/Z_inner,
+                        R_outer/Z_outer), in plasma -> TF order.
+        V_total      — sum of all layer volumes [m³]
+        V_divertor   — divertor volume (fraction of FW+breeder+structure+multiplier) [m³]
+        delta_BB_ib, delta_BB_ob — breeder-layer IB/OB thicknesses [m]
     """
-    # ── SOL and FW: Miller ellipse contours ──────────────────────────────────
-    theta_lc = np.linspace(0.0, 2.0 * np.pi, N_theta, endpoint=False)
-    R_lcfs = R0 + a * np.cos(theta_lc + np.arcsin(δ) * np.sin(theta_lc))
-    Z_lcfs = κ * a * np.sin(theta_lc)
+    layers    = radial_layers_effective(Blanket_choice, b, Delta_TF)
+    i_breeder = next(i for i, L in enumerate(layers) if L['role'] == 'breeder')
+    before    = layers[:i_breeder]
+    breeder   = layers[i_breeder]
+    after     = layers[i_breeder + 1:]
 
-    R_sol, Z_sol, R_fw, Z_fw = _sol_fw_miller_contours(
-        R0, a, κ, δ, delta_SOL, f_kappa_SOL, delta_FW, N_theta)
+    theta     = np.linspace(0.0, 2.0 * np.pi, N_theta, endpoint=False)
+    kappa_sol = κ * (1.0 + f_kappa_SOL)
+    cos_t     = np.cos(theta + np.arcsin(δ) * np.sin(theta))
+    sin_t     = np.sin(theta)
 
-    M_lcfs = _moment_area(R_lcfs, Z_lcfs)
-    M_sol  = _moment_area(R_sol,  Z_sol)
-    M_fw   = _moment_area(R_fw,   Z_fw)
+    # ── Plasma-side stack: cumulative Miller ellipses from the LCFS ─────────
+    R_prev, Z_prev = R0 + a * cos_t, κ * a * sin_t
+    M_prev = _moment_area(R_prev, Z_prev)
+    a_cum  = a
+    for L in before:
+        a_cum += L['delta_ib']
+        R_out, Z_out = R0 + a_cum * cos_t, kappa_sol * a_cum * sin_t
+        M_cur = _moment_area(R_out, Z_out)
+        L['V'] = 2.0 * np.pi * (M_cur - M_prev)
+        L['R_inner'], L['Z_inner'] = R_prev, Z_prev
+        L['R_outer'], L['Z_outer'] = R_out,  Z_out
+        R_prev, Z_prev, M_prev = R_out, Z_out, M_cur
+    M_breeder_in            = M_prev
+    R_breeder_in, Z_breeder_in = R_prev, Z_prev
 
-    V_SOL = 2.0 * np.pi * (M_sol - M_lcfs)
-    V_FW  = 2.0 * np.pi * (M_fw  - M_sol)
+    # ── TF-side stack: cumulative offsets of the TF inner face ──────────────
+    R_prev, Z_prev = R_tf_in, Z_tf_in
+    M_prev = _moment_area(R_tf_in, Z_tf_in)
+    offset_cum = 0.0
+    for L in reversed(after):
+        offset_cum += L['delta_ib']
+        R_in, Z_in = _offset_contour(R_tf_in, Z_tf_in, offset_cum)
+        M_cur = _moment_area(R_in, Z_in)
+        L['V'] = 2.0 * np.pi * (M_prev - M_cur)
+        L['R_outer'], L['Z_outer'] = R_prev, Z_prev
+        L['R_inner'], L['Z_inner'] = R_in,   Z_in
+        R_prev, Z_prev, M_prev = R_in, Z_in, M_cur
+    M_breeder_out             = M_prev
+    R_breeder_out, Z_breeder_out = R_prev, Z_prev
 
-    # ── BB, shield, VV, gap_TF: Princeton-D offset contours ─────────────────
-    R_VV_o, Z_VV_o = _offset_contour(R_tf_in, Z_tf_in, delta_gap_TF)
-    R_sh_o, Z_sh_o = _offset_contour(R_tf_in, Z_tf_in, delta_gap_TF + delta_VV)
-    R_BB_o, Z_BB_o = _offset_contour(R_tf_in, Z_tf_in, delta_gap_TF + delta_VV + delta_shield)
+    # ── Breeder: fills the remaining shell between the two stacks ───────────
+    breeder['V'] = 2.0 * np.pi * (M_breeder_out - M_breeder_in)
+    breeder['R_inner'], breeder['Z_inner'] = R_breeder_in,  Z_breeder_in
+    breeder['R_outer'], breeder['Z_outer'] = R_breeder_out, Z_breeder_out
 
-    M_tf  = _moment_area(R_tf_in, Z_tf_in)
-    M_vv  = _moment_area(R_VV_o,  Z_VV_o)
-    M_sh  = _moment_area(R_sh_o,  Z_sh_o)
-    M_bb  = _moment_area(R_BB_o,  Z_BB_o)
+    V_total = sum(L['V'] for L in layers)
 
-    V_gap_TF = 2.0 * np.pi * (M_tf  - M_vv)
-    V_VV     = 2.0 * np.pi * (M_vv  - M_sh)
-    V_shield = 2.0 * np.pi * (M_sh  - M_bb)
-    V_BB     = 2.0 * np.pi * (M_bb  - M_fw)
+    # ── Divertor: fraction of FW + breeder/structure/multiplier volume ──────
+    _DIV_ROLES = ('FW', 'breeder', 'structure', 'multiplier')
+    V_FW_BB    = sum(L['V'] for L in layers if L['role'] in _DIV_ROLES)
+    V_divertor = f_div_area_fraction * V_FW_BB
+    for L in layers:
+        L['V_eff'] = (L['V'] * (1.0 - f_div_area_fraction)
+                       if L['role'] in _DIV_ROLES else L['V'])
 
-    # ── BB residual thicknesses (for annotation use) ─────────────────────────
-    fixed       = delta_SOL + delta_FW + delta_shield + delta_VV + delta_gap_TF
-    delta_BB_ib = b            - fixed
-    delta_BB_ob = b + Delta_TF - fixed
-
-    # ── Divertor: fraction of FW+BB ─────────────────────────────────────────
-    V_FW_BB     = V_FW + V_BB
-    V_divertor  = f_div_area_fraction * V_FW_BB
-    V_FW_eff    = V_FW * (1.0 - f_div_area_fraction)
-    V_BB_eff    = V_BB * (1.0 - f_div_area_fraction)
-
-    V_total = V_SOL + V_FW + V_BB + V_shield + V_VV + V_gap_TF
+    # ── Densities and masses ─────────────────────────────────────────────────
+    _RHO_BY_ROLE = {'SOL': 0.0, 'gap': 0.0, 'FW': rho_FW,
+                    'shield_HT': rho_shield, 'shield_LT': rho_shield, 'VV': rho_VV}
+    for L in layers:
+        L['rho'] = _RHO_BY_ROLE.get(L['role'], L.get('rho'))
+        L['M']   = L['V_eff'] * L['rho']
 
     return {
-        "V_SOL":     V_SOL,     "V_FW":      V_FW,
-        "V_BB":      V_BB,      "V_shield":  V_shield,
-        "V_VV":      V_VV,      "V_gap_TF":  V_gap_TF,
-        "V_FW_eff":  V_FW_eff,  "V_BB_eff":  V_BB_eff,
-        "V_divertor": V_divertor,
-        "delta_BB_ib": delta_BB_ib,
-        "delta_BB_ob": delta_BB_ob,
-        "V_total":   V_total,
+        'layers':      layers,
+        'V_total':     V_total,
+        'V_divertor':  V_divertor,
+        'delta_BB_ib': breeder['delta_ib'],
+        'delta_BB_ob': breeder['delta_ob'],
     }
 
 
@@ -5670,33 +5558,6 @@ def f_coil_masses(
             M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS)
 
 
-def f_blanket_masses(
-    V_FW:       float, V_BB:       float, V_shield: float,
-    V_VV:       float, V_divertor: float,
-    rho_FW:     float, rho_BB:     float, rho_shield: float,
-    rho_VV:     float, rho_divertor: float,
-) -> tuple:
-    """
-    Masses of radial-build components from their volumes and effective densities.
-
-    Parameters
-    ----------
-    V_*   : float  Component volume [m³] (excluding divertor fraction where noted).
-    rho_* : float  Effective volumetric density [kg/m³].
-
-    Returns
-    -------
-    (M_FW, M_BB, M_shield, M_VV, M_divertor, M_total_blanket)  — all in [kg].
-    """
-    M_FW       = V_FW       * rho_FW
-    M_BB       = V_BB       * rho_BB
-    M_shield   = V_shield   * rho_shield
-    M_VV       = V_VV       * rho_VV
-    M_divertor = V_divertor * rho_divertor
-    M_total_blanket = M_FW + M_BB + M_shield + M_VV + M_divertor
-    return M_FW, M_BB, M_shield, M_VV, M_divertor, M_total_blanket
-
-
 def f_TBR(delta_BB_ib: float, Blanket_choice: str) -> float:
     """
     Tritium breeding ratio from a saturation-curve fit to the breeder-zone
@@ -5704,73 +5565,25 @@ def f_TBR(delta_BB_ib: float, Blanket_choice: str) -> float:
 
         TBR(delta_BZ) = TBR_max * (1 - exp(-delta_BZ / delta_e))
         delta_e       = delta_BB_sat / ln(20)
-        delta_BZ      = f_width_BZ * delta_BB_ib
 
     delta_e is set so that TBR reaches 95% of TBR_max at delta_BZ = delta_BB_sat.
-    TBR_max, delta_BB_sat and the breeder-zone width fraction f_width_BZ
-    (first entry of 'sublayers') are taken from BLANKET_CONCEPTS[Blanket_choice].
+    TBR_max and delta_BB_sat are taken from BLANKET_CONCEPTS[Blanket_choice].
+    The breeder layer's own IB thickness (delta_BB_ib, from
+    radial_layers_effective()) is used directly as delta_BZ.
 
     Parameters
     ----------
-    delta_BB_ib    : float  Inboard breeding-blanket thickness [m].
+    delta_BB_ib    : float  Inboard breeder-layer thickness [m].
     Blanket_choice : str    Concept key (see BLANKET_CONCEPTS).
 
     Returns
     -------
     TBR : float  Achieved tritium breeding ratio [-].
     """
-    concept   = material_blanket(Blanket_choice)
-    f_BZ      = concept['sublayers'][0]['f_width']
-    delta_BZ  = f_BZ * max(delta_BB_ib, 0.0)
-    delta_e   = concept['delta_BB_sat'] / np.log(20.0)
+    concept  = material_blanket(Blanket_choice)
+    delta_BZ = max(delta_BB_ib, 0.0)
+    delta_e  = concept['delta_BB_sat'] / np.log(20.0)
     return concept['TBR_max'] * (1.0 - np.exp(-delta_BZ / delta_e))
-
-
-def f_blanket_sublayers(
-    V_BB: float, delta_BB_ib: float, delta_BB_ob: float,
-    Blanket_choice: str,
-) -> list:
-    """
-    Subdivide the breeding-blanket (BB) volume into concept-specific sub-layers.
-
-    Each sub-layer's volume and IB/OB thickness are taken as the same fraction
-    f_width of the total BB volume / thickness (smeared 0D split — consistent
-    with the single-thickness 'b' treatment used elsewhere in the radial
-    build).  Sub-layer masses therefore sum exactly to V_BB * rho_BB_effective.
-
-    Parameters
-    ----------
-    V_BB           : float  Total breeding-blanket volume [m³] (e.g. V_BB_eff).
-    delta_BB_ib    : float  Inboard BB thickness [m].
-    delta_BB_ob    : float  Outboard BB thickness [m].
-    Blanket_choice : str    Concept key (see BLANKET_CONCEPTS).
-
-    Returns
-    -------
-    list of dict, one per sub-layer (ordered FW-side -> shield-side), each with:
-        name     : str    Sub-layer label.
-        f_width  : float  Fraction of BB thickness/volume [-].
-        rho      : float  Effective density [kg/m³].
-        delta_ib : float  Sub-layer IB thickness [m].
-        delta_ob : float  Sub-layer OB thickness [m].
-        V        : float  Sub-layer volume [m³].
-        M        : float  Sub-layer mass [kg].
-    """
-    concept = material_blanket(Blanket_choice)
-    layers  = []
-    for sub in concept['sublayers']:
-        f = sub['f_width']
-        V = f * V_BB
-        layers.append({
-            'name':     sub['name'],
-            'f_width':  f,
-            'rho':      sub['rho'],
-            'delta_ib': f * delta_BB_ib,
-            'delta_ob': f * delta_BB_ob,
-            'V':        V,
-            'M':        V * sub['rho'],
-        })
-    return layers
 
 
 def f_cable_length(

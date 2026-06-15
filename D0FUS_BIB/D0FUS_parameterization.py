@@ -354,15 +354,10 @@ class GlobalConfig:
 
     # ── 17. Radial build sublayer widths ─────────────────────────────────────
     # b = total plasma→TF radial gap (drives all existing machinery).
-    # Single width per component (no IB/OB distinction except for the BB which
-    # derives separately: δ_BB_ib = b − Σ(fixed), δ_BB_ob = b + Delta_TF − Σ(fixed)).
-    # Layers in order from plasma outward: SOL, FW (Princeton-D), BB(derived), shield, VV, gap_TF
-    delta_SOL    : float = 0.10   # SOL / far-SOL width at IB and OB midplane [m]
+    # Per-concept layer widths (SOL, FW, breeder, structure, shields, VV, gaps)
+    # are defined in BLANKET_CONCEPTS[Blanket_choice]['radial_layers']; only the
+    # SOL/FW elongation factor remains a global geometric parameter.
     f_kappa_SOL  : float = 0.25   # Elongation increase factor for SOL/FW shapes [-]
-    delta_FW     : float = 0.05   # First wall width at IB and OB midplane [m]
-    delta_shield     : float = 0.30   # Neutron shield [m]
-    delta_VV         : float = 0.15   # Vacuum vessel [m]
-    delta_gap_TF     : float = 0.05   # VV→TF gap [m]
 
     # ── Blanket concept selection ─────────────────────────────────────────────
     # Selects the breeder/coolant/structure/multiplier combination and the
@@ -374,9 +369,10 @@ class GlobalConfig:
 
     # ── Effective volumetric densities for radial-build mass estimates ────────
     # Smeared/homogenised values.  Defaults from BLANKET_MATERIAL_DENSITIES.
+    # Breeder/structure/multiplier layer densities are concept-specific (see
+    # BLANKET_CONCEPTS[Blanket_choice]['radial_layers']).
     rho_FW       : float = 7900.0    # First wall           [kg/m³]
-    rho_BB       : float = 4500.0    # Breeding blanket     [kg/m³]
-    rho_shield   : float = 5500.0    # Neutron shield       [kg/m³]
+    rho_shield   : float = 5500.0    # Neutron shield (HT+LT) [kg/m³]
     rho_VV       : float = 7500.0    # Vacuum vessel        [kg/m³]
     rho_divertor : float = 13000.0   # Divertor             [kg/m³]
 
@@ -597,22 +593,31 @@ BLANKET_MATERIAL_DENSITIES = {
 # Six concepts compared in the "Infinity Two pilot plant blanket trade study"
 # (J. Plasma Phys. 91, E79 (2025), doi:10.1017/S002237782500039X).
 #
-# Each entry also defines a breeding-blanket (BB) sub-layer breakdown used to
-# split the single BB volume/mass computed by f_radial_build_component_volumes
-# into named sub-elements (radial-build figures and mass tables).  Sub-layers
-# are ordered from the first wall (front) to the shield (back); 'f_width' are
-# fractions of the local BB thickness (IB and OB) and sum to 1.0.  'rho' are
-# smeared/homogenised effective densities [kg/m³] for that sub-layer.
+# Each entry defines a concept-specific radial-build layer stack 'radial_layers'
+# (ordered plasma -> TF, widths in [m]), reflecting the inboard radial builds of
+# figures 10-15 of the reference study.  Exactly one entry per concept has
+# 'width': None and 'role': 'breeder' — its thickness is the residual of the
+# top-level design variable b once every other (fixed-width) layer in the stack
+# has been subtracted off (see radial_layers_effective()).  High/low-temperature
+# shield layers ('shield_HT' / 'shield_LT') use the DEFAULT_SHIELD_HT_WIDTH /
+# DEFAULT_SHIELD_LT_WIDTH defaults below where the source figures do not give a
+# value.  'gap' layers are voids (zero density).  'rho' for SOL/FW/shield_HT/
+# shield_LT/VV layers is taken from GlobalConfig (rho_FW, rho_shield, rho_VV) at
+# run time; only breeder/structure/multiplier layers carry their own concept-
+# specific smeared density here.
 #
-# TBR_max and delta_BB_sat (front "breeder zone" thickness for ~95% of
-# TBR_max) feed the saturation-curve model f_TBR():
+# TBR_max and delta_BB_sat (breeder-zone thickness for ~95% of TBR_max) feed the
+# saturation-curve model f_TBR():
 #   TBR(delta_BZ) = TBR_max * (1 - exp(-delta_BZ / delta_e)),
 #   delta_e = delta_BB_sat / ln(20)
-# where delta_BZ = f_width[0] * delta_BB_ib (breeder-zone IB thickness).
+# where delta_BZ = delta_BB_ib (breeder-layer IB thickness).
 #
 # All numeric values are illustrative, smeared 0D estimates consistent with
 # the ranges reported in the reference study; they are not a substitute for
 # detailed neutronics.
+DEFAULT_SHIELD_HT_WIDTH = 0.20   # [m]  high-temperature shield default thickness
+DEFAULT_SHIELD_LT_WIDTH = 0.10   # [m]  low-temperature shield default thickness
+
 BLANKET_CONCEPTS = {
     'HCPB': {
         'label':       'Helium-Cooled Pebble Bed',
@@ -630,6 +635,19 @@ BLANKET_CONCEPTS = {
         'sublayers': [
             {'name': 'Breeder/Multiplier Zone (Li4SiO4 + Be12Ti)', 'f_width': 0.65, 'rho': 2700.0},
             {'name': 'Manifold / Back Structure',                   'f_width': 0.35, 'rho': 7000.0},
+        ],
+        'radial_layers': [
+            {'name': 'SOL',                                'role': 'SOL',       'width': 0.05},
+            {'name': 'First wall',                         'role': 'FW',        'width': 0.04},
+            {'name': 'Breeder/Multiplier Zone (Li4SiO4 + Be12Ti)', 'role': 'breeder', 'width': None, 'rho': 2700.0},
+            {'name': 'Back Wall',                          'role': 'structure', 'width': 0.10, 'rho': 7000.0},
+            {'name': 'Manifold',                           'role': 'structure', 'width': 0.15, 'rho': 7000.0},
+            {'name': 'High-Temp Shield',                   'role': 'shield_HT', 'width': DEFAULT_SHIELD_HT_WIDTH},
+            {'name': 'Gap',                                'role': 'gap',       'width': 0.02},
+            {'name': 'Vacuum Vessel',                      'role': 'VV',        'width': 0.10},
+            {'name': 'Gap',                                'role': 'gap',       'width': 0.02},
+            {'name': 'Low-Temp Shield',                    'role': 'shield_LT', 'width': DEFAULT_SHIELD_LT_WIDTH},
+            {'name': 'Gap',                                'role': 'gap',       'width': 0.10},
         ],
     },
     'HCLL': {
@@ -649,6 +667,19 @@ BLANKET_CONCEPTS = {
             {'name': 'Breeder Zone (PbLi + stiffening plates)', 'f_width': 0.75, 'rho': 9000.0},
             {'name': 'Manifold / Back Structure',               'f_width': 0.25, 'rho': 6500.0},
         ],
+        'radial_layers': [
+            {'name': 'SOL',                                  'role': 'SOL',       'width': 0.05},
+            {'name': 'First wall',                           'role': 'FW',        'width': 0.04},
+            {'name': 'Breeder Zone (PbLi + stiffening plates)', 'role': 'breeder', 'width': None, 'rho': 9000.0},
+            {'name': 'Back Wall',                            'role': 'structure', 'width': 0.02, 'rho': 6500.0},
+            {'name': 'Manifold',                             'role': 'structure', 'width': 0.16, 'rho': 6500.0},
+            {'name': 'High-Temp Shield',                     'role': 'shield_HT', 'width': DEFAULT_SHIELD_HT_WIDTH},
+            {'name': 'Gap',                                  'role': 'gap',       'width': 0.02},
+            {'name': 'Vacuum Vessel',                        'role': 'VV',        'width': 0.10},
+            {'name': 'Gap',                                  'role': 'gap',       'width': 0.02},
+            {'name': 'Low-Temp Shield',                      'role': 'shield_LT', 'width': DEFAULT_SHIELD_LT_WIDTH},
+            {'name': 'Gap',                                  'role': 'gap',       'width': 0.10},
+        ],
     },
     'DCLL': {
         'label':       'Dual-Coolant Lithium-Lead',
@@ -666,6 +697,19 @@ BLANKET_CONCEPTS = {
         'sublayers': [
             {'name': 'Breeder Zone (PbLi + SiC FCIs)', 'f_width': 0.92, 'rho': 8200.0},
             {'name': 'Manifold / Back Structure',      'f_width': 0.08, 'rho': 6000.0},
+        ],
+        'radial_layers': [
+            {'name': 'SOL',                              'role': 'SOL',       'width': 0.05},
+            {'name': 'First wall',                       'role': 'FW',        'width': 0.04},
+            {'name': 'Breeder Zone (PbLi + SiC FCIs)',   'role': 'breeder',   'width': None, 'rho': 8200.0},
+            {'name': 'Back Wall',                        'role': 'structure', 'width': 0.02, 'rho': 6000.0},
+            {'name': 'Manifold',                         'role': 'structure', 'width': 0.06, 'rho': 6000.0},
+            {'name': 'High-Temp Shield',                 'role': 'shield_HT', 'width': DEFAULT_SHIELD_HT_WIDTH},
+            {'name': 'Gap',                              'role': 'gap',       'width': 0.02},
+            {'name': 'Vacuum Vessel',                    'role': 'VV',        'width': 0.10},
+            {'name': 'Gap',                              'role': 'gap',       'width': 0.02},
+            {'name': 'Low-Temp Shield',                  'role': 'shield_LT', 'width': DEFAULT_SHIELD_LT_WIDTH},
+            {'name': 'Gap',                              'role': 'gap',       'width': 0.10},
         ],
     },
     'SCLL': {
@@ -685,6 +729,16 @@ BLANKET_CONCEPTS = {
             {'name': 'Breeder Zone (PbLi + SiC)',  'f_width': 0.88, 'rho': 8500.0},
             {'name': 'Manifold / Back Structure',  'f_width': 0.12, 'rho': 5500.0},
         ],
+        'radial_layers': [
+            {'name': 'SOL',                       'role': 'SOL',       'width': 0.05},
+            {'name': 'Breeder Zone (PbLi + SiC)', 'role': 'breeder',   'width': None, 'rho': 8500.0},
+            {'name': 'High-Temp Shield',          'role': 'shield_HT', 'width': DEFAULT_SHIELD_HT_WIDTH},
+            {'name': 'Gap',                       'role': 'gap',       'width': 0.02},
+            {'name': 'Vacuum Vessel',             'role': 'VV',        'width': 0.10},
+            {'name': 'Gap',                       'role': 'gap',       'width': 0.02},
+            {'name': 'Low-Temp Shield',           'role': 'shield_LT', 'width': DEFAULT_SHIELD_LT_WIDTH},
+            {'name': 'Gap',                       'role': 'gap',       'width': 0.10},
+        ],
     },
     'SCLV': {
         'label':       'Self-Cooled Lithium-Vanadium',
@@ -703,6 +757,17 @@ BLANKET_CONCEPTS = {
             {'name': 'Breeder Zone (Li + V-alloy structure)', 'f_width': 0.80, 'rho': 2200.0},
             {'name': 'Manifold / Back Structure',             'f_width': 0.20, 'rho': 5000.0},
         ],
+        'radial_layers': [
+            {'name': 'SOL',                                    'role': 'SOL',        'width': 0.05},
+            {'name': 'First wall',                             'role': 'FW',         'width': 0.032},
+            {'name': 'Gap',                                    'role': 'gap',        'width': 0.01},
+            {'name': 'Breeder Zone (Li + V-alloy structure)',  'role': 'breeder',    'width': None, 'rho': 2200.0},
+            {'name': 'Multiplier (Be)',                        'role': 'multiplier', 'width': 0.01, 'rho': 1850.0},
+            {'name': 'High-Temp Shield',                       'role': 'shield_HT',  'width': DEFAULT_SHIELD_HT_WIDTH},
+            {'name': 'Vacuum Vessel',                          'role': 'VV',         'width': 0.10},
+            {'name': 'Low-Temp Shield',                        'role': 'shield_LT',  'width': DEFAULT_SHIELD_LT_WIDTH},
+            {'name': 'Gap',                                    'role': 'gap',        'width': 0.10},
+        ],
     },
     'F-LIB': {
         'label':       'FLiBe Liquid-Immersion Blanket',
@@ -720,6 +785,18 @@ BLANKET_CONCEPTS = {
         'sublayers': [
             {'name': 'Breeder Zone (FLiBe + Be)',  'f_width': 0.90, 'rho': 2200.0},
             {'name': 'Manifold / Back Structure',  'f_width': 0.10, 'rho': 7500.0},
+        ],
+        'radial_layers': [
+            {'name': 'SOL',                       'role': 'SOL',        'width': 0.05},
+            {'name': 'First wall',                'role': 'FW',         'width': 0.032},
+            {'name': 'Multiplier (Be)',           'role': 'multiplier', 'width': 0.01, 'rho': 1850.0},
+            {'name': 'Vacuum Vessel',             'role': 'VV',         'width': 0.03},
+            {'name': 'Breeder Zone (FLiBe + Be)', 'role': 'breeder',    'width': None, 'rho': 2200.0},
+            {'name': 'Back Wall',                 'role': 'structure',  'width': 0.06, 'rho': 7500.0},
+            {'name': 'High-Temp Shield',          'role': 'shield_HT',  'width': DEFAULT_SHIELD_HT_WIDTH},
+            {'name': 'Gap',                       'role': 'gap',        'width': 0.01},
+            {'name': 'Low-Temp Shield',           'role': 'shield_LT',  'width': DEFAULT_SHIELD_LT_WIDTH},
+            {'name': 'Gap',                       'role': 'gap',        'width': 0.02},
         ],
     },
 }
@@ -766,18 +843,6 @@ def material_blanket(Blanket_choice: str) -> dict:
     return BLANKET_CONCEPTS.get(Blanket_choice, BLANKET_CONCEPTS['HCPB'])
 
 
-def rho_BB_effective(Blanket_choice: str) -> float:
-    """
-    Effective (sub-layer-weighted) breeding-blanket density [kg/m³].
-
-    rho_BB_eff = Σ f_width_i * rho_i  over the concept's BB sub-layers.
-    By construction, V_BB * rho_BB_eff equals the sum of the individual
-    sub-layer masses returned by f_blanket_sublayers().
-    """
-    concept = material_blanket(Blanket_choice)
-    return sum(layer['f_width'] * layer['rho'] for layer in concept['sublayers'])
-
-
 def M_blanket_effective(Blanket_choice: str) -> float:
     """
     Blanket energy multiplication factor [-] for the selected concept.
@@ -798,3 +863,50 @@ def eta_T_effective(Blanket_choice: str) -> float:
     """
     eta_lo, eta_hi = material_blanket(Blanket_choice)['eta_T_range']
     return 0.5 * (eta_lo + eta_hi)
+
+
+def radial_layers_effective(Blanket_choice: str, b: float, Delta_TF: float = 0.0) -> list:
+    """
+    Concept-specific radial-build layer stack with the breeder layer's width
+    resolved to a value.
+
+    Returns BLANKET_CONCEPTS[Blanket_choice]['radial_layers'] (ordered plasma ->
+    TF) as a list of dicts, each augmented with 'delta_ib' and 'delta_ob' [m]
+    (IB/OB thickness).  Every fixed-width layer has delta_ib == delta_ob ==
+    'width'.  The single 'breeder' layer's thickness is the residual of b (IB)
+    / b + Delta_TF (OB) once every other layer's width has been subtracted:
+
+        delta_breeder_ib = b            - sum(fixed widths)
+        delta_breeder_ob = b + Delta_TF - sum(fixed widths)
+
+    clipped to >= 0.
+
+    Parameters
+    ----------
+    Blanket_choice : str    Concept key (see BLANKET_CONCEPTS).
+    b              : float  Breeding blanket + shield radial thickness [m].
+    Delta_TF       : float  Outboard port-access radial clearance [m].
+
+    Returns
+    -------
+    list of dict, one per layer, each with: name, role, width (None for
+    breeder), rho (None if not concept-specific — falls back to GlobalConfig at
+    run time), delta_ib, delta_ob.
+    """
+    concept    = material_blanket(Blanket_choice)
+    fixed_sum  = sum(layer['width'] for layer in concept['radial_layers']
+                     if layer['width'] is not None)
+    delta_ib   = max(b - fixed_sum, 0.0)
+    delta_ob   = max(b + Delta_TF - fixed_sum, 0.0)
+
+    layers = []
+    for layer in concept['radial_layers']:
+        entry = dict(layer)
+        if entry['width'] is None:
+            entry['delta_ib'] = delta_ib
+            entry['delta_ob'] = delta_ob
+        else:
+            entry['delta_ib'] = entry['width']
+            entry['delta_ob'] = entry['width']
+        layers.append(entry)
+    return layers
