@@ -5523,6 +5523,7 @@ def f_coil_masses(
     V_steel_TF: float, V_sc_TF: float, V_cu_TF: float, V_In_TF: float,
     V_steel_CS: float, V_sc_CS: float, V_cu_CS: float, V_In_CS: float,
     Chosen_Steel: str, Supra_choice: str,
+    f_TF_steel_mass: float = 2.0,
 ) -> tuple:
     """
     Compute the mass of each material component for the TF and CS coil systems.
@@ -5539,6 +5540,9 @@ def f_coil_masses(
         Material volumes for the full CS solenoid [m³].
     Chosen_Steel : str   Steel grade ('316L', 'N50H', 'Manual').
     Supra_choice : str   SC type ('Nb3Sn', 'NbTi', 'REBCO', 'Manual').
+    f_TF_steel_mass : float
+        Multiplicative factor on M_steel_TF to account for geometry
+        approximations, gravitational supports, and inter-coil structures [-].
 
     Returns
     -------
@@ -5551,7 +5555,7 @@ def f_coil_masses(
     rho_cu  = rho['Cu']
     rho_ins = rho['insulation']
 
-    M_steel_TF = V_steel_TF * rho_st
+    M_steel_TF = V_steel_TF * rho_st * f_TF_steel_mass
     M_sc_TF    = V_sc_TF    * rho_sc
     M_cu_TF    = V_cu_TF    * rho_cu
     M_In_TF    = V_In_TF    * rho_ins

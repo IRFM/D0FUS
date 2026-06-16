@@ -228,6 +228,10 @@ class GlobalConfig:
     n_shape_TF           : float = 1.0      # TF conductor shape factor (1 = square, 0 = optimal) [-]
     c_BP                 : float = 0.07     # Backplate thickness [m]
     TF_grading           : bool  = False    # TF WP conductor grading: α(R) varies to saturate Tresca [-]
+    f_TF_steel_mass      : float = 2.0      # Multiplicative factor on total TF steel mass to account
+                                            # for geometry approximations, gravitational supports, and
+                                            # inter-coil structures [-]. Default = 2.0 (benchmarked
+                                            # against ITER TF coil set total steel mass).
 
     # ── 8. Central Solenoid ──────────────────────────────────────────────────
     Gap      : float = 0.10      # CS–TF mechanical clearance [m]

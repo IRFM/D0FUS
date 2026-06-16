@@ -252,6 +252,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     n_shape_TF                = config.n_shape_TF
     c_BP                      = config.c_BP
     TF_grading                = config.TF_grading
+    f_TF_steel_mass           = config.f_TF_steel_mass
     Gap                       = config.Gap
     n_shape_CS                = config.n_shape_CS
     N_sub_CS                  = config.N_sub_CS
@@ -1995,7 +1996,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
      M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS) = f_coil_masses(
         V_steel_TF, V_sc_TF, V_cu_TF, V_In_TF,
         V_steel_CS, V_sc_CS, V_cu_CS, V_In_CS,
-        Chosen_Steel, Supra_choice)
+        Chosen_Steel, Supra_choice, f_TF_steel_mass)
 
     # ── SC strand counts and total SC strand lengths ───────────────────────────
     (n_sc_TF, n_sc_CS,
