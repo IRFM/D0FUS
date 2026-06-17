@@ -864,6 +864,366 @@ OUTPUT_REGISTRY = {
         category='limits',
         description='Radial build validity flag'
     ),
+
+    # -------------------------------------------------------------------------
+    # RADIAL BUILD COMPONENT VOLUMES
+    # -------------------------------------------------------------------------
+    'V_rb_SOL': OutputParameter(
+        name='V_rb_SOL',
+        label='$V_{\\mathrm{SOL}}$',
+        unit='m³',
+        levels=(0, 200, 20),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='radial_build',
+        description='SOL / far-SOL volume (all around)'
+    ),
+    'V_rb_FW': OutputParameter(
+        name='V_rb_FW',
+        label='$V_{\\mathrm{FW}}$',
+        unit='m³',
+        levels=(0, 500, 50),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='radial_build',
+        description='First wall volume (excl. divertor region)'
+    ),
+    'V_rb_BB': OutputParameter(
+        name='V_rb_BB',
+        label='$V_{\\mathrm{BB}}$',
+        unit='m³',
+        levels=(0, 3000, 200),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='radial_build',
+        description='Breeding blanket volume (excl. divertor region)'
+    ),
+    'V_rb_shield': OutputParameter(
+        name='V_rb_shield',
+        label='$V_{\\mathrm{shield}}$',
+        unit='m³',
+        levels=(0, 2000, 200),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='radial_build',
+        description='Neutron shield volume (all around)'
+    ),
+    'V_rb_VV': OutputParameter(
+        name='V_rb_VV',
+        label='$V_{\\mathrm{VV}}$',
+        unit='m³',
+        levels=(0, 1000, 100),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='radial_build',
+        description='Vacuum vessel volume (all around)'
+    ),
+    'V_rb_gap_TF': OutputParameter(
+        name='V_rb_gap_TF',
+        label='$V_{\\mathrm{gap,TF}}$',
+        unit='m³',
+        levels=(0, 500, 50),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='radial_build',
+        description='VV→TF gap volume (all around)'
+    ),
+    'V_rb_divertor': OutputParameter(
+        name='V_rb_divertor',
+        label='$V_{\\mathrm{div}}$',
+        unit='m³',
+        levels=(0, 200, 20),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='radial_build',
+        description='Divertor volume'
+    ),
+
+    # -------------------------------------------------------------------------
+    # RADIAL BUILD COMPONENT MASSES
+    # -------------------------------------------------------------------------
+    'M_rb_FW': OutputParameter(
+        name='M_rb_FW',
+        label='$M_{\\mathrm{FW}}$',
+        unit='t',
+        levels=(0, 5000, 500),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='First wall mass (excl. divertor region)'
+    ),
+    'M_rb_BB': OutputParameter(
+        name='M_rb_BB',
+        label='$M_{\\mathrm{BB}}$',
+        unit='t',
+        levels=(0, 20000, 2000),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='Breeding blanket mass (excl. divertor region)'
+    ),
+    'M_rb_shield': OutputParameter(
+        name='M_rb_shield',
+        label='$M_{\\mathrm{shield}}$',
+        unit='t',
+        levels=(0, 20000, 2000),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='Neutron shield mass'
+    ),
+    'M_rb_VV': OutputParameter(
+        name='M_rb_VV',
+        label='$M_{\\mathrm{VV}}$',
+        unit='t',
+        levels=(0, 10000, 1000),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='Vacuum vessel mass'
+    ),
+    'M_rb_divertor': OutputParameter(
+        name='M_rb_divertor',
+        label='$M_{\\mathrm{div}}$',
+        unit='t',
+        levels=(0, 2000, 200),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='Divertor mass'
+    ),
+    'M_rb_total': OutputParameter(
+        name='M_rb_total',
+        label='$M_{\\mathrm{blanket}}^{\\mathrm{tot}}$',
+        unit='t',
+        levels=(0, 50000, 5000),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='Total radial build mass (FW + BB + shield + VV + divertor)'
+    ),
+
+    # -------------------------------------------------------------------------
+    # BLANKET & COIL MASSES
+    # -------------------------------------------------------------------------
+    'V_blanket': OutputParameter(
+        name='V_blanket',
+        label='$V_{\\mathrm{bl}}$',
+        unit='m³',
+        levels=(0, 2000, 100),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='Blanket volume (Miller LCFS → TF inner face)'
+    ),
+    'M_total_TF': OutputParameter(
+        name='M_total_TF',
+        label='$M_{\\mathrm{TF}}^{\\mathrm{tot}}$',
+        unit='t',
+        levels=(0, 5000, 250),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='Total TF coil mass (all coils, all materials)'
+    ),
+    'M_sc_TF': OutputParameter(
+        name='M_sc_TF',
+        label='$M_{\\mathrm{TF}}^{\\mathrm{SC}}$',
+        unit='t',
+        levels=(0, 500, 25),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='TF superconductor mass (all coils)'
+    ),
+    'M_steel_TF': OutputParameter(
+        name='M_steel_TF',
+        label='$M_{\\mathrm{TF}}^{\\mathrm{steel}}$',
+        unit='t',
+        levels=(0, 3000, 200),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='TF structural steel mass (all coils)'
+    ),
+    'M_cu_TF': OutputParameter(
+        name='M_cu_TF',
+        label='$M_{\\mathrm{TF}}^{\\mathrm{Cu}}$',
+        unit='t',
+        levels=(0, 500, 25),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='TF copper stabiliser mass (all coils)'
+    ),
+    'M_total_CS': OutputParameter(
+        name='M_total_CS',
+        label='$M_{\\mathrm{CS}}^{\\mathrm{tot}}$',
+        unit='t',
+        levels=(0, 1000, 50),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='Total CS mass'
+    ),
+    'M_sc_CS': OutputParameter(
+        name='M_sc_CS',
+        label='$M_{\\mathrm{CS}}^{\\mathrm{SC}}$',
+        unit='t',
+        levels=(0, 200, 20),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='CS superconductor mass'
+    ),
+    'M_steel_CS': OutputParameter(
+        name='M_steel_CS',
+        label='$M_{\\mathrm{CS}}^{\\mathrm{steel}}$',
+        unit='t',
+        levels=(0, 600, 50),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='CS structural steel mass'
+    ),
+    'M_cu_CS': OutputParameter(
+        name='M_cu_CS',
+        label='$M_{\\mathrm{CS}}^{\\mathrm{Cu}}$',
+        unit='t',
+        levels=(0, 200, 20),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='materials',
+        description='CS copper stabiliser mass'
+    ),
+
+    # -------------------------------------------------------------------------
+    # CONDUCTOR LENGTHS
+    # -------------------------------------------------------------------------
+    'L_cable_TF': OutputParameter(
+        name='L_cable_TF',
+        label='$L_{\\mathrm{cable}}^{\\mathrm{TF}}$',
+        unit='km',
+        levels=(0, 500, 50),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='conductor',
+        description='Total TF cable conductor length (all coils)'
+    ),
+    'L_cable_CS': OutputParameter(
+        name='L_cable_CS',
+        label='$L_{\\mathrm{cable}}^{\\mathrm{CS}}$',
+        unit='km',
+        levels=(0, 100, 10),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='conductor',
+        description='Total CS cable conductor length'
+    ),
+    'L_sc_strand_TF': OutputParameter(
+        name='L_sc_strand_TF',
+        label='$L_{\\mathrm{SC}}^{\\mathrm{TF}}$',
+        unit='km',
+        levels=(0, 2000, 200),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='conductor',
+        description='Total TF SC strand length (all coils)'
+    ),
+    'L_sc_strand_CS': OutputParameter(
+        name='L_sc_strand_CS',
+        label='$L_{\\mathrm{SC}}^{\\mathrm{CS}}$',
+        unit='km',
+        levels=(0, 500, 50),
+        fmt='%.0f',
+        use_radial_mask=True,
+        category='conductor',
+        description='Total CS SC strand length'
+    ),
+
+    # -------------------------------------------------------------------------
+    # COMPONENT LIFETIMES & AVAILABILITY
+    # -------------------------------------------------------------------------
+    't_blanket_fpy': OutputParameter(
+        name='t_blanket_fpy',
+        label='$t_{\\mathrm{bl}}$',
+        unit='fpy',
+        levels=(0, 15, 1),
+        fmt='%.1f',
+        use_radial_mask=True,
+        category='availability',
+        description='Blanket structural lifetime (dpa model)'
+    ),
+    't_div_fpy': OutputParameter(
+        name='t_div_fpy',
+        label='$t_{\\mathrm{div}}$',
+        unit='fpy',
+        levels=(0, 10, 1),
+        fmt='%.1f',
+        use_radial_mask=True,
+        category='availability',
+        description='Divertor lifetime (integrated heat model)'
+    ),
+    't_blanket_yr': OutputParameter(
+        name='t_blanket_yr',
+        label='$t_{\\mathrm{bl}}$',
+        unit='yr',
+        levels=(0, 20, 2),
+        fmt='%.1f',
+        use_radial_mask=True,
+        category='availability',
+        description='Blanket calendar lifetime'
+    ),
+    't_div_yr': OutputParameter(
+        name='t_div_yr',
+        label='$t_{\\mathrm{div}}$',
+        unit='yr',
+        levels=(0, 15, 1),
+        fmt='%.1f',
+        use_radial_mask=True,
+        category='availability',
+        description='Divertor calendar lifetime'
+    ),
+    'T_op_limit': OutputParameter(
+        name='T_op_limit',
+        label='$T_{\\mathrm{op}}$',
+        unit='yr',
+        levels=(0, 15, 1),
+        fmt='%.1f',
+        use_radial_mask=True,
+        category='availability',
+        description='Calendar operation time per replacement cycle'
+    ),
+    'dt_rep_eff': OutputParameter(
+        name='dt_rep_eff',
+        label='$\\Delta t_{\\mathrm{rep}}$',
+        unit='yr',
+        levels=(0, 3, 0.2),
+        fmt='%.2f',
+        use_radial_mask=True,
+        category='availability',
+        description='Effective average replacement downtime per cycle'
+    ),
+    'Av': OutputParameter(
+        name='Av',
+        label='$A_v$',
+        unit='',
+        levels=(0.5, 1.0, 0.05),
+        fmt='%.2f',
+        use_radial_mask=True,
+        category='availability',
+        description='Plant availability'
+    ),
+    'CF': OutputParameter(
+        name='CF',
+        label='$\\mathrm{CF}$',
+        unit='',
+        levels=(0.3, 0.9, 0.05),
+        fmt='%.2f',
+        use_radial_mask=True,
+        category='availability',
+        description='Plant capacity factor'
+    ),
 }
 
 # Category descriptions for display
@@ -875,6 +1235,10 @@ CATEGORY_INFO = {
     'geometry': ('Geometry', 'Plasma and coil dimensions'),
     'structural': ('Structural', 'Mechanical stress and materials'),
     'runaway': ('Runaway Electrons', 'RE seed and avalanche indicators (post-convergence diagnostic)'),
+    'availability': ('Availability', 'Component lifetimes, replacement schedule, availability and capacity factor'),
+    'radial_build': ('Radial Build Volumes', 'Component volumes: plasma gap, FW, breeding blanket, shield, VV, divertor'),
+    'materials': ('Masses & Volumes', 'Blanket volume and TF/CS coil masses per material'),
+    'conductor': ('Conductor Lengths', 'TF and CS cable and SC strand total lengths'),
     'limits': ('Limits', 'Operational limits (internal)'),
 }
 
@@ -1564,7 +1928,7 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
             continue
 
         # ===========================================================
-        # Unpack the full run() return tuple (v3 — 99 outputs)
+        # Unpack the full run() return tuple
         # ===========================================================
         (B0, B_CS, B_pol,
          tauE, W_th,
@@ -1590,7 +1954,8 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
          I_LH, I_EC, I_NBI,
          f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF,
          f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS,
-         beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha) = res
+         beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha,
+         *_coil_extra) = res
 
         # ── Plasma stability limits ──────────────────────────────────
         betaN_limit_value = config.betaN_limit
@@ -1607,9 +1972,16 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
         _C_invest_val = np.nan
         if config.cost_model != 'None' and np.isfinite(cost):
             try:
-                P_th_scan = config.P_fus * config.M_blanket + P_CD
-                (V_BB_s, V_TF_s, V_CS_s, V_FI_s) = f_volume(
-                    config.a, config.b, c, d, config.R0, κ)
+                P_th_scan    = config.P_fus * M_blanket_effective(config.Blanket_choice) + P_CD
+                T_op_limit_s = res[132]
+                CF_s         = res[135]
+                t_bl_yr_s    = res[130]
+                t_div_yr_s   = res[131]
+                V_rb_BB_s    = res[138]
+                _, _, Delta_TF_s = Number_TF_coils(config.R0, config.a, config.b, config.ripple_adm, config.L_min)
+                _H_TF_s = 2.0 * (κ * config.a + config.b + c)
+                (V_blanket_s, V_TF_Pappus_s, V_CS_geom_s, V_FI_s) = f_volume(
+                    config.a, config.b, c, d, config.R0, κ, Delta_TF_s, _H_TF_s)
                 _cres = f_costs_Sheffield(
                     discount_rate=config.discount_rate,
                     contingency=config.contingency,
@@ -1619,13 +1991,14 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
                     P_e=max(P_elec, 1.0),
                     P_aux=P_CD,
                     Gamma_n=Gamma_n,
-                    Util_factor=config.Util_factor,
-                    Dwell_factor=config.Dwell_factor,
-                    dt_rep=config.dt_rep,
+                    T_op_limit=T_op_limit_s,
+                    CF=CF_s,
+                    t_life_bl_yr=t_bl_yr_s,
+                    t_life_div_yr=t_div_yr_s,
                     V_FI=V_FI_s,
-                    V_pc=V_TF_s + V_CS_s,
-                    V_sg=V_BB_s,
-                    V_bl=V_BB_s,
+                    V_pc=V_TF_Pappus_s + V_CS_geom_s,
+                    V_sg=V_blanket_s,
+                    V_bl=V_rb_BB_s,
                     S_tt=0.1 * Surface,
                     Supra_cost_factor=config.Supra_cost_factor,
                 )
@@ -1633,6 +2006,43 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
                 _C_invest_val = _cres[2] * 1e-3  # M EUR → B EUR
             except Exception:
                 pass
+
+        # ── Unpack radial build component volumes (offsets 37–43) ────────────
+        V_rb_SOL_s        = _coil_extra[37]
+        V_rb_FW_s         = _coil_extra[38]
+        V_rb_BB_s         = _coil_extra[39]
+        V_rb_shield_s     = _coil_extra[40]
+        V_rb_VV_s         = _coil_extra[41]
+        V_rb_gap_TF_s     = _coil_extra[42]
+        V_rb_divertor_s   = _coil_extra[43]
+        # ── Radial build masses (offsets 44–49) ──────────────────────────────
+        M_rb_FW_s         = _coil_extra[44] * 1e-3   # kg → t
+        M_rb_BB_s         = _coil_extra[45] * 1e-3
+        M_rb_shield_s     = _coil_extra[46] * 1e-3
+        M_rb_VV_s         = _coil_extra[47] * 1e-3
+        M_rb_divertor_s   = _coil_extra[48] * 1e-3
+        M_rb_total_s      = _coil_extra[49] * 1e-3
+
+        # ── Unpack masses, volumes and conductor lengths from _coil_extra ───
+        L_cable_TF_s    = _coil_extra[12] * 1e-3   # m → km
+        L_cable_CS_s    = _coil_extra[13] * 1e-3
+        L_sc_TF_s       = _coil_extra[16] * 1e-3
+        L_sc_CS_s       = _coil_extra[17] * 1e-3
+        M_steel_TF_s    = _coil_extra[18] * 1e-3   # kg → t
+        M_sc_TF_s       = _coil_extra[19] * 1e-3
+        M_cu_TF_s       = _coil_extra[20] * 1e-3
+        M_total_TF_s    = _coil_extra[22] * 1e-3
+        M_steel_CS_s    = _coil_extra[23] * 1e-3
+        M_sc_CS_s       = _coil_extra[24] * 1e-3
+        M_cu_CS_s       = _coil_extra[25] * 1e-3
+        M_total_CS_s    = _coil_extra[27] * 1e-3
+        V_blanket_s     = _coil_extra[28]
+
+        # ── Unpack lifetime/availability outputs (offsets 29–36) ─────────────
+        (t_bl_fpy, t_div_fpy,
+         t_bl_yr,  t_div_yr,
+         T_op_s,   dt_eff_s,
+         Av_s,     CF_s_out) = _coil_extra[29:37]
 
         # ── Store all results ────────────────────────────────────────
         outputs.set_point(y, x,
@@ -1701,6 +2111,40 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
             density_limit=n_condition,
             beta_limit=beta_condition,
             q_limit=q_condition,
+            V_rb_SOL=V_rb_SOL_s,
+            V_rb_FW=V_rb_FW_s,
+            V_rb_BB=V_rb_BB_s,
+            V_rb_shield=V_rb_shield_s,
+            V_rb_VV=V_rb_VV_s,
+            V_rb_gap_TF=V_rb_gap_TF_s,
+            V_rb_divertor=V_rb_divertor_s,
+            M_rb_FW=M_rb_FW_s,
+            M_rb_BB=M_rb_BB_s,
+            M_rb_shield=M_rb_shield_s,
+            M_rb_VV=M_rb_VV_s,
+            M_rb_divertor=M_rb_divertor_s,
+            M_rb_total=M_rb_total_s,
+            V_blanket=V_blanket_s,
+            M_total_TF=M_total_TF_s,
+            M_sc_TF=M_sc_TF_s,
+            M_steel_TF=M_steel_TF_s,
+            M_cu_TF=M_cu_TF_s,
+            M_total_CS=M_total_CS_s,
+            M_sc_CS=M_sc_CS_s,
+            M_steel_CS=M_steel_CS_s,
+            M_cu_CS=M_cu_CS_s,
+            L_cable_TF=L_cable_TF_s,
+            L_cable_CS=L_cable_CS_s,
+            L_sc_strand_TF=L_sc_TF_s,
+            L_sc_strand_CS=L_sc_CS_s,
+            t_blanket_fpy=t_bl_fpy,
+            t_div_fpy=t_div_fpy,
+            t_blanket_yr=t_bl_yr,
+            t_div_yr=t_div_yr,
+            T_op_limit=T_op_s,
+            dt_rep_eff=dt_eff_s,
+            Av=Av_s,
+            CF=CF_s_out,
         )
 
         # Combined TF + CS thickness

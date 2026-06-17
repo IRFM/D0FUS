@@ -61,8 +61,12 @@ if __name__ != "__main__":
         F_CIRCE0D, compute_von_mises_stress,
         calculate_E_mag_TF,
         Number_TF_coils,
+        f_TF_cross_section,
+        f_radial_build_layers,
+        _offset_contour,
+        f_TBR,
     )
-    from .D0FUS_parameterization import DEFAULT_CONFIG, E_ELEM
+    from .D0FUS_parameterization import DEFAULT_CONFIG, E_ELEM, BLANKET_CONCEPTS, radial_layers_effective
 
 # Standalone-execution imports (development / testing)
 else:
@@ -92,8 +96,12 @@ else:
         F_CIRCE0D, compute_von_mises_stress,
         calculate_E_mag_TF,
         Number_TF_coils,
+        f_TF_cross_section,
+        f_radial_build_layers,
+        _offset_contour,
+        f_TBR,
     )
-    from D0FUS_BIB.D0FUS_parameterization import DEFAULT_CONFIG, E_ELEM
+    from D0FUS_BIB.D0FUS_parameterization import DEFAULT_CONFIG, E_ELEM, BLANKET_CONCEPTS, radial_layers_effective
 
 
 # =============================================================================
@@ -2373,7 +2381,8 @@ def _resolve_build(run: dict) -> dict:
 
     Returns a flat dict with keys: b, c_TF, c_CS, N_TF, Gap, H_TF,
     R_TF_in, R_TF_out, R_CS_ext, R_CS_int,
-    e_fw, e_blanket, e_shield, e_gap.
+    e_fw, e_blanket, e_shield, e_gap,
+    Blanket_choice, f_kappa_SOL, f_div_area_fraction.
     """
     R0         = float(run["R0"])
     a          = float(run["a"])
@@ -2413,12 +2422,19 @@ def _resolve_build(run: dict) -> dict:
     e_shield   = float(run.get("e_shield",  max(b * 0.38, 0.3)))
     e_gap      = max(b - e_fw - e_blanket - e_shield, 0.0)
 
+    # Concept-specific radial-build parameters (see f_radial_build_layers)
+    Blanket_choice      = run.get("Blanket_choice", "HCPB")
+    f_kappa_SOL         = float(run.get("f_kappa_SOL", 0.25))
+    f_div_area_fraction = float(run.get("f_div_area_fraction", 0.08))
+
     return dict(
         b=b, c_TF=c_TF, c_CS=c_CS, N_TF=N_TF, Gap=Gap, Delta_TF=Delta_TF,
         H_TF=H_TF,
         R_TF_in=R_TF_in, R_TF_out=R_TF_out,
         R_CS_ext=R_CS_ext, R_CS_int=R_CS_int,
         e_fw=e_fw, e_blanket=e_blanket, e_shield=e_shield, e_gap=e_gap,
+        Blanket_choice=Blanket_choice, f_kappa_SOL=f_kappa_SOL,
+        f_div_area_fraction=f_div_area_fraction,
     )
 
 
@@ -2511,143 +2527,9 @@ def plot_cross_section_comparison(
 # B2 — TF coil Princeton-D view (poloidal plane)
 # ---------------------------------------------------------------------------
 
-def _princeton_D_contour(
-    r1: float,
-    r2: float,
-    n_leg: int = 50,
-) -> tuple:
-    """
-    Compute a Princeton-D constant-tension coil contour in the (R, Z) plane.
-
-    The shape is obtained by numerical integration of the arc-length ODE
-    for a filamentary conductor in a 1/R toroidal field:
-
-        dR/ds     = cos(α)
-        dZ/ds     = sin(α)
-        dα/ds     = 1 / (k · R)
-
-    where  k = ½ ln(r₂ / r₁)  is the shape parameter.  Integration starts
-    at (r₂, 0) with α = π/2 (vertical upward) and proceeds until α = 3π/2
-    (vertical downward at the inboard straight-leg junction).
-
-    The full closed contour is assembled as:
-      top constant-tension arc + straight inboard leg + mirrored bottom arc.
-
-    Parameters
-    ----------
-    r1    : float  Inboard leg radial position [m].
-    r2    : float  Outboard midplane radial position [m].
-    n_leg : int    Number of discretisation points on the straight leg.
-
-    Returns
-    -------
-    R, Z : ndarray  Closed contour arrays (ready for ax.fill / ax.plot).
-
-    References
-    ----------
-    File, Stewart & Mills, IEEE TNS 18 (1971) — Princeton-D concept.
-    Gralnick & Tenney, J. Appl. Phys. 47 (1976) — Analytical solution.
-    """
-
-    k = 0.5 * np.log(r2 / r1)
-
-    def _rhs(_s, y):
-        """Arc-length ODE right-hand side."""
-        _r, _z, _alpha = y
-        return [np.cos(_alpha), np.sin(_alpha), 1.0 / (k * _r)]
-
-    # Terminal event: stop when tangent angle reaches 3π/2 (vertical downward)
-    def _evt_alpha(_s, y):
-        return y[2] - 3.0 * np.pi / 2.0
-    _evt_alpha.terminal = True
-
-    y0 = [r2, 0.0, np.pi / 2.0]
-    s_max = 30.0 * r2                  # Generous arc-length upper bound
-    sol = solve_ivp(_rhs, [0.0, s_max], y0,
-                    events=_evt_alpha,
-                    max_step=0.01 * r2,
-                    rtol=1e-10, atol=1e-12)
-
-    r_top = sol.y[0]                   # Top half: (r2, 0) → (r1, z_leg)
-    z_top = sol.y[1]
-    z_leg = z_top[-1]
-    r_leg = r_top[-1]                  # Should be ≈ r1
-
-    # Straight inboard leg (top → bottom)
-    z_leg_pts = np.linspace(z_leg, -z_leg, n_leg)
-    r_leg_pts = np.full_like(z_leg_pts, r_leg)
-
-    # Bottom half: time-reversed mirror of the top half
-    r_bot = r_top[::-1]
-    z_bot = -z_top[::-1]
-
-    # Assemble closed contour
-    R = np.concatenate([r_top, r_leg_pts[1:-1], r_bot])
-    Z = np.concatenate([z_top, z_leg_pts[1:-1], z_bot])
-    return R, Z
-
-
-def _offset_contour(R: np.ndarray, Z: np.ndarray, d: float) -> tuple:
-    """
-    Compute an inward-offset (parallel) curve at constant distance *d*.
-
-    The Princeton-D contour as assembled by ``_princeton_D_contour`` is
-    wound **clockwise** in the (R, Z) plane.  For a CW contour the
-    inward-pointing unit normal is  n = (−tZ, +tR)  where (tR, tZ) is
-    the unit tangent.
-
-    To avoid artefacts at the corners where the curved arcs meet the
-    straight inboard leg, the contour is split into three segments
-    (top arc, straight leg, bottom arc); each is offset independently
-    and then stitched back together.
-
-    Parameters
-    ----------
-    R, Z : ndarray  Original closed contour (clockwise winding).
-    d    : float    Offset distance [m].  Positive = inward.
-
-    Returns
-    -------
-    R_off, Z_off : ndarray  Offset contour arrays.
-    """
-    # --- Identify inboard straight leg (R ≈ R_min) ---
-    R_min = R.min()
-    tol = 0.01 * (R.max() - R_min)
-    leg_idx = np.where(np.abs(R - R_min) < tol)[0]
-
-    if len(leg_idx) < 2:
-        # Fallback: simple normal offset everywhere (CW convention)
-        dR = np.gradient(R); dZ = np.gradient(Z)
-        ds = np.hypot(dR, dZ); ds[ds < 1e-15] = 1e-15
-        return R - d * dZ / ds, Z + d * dR / ds
-
-    i_s = leg_idx[0]                   # First index on the straight leg
-    i_e = leg_idx[-1]                  # Last index on the straight leg
-
-    # --- Helper: offset an open arc segment (CW inward normal) ---
-    def _offset_arc(r_seg, z_seg):
-        dr = np.gradient(r_seg)
-        dz = np.gradient(z_seg)
-        ds = np.hypot(dr, dz)
-        ds[ds < 1e-15] = 1e-15
-        # CW inward normal: n = (-dz, +dr) / ds
-        return r_seg - d * dz / ds, z_seg + d * dr / ds
-
-    # Top arc:  indices [0 .. i_s]  (outboard midplane → inboard junction)
-    ro_top, zo_top = _offset_arc(R[:i_s + 1], Z[:i_s + 1])
-
-    # Straight leg:  indices [i_s .. i_e]  — inward normal is simply (+d, 0)
-    r_leg = R[i_s:i_e + 1] + d
-    z_leg = Z[i_s:i_e + 1]
-
-    # Bottom arc:  indices [i_e .. end]  (inboard junction → outboard midplane)
-    ro_bot, zo_bot = _offset_arc(R[i_e:], Z[i_e:])
-
-    # Stitch together (skip duplicate junction points)
-    R_off = np.concatenate([ro_top[:-1], r_leg, ro_bot[1:]])
-    Z_off = np.concatenate([zo_top[:-1], z_leg, zo_bot[1:]])
-
-    return R_off, Z_off
+# _princeton_D_contour and _offset_contour have been moved to
+# D0FUS_radial_build_functions.py (functions of the same name).
+# plot_TF_side_view calls f_TF_cross_section which encapsulates both.
 
 
 def plot_TF_side_view(
@@ -2687,20 +2569,15 @@ def plot_TF_side_view(
     bd         = _resolve_build(run)
 
     c_TF     = bd["c_TF"]
-    R_TF_in  = bd["R_TF_in"]          # Inboard bore face (plasma side)
-    R_TF_out = bd["R_TF_out"]         # Outboard outer face
-    R_bore   = R_TF_in - c_TF         # Inboard outer face (machine-axis side)
-    W_TF     = R_TF_out - R_bore      # Total radial width [m]
+    Delta_TF = bd["Delta_TF"]
 
-    # ── Build Princeton-D contours ──────────────────────────────────
-    R_out, Z_out = _princeton_D_contour(R_bore, R_TF_out)
+    # ── Princeton-D cross-section (from radial build) ───────────────
+    (R_bore, R_TF_out, H_TF, _A_cross, _L_turn,
+     R_out, Z_out, R_in, Z_in) = f_TF_cross_section(a, bd["b"], R0, c_TF, Delta_TF)
 
-    # Inner contour: constant-thickness offset of the outer D
-    R_in, Z_in = _offset_contour(R_out, Z_out, c_TF)
-
-    # Actual coil height from the ODE solution
-    H_TF = 2.0 * Z_out.max()
-    h    = Z_out.max()
+    R_TF_in = R_bore + c_TF       # Plasma-facing inner face (= R0 − a − b)
+    W_TF    = R_TF_out - R_bore   # Total radial width [m]
+    h       = H_TF / 2.0          # Half-height [m]
 
     # ── Black-and-white colour scheme ───────────────────────────────
     col_fill = "black"              # Light grey fill for coil body
@@ -2781,6 +2658,410 @@ def plot_TF_side_view(
 
 
 # ---------------------------------------------------------------------------
+# B2b — Radial build assembly (CS + TF + blanket, one side, R–Z plane)
+# ---------------------------------------------------------------------------
+
+
+def _smooth_closed(R, Z, frac=0.045):
+    """Periodically smooth a closed contour (display only).
+
+    Rounds the slope-discontinuity corner where the Princeton-D straight
+    inboard leg meets the curved arc, so the offset build layers that follow
+    the TF inner face carry no kink. A Hann window spanning ``frac`` of the
+    contour is convolved with R and Z separately, with periodic padding. This
+    is cosmetic: the volumes from f_radial_build_layers are untouched, and the
+    midplane radii (the points used for the thickness annotations) are extrema,
+    so they are preserved to second order.
+    """
+    R = np.asarray(R, float)
+    Z = np.asarray(Z, float)
+    n = len(R)
+    w = max(3, int(round(frac * n)))
+    if w % 2 == 0:
+        w += 1
+    ker = np.hanning(w)
+    ker /= ker.sum()
+
+    def _sm(x):
+        xp = np.concatenate([x[-w:], x, x[:w]])
+        return np.convolve(xp, ker, mode="same")[w:-w]
+
+    return _sm(R), _sm(Z)
+
+
+def plot_assembly_side_view(run, save_dir=None, n_cs_modules=None):
+    """Poloidal (R-Z) cross-section of the full radial build.
+
+    Layer boundaries use the concept-specific conformal geometry from
+    f_radial_build_layers: the plasma-side layers (SOL, first wall) follow
+    Miller ellipses expanded by the SOL elongation factor f_kappa_SOL, leaving
+    realistic vertical room above and below the plasma for the lower (and, by
+    the assumed up/down symmetry of the display, upper) X-point regions; the
+    outboard structure / shield / VV / gap layers follow constant-thickness
+    offsets of the Princeton-D TF inner face. Layer volumes are the exact
+    moment-area volumes that feed the cost model, so the cross-sections drawn
+    are consistent with the build that is costed.
+
+    Rendering choices:
+      - Fills are drawn as annuli (each layer is the ring between its inner and
+        outer contour) with light transparency, so stacked layers never muddy
+        each other's colour.
+      - Black outlines are drawn only at GROUP boundaries, never around every
+        thin layer: plasma, plasma+SOL, first wall, breeding blanket, the whole
+        structure/shield/VV block, the TF coil and the CS. Internal shield gaps
+        stay white and unoutlined.
+      - The SOL is filled white: outside the X-point region it is physically a
+        thin vacuum-like layer, so colouring it would be misleading; only its
+        outer boundary is drawn, leaving the open region above/below the plasma.
+      - CS segmentation via N_sub_CS axial modules (override n_cs_modules).
+      - Staircase dimension chain with generous margins so labels never overlap.
+
+    NOTE: second-order in-vessel components are deliberately NOT drawn here.
+    The divertor cassette, ports, NBI / RF antennas and diagnostics carry
+    little radial-build volume at the 0D level and would clutter the schematic.
+    The divertor volume is still accounted for separately (f_radial_build_layers
+    returns V_divertor, used by the cost model); only its drawing is omitted.
+
+    Parameters
+    ----------
+    run         : dict   D0FUS run output including radial-build keys.
+    save_dir    : str or None
+    n_cs_modules: int or None   Override for the CS module count.
+    """
+    from matplotlib.patches import Patch
+
+    # -- Geometry -----------------------------------------------------------
+    R0 = float(run["R0"]); a = float(run["a"])
+    kappa = float(run.get("kappa_edge", 1.85))
+    delta = float(run.get("delta_edge", 0.33))
+
+    bd = _resolve_build(run)
+    b, c_TF, Delta_TF = bd["b"], bd["c_TF"], bd["Delta_TF"]
+    c_CS, R_CS_int, R_CS_ext = bd["c_CS"], bd["R_CS_int"], bd["R_CS_ext"]
+    f_kappa_SOL = bd["f_kappa_SOL"]
+    f_div = bd["f_div_area_fraction"]
+    Blanket_choice = bd["Blanket_choice"]
+
+    if n_cs_modules is None:
+        n_cs_modules = int(run.get("N_sub_CS", 1))
+    n_cs_modules = max(1, int(n_cs_modules))
+
+    (R_bore, R_TF_out, H_TF, _A, _L,
+     R_tf_out, Z_tf_out, R_tf_in, Z_tf_in) = f_TF_cross_section(a, b, R0, c_TF, Delta_TF)
+    h_tf = H_TF / 2.0
+
+    # Smooth the Princeton-D inner and outer faces for display, and base the
+    # build-layer offsets on the *smoothed* inner face. Offsetting the raw inner
+    # face inward produces a self-intersecting spike at the concave straight-leg
+    # / arc junction; rounding the junction first removes it cleanly, at no cost
+    # to the cost model (these display contours are independent of the run's
+    # volumes).
+    R_tf_out, Z_tf_out = _smooth_closed(R_tf_out, Z_tf_out)
+    R_tf_in,  Z_tf_in  = _smooth_closed(R_tf_in,  Z_tf_in)
+
+    theta = np.linspace(0.0, 2.0 * np.pi, 500, endpoint=False)
+    R_lcfs = R0 + a * np.cos(theta + np.arcsin(delta) * np.sin(theta))
+    Z_lcfs = (kappa * a) * np.sin(theta)
+
+    _rb = f_radial_build_layers(
+        a=a, b=b, κ=kappa, δ=delta, R0=R0, Delta_TF=Delta_TF,
+        f_kappa_SOL=f_kappa_SOL, f_div_area_fraction=f_div,
+        R_tf_in=R_tf_in, Z_tf_in=Z_tf_in, Blanket_choice=Blanket_choice)
+    layers = _rb["layers"]
+    N = len(layers)
+    i_breeder = next(i for i, L in enumerate(layers) if L["role"] == "breeder")
+
+    # The breeder outer boundary is the deepest inward offset of the TF face and
+    # can still self-intersect at the rounded junction; a stronger periodic
+    # smoothing there (and a lighter one on the shallower outer layers) removes
+    # the residual spike. A self-intersection is a high-frequency feature, so a
+    # wide Hann window averages it into a smooth bulge.
+    for i, L in enumerate(layers):
+        if i >= i_breeder:
+            frac_o = 0.08 if i == i_breeder else 0.045
+            L["R_outer"], L["Z_outer"] = _smooth_closed(L["R_outer"], L["Z_outer"], frac=frac_o)
+        if i > i_breeder:
+            L["R_inner"], L["Z_inner"] = _smooth_closed(L["R_inner"], L["Z_inner"], frac=0.045)
+
+    # -- Colour scheme ------------------------------------------------------
+    ALPHA = 0.72
+    col_plasma = "#7E3FA8"      # violet
+    col_sol    = "white"        # SOL drawn as open space (see docstring)
+    col_fw     = "#9AA0A6"      # grey
+    col_bb     = "#E8853A"      # orange
+    col_tf     = "#D1495B"      # red
+    col_cs     = "#3E6DB5"      # blue
+    col_gap    = "white"
+    # green shades (inner -> outer) for the structure/shield/VV block
+    GREEN_ROLES = ("structure", "multiplier", "shield_HT", "shield_LT", "VV")
+    green_shades = ["#1B5E20", "#2E7D32", "#43A047", "#66BB6A", "#86C98E", "#A5D6A7"]
+    green_order = [i for i, L in enumerate(layers) if L["role"] in GREEN_ROLES]
+    green_color = {gi: green_shades[min(k, len(green_shades) - 1)]
+                   for k, gi in enumerate(green_order)}
+
+    def _role_color(i, L):
+        r = L["role"]
+        if r == "SOL":
+            return col_sol, 1.0
+        if r == "gap":
+            return col_gap, 1.0
+        if r == "FW":
+            return col_fw, ALPHA
+        if r == "breeder":
+            return col_bb, ALPHA
+        if r in GREEN_ROLES:
+            return green_color.get(i, green_shades[-1]), ALPHA
+        return "white", 1.0
+
+    def _cl(R, Z):
+        """Append the first point so a contour sampled endpoint-free closes."""
+        return np.append(R, R[0]), np.append(Z, Z[0])
+
+    def _annulus(R_in, Z_in, R_out, Z_out):
+        # Close both loops first: the contours are sampled endpoint-free, so
+        # without this a thin unfilled wedge appears at theta = 0 (the outboard,
+        # low-field-side midplane) and reads as a white seam in the fill.
+        R_out, Z_out = _cl(R_out, Z_out)
+        R_in,  Z_in  = _cl(R_in,  Z_in)
+        Rp = np.concatenate([R_out, R_in[::-1]])
+        Zp = np.concatenate([Z_out, Z_in[::-1]])
+        return Rp, Zp
+
+    col_line = "black"
+    col_dim = "#333333"
+    h_cs = (kappa * a + b + 1.0)
+
+    # -- Figure -------------------------------------------------------------
+    fig, ax = plt.subplots(figsize=(12.5, 8.2))
+    ax.set_facecolor("white")
+
+    # TF coil body: annulus between the inner and outer Princeton-D faces.
+    Rp, Zp = _annulus(R_tf_in, Z_tf_in, R_tf_out, Z_tf_out)
+    ax.fill(Rp, Zp, fc=col_tf, alpha=ALPHA, ec="none", zorder=4)
+
+    # Radial-build layers as transparent annuli (no per-layer edge).
+    zbase = 6
+    for i, L in enumerate(layers):
+        fc, al = _role_color(i, L)
+        Rp, Zp = _annulus(L["R_inner"], L["Z_inner"], L["R_outer"], L["Z_outer"])
+        ax.fill(Rp, Zp, fc=fc, alpha=al, ec="none", zorder=zbase + (N - i))
+
+    # Plasma core (closed so the low-field-side seam does not show).
+    Rp, Zp = _cl(R_lcfs, Z_lcfs)
+    ax.fill(Rp, Zp, fc=col_plasma, alpha=ALPHA, ec="none", zorder=zbase + N + 1)
+
+    # CS: blue winding pack, segmented into N_sub_CS modules with white gaps.
+    if n_cs_modules == 1:
+        ax.add_patch(plt.Rectangle((R_CS_int, -h_cs), c_CS, 2 * h_cs,
+                                   fc=col_cs, alpha=ALPHA, ec="none", zorder=4))
+    else:
+        g_mod = 0.02 * (2 * h_cs)
+        mod_h = (2 * h_cs - (n_cs_modules - 1) * g_mod) / n_cs_modules
+        for k in range(n_cs_modules):
+            z0 = -h_cs + k * (mod_h + g_mod)
+            ax.add_patch(plt.Rectangle((R_CS_int, z0), c_CS, mod_h,
+                                       fc=col_cs, alpha=ALPHA, ec="none", zorder=4))
+
+    # NOTE: divertor / ports / antennas intentionally not drawn (see docstring).
+
+    # -- Black outlines at GROUP boundaries only ----------------------------
+    OUT = dict(color=col_line, lw=0.9, zorder=zbase + N + 4)
+    SOL_L = next((L for L in layers if L["role"] == "SOL"), None)
+    FW_L = next((L for L in layers if L["role"] == "FW"), None)
+    BB_L = layers[i_breeder]
+    green_outer_L = layers[green_order[-1]] if green_order else BB_L
+
+    def _outline(R, Z):
+        Rc, Zc = _cl(R, Z)
+        ax.plot(Rc, Zc, **OUT)
+
+    _outline(R_lcfs, Z_lcfs)                                       # plasma
+    if SOL_L is not None:
+        _outline(SOL_L["R_outer"], SOL_L["Z_outer"])               # plasma+SOL group
+    if FW_L is not None:
+        _outline(FW_L["R_outer"], FW_L["Z_outer"])                 # first wall
+    _outline(BB_L["R_outer"], BB_L["Z_outer"])                     # breeding blanket
+    _outline(green_outer_L["R_outer"], green_outer_L["Z_outer"])   # structure/shield/VV block
+    _outline(R_tf_in, Z_tf_in)                                     # TF inner face
+    _outline(R_tf_out, Z_tf_out)                                   # TF outer face
+
+    # CS outline (single frame per module, thin).
+    if n_cs_modules == 1:
+        ax.add_patch(plt.Rectangle((R_CS_int, -h_cs), c_CS, 2 * h_cs,
+                                   fc="none", ec=col_line, lw=0.9, zorder=zbase + N + 4))
+    else:
+        for k in range(n_cs_modules):
+            z0 = -h_cs + k * (mod_h + g_mod)
+            ax.add_patch(plt.Rectangle((R_CS_int, z0), c_CS, mod_h,
+                                       fc="none", ec=col_line, lw=0.7, zorder=zbase + N + 4))
+
+    ax.axvline(0, color=col_line, lw=0.5, ls="-.", alpha=0.5, zorder=1)
+    ax.axhline(0, color=col_line, lw=0.4, ls="-.", alpha=0.4, zorder=1)
+
+    # -- Plasma text tag only (CS / TF now live in the legend) --------------
+    ax.text(R0 + 0.05 * a, 0, "Plasma", color="#4A1E63", fontsize=10,
+            ha="center", va="center", fontweight="bold", zorder=zbase + N + 6)
+
+    # -- Legend -------------------------------------------------------------
+    def _clean(nm):
+        return nm.split("(")[0].strip() if "(" in nm else nm
+
+    leg = [Patch(fc=col_plasma, alpha=ALPHA, ec="grey", lw=0.4, label="Plasma"),
+           Patch(fc=col_sol, ec="grey", lw=0.4, label="Scrape-off layer")]
+    seen = set()
+    for i, L in enumerate(layers):
+        r = L["role"]
+        if r in ("SOL",):
+            continue
+        if r == "breeder":
+            label, fc, al = "Breeding blanket", col_bb, ALPHA
+        elif r == "FW":
+            label, fc, al = "First wall", col_fw, ALPHA
+        elif r == "gap":
+            label, fc, al = "Gap", col_gap, 1.0
+        elif r in GREEN_ROLES:
+            label, fc, al = _clean(L["name"]), green_color.get(i, green_shades[-1]), ALPHA
+        else:
+            label, fc, al = _clean(L["name"]), "white", 1.0
+        if label in seen:
+            continue
+        seen.add(label)
+        leg.append(Patch(fc=fc, alpha=al, ec="grey", lw=0.4, label=label))
+    leg.append(Patch(fc=col_cs, alpha=ALPHA, ec="grey", lw=0.4, label="CS coil"))
+    leg.append(Patch(fc=col_tf, alpha=ALPHA, ec="grey", lw=0.4, label="TF coil"))
+    ax.legend(handles=leg, loc="center left", bbox_to_anchor=(1.02, 0.5),
+              fontsize=9, framealpha=0.95, edgecolor="grey", handlelength=1.4,
+              borderpad=0.8, labelspacing=0.5)
+
+    # -- Dimension chain (staircase, generous margins) ----------------------
+    arr = dict(arrowstyle="<->", color=col_dim, lw=1.0, mutation_scale=10)
+    ext = dict(color=col_dim, lw=0.5, ls="-", alpha=0.5)
+    txt = dict(fontsize=8.5, color=col_dim, ha="center", va="top",
+               bbox=dict(fc="white", ec="none", alpha=1.0, pad=2.4))
+    z_bot = -max(h_tf, h_cs)
+
+    R_TF_in_face = R0 - a - b
+    R_pl_ib = R0 - a
+    R_pl_ob = R0 + a
+    R_blkt_ob = R0 + a + b + Delta_TF
+
+    dims = [
+        (r"$\Delta_{\mathrm{CS}}$"     + f" = {c_CS:.2f} m",         R_CS_int,     R_CS_ext,    -h_cs, -h_cs),
+        (r"$\Delta_{\mathrm{TF}}$"     + f" = {c_TF:.2f} m",         R_bore,       R_TF_in_face, -h_tf, -h_tf),
+        (r"$\Delta_{\mathrm{BB,in}}$"  + f" = {b:.2f} m",            R_TF_in_face, R_pl_ib,     -h_tf, -h_tf),
+        (r"$\Delta_{\mathrm{BB,out}}$" + f" = {b + Delta_TF:.2f} m", R_pl_ob,      R_blkt_ob,   -h_tf, -h_tf),
+    ]
+    dz = 0.95
+    z_first = z_bot - 0.85
+    for lvl, (label, Rl, Rr, tl, tr) in enumerate(dims):
+        z_arr = z_first - lvl * dz
+        ax.plot([Rl, Rl], [tl, z_arr + 0.05], **ext, zorder=9)
+        ax.plot([Rr, Rr], [tr, z_arr + 0.05], **ext, zorder=9)
+        ax.annotate("", xy=(Rr, z_arr), xytext=(Rl, z_arr), arrowprops=arr, zorder=9)
+        ax.text((Rl + Rr) / 2, z_arr - 0.16, label, **txt)
+    z_dim_bottom = z_first - (len(dims) - 1) * dz
+
+    R_v = R_TF_out + 0.40
+    ax.plot([R_TF_out, R_v - 0.03], [h_tf, h_tf], **ext, zorder=9)
+    ax.plot([R_TF_out, R_v - 0.03], [-h_tf, -h_tf], **ext, zorder=9)
+    ax.annotate("", xy=(R_v, h_tf), xytext=(R_v, -h_tf), arrowprops=arr, zorder=9)
+    ax.text(R_v + 0.22, 0, f"$H_{{TF}}$ = {H_TF:.2f} m", rotation=90, fontsize=9,
+            color=col_dim, ha="center", va="center",
+            bbox=dict(fc="white", ec="none", alpha=1.0, pad=1.6))
+
+    # -- Styling ------------------------------------------------------------
+    ax.set_aspect("equal")
+    ax.set_xlabel("$R$  [m]", fontsize=11)
+    ax.set_ylabel("$Z$  [m]", fontsize=11)
+    ax.set_title("Radial build — poloidal cross-section  (CS  /  TF  /  blanket  /  plasma)",
+                 fontsize=12, fontweight="bold", pad=12)
+    ax.grid(False)
+    ax.tick_params(labelsize=10, direction="in")
+    for sp in ax.spines.values():
+        sp.set_linewidth(0.8)
+    ax.set_xlim(-0.6, R_TF_out + 1.6)
+    ax.set_ylim(z_dim_bottom - 0.8, h_tf + 1.1)
+    plt.tight_layout()
+
+    if save_dir is not None:
+        fig.savefig(os.path.join(save_dir, "run_assembly_side_view.png"),
+                    dpi=130, bbox_inches="tight")
+        plt.close(fig)
+        return None
+    return fig
+
+
+def plot_blanket_concepts_comparison(save_dir: str | None = None) -> None:
+    """
+    Compare the breeding-blanket concepts defined in BLANKET_CONCEPTS.
+
+    Left panel : TBR(delta_BZ) saturation curves
+                     TBR = TBR_max * (1 - exp(-delta_BZ / delta_e)),
+                     delta_e = delta_BB_sat / ln(20)
+                 for the breeder/multiplier-zone thickness delta_BZ, one
+                 curve per concept (dotted vertical line at delta_BB_sat).
+    Right panel: grouped bars comparing TBR_max and the blanket energy
+                 multiplication factor M_blanket across concepts.
+
+    This figure is independent of any specific run — it summarises the
+    concept database only.
+
+    Parameters
+    ----------
+    save_dir : str or None
+    """
+    concepts = list(BLANKET_CONCEPTS.keys())
+    colors   = plt.cm.tab10(np.linspace(0.0, 1.0, len(concepts)))
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5.5))
+
+    # ── Left: TBR(delta_BZ) saturation curves ───────────────────────────
+    delta_BZ = np.linspace(0.0, 1.2, 200)
+    for c, col in zip(concepts, colors):
+        concept   = BLANKET_CONCEPTS[c]
+        delta_e   = concept["delta_BB_sat"] / np.log(20.0)
+        TBR_curve = concept["TBR_max"] * (1.0 - np.exp(-delta_BZ / delta_e))
+        ax1.plot(delta_BZ, TBR_curve, color=col, lw=2, label=c)
+        ax1.axvline(concept["delta_BB_sat"], color=col, lw=0.8, ls=":", alpha=0.6)
+
+    ax1.axhline(1.0, color="grey", lw=1.0, ls="--", alpha=0.7)
+    ax1.set_xlabel(r"Breeder/multiplier-zone thickness  $\delta_{BZ}$  [m]", fontsize=11)
+    ax1.set_ylabel("Tritium breeding ratio (TBR)", fontsize=11)
+    ax1.set_title("TBR saturation curves", fontsize=12, fontweight="bold")
+    ax1.set_xlim(0, 1.2)
+    ax1.set_ylim(0, 1.6)
+    ax1.legend(fontsize=9, loc="lower right")
+    ax1.grid(alpha=0.3)
+
+    # ── Right: TBR_max and M_blanket comparison bars ────────────────────
+    x     = np.arange(len(concepts))
+    width = 0.38
+    TBR_max_vals = [BLANKET_CONCEPTS[c]["TBR_max"]   for c in concepts]
+    M_bl_vals    = [BLANKET_CONCEPTS[c]["M_blanket"] for c in concepts]
+
+    bars1 = ax2.bar(x - width / 2, TBR_max_vals, width, color="#4477AA", label="TBR_max")
+    ax2.axhline(1.0, color="grey", lw=1.0, ls="--", alpha=0.7)
+    ax2.set_ylabel("TBR$_{max}$  [-]", fontsize=11, color="#4477AA")
+    ax2.set_ylim(0, 1.6)
+    ax2.tick_params(axis="y", labelcolor="#4477AA")
+
+    ax2b  = ax2.twinx()
+    bars2 = ax2b.bar(x + width / 2, M_bl_vals, width, color="#CC6677", label="M_blanket")
+    ax2b.set_ylabel("$M_{blanket}$  [-]", fontsize=11, color="#CC6677")
+    ax2b.set_ylim(0, 1.6)
+    ax2b.tick_params(axis="y", labelcolor="#CC6677")
+
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(concepts, fontsize=10)
+    ax2.set_title(r"TBR$_{max}$ and energy multiplication $M_{blanket}$", fontsize=12, fontweight="bold")
+    ax2.legend([bars1, bars2], ["TBR_max", "M_blanket"], fontsize=9, loc="upper right")
+
+    fig.suptitle("Breeding-blanket concept comparison", fontsize=13, fontweight="bold")
+    plt.tight_layout()
+    _save_or_show(fig, save_dir, "blanket_concepts_comparison")
+
+
+# ---------------------------------------------------------------------------
 # B3 — CS solenoid cross-section (R–Z plane)
 # ---------------------------------------------------------------------------
 
@@ -2811,13 +3092,14 @@ def plot_CS_cross_section(
     Sarasola et al., IEEE Trans. Appl. Supercond. 33, 1-5 (2023).
     """
 
+    a          = float(run["a"])
+    kappa_edge = float(run.get("kappa_edge", 1.85))
     bd = _resolve_build(run)
 
     R_CS_int = bd["R_CS_int"]          # Inner radius of winding pack [m]
     R_CS_ext = bd["R_CS_ext"]          # Outer radius of winding pack [m]
     c_CS     = bd["c_CS"]              # Winding-pack radial thickness [m]
-    H_TF     = bd["H_TF"]
-    H_CS     = H_TF * 0.88            # CS slightly shorter than TF [m]
+    H_CS     = 2.0 * (kappa_edge * a + bd["b"] + 1.0)
     h_cs     = H_CS / 2.0
 
     # ── Black-and-white colour scheme (matches TF side view) ────────
@@ -2961,7 +3243,7 @@ def plot_all(
         Pass ``None`` to display each figure interactively.
     cfg      : config object (DEFAULT_CONFIG if None).
     """
-    N = 30
+    N = 31
 
     def _p(i, label):
         print(f"  [{i:2d}/{N}] {label}")
@@ -3057,20 +3339,23 @@ def plot_all(
     _p(25, "CIRCE stress-model validation")
     plot_CIRCE_stress_validation(save_dir=save_dir)
 
-    _p(26, "TF coil side view")
+    _p(26, "Radial build assembly (CS / TF / blanket)")
+    plot_assembly_side_view(run, save_dir=save_dir)
+
+    _p(27, "TF coil side view")
     plot_TF_side_view(run, save_dir=save_dir)
 
-    _p(27, "CS cross-section")
+    _p(28, "CS cross-section")
     plot_CS_cross_section(run, save_dir=save_dir)
 
     # ── Benchmarks & machine comparison ───────────────────────────────
-    _p(28, "TF benchmark table")
+    _p(29, "TF benchmark table")
     plot_TF_benchmark_table(cfg=cfg, save_dir=save_dir)
 
-    _p(29, "CS benchmark table")
+    _p(30, "CS benchmark table")
     plot_CS_benchmark_table(cfg=cfg, save_dir=save_dir)
 
-    _p(30, "Tokamak LCFS comparison")
+    _p(31, "Tokamak LCFS comparison")
     plot_cross_section_comparison(run=run, save_dir=save_dir)
 
     print("Done.")
@@ -3081,24 +3366,29 @@ def plot_run(
     save_dir: str | None = None,
 ) -> None:
     """
-    Render the run-specific figure set (11 figures).
+    Render the run-specific figure set (16 figures).
 
     This is the subset called after each D0FUS run.  It contains only the
     figures that depend on the current run configuration and results —
     no validation curves, no benchmarks, no scaling-law surveys.
 
     Figures produced:
-      [ 1/11]  Tokamak LCFS comparison (with D0FUS overlay)
-      [ 2/11]  Miller flux surfaces (run geometry)
-      [ 3/11]  Shaping profiles κ(ρ), δ(ρ)
-      [ 4/11]  Kinetic profiles n(ρ), T(ρ), p(ρ)
-      [ 5/11]  Safety factor q(ρ) and current decomposition
-      [ 6/11]  Radiation profiles
-      [ 7/11]  Divertor two-point model (detachment vs SOL dissipation)
-      [ 8/11]  TF coil side view
-      [ 9/11]  CICC TF conductor
-      [10/11]  CS cross-section
-      [11/11]  CICC CS conductor
+      [ 1/16]  Tokamak LCFS comparison (with D0FUS overlay)
+      [ 2/16]  Miller flux surfaces (run geometry)
+      [ 3/16]  Shaping profiles κ(ρ), δ(ρ)
+      [ 4/16]  Kinetic profiles n(ρ), T(ρ), p(ρ)
+      [ 5/16]  Safety factor q(ρ) and current decomposition
+      [ 6/16]  Radiation profiles
+      [ 7/16]  Divertor two-point model (detachment vs SOL dissipation)
+      [ 8/16]  Radial build assembly (CS / TF / blanket)
+      [ 9/16]  Breeding-blanket concept comparison
+      [10/16]  TF coil side view
+      [11/16]  CICC TF conductor
+      [12/16]  CS cross-section
+      [13/16]  CICC CS conductor
+      [14/16]  Cost breakdown (Sheffield 2016, CapEx / OpEx / COE)
+      [15/16]  Plasma temperature map T(rho)
+      [16/16]  Plasma density map n(rho)
 
     Parameters
     ----------
@@ -3107,49 +3397,69 @@ def plot_run(
         If provided, figures are saved as PNG files.
         Pass ``None`` to display interactively.
     """
-    N = 11
+    N = 16
 
-    def _p(i, label):
+    # When saving, prefix each PNG with its order index so that the files sort
+    # in the logical reading order: geometry (Miller), profiles, physics detail,
+    # then the radial-build / coil set. Figure functions are called unchanged;
+    # any new PNG they drop into save_dir is renamed "<NN>_<original>.png".
+    import os as _os, re as _re
+    _already = _re.compile(r"^\d{2}_")
+
+    def _emit(i, label, thunk):
         print(f"  [{i:2d}/{N}] {label}")
+        if save_dir is None:
+            thunk(); return
+        before = set(_os.listdir(save_dir))
+        thunk()
+        for f in sorted(set(_os.listdir(save_dir)) - before):
+            if f.lower().endswith(".png") and not _already.match(f):
+                _os.rename(_os.path.join(save_dir, f),
+                           _os.path.join(save_dir, f"{i:02d}_{f}"))
 
     print("D0FUS_figures — generating run figures...")
 
     # ── Geometry ──────────────────────────────────────────────────────
-    _p(1, "Tokamak LCFS comparison")
-    plot_cross_section_comparison(run=run, save_dir=save_dir)
-
-    _p(2, "Miller flux surfaces")
-    plot_flux_surfaces_run(run, save_dir=save_dir)
-
-    _p(3, "Shaping profiles κ(ρ), δ(ρ)")
-    plot_shaping_run(run, save_dir=save_dir)
+    _emit(1, "Tokamak LCFS comparison",
+          lambda: plot_cross_section_comparison(run=run, save_dir=save_dir))
+    _emit(2, "Miller flux surfaces",
+          lambda: plot_flux_surfaces_run(run, save_dir=save_dir))
+    _emit(3, "Shaping profiles κ(ρ), δ(ρ)",
+          lambda: plot_shaping_run(run, save_dir=save_dir))
 
     # ── Kinetic profiles ──────────────────────────────────────────────
-    _p(4, "Kinetic profiles n(ρ), T(ρ), p(ρ)")
-    plot_run_nTp(run, save_dir=save_dir)
-
-    _p(5, "Safety factor q(ρ)")
-    plot_q_profile(run, save_dir=save_dir)
+    _emit(4, "Kinetic profiles n(ρ), T(ρ), p(ρ)",
+          lambda: plot_run_nTp(run, save_dir=save_dir))
+    _emit(5, "Safety factor q(ρ)",
+          lambda: plot_q_profile(run, save_dir=save_dir))
 
     # ── Transport & radiation ─────────────────────────────────────────
-    _p(6, "Radiation profiles")
-    plot_radiation_profile(run, save_dir=save_dir)
+    _emit(6, "Radiation profiles",
+          lambda: plot_radiation_profile(run, save_dir=save_dir))
+    _emit(7, "Divertor two-point model",
+          lambda: plot_divertor_two_point(run, save_dir=save_dir))
 
-    _p(7, "Divertor two-point model")
-    plot_divertor_two_point(run, save_dir=save_dir)
+    # ── Radial build & coils ──────────────────────────────────────────
+    _emit(8, "Radial build assembly (CS / TF / blanket)",
+          lambda: plot_assembly_side_view(run, save_dir=save_dir))
+    _emit(9, "Breeding-blanket concept comparison",
+          lambda: plot_blanket_concepts_comparison(save_dir=save_dir))
+    _emit(10, "TF coil side view",
+          lambda: plot_TF_side_view(run, save_dir=save_dir))
+    _emit(11, "CICC TF conductor",
+          lambda: plot_CICC_cross_section(build_conductor_from_run(run, coil="TF"), save_dir=save_dir))
+    _emit(12, "CS cross-section",
+          lambda: plot_CS_cross_section(run, save_dir=save_dir))
+    _emit(13, "CICC CS conductor",
+          lambda: plot_CICC_cross_section(build_conductor_from_run(run, coil="CS"), save_dir=save_dir))
 
-    # ── Coils & conductors ────────────────────────────────────────────
-    _p(8, "TF coil side view")
-    plot_TF_side_view(run, save_dir=save_dir)
+    # ── Techno-economic synthesis ─────────────────────────────────────
+    _emit(14, "Cost breakdown (Sheffield 2016)",
+          lambda: plot_cost_breakdown(run, save_dir=save_dir))
 
-    _p(9, "CICC TF conductor")
-    plot_CICC_cross_section(build_conductor_from_run(run, coil="TF"), save_dir=save_dir)
-
-    _p(10, "CS cross-section")
-    plot_CS_cross_section(run, save_dir=save_dir)
-
-    _p(11, "CICC CS conductor")
-    plot_CICC_cross_section(build_conductor_from_run(run, coil="CS"), save_dir=save_dir)
+    # ── Plasma field maps ────────────────────────────────────
+    _emit(15, "Plasma temperature map", lambda: plot_temperature_map(run, save_dir=save_dir))
+    _emit(16, "Plasma density map", lambda: plot_density_map(run, save_dir=save_dir))
 
     print("Done.")
 
@@ -3981,6 +4291,181 @@ def _conductor_aspect_ratio(n: float, f_steel: float) -> float:
     return (1.0 + n * x) / (1.0 + x)
 
 
+def _plasma_field_grid(run, n_rho=90, n_theta=241):
+    """Build (R0, rho, theta, R, Z) meshes spanning the plasma cross-section.
+
+    Flux surfaces follow the same geometry as plot_flux_surfaces_run: refined
+    Miller surfaces with radially varying kappa(rho), delta(rho) when
+    Plasma_geometry == 'refined', concentric ellipses (delta = 0) otherwise.
+    The returned R, Z arrays have shape (n_rho, n_theta) and can carry any
+    flux-function field (constant on each surface) for contouring.
+    """
+    R0, a, kappa_edge, delta_edge, kappa_95, delta_95, _ = _resolve_geometry(run)
+    geom = run.get("Plasma_geometry", "refined")
+    rho = np.linspace(0.0, 1.0, n_rho)
+    theta = np.linspace(0.0, 2.0 * np.pi, n_theta)
+    RR = np.empty((n_rho, n_theta))
+    ZZ = np.empty((n_rho, n_theta))
+    for j, rv in enumerate(rho):
+        if geom == "Academic":
+            RR[j] = R0 + rv * a * np.cos(theta)
+            ZZ[j] = kappa_edge * rv * a * np.sin(theta)
+        else:
+            RR[j], ZZ[j] = miller_RZ(rv, theta, R0, a,
+                                     kappa_edge, delta_edge, kappa_95, delta_95)
+    return R0, rho, theta, RR, ZZ
+
+
+def _plot_plasma_field_map(run, field, save_dir=None):
+    """Filled colormap of a kinetic profile over the poloidal cross-section.
+
+    field : 'T' (temperature, keV) or 'n' (density, m^-3). The 1D profile is
+    rebuilt from the run dict (peaking nu, pedestal) with f_Tprof / f_nprof,
+    then painted on the Miller flux surfaces. The field is a flux function, so
+    it is constant on each surface and varies only with rho.
+    """
+    R0, rho, theta, RR, ZZ = _plasma_field_grid(run)
+    Vp = run.get("Vprime_data")
+
+    if field == "T":
+        Tbar = float(run.get("Tbar", 1.0))
+        prof = f_Tprof(Tbar, float(run.get("nu_T", 1.0)), rho,
+                       float(run.get("rho_ped", 1.0)),
+                       float(run.get("T_ped_frac", 0.0)), Vp)
+        cmap, fname = "inferno", "temperature_map"
+        cb_label = "Temperature  [keV]"
+        title = (f"Plasma temperature map\n"
+                 f"$\\langle T \\rangle$ = {Tbar:.1f} keV,  "
+                 f"$T(0)$ = {prof[0]:.1f} keV")
+    else:
+        nbar = float(run.get("nbar", 1.0))
+        prof = f_nprof(nbar, float(run.get("nu_n", 1.0)), rho,
+                       float(run.get("rho_ped", 1.0)),
+                       float(run.get("n_ped_frac", 0.0)), Vp)
+        cmap, fname = "viridis", "density_map"
+        cb_label = "Density  [10$^{20}$ m$^{-3}$]"
+        title = (f"Plasma density map\n"
+                 f"$\\langle n \\rangle$ = {nbar:.2f},  "
+                 f"$n(0)$ = {prof[0]:.2f}   ($\\times 10^{{20}}$ m$^{{-3}}$)")
+
+    VAL = np.tile(prof[:, None], (1, theta.size))
+
+    fig, ax = plt.subplots(figsize=(6.4, 8))
+    ax.set_facecolor("white")
+    pcm = ax.pcolormesh(RR, ZZ, VAL, shading="gouraud", cmap=cmap, zorder=2)
+    ax.plot(RR[-1], ZZ[-1], color="black", lw=1.3, zorder=5)      # LCFS
+    ax.plot([R0], [0.0], "+", color="white", ms=11, mew=1.8, zorder=6)  # magnetic axis
+
+    cb = fig.colorbar(pcm, ax=ax, fraction=0.046, pad=0.04)
+    cb.set_label(cb_label, fontsize=10)
+    cb.ax.tick_params(labelsize=9)
+
+    ax.set_aspect("equal")
+    ax.set_xlabel("$R$  [m]", fontsize=11)
+    ax.set_ylabel("$Z$  [m]", fontsize=11)
+    ax.set_title(title, fontsize=11, fontweight="bold")
+    ax.tick_params(labelsize=10, direction="in")
+    plt.tight_layout()
+    return _save_or_show(fig, save_dir, fname)
+
+
+def plot_temperature_map(run, save_dir=None):
+    """Plasma temperature map T(rho) over the poloidal cross-section."""
+    return _plot_plasma_field_map(run, "T", save_dir=save_dir)
+
+
+def plot_density_map(run, save_dir=None):
+    """Plasma density map n(rho) over the poloidal cross-section."""
+    return _plot_plasma_field_map(run, "n", save_dir=save_dir)
+
+
+def plot_cost_breakdown(run: dict, save_dir: str | None = None) -> None:
+    """
+    Techno-economic cost breakdown (Sheffield & Milora 2016 model).
+
+    Left panel : CapEx by component (TF + CS coils, breeding blanket,
+                 shield + gaps, divertor targets, heating plant, balance of
+                 plant, auxiliary heating, buildings & other, indirect) as
+                 horizontal bars sorted by magnitude. The bars sum to the
+                 constructed capital cost reported in the title.
+    Right panel: annual OpEx (O&M, fuel / consumables, waste).
+
+    The capacity-weighted cost of electricity (COE) is shown in the suptitle.
+    All capital and operating costs are in 2025 M EUR; COE in 2025 EUR/MWh.
+
+    The breakdown is read from ``run["cost_breakdown"]``, which D0FUS_run fills
+    only when ``cost_model != 'None'``. If it is absent the figure is skipped,
+    so the run figure set stays consistent across cost-enabled and disabled
+    configurations.
+
+    Parameters
+    ----------
+    run      : dict   D0FUS run output dict (must carry "cost_breakdown").
+    save_dir : str or None
+    """
+    cb    = run.get("cost_breakdown") or {}
+    capex = cb.get("capex", {})
+    opex  = cb.get("opex", {})
+    if not capex:
+        print("    (cost breakdown unavailable — cost_model off; figure skipped)")
+        return
+
+    cur   = cb.get("currency", "M EUR")
+    coe   = cb.get("COE", float("nan"))
+    coe_u = cb.get("coe_unit", "EUR/MWh")
+    C_tot = cb.get("C_invest", sum(capex.values()))
+
+    # Paul Tol qualitative palette, cycled across the component list
+    palette = ["#4477AA", "#66CCEE", "#228833", "#CCBB44", "#EE6677",
+               "#AA3377", "#BBBBBB", "#332288", "#999933"]
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5.8),
+                                   gridspec_kw={"width_ratios": [1.7, 1.0]})
+
+    # ── Left: CapEx components, sorted largest-first (top of axis) ───────
+    items  = sorted(capex.items(), key=lambda kv: kv[1], reverse=True)
+    labels = [k for k, _ in items]
+    vals   = [v for _, v in items]
+    colors = [palette[i % len(palette)] for i in range(len(vals))]
+    y      = np.arange(len(labels))[::-1]
+
+    ax1.barh(y, vals, color=colors, edgecolor="white", height=0.72)
+    for yi, v in zip(y, vals):
+        pct = 100.0 * v / C_tot if C_tot else 0.0
+        ax1.text(v, yi, f"  {v:,.0f}  ({pct:.0f}%)", va="center", ha="left", fontsize=9)
+    ax1.set_yticks(y)
+    ax1.set_yticklabels(labels, fontsize=10)
+    ax1.set_xlabel(f"Capital cost  [{cur}]", fontsize=11)
+    ax1.set_title(f"CapEx breakdown — total {C_tot * 1e-3:.2f} B EUR",
+                  fontsize=12, fontweight="bold")
+    ax1.set_xlim(0, max(vals) * 1.30)
+    ax1.grid(axis="x", alpha=0.3)
+
+    # ── Right: annual OpEx ──────────────────────────────────────────────
+    if opex:
+        oitems  = sorted(opex.items(), key=lambda kv: kv[1], reverse=True)
+        olabels = [k for k, _ in oitems]
+        ovals   = [v for _, v in oitems]
+        yo      = np.arange(len(olabels))[::-1]
+        ax2.barh(yo, ovals, color="#CC6677", edgecolor="white", height=0.6)
+        for yi, v in zip(yo, ovals):
+            ax2.text(v, yi, f"  {v:,.1f}", va="center", ha="left", fontsize=9)
+        ax2.set_yticks(yo)
+        ax2.set_yticklabels(olabels, fontsize=10)
+        ax2.set_xlabel(f"Annual OpEx  [{cur}/yr]", fontsize=11)
+        ax2.set_xlim(0, max(ovals) * 1.32)
+        ax2.set_title(f"Annual OpEx — total {sum(ovals):,.0f} {cur}/yr",
+                      fontsize=12, fontweight="bold")
+        ax2.grid(axis="x", alpha=0.3)
+    else:
+        ax2.axis("off")
+
+    fig.suptitle(f"Cost breakdown (Sheffield 2016)   |   COE = {coe:.0f} {coe_u}",
+                 fontsize=13, fontweight="bold")
+    plt.tight_layout()
+    _save_or_show(fig, save_dir, "cost_breakdown")
+
+
 def build_conductor_from_run(run: dict, coil: str = "TF") -> dict:
     """
     Build a CICC conductor dict from a D0FUS run output dict.
@@ -4531,6 +5016,28 @@ def demo_run_dict():
         "e_fw":        0.05,
         "e_blanket":   0.45,
         "e_shield":    0.50,
+        # Refined two-point divertor solution (representative ITER values), so
+        # plot_divertor_two_point renders in the stand-alone smoke test.
+        "divertor": {
+            "lambda_q": 9.12e-4, "q_pol_omp": 1503.05, "pitch_B_over_Bpol": 4.835,
+            "f_outer_target": 0.65, "q_par_u": 7266.72, "T_eu": 343.66, "T_et": 343.66,
+            "n_et": 8.015e16, "Gamma_et": 1.4728e23, "q_dep_t": 2.492,
+            "f_pwr_loss_req": 0.9842, "regime": "sheath-limited", "detached": False,
+            "sputtering_safe": False, "n_sep": 2.052e19, "f_cooling": 0.0, "f_mom": 0.0,
+            "theta_deg": 2.5, "q_dep_limit": 5.0, "q_par0_attached": 7266.72,
+        },
+        # Techno-economic breakdown (representative ITER Sheffield values, M EUR
+        # 2025), so plot_cost_breakdown renders in the stand-alone smoke test.
+        "cost_breakdown": {
+            "COE": 2395.68, "C_invest": 22301.80,
+            "currency": "M EUR (2025)", "coe_unit": "EUR/MWh",
+            "capex": {"TF + CS coils": 4002.90, "Breeding blanket": 1951.65,
+                      "Shield + gaps": 1476.53, "Divertor targets": 12.27,
+                      "Heating plant": 101.20, "Balance of plant": 450.60,
+                      "Aux. heating": 378.05, "Buildings & other": 2253.02,
+                      "Indirect": 11675.58},
+            "opex": {"O&M": 43.05, "Fuel / consumables": 180.19, "Waste": 6.52},
+        },
     }
 
     return ITER_RUN
@@ -4550,7 +5057,6 @@ def build_figure_registry():
     module conventions:
       run dict        -> 'run'          (rendered by plot_all on a run dict)
       results         -> 'uncertainty'  (Monte-Carlo robustness figures)
-      names           -> 'uncertainty'  (Sobol indices figure)
       scan_results    -> 'scan'
       anything else   -> 'standalone'   (parametric / validation figures
                                          taking explicit physics arguments)
@@ -4595,7 +5101,7 @@ _CATEGORY_LABEL = {
     'standalone':  'STANDALONE FIGURES — parametric / validation '
                    '(explicit physics arguments)',
     'scan':        'SCAN FIGURES — rendered from scan-mode outputs',
-    'uncertainty': 'UNCERTAINTY FIGURES — rendered from UQ / Sobol outputs',
+    'uncertainty': 'UNCERTAINTY FIGURES — rendered from UQ outputs',
 }
 
 
@@ -4617,12 +5123,105 @@ def print_figure_catalog(registry=None):
     print("=" * 78)
 
 
+def _smoke_test_all(save_dir, dpi=110):
+    """Render every individual figure once, numbered, as a visual smoke test.
+
+    Iterates the auto-populated figure registry (so any new plot_* / fig_*
+    function is picked up automatically) and renders each individual 'run' and
+    'standalone' figure to ``save_dir`` with a zero-padded numeric prefix
+    (01_, 02_, ...), so the whole catalogue can be browsed in order. Run-dict
+    figures use the ITER demo dict; standalone figures use their default
+    arguments; the CICC conductor figure is rendered for both TF and CS by
+    building the conductor from the demo run. The composite renderers
+    (plot_all, plot_run) are skipped because they would duplicate the
+    individual figures and clash with the numbering. Figures that need scan or
+    uncertainty datasets are listed and skipped. Each figure is wrapped so one
+    failure never aborts the sweep.
+
+    Parameters
+    ----------
+    save_dir : str   Output directory (created if missing).
+    dpi      : int   Resolution hint for figures that do not set their own.
+    """
+    import re as _re
+
+    registry = build_figure_registry()
+    run = demo_run_dict()
+    os.makedirs(save_dir, exist_ok=True)
+    _COMPOSITE = {"plot_all", "plot_run"}
+
+    renderable, deferred = [], []
+    for name in sorted(registry):
+        if name in _COMPOSITE:
+            continue
+        cat = registry[name]["category"]
+        if cat == "meta":
+            continue
+        (renderable if cat in ("run", "standalone") else deferred).append(name)
+
+    total = len(renderable) + len(deferred)
+    n_ok = n_skip = n_fail = 0
+    idx = 0
+
+    def _new_pngs(before):
+        after = {f for f in os.listdir(save_dir) if f.endswith(".png")}
+        return [f for f in (after - before) if not _re.match(r"^\d{2,3}_", f)]
+
+    print(f"D0FUS_figures — numbered smoke test ({total} figures) -> {save_dir}")
+    for name in renderable:
+        idx += 1
+        tag = f"{idx:02d}"
+        e = registry[name]
+        before = {f for f in os.listdir(save_dir) if f.endswith(".png")}
+        try:
+            if name == "plot_CICC_cross_section":
+                for _coil in ("TF", "CS"):
+                    e["func"](build_conductor_from_run(run, coil=_coil), save_dir=save_dir)
+            elif e["category"] == "run":
+                e["func"](run, save_dir=save_dir)
+            else:
+                try:
+                    e["func"](save_dir=save_dir)
+                except TypeError:
+                    try:
+                        e["func"]()
+                    except TypeError:
+                        print(f"  [{tag}/{total}] {name}  (skipped: needs explicit arguments)")
+                        n_skip += 1
+                        continue
+            new = _new_pngs(before)
+            for f in new:
+                os.rename(os.path.join(save_dir, f), os.path.join(save_dir, f"{tag}_{f}"))
+            if new:
+                extra = f"  (+{len(new) - 1} more)" if len(new) > 1 else ""
+                print(f"  [{tag}/{total}] {name}  ->  {tag}_{sorted(new)[0]}{extra}")
+                n_ok += 1
+            else:
+                print(f"  [{tag}/{total}] {name}  (no PNG produced)")
+                n_skip += 1
+        except Exception as ex:
+            print(f"  [{tag}/{total}] FAILED {name}: {type(ex).__name__}: {ex}")
+            n_fail += 1
+
+    for name in deferred:
+        idx += 1
+        cat = registry[name]["category"]
+        print(f"  [{idx:02d}/{total}] {name}  (skipped: {cat} figure, needs {cat} outputs)")
+        n_skip += 1
+
+    print(f"\nSmoke test complete: {n_ok} rendered, {n_skip} skipped, "
+          f"{n_fail} failed (of {total}).")
+    print(f"Numbered PNGs written to: {save_dir}")
+    return n_fail
+
+
 def _standalone_main():
     parser = argparse.ArgumentParser(
         description="D0FUS_figures.py — stand-alone figure catalogue.\n"
-                    "Prints the catalogue, then renders the full demo "
-                    "sequence (plot_all on the ITER reference run dict) "
-                    "interactively by default.")
+                    "Prints the catalogue, then by default renders a numbered "
+                    "smoke test of every figure (one PNG per figure, prefixed "
+                    "01_, 02_, ...) so the whole catalogue can be browsed in "
+                    "order. Use --save-dir to choose the output folder.")
     parser.add_argument("--save-dir", default=None,
                         help="Directory to save PNG figures "
                              "(suppresses interactive display)")
@@ -4669,7 +5268,11 @@ def _standalone_main():
                       f"through its execution mode.")
         return
 
-    plot_all(demo_run_dict(), save_dir=_out)
+    # Default action: numbered smoke test of the whole figure catalogue,
+    # so every figure can be visualised at a glance. Saved (numbered) to
+    # --save-dir if given, otherwise to ./D0FUS_figures_catalog/.
+    target = _out if _out is not None else os.path.join(os.getcwd(), "D0FUS_figures_catalog")
+    _smoke_test_all(target)
 
 # =============================================================================
 # UNCERTAINTY-MODE FIGURES
@@ -4688,63 +5291,10 @@ Each figure carries a one-line plain-language reading note so it stands on its o
   - fig_margins : headroom to each plasma limit (P5/P50/P95 of the normalised margin).
   - scan_feasibility + fig_scan : one-parameter feasibility scans with a traffic-light
     background, so a glance places the design value in a safe / marginal / unlikely zone.
-  - fig_models : impact of the model-form choices (confinement scaling, elongation, ...)
-    on feasibility and on a key physics output, one row per model combination.
+  - fig_inputs : histograms of the continuous uncertain inputs (with the design
+    value marked) plus a categorical panel for each model-form switch.
+  - fig_outputs : histogram of the main outputs over the converged samples.
 """
-def fig_sobol(names, sobol, meta, save_dir=None, show=False):
-    """
-    Sobol sensitivity bar charts: one panel per analysed QoI, horizontal bars
-    for the first-order (S1, filled) and total (ST, hatched outline) indices
-    of every uncertain parameter, per envelope combo (one figure per combo).
-
-    Parameters mirror the return values of
-    D0FUS_uncertainty.run_sobol_from_file.
-    """
-    figs = []
-    for label, per_out in sobol.items():
-        outputs = [k for k in per_out if np.isfinite(per_out[k]['ST']).any()]
-        if not outputs:
-            continue
-        ncol = min(3, len(outputs))
-        nrow = int(np.ceil(len(outputs) / ncol))
-        fig, axes = plt.subplots(nrow, ncol,
-                                 figsize=(4.2 * ncol, 0.6 * len(names) * nrow + 1.8),
-                                 squeeze=False)
-        y = np.arange(len(names))
-        for k, out_key in enumerate(outputs):
-            ax = axes[k // ncol][k % ncol]
-            idx = per_out[out_key]
-            order = np.argsort(np.nan_to_num(idx['ST']))
-            ax.barh(y - 0.18, idx['ST'][order], height=0.36, color='lightsteelblue',
-                    edgecolor='navy', hatch='//', label='ST (total)')
-            ax.barh(y + 0.18, idx['S1'][order], height=0.36, color='steelblue',
-                    label='S1 (first order)')
-            ax.set_yticks(y)
-            ax.set_yticklabels([names[j] for j in order], fontsize=8)
-            ax.axvline(0.0, color='k', lw=0.6)
-            ax.set_xlim(left=min(0.0, np.nanmin(idx['S1']) - 0.05),
-                        right=max(1.0, np.nanmax(idx['ST']) + 0.05))
-            _std = idx.get('std', None)
-            ax.set_title(out_key if _std is None
-                         else f"{out_key}  (std = {_std:.3g})", fontsize=10)
-            ax.grid(axis='x', alpha=0.3)
-            if k == 0:
-                ax.legend(fontsize=8, loc='lower right')
-        for k in range(len(outputs), nrow * ncol):
-            axes[k // ncol][k % ncol].axis('off')
-        fig.suptitle(f"Sobol indices — combo [{label}]  "
-                     f"(N={meta['n_base']}, {meta['n_eval']} evaluations)",
-                     fontsize=11)
-        fig.tight_layout(rect=(0, 0, 1, 0.96))
-        if save_dir is not None:
-            safe = label.replace(' ', '').replace(',', '_').replace('=', '-')
-            fig.savefig(os.path.join(save_dir, f"sobol_{safe}.png"), dpi=170)
-        figs.append(fig)
-        if not show:
-            plt.close(fig)
-    return figs
-
-
 # (os, Counter, numpy, matplotlib, pyplot and Patch are all exported by
 #  D0FUS_import.py through the wildcard import at the top of this module.)
 
@@ -4968,57 +5518,161 @@ def fig_scan(scan_results, save_dir=None):
 
 
 # =============================================================================
-# Figure 4 -- impact of the physics models (envelope combinations)
+# Figure 4 -- distribution of the main uncertain inputs
 # =============================================================================
-def fig_models(results, qoi='Q', save_dir=None):
+# Plain-language labels for the uncertain inputs; the raw parameter name is used
+# as a fallback for anything not listed here.
+_IN_NICE = {
+    'H': 'confinement H', 'Tbar': r'$\langle T \rangle$  [keV]', 'C_Alpha': r'$C_\alpha$',
+    'nu_n_manual': r'density peaking $\nu_n$', 'nu_T_manual': r'temp. peaking $\nu_T$',
+    'rho_ped': r'pedestal radius $\rho_{ped}$', 'n_ped_frac': 'pedestal density frac.',
+    'T_ped_frac': 'pedestal temp. frac.', 'eta_WP_acad': 'CD wall-plug eff.',
+    'gamma_CD_acad': r'CD figure of merit $\gamma_{CD}$', 'Ce': r'flux coeff. $C_e$',
+    'betaN_limit': r'$\beta_N$ limit', 'q_limit': r'kink limit on $q_{95}$',
+    'Greenwald_limit': 'Greenwald limit', 'Supra_cost_factor': 'SC cost factor',
+    'discount_rate': 'discount rate',
+    # model-form switches (shown as categorical panels)
+    'Scaling_Law': 'confinement scaling law', 'Option_Kappa': 'elongation model',
+    'Bootstrap_choice': 'bootstrap model',
+}
+
+
+def fig_inputs(names, X, base, spec=None, envelope=None, save_dir=None):
     """
-    How the model-form choices (confinement scaling law, elongation model, ...) move
-    feasibility. One row per model combination: a wide spread between rows means the
-    model assumptions matter, a tight spread means they do not. (qoi kept for backward
-    compatibility; no longer plotted.)
+    Distribution of every uncertain input: a histogram for each continuous (normal)
+    marginal with the design value marked, and a categorical bar panel for each
+    model-form switch (envelope), so the switches appear in the same table.
+
+    names    : list of str               column order of X (continuous inputs).
+    X        : ndarray (n_samples, d)     Latin-Hypercube sample in physical units.
+    base     : GlobalConfig               design point (provides the nominal value).
+    spec     : dict name -> dist tuple    optional; used only to tag the law (norm / ...).
+    envelope : dict switch -> [options]   optional; one categorical panel per switch.
     """
-    combos = [k for k in results if k != ('nominal',)]
-    if not combos:
-        return None                              # no model envelope in this study
+    envelope = envelope or {}
+    switches = list(envelope.keys())
+    n_cont = len(names)
+    total = n_cont + len(switches)
+    if total == 0:
+        return None
+    ncols = min(4, total)
+    nrows = int(np.ceil(total / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3.4 * ncols, 2.6 * nrows))
+    axes = np.atleast_1d(axes).ravel()
 
-    def _label(key):
-        d = dict(key)
-        order = ['Scaling_Law', 'Option_Kappa', 'Bootstrap_choice']
-        vals = [str(d[k]) for k in order if k in d]
-        vals += [str(v) for k, v in key if k not in order]
-        return '  ·  '.join(vals)
+    # --- continuous marginals: one histogram each ---------------------------
+    for j, name in enumerate(names):
+        ax = axes[j]
+        col = np.asarray(X[:, j], dtype=float)
+        col = col[np.isfinite(col)]
+        if col.size:
+            ax.hist(col, bins=40, color='steelblue', edgecolor='white', alpha=0.85)
+        nom = getattr(base, name, np.nan)
+        try:
+            nomf = float(nom)
+        except (TypeError, ValueError):
+            nomf = np.nan
+        if np.isfinite(nomf):
+            ax.axvline(nomf, color='0.15', ls='--', lw=1.6)
+            ax.annotate('design', xy=(nomf, 0.92), xycoords=('data', 'axes fraction'),
+                        rotation=90, va='top', ha='right', fontsize=7.5, color='0.15')
+        fam = spec.get(name, (None,))[0] if spec else None
+        tag = f"  ({fam})" if fam else ""
+        ax.set_title(f"{_IN_NICE.get(name, name)}{tag}", fontsize=9.5)
+        ax.tick_params(labelsize=8)
+        ax.set_yticks([])
 
-    labels, p_feas = [], []
-    for k in combos:
-        rws = results[k]
-        n = max(len(rws), 1)
-        feas = [r for r in rws if r.get('converged') and r.get('feasible')]
-        labels.append(_label(k))
-        p_feas.append(100.0 * len(feas) / n)
+    # --- model-form switches: one categorical bar panel each ----------------
+    # Each option is swept with equal weight (n_samples runs per combination),
+    # so the input distribution of a switch is uniform over its options.
+    for s, sw in enumerate(switches):
+        ax = axes[n_cont + s]
+        opts = list(envelope[sw])
+        xpos = np.arange(len(opts))
+        ax.bar(xpos, np.full(len(opts), 1.0 / len(opts)), color='slategray',
+               edgecolor='white', width=0.7)
+        ax.set_xticks(xpos)
+        ax.set_xticklabels(opts, fontsize=7.5, rotation=20, ha='right')
+        ax.set_ylim(0, 1)
+        ax.set_yticks([])
+        ax.set_title(f"{_IN_NICE.get(sw, sw)}  (switch)", fontsize=9.5)
 
-    order = np.argsort(p_feas)                    # worst feasibility at the bottom
-    labels = [labels[i] for i in order]
-    p_feas = [p_feas[i] for i in order]
-    y = np.arange(len(labels))
+    for ax in axes[total:]:
+        ax.axis('off')
 
-    fig, ax = plt.subplots(figsize=(10, 0.7 * len(labels) + 2.2))
-    grays = [str(max(0.25, 0.85 - 0.6 * p / 100.0)) for p in p_feas]   # darker = higher
-    ax.barh(y, p_feas, color=grays, edgecolor='black', lw=0.8)
-    for yi, p in zip(y, p_feas):
-        ax.text(min(p + 1.5, 97), yi, f'{p:.0f}%', va='center', fontsize=10)
-    ax.axvline(85, color='0.3', ls=':', lw=1)
-    ax.set_xlim(0, 105)
-    ax.set_yticks(y)
-    ax.set_yticklabels(labels, fontsize=11)
-    ax.set_xlabel('probability of staying feasible [%]', fontsize=11)
-    ax.set_title('Impact of the physics models on feasibility',
-                 fontsize=13, fontweight='bold')
-    ax.annotate('each row is one model combination (confinement scaling · elongation); '
-                'the spread shows how much the model assumptions drive feasibility',
-                xy=(0.5, -0.30 if len(labels) <= 4 else -0.18), xycoords='axes fraction',
-                ha='center', fontsize=9.5, color='dimgray')
-    plt.tight_layout()
-    return _save(fig, save_dir, 'uq_models')
+    plt.suptitle('Distribution of the uncertain inputs',
+                 fontsize=14, fontweight='bold')
+    fig.text(0.5, -0.01, 'sampled values fed to the Monte-Carlo (dashed line = design '
+             'value); switches are swept with equal weight',
+             ha='center', fontsize=9.5, color='dimgray')
+    plt.tight_layout(rect=(0, 0.02, 1, 0.96))
+    return _save(fig, save_dir, 'uq_inputs')
+
+
+# =============================================================================
+# Figure 5 -- distribution of the main outputs
+# =============================================================================
+# (key, precise label, unit) for the outputs shown; all are produced by
+# D0FUS_uncertainty.evaluate().
+_OUT_SPEC = [
+    ('Q',        r'fusion gain  $Q$',                          ''),
+    ('P_elec',   'net electric power',                         '[MW]'),
+    ('COE',      'levelised cost of electricity',              '[EUR/MWh]'),
+    ('C_invest', r'capital cost  $C_{invest}$',                '[B EUR]'),
+    ('beta_N',   r'normalised beta  $\beta_N$',                ''),
+    ('f_bs',     'bootstrap current fraction',                 '[%]'),
+    ('q95',      r'edge safety factor  $q_{95}$',              ''),
+    ('B0',       r'on-axis toroidal field  $B_0$',             '[T]'),
+    ('B_CS',     'peak field on the central solenoid',         '[T]'),
+    ('P_sep',    r'power crossing the separatrix  $P_{sep}$',  '[MW]'),
+    ('d_TF',     'inboard TF radial build (coil + gap)',       '[m]'),
+    ('d_CS',     'central solenoid radial thickness',          '[m]'),
+]
+
+
+def fig_outputs(results, save_dir=None):
+    """
+    Histogram of the main outputs over the converged Monte-Carlo samples (all model
+    combinations pooled).
+
+    results : dict combo -> list of per-sample row dicts (the run_uq_from_file output).
+    """
+    rows = [r for k in results for r in results[k] if r.get('converged')]
+    if not rows:
+        return None
+
+    specs = [(k, lab, unit) for (k, lab, unit) in _OUT_SPEC
+             if any(np.isfinite(r.get(k, np.nan)) for r in rows)]
+    d = len(specs)
+    if d == 0:
+        return None
+    ncols = min(4, d)
+    nrows = int(np.ceil(d / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3.4 * ncols, 2.6 * nrows))
+    axes = np.atleast_1d(axes).ravel()
+
+    for j, (key, label, unit) in enumerate(specs):
+        ax = axes[j]
+        vals = np.array([r.get(key, np.nan) for r in rows], dtype=float)
+        vals = vals[np.isfinite(vals)]
+        if vals.size:
+            ax.hist(vals, bins=40, color='tab:blue', edgecolor='white', alpha=0.85)
+        ttl = f"{label}  {unit}".strip()
+        ax.set_title(ttl, fontsize=9.5)
+        ax.tick_params(labelsize=8)
+        ax.set_yticks([])
+
+    for ax in axes[d:]:
+        ax.axis('off')
+
+    n_conv = len(rows)
+    plt.suptitle('Distribution of the main outputs',
+                 fontsize=14, fontweight='bold')
+    fig.text(0.5, -0.01, f'over {n_conv} converged Monte-Carlo samples',
+             ha='center', fontsize=9.5, color='dimgray')
+    plt.tight_layout(rect=(0, 0.02, 1, 0.96))
+    return _save(fig, save_dir, 'uq_outputs')
+
 
 if __name__ == "__main__":
     _standalone_main()

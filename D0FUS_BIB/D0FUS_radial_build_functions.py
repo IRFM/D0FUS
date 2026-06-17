@@ -5421,6 +5421,680 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
 
     return d, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS
 
+
+#%% TF and CS Coil Geometry, Volumes, and Cable Inventory
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _princeton_D_contour(r1: float, r2: float, n_leg: int = 50) -> tuple:
+    """
+    Princeton-D constant-tension coil contour in the (R, Z) plane.
+
+    Arc-length ODE:  dR/ds = cos(α),  dZ/ds = sin(α),  dα/ds = 1/(k·R),
+    with k = ½ ln(r₂/r₁).  Starts at (r₂, 0) with α = π/2, stops at α = 3π/2.
+    Closed contour assembled as: top arc + straight inboard leg + mirrored arc.
+
+    Parameters
+    ----------
+    r1 : float  Inboard-leg radius (inner bore) [m].
+    r2 : float  Outboard midplane radius (outer face) [m].
+
+    Returns
+    -------
+    R, Z : ndarray  Closed contour (clockwise winding).
+    """
+    k = 0.5 * np.log(r2 / r1)
+
+    def _rhs(_s, y):
+        _r, _z, _alpha = y
+        return [np.cos(_alpha), np.sin(_alpha), 1.0 / (k * _r)]
+
+    def _evt_alpha(_s, y):
+        return y[2] - 3.0 * np.pi / 2.0
+    _evt_alpha.terminal = True
+
+    y0    = [r2, 0.0, np.pi / 2.0]
+    s_max = 30.0 * r2
+    sol   = solve_ivp(_rhs, [0.0, s_max], y0,
+                      events=_evt_alpha,
+                      max_step=0.01 * r2,
+                      rtol=1e-10, atol=1e-12)
+
+    r_top = sol.y[0];  z_top = sol.y[1]
+    z_leg = z_top[-1]; r_leg = r_top[-1]
+
+    z_leg_pts = np.linspace(z_leg, -z_leg, n_leg)
+    r_leg_pts = np.full_like(z_leg_pts, r_leg)
+    r_bot = r_top[::-1];  z_bot = -z_top[::-1]
+
+    R = np.concatenate([r_top, r_leg_pts[1:-1], r_bot])
+    Z = np.concatenate([z_top, z_leg_pts[1:-1], z_bot])
+    return R, Z
+
+
+def _princeton_D_r2_from_height(r1: float, Z_target: float) -> float:
+    """
+    Find the outboard midplane radius r2 of a Princeton-D curve whose
+    half-height equals Z_target, given inboard leg radius r1.
+
+    Height is monotonically increasing with r2 (for fixed r1), so a
+    simple brentq root-find on the Princeton-D ODE is used.
+
+    Parameters
+    ----------
+    r1       : float  Inboard leg radius [m].
+    Z_target : float  Desired half-height (Z_max) [m].
+
+    Returns
+    -------
+    r2 : float  Outboard midplane radius [m].
+    """
+    def _residual(r2):
+        _, Z = _princeton_D_contour(r1, r2)
+        return Z.max() - Z_target
+
+    r2_lo = r1 * 1.01
+    r2_hi = r1 * 30.0
+    if _residual(r2_hi) < 0:
+        return r2_hi
+    return brentq(_residual, r2_lo, r2_hi, xtol=1e-4)
+
+
+def _offset_contour(R: np.ndarray, Z: np.ndarray, d: float) -> tuple:
+    """
+    Parallel-curve offset of a clockwise Princeton-D contour.
+
+    Split at the straight inboard leg to avoid corner artefacts; each
+    segment is offset independently and stitched back together.
+
+    Parameters
+    ----------
+    R, Z : ndarray  Original contour (clockwise winding).
+    d    : float    Offset distance [m] (positive = inward).
+
+    Returns
+    -------
+    R_off, Z_off : ndarray  Offset contour.
+    """
+    R_min   = R.min()
+    tol     = 0.01 * (R.max() - R_min)
+    leg_idx = np.where(np.abs(R - R_min) < tol)[0]
+
+    if len(leg_idx) < 2:
+        dR = np.gradient(R);  dZ = np.gradient(Z)
+        ds = np.hypot(dR, dZ);  ds[ds < 1e-15] = 1e-15
+        return R - d * dZ / ds, Z + d * dR / ds
+
+    i_s = leg_idx[0];  i_e = leg_idx[-1]
+
+    def _offset_arc(r_seg, z_seg):
+        dr = np.gradient(r_seg);  dz = np.gradient(z_seg)
+        ds = np.hypot(dr, dz);    ds[ds < 1e-15] = 1e-15
+        return r_seg - d * dz / ds, z_seg + d * dr / ds
+
+    ro_top, zo_top = _offset_arc(R[:i_s + 1], Z[:i_s + 1])
+    r_leg_off = R[i_s:i_e + 1] + d
+    z_leg_off = Z[i_s:i_e + 1]
+    ro_bot, zo_bot = _offset_arc(R[i_e:], Z[i_e:])
+
+    R_off = np.concatenate([ro_top[:-1], r_leg_off, ro_bot[1:]])
+    Z_off = np.concatenate([zo_top[:-1], z_leg_off, zo_bot[1:]])
+    return R_off, Z_off
+
+
+def f_TF_cross_section(a: float, b: float, R0: float,
+                       c: float, Delta_TF: float) -> tuple:
+    """
+    Princeton-D cross-section geometry of a TF coil.
+
+    Computes the outer and inner contours of the winding pack using the
+    Princeton-D shape and a constant-thickness inward offset.  Also returns
+    the annular cross-section area and the outer-contour arc length (= one
+    coil turn length, used for cable inventory).
+
+    Called by D0FUS_figures.plot_TF_side_view and by f_V_TF.
+
+    Parameters
+    ----------
+    a, b     : float  Plasma minor radius and blanket+shield thickness [m].
+    R0       : float  Major radius [m].
+    c        : float  Total TF inboard radial thickness c_TF [m].
+    Delta_TF : float  Outboard port-access radial clearance [m].
+
+    Returns
+    -------
+    R_bore   : float   Inner bore radius R0 − a − b − c [m].
+    R_TF_out : float   Outer face radius R0 + a + b + Delta_TF + c [m].
+    H_TF     : float   Total coil height 2 × Z_max [m].
+    A_cross  : float   Annular cross-section area [m²].
+    L_turn   : float   Outer-contour arc length (one full turn) [m].
+    R_out, Z_out : ndarray  Outer Princeton-D contour.
+    R_in,  Z_in  : ndarray  Inner (offset) contour.
+    """
+    R_bore   = R0 - a - b - c
+    R_TF_out = R0 + a + b + Delta_TF + c
+
+    # Degenerate/non-viable geometry (e.g. R_bore <= 0): the Princeton-D ODE
+    # has k = 0.5*ln(R_TF_out/R_bore) undefined or non-positive, which would
+    # otherwise send solve_ivp into a non-terminating step-rejection loop on
+    # NaN derivatives. Short-circuit to NaN, consistent with how other
+    # non-viable design points are flagged.
+    if not (np.isfinite(R_bore) and np.isfinite(R_TF_out)) or R_bore <= 0:
+        _nan_pts = np.full(2, np.nan)
+        return (R_bore, R_TF_out, np.nan, np.nan, np.nan,
+                _nan_pts, _nan_pts, _nan_pts, _nan_pts)
+
+    R_out, Z_out = _princeton_D_contour(R_bore, R_TF_out)
+    R_in,  Z_in  = _offset_contour(R_out, Z_out, c)
+
+    H_TF = 2.0 * float(Z_out.max())
+
+    def _area(R, Z):
+        return abs(0.5 * np.sum(R * np.roll(Z, -1) - np.roll(R, -1) * Z))
+
+    A_cross = _area(R_out, Z_out) - _area(R_in, Z_in)
+    L_turn  = float(np.sum(np.hypot(np.diff(R_out), np.diff(Z_out))))
+
+    return R_bore, R_TF_out, H_TF, A_cross, L_turn, R_out, Z_out, R_in, Z_in
+
+
+def f_V_TF(a: float, b: float, R0: float,
+           c: float, N_TF: int, Delta_TF: float) -> float:
+    """
+    Volume of a single TF coil.
+
+    TF coils are flat D-shaped panels with constant toroidal depth.  
+    The depth of one coil is set by fitting N_TF coils around the inner 
+    bore circumference:
+
+        depth  = 2π × R_bore / N_TF
+        V_TF_one = A_cross × depth
+
+    where R_bore = R0 − a − b − c is the inner bore radius (most constrained
+    location) and A_cross is the annular Princeton-D cross-section area.
+
+    Parameters
+    ----------
+    a, b     : float  Plasma minor radius and blanket+shield thickness [m].
+    R0       : float  Major radius [m].
+    c        : float  Total TF inboard radial thickness c_TF [m].
+    N_TF     : int    Number of TF coils.
+    Delta_TF : float  Outboard port-access radial clearance [m].
+
+    Returns
+    -------
+    V_TF_one : float  Volume of one TF coil [m³].
+    """
+    R_bore, _, _, A_cross, _, _, _, _, _ = f_TF_cross_section(
+        a, b, R0, c, Delta_TF)
+    return A_cross * 2.0 * np.pi * R_bore / float(N_TF)
+
+
+def _moment_area(R: np.ndarray, Z: np.ndarray) -> float:
+    """
+    Compute ∫∫_enclosed R dA for a closed contour via Green's theorem.
+
+    Exact for piecewise-linear polygons (same accuracy class as the
+    shoelace _area formula).  Orientation-independent (abs value taken).
+
+    Uses:  ∫∫ R dA = (1/6) Σ_i (Z_{i+1}−Z_i)(R_i² + R_i R_{i+1} + R_{i+1}²)
+    """
+    Rp = np.roll(R, -1)
+    Zp = np.roll(Z, -1)
+    return abs(np.sum((Zp - Z) * (R**2 + R * Rp + Rp**2))) / 6.0
+
+
+def f_V_blanket(a: float, b: float, R0: float,
+                κ: float, δ: float, Delta_TF: float,
+                N_theta: int = 500,
+                R_outer: np.ndarray | None = None,
+                Z_outer: np.ndarray | None = None) -> float:
+    """
+    Volume of the blanket (continuous torus between plasma LCFS and TF inner face).
+
+    Outer boundary: actual inner face of the TF coil (R_in/Z_in from
+                    f_TF_cross_section), passed via R_outer/Z_outer.  This is
+                    the physically correct boundary — the blanket fills exactly
+                    the cavity inside the TF winding pack.  When R_outer/Z_outer
+                    are omitted a fresh Princeton-D at r1=R0−a−b, r2=R0+a+b+Delta_TF
+                    is used instead (slightly shorter, ~23% smaller volume).
+    Inner boundary: Miller LCFS with elongation κ and triangularity δ
+                    R(θ) = R0 + a·cos(θ + arcsin(δ)·sin(θ))
+                    Z(θ) = κ·a·sin(θ)
+
+    Volume formula (exact for a body of revolution):
+        V = 2π ∫∫_cross-section R dA
+          = 2π × [_moment_area(outer) − _moment_area(inner)]
+
+    Parameters
+    ----------
+    a, b     : float          Plasma minor radius and blanket+shield thickness [m].
+    R0       : float          Major radius [m].
+    κ        : float          Plasma elongation (LCFS).
+    δ        : float          Plasma triangularity (LCFS).
+    Delta_TF : float          Outboard port-access radial clearance [m].
+    N_theta  : int            Points on the Miller LCFS contour.
+    R_outer, Z_outer : ndarray or None
+                              Pre-computed outer boundary contour (TF inner face).
+                              When provided, the Princeton-D ODE is not re-solved.
+
+    Returns
+    -------
+    V_blanket : float  Total blanket volume [m³].
+    """
+    if R_outer is None:
+        R_outer, Z_outer = _princeton_D_contour(R0 - a - b, R0 + a + b + Delta_TF)
+
+    theta = np.linspace(0.0, 2.0 * np.pi, N_theta, endpoint=False)
+    R_in  = R0 + a * np.cos(theta + np.arcsin(δ) * np.sin(theta))
+    Z_in  = κ * a * np.sin(theta)
+
+    return 2.0 * np.pi * (_moment_area(R_outer, Z_outer) - _moment_area(R_in, Z_in))
+
+
+# ── Radial build layer volumes ────────────────────────────────────────────
+
+def f_radial_build_layers(
+    a: float, b: float, κ: float, δ: float, R0: float,
+    Delta_TF: float,
+    f_kappa_SOL: float,
+    f_div_area_fraction: float,
+    R_tf_in: np.ndarray,
+    Z_tf_in: np.ndarray,
+    Blanket_choice: str,
+    N_theta: int = 500,
+) -> dict:
+    """
+    Exact volumes/masses of every layer in the concept-specific radial build,
+    from the plasma LCFS to the TF inner face.
+
+    The layer stack (BLANKET_CONCEPTS[Blanket_choice]['radial_layers'], ordered
+    plasma -> TF) is split around its single 'breeder' layer:
+
+      - Layers between the LCFS and the breeder (SOL, FW, and any concept-
+        specific layers in between, e.g. F-LIB's multiplier+VV) are bounded by
+        cumulative Miller ellipses (κ·(1+f_kappa_SOL), same δ, expanding minor
+        radius by each layer's width in turn).
+      - Layers between the breeder and the TF inner face (shields, VV, gaps,
+        structure) are bounded by cumulative _offset_contour() shells of the
+        TF inner face, built up TF-side first.
+      - The breeder layer fills the remaining shell between the two stacks —
+        its thickness is the residual of b (radial_layers_effective()).
+
+    Every layer boundary is an actual 3D contour; volumes are computed via the
+    exact body-of-revolution formula V = 2π ∫∫ R dA (_moment_area).  No Pappus
+    approximation, no post-hoc scaling: sum(V) equals f_V_blanket to within
+    numerical integration error, for any concept-specific layer count/order.
+
+    Parameters
+    ----------
+    R_tf_in, Z_tf_in : ndarray  TF inner-face Princeton-D contour (from f_TF_cross_section).
+
+    Returns
+    -------
+    dict with keys:
+        layers       — list of per-layer dicts (name, role, width, rho,
+                        composition, component_masses, delta_ib, delta_ob, V,
+                        V_eff, M, R_inner/Z_inner, R_outer/Z_outer), in
+                        plasma -> TF order.  'rho' is derived from
+                        'composition' (volume fractions) and
+                        BLANKET_MATERIAL_DENSITIES; 'component_masses' gives
+                        the mass [kg] of each constituent material.
+        V_total      — sum of all layer volumes [m³]
+        V_divertor   — divertor volume (fraction of FW+breeder+structure+multiplier) [m³]
+        delta_BB_ib, delta_BB_ob — breeder-layer IB/OB thicknesses [m]
+    """
+    layers    = radial_layers_effective(Blanket_choice, b, Delta_TF)
+    i_breeder = next(i for i, L in enumerate(layers) if L['role'] == 'breeder')
+    before    = layers[:i_breeder]
+    breeder   = layers[i_breeder]
+    after     = layers[i_breeder + 1:]
+
+    theta     = np.linspace(0.0, 2.0 * np.pi, N_theta, endpoint=False)
+    kappa_sol = κ * (1.0 + f_kappa_SOL)
+    cos_t     = np.cos(theta + np.arcsin(δ) * np.sin(theta))
+    sin_t     = np.sin(theta)
+
+    # ── Plasma-side stack: cumulative Miller ellipses from the LCFS ─────────
+    R_prev, Z_prev = R0 + a * cos_t, κ * a * sin_t
+    M_prev = _moment_area(R_prev, Z_prev)
+    a_cum  = a
+    for L in before:
+        a_cum += L['delta_ib']
+        R_out, Z_out = R0 + a_cum * cos_t, kappa_sol * a_cum * sin_t
+        M_cur = _moment_area(R_out, Z_out)
+        L['V'] = 2.0 * np.pi * (M_cur - M_prev)
+        L['R_inner'], L['Z_inner'] = R_prev, Z_prev
+        L['R_outer'], L['Z_outer'] = R_out,  Z_out
+        R_prev, Z_prev, M_prev = R_out, Z_out, M_cur
+    M_breeder_in            = M_prev
+    R_breeder_in, Z_breeder_in = R_prev, Z_prev
+
+    # ── TF-side stack: cumulative offsets of the TF inner face ──────────────
+    R_prev, Z_prev = R_tf_in, Z_tf_in
+    M_prev = _moment_area(R_tf_in, Z_tf_in)
+    offset_cum = 0.0
+    for L in reversed(after):
+        offset_cum += L['delta_ib']
+        R_in, Z_in = _offset_contour(R_tf_in, Z_tf_in, offset_cum)
+        M_cur = _moment_area(R_in, Z_in)
+        L['V'] = 2.0 * np.pi * (M_prev - M_cur)
+        L['R_outer'], L['Z_outer'] = R_prev, Z_prev
+        L['R_inner'], L['Z_inner'] = R_in,   Z_in
+        R_prev, Z_prev, M_prev = R_in, Z_in, M_cur
+    M_breeder_out             = M_prev
+    R_breeder_out, Z_breeder_out = R_prev, Z_prev
+
+    # ── Breeder: fills the remaining shell between the two stacks ───────────
+    breeder['V'] = 2.0 * np.pi * (M_breeder_out - M_breeder_in)
+    breeder['R_inner'], breeder['Z_inner'] = R_breeder_in,  Z_breeder_in
+    breeder['R_outer'], breeder['Z_outer'] = R_breeder_out, Z_breeder_out
+
+    V_total = sum(L['V'] for L in layers)
+
+    # ── Divertor: fraction of FW + breeder/structure/multiplier volume ──────
+    _DIV_ROLES = ('FW', 'breeder', 'structure', 'multiplier')
+    V_FW_BB    = sum(L['V'] for L in layers if L['role'] in _DIV_ROLES)
+    V_divertor = f_div_area_fraction * V_FW_BB
+    for L in layers:
+        L['V_eff'] = (L['V'] * (1.0 - f_div_area_fraction)
+                       if L['role'] in _DIV_ROLES else L['V'])
+
+    # ── Densities and masses from per-layer material composition ────────────
+    for L in layers:
+        comp = L['composition']
+        L['rho'] = sum(frac * BLANKET_MATERIAL_DENSITIES[mat] for mat, frac in comp.items())
+        L['component_masses'] = {mat: L['V_eff'] * frac * BLANKET_MATERIAL_DENSITIES[mat]
+                                  for mat, frac in comp.items()}
+        L['M'] = sum(L['component_masses'].values())
+
+    return {
+        'layers':      layers,
+        'V_total':     V_total,
+        'V_divertor':  V_divertor,
+        'delta_BB_ib': breeder['delta_ib'],
+        'delta_BB_ob': breeder['delta_ob'],
+    }
+
+
+def f_V_CS(a: float, b: float, c: float, d: float,
+           R0: float, κ: float,
+           Gap: float, Choice_Buck_Wedg: str) -> float:
+    """
+    Volume of the full CS solenoid (annular right cylinder, all modules).
+
+    Formula consistent with f_volume():
+        H_CS = 2 × (κ·a + b + c)
+        V_CS_geom = π × H_CS × (R_CS_ext² − R_CS_int²)
+
+    Parameters
+    ----------
+    a, b : float  Plasma minor radius and blanket+shield thickness [m].
+    c    : float  TF inboard radial thickness c_TF [m].
+    d    : float  CS winding-pack radial thickness [m].
+    R0   : float  Major radius [m].
+    κ    : float  Plasma elongation [-].
+    Gap  : float  Radial TF bore → CS gap (Wedging only) [m].
+    Choice_Buck_Wedg : str  'Wedging', 'Bucking', or 'Plug'.
+
+    Returns
+    -------
+    V_CS_geom : float  Total CS solenoid volume [m³].
+    """
+    _gap_eff = Gap if Choice_Buck_Wedg == 'Wedging' else 0.0
+    R_CS_ext = R0 - a - b - c - _gap_eff
+    R_CS_int = R_CS_ext - d
+    H_CS     = 2.0 * (κ * a + b + 1)
+    return np.pi * H_CS * (R_CS_ext ** 2 - R_CS_int ** 2)
+
+
+def f_coil_material_volumes(
+    V_TF_one: float, N_TF: int,
+    Steel_fraction_TF: float,
+    f_sc_TF: float, f_cu_TF: float, f_He_TF: float, f_In_TF: float,
+    V_CS_geom: float,
+    Steel_fraction_CS: float,
+    f_sc_CS: float, f_cu_CS: float, f_He_CS: float, f_In_CS: float,
+) -> tuple:
+    """
+    Material volumes for the TF system (total = V_TF_one × N_TF) and the CS.
+
+    Decomposition:
+        V_total = V_steel + V_cable
+        V_cable = V_sc + V_cu + V_He + V_In   (wost fractions)
+
+    Parameters
+    ----------
+    V_TF_one          : float  Volume of one TF coil [m³].
+    N_TF              : int    Number of TF coils.
+    Steel_fraction_TF : float  Steel fraction of TF winding pack [-].
+    f_sc_TF … f_In_TF : float  Wost material fractions for TF.
+    V_CS_geom         : float  Total CS solenoid volume [m³].
+    Steel_fraction_CS : float  Steel fraction of CS winding pack [-].
+    f_sc_CS … f_In_CS : float  Wost material fractions for CS.
+
+    Returns
+    -------
+    (V_steel_TF, V_sc_TF, V_cu_TF, V_He_TF, V_In_TF,
+     V_steel_CS, V_sc_CS, V_cu_CS, V_He_CS, V_In_CS)  all in [m³].
+    """
+    V_TF_total = V_TF_one * float(N_TF)
+    cable_TF   = V_TF_total * (1.0 - Steel_fraction_TF)
+    V_steel_TF = V_TF_total * Steel_fraction_TF
+    V_sc_TF    = cable_TF * f_sc_TF
+    V_cu_TF    = cable_TF * f_cu_TF
+    V_He_TF    = cable_TF * f_He_TF
+    V_In_TF    = cable_TF * f_In_TF
+
+    cable_CS   = V_CS_geom * (1.0 - Steel_fraction_CS)
+    V_steel_CS = V_CS_geom * Steel_fraction_CS
+    V_sc_CS    = cable_CS * f_sc_CS
+    V_cu_CS    = cable_CS * f_cu_CS
+    V_He_CS    = cable_CS * f_He_CS
+    V_In_CS    = cable_CS * f_In_CS
+
+    return (V_steel_TF, V_sc_TF, V_cu_TF, V_He_TF, V_In_TF,
+            V_steel_CS, V_sc_CS, V_cu_CS, V_He_CS, V_In_CS)
+
+
+def f_coil_masses(
+    V_steel_TF: float, V_sc_TF: float, V_cu_TF: float, V_In_TF: float,
+    V_steel_CS: float, V_sc_CS: float, V_cu_CS: float, V_In_CS: float,
+    Chosen_Steel: str, Supra_choice: str,
+    f_TF_steel_mass: float = 2.0,
+) -> tuple:
+    """
+    Compute the mass of each material component for the TF and CS coil systems.
+
+    Uses volumetric mass densities from COIL_MATERIAL_DENSITIES in
+    D0FUS_parameterization.py.  Helium (void + pipe) is excluded from the
+    mass budget as it is a coolant, not a structural material.
+
+    Parameters
+    ----------
+    V_steel_TF, V_sc_TF, V_cu_TF, V_In_TF : float
+        Total material volumes for the full TF system (all N_TF coils) [m³].
+    V_steel_CS, V_sc_CS, V_cu_CS, V_In_CS : float
+        Material volumes for the full CS solenoid [m³].
+    Chosen_Steel : str   Steel grade ('316L', 'N50H', 'Manual').
+    Supra_choice : str   SC type ('Nb3Sn', 'NbTi', 'REBCO', 'Manual').
+    f_TF_steel_mass : float
+        Multiplicative factor on M_steel_TF to account for geometry
+        approximations, gravitational supports, and inter-coil structures [-].
+
+    Returns
+    -------
+    (M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF,
+     M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS)  all in [kg].
+    """
+    rho = material_rho(Chosen_Steel, Supra_choice)
+    rho_st  = rho['steel']
+    rho_sc  = rho['SC']
+    rho_cu  = rho['Cu']
+    rho_ins = rho['insulation']
+
+    M_steel_TF = V_steel_TF * rho_st * f_TF_steel_mass
+    M_sc_TF    = V_sc_TF    * rho_sc
+    M_cu_TF    = V_cu_TF    * rho_cu
+    M_In_TF    = V_In_TF    * rho_ins
+    M_total_TF = M_steel_TF + M_sc_TF + M_cu_TF + M_In_TF
+
+    M_steel_CS = V_steel_CS * rho_st
+    M_sc_CS    = V_sc_CS    * rho_sc
+    M_cu_CS    = V_cu_CS    * rho_cu
+    M_In_CS    = V_In_CS    * rho_ins
+    M_total_CS = M_steel_CS + M_sc_CS + M_cu_CS + M_In_CS
+
+    return (M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF,
+            M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS)
+
+
+def f_TBR(delta_BB_ib: float, Blanket_choice: str) -> float:
+    """
+    Tritium breeding ratio from a saturation-curve fit to the breeder-zone
+    thickness.
+
+        TBR(delta_BZ) = TBR_max * (1 - exp(-delta_BZ / delta_e))
+        delta_e       = delta_BB_sat / ln(20)
+
+    delta_e is set so that TBR reaches 95% of TBR_max at delta_BZ = delta_BB_sat.
+    TBR_max and delta_BB_sat are taken from BLANKET_CONCEPTS[Blanket_choice].
+    The breeder layer's own IB thickness (delta_BB_ib, from
+    radial_layers_effective()) is used directly as delta_BZ.
+
+    Parameters
+    ----------
+    delta_BB_ib    : float  Inboard breeder-layer thickness [m].
+    Blanket_choice : str    Concept key (see BLANKET_CONCEPTS).
+
+    Returns
+    -------
+    TBR : float  Achieved tritium breeding ratio [-].
+    """
+    concept  = material_blanket(Blanket_choice)
+    delta_BZ = max(delta_BB_ib, 0.0)
+    delta_e  = concept['delta_BB_sat'] / np.log(20.0)
+    return concept['TBR_max'] * (1.0 - np.exp(-delta_BZ / delta_e))
+
+
+def f_cable_length(
+    N_TF: int, L_turn_TF: float, Bmax_TF: float, R_TF_in: float,
+    I_cond: float,
+    N_sub_CS: int, L_turn_CS: float, B_CS: float, H_CS_NI: float,
+) -> tuple:
+    """
+    Total cable conductor length for the TF and CS systems.
+
+    TF — Ampere's law on toroidal path at the plasma-facing inner face
+    (R_TF_in = R0 − a − b), consistent with the NI convention used
+    throughout D0FUS (save_run_output, calculate_E_mag_TF):
+        NI_total = Bmax_TF × 2π × R_TF_in / μ₀
+        N_turns  = NI_total / (N_TF × I_cond)
+        L_cable  = N_TF × N_turns × L_turn_TF
+
+    CS — solenoid law:
+        NI_total = B_CS × H_CS / μ₀
+        N_turns  = NI_total / (N_sub_CS × I_cond)
+        L_cable  = N_sub_CS × N_turns × L_turn_CS
+
+    Parameters
+    ----------
+    N_TF       : int    Number of TF coils.
+    L_turn_TF  : float  Princeton-D outer contour arc length [m].
+    Bmax_TF    : float  Peak field on TF conductor [T].
+    R_TF_in    : float  Plasma-facing inner face radius = R0 − a − b [m].
+                        This is the radius used for Ampere's law throughout
+                        D0FUS (consistent with N_turns displayed in output).
+    I_cond     : float  Operating current per conductor [A].
+    N_sub_CS   : int    Number of CS modules.
+    L_turn_CS  : float  Mean CS turn perimeter = π × (R_ext + R_int) [m].
+    B_CS       : float  CS peak field [T].
+    H_CS_NI    : float  CS height for NI computation = 2(κa + b + 1) [m].
+
+    Returns
+    -------
+    (L_cable_TF, L_cable_CS, Nturns_TF, Nturns_CS)
+        Lengths in [m], turns in turns/coil or turns/module.
+    """
+    if I_cond > 0 and N_TF > 0:
+        NI_TF      = Bmax_TF * 2.0 * np.pi * R_TF_in / μ0
+        Nturns_TF  = NI_TF / (float(N_TF) * I_cond)
+        L_cable_TF = float(N_TF) * Nturns_TF * L_turn_TF
+    else:
+        Nturns_TF  = np.nan
+        L_cable_TF = np.nan
+
+    _N_sub = max(int(N_sub_CS), 1)
+    if (np.isfinite(B_CS) and B_CS > 0 and I_cond > 0
+            and np.isfinite(H_CS_NI) and H_CS_NI > 0):
+        NI_CS      = B_CS * H_CS_NI / μ0
+        Nturns_CS  = NI_CS / (_N_sub * I_cond)
+        L_cable_CS = _N_sub * Nturns_CS * L_turn_CS
+    else:
+        Nturns_CS  = np.nan
+        L_cable_CS = np.nan
+
+    return L_cable_TF, L_cable_CS, Nturns_TF, Nturns_CS
+
+
+def f_cable_strands(
+    V_sc_TF: float, L_cable_TF: float,
+    V_sc_CS: float, L_cable_CS: float,
+    Supra_choice: str,
+) -> tuple:
+    """
+    SC and Cu strand (or tape) counts per cable, and total strand lengths.
+
+    Uses the same convention as D0FUS's CICC cross-section plot
+    (build_conductor_from_run / plot_CICC_cross_section, Cu_nonCu = 0):
+    each strand is counted as either pure SC or pure Cu based on the
+    volume fraction it carries.  This gives n_sc ≠ n_cu because
+    V_sc ≠ V_cu (f_sc ≠ f_cu).
+
+        n_sc = (V_sc / L_cable) / A_strand_full
+        n_cu = (V_cu / L_cable) / A_strand_full
+
+    where A_strand_full is the full cross-section of one strand/tape.
+
+    Reference cross-sections (from D0FUS Jc functions):
+        REBCO : full tape  12 mm × 100 µm = 1.2×10⁻⁶ m².
+        Nb3Sn : strand diameter 0.82 mm  (Mitchell 2012) → 5.28×10⁻⁷ m².
+        NbTi  : strand diameter 0.81 mm  (Sborchia 2011) → 5.15×10⁻⁷ m².
+
+    Parameters
+    ----------
+    V_sc_TF    : float  SC material volume for all TF coils [m³].
+    L_cable_TF : float  Total TF cable conductor length [m].
+    V_sc_CS    : float  SC material volume for full CS solenoid [m³].
+    L_cable_CS : float  Total CS cable conductor length [m].
+    Supra_choice : str  SC type ('Nb3Sn', 'NbTi', 'REBCO', 'Manual').
+
+    Returns
+    -------
+    (n_sc_TF, n_sc_CS, L_sc_strand_TF, L_sc_strand_CS)
+        n in SC strands/tapes per cable cross-section [-].
+        L in total SC strand length [m].
+    """
+    if 'REBCO' in Supra_choice:
+        A_strand = 12e-3 * 100e-6              # full tape 12 mm × 100 µm [m²]
+    elif Supra_choice == 'NbTi':
+        A_strand = np.pi * (0.81e-3 / 2.0) ** 2   # 0.81 mm strand [m²]
+    else:
+        A_strand = np.pi * (0.82e-3 / 2.0) ** 2   # 0.82 mm strand (Nb3Sn/Manual)
+
+    def _compute(V_sc, L_cable):
+        if not (np.isfinite(V_sc) and np.isfinite(L_cable)
+                and L_cable > 0 and A_strand > 0):
+            return np.nan, np.nan
+        n_sc = (V_sc / L_cable) / A_strand
+        return n_sc, L_cable * n_sc
+
+    n_sc_TF, L_sc_TF = _compute(V_sc_TF, L_cable_TF)
+    n_sc_CS, L_sc_CS = _compute(V_sc_CS, L_cable_CS)
+
+    return n_sc_TF, n_sc_CS, L_sc_TF, L_sc_CS
+
+
 #%% CS Benchmark
 
 if __name__ == "__main__":

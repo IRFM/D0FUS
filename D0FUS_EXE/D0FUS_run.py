@@ -21,7 +21,9 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # D0FUS modules
-from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG, coerce_input_value
+from D0FUS_BIB.D0FUS_parameterization import (
+    GlobalConfig, DEFAULT_CONFIG, coerce_input_value, material_rho,
+    M_blanket_effective, eta_T_effective)
 from D0FUS_BIB.D0FUS_radial_build_functions import *
 from D0FUS_BIB.D0FUS_physical_functions import *
 from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
@@ -396,6 +398,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     n_shape_TF                = config.n_shape_TF
     c_BP                      = config.c_BP
     TF_grading                = config.TF_grading
+    f_TF_steel_mass           = config.f_TF_steel_mass
     Gap                       = config.Gap
     n_shape_CS                = config.n_shape_CS
     N_sub_CS                  = config.N_sub_CS
@@ -417,7 +420,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     T_hotspot                 = config.T_hotspot
     RRR                       = config.RRR
     Dump_resistor_subdivision = config.Dump_resistor_subdivision
-    eta_T                     = config.eta_T
+    eta_T                     = eta_T_effective(config.Blanket_choice)
     eta_WP                    = config.eta_WP_acad if config.CD_source == 'Academic' else config.eta_RF
     theta_deg                 = config.theta_deg
     f_n_sep                   = config.f_n_sep
@@ -442,7 +445,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     A_beam                    = config.A_beam
     E_beam_keV                = config.E_beam_keV
     Plasma_geometry           = config.Plasma_geometry
-    M_blanket                 = config.M_blanket
+    M_blanket                 = M_blanket_effective(config.Blanket_choice)
 
     # Core/edge radiation boundary for P_loss convention.
     # Radiation emitted inside ρ < rho_rad_core is subtracted from P_heat
@@ -1695,6 +1698,24 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             _nan, _nan, _nan, _nan, _nan, _nan,  # f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF
             _nan, _nan, _nan, _nan, _nan, _nan,  # f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS
             _nan, _nan, _nan, _nan,              # beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha
+            _nan, _nan,                          # V_TF_one, V_CS_geom
+            _nan, _nan, _nan, _nan, _nan,        # V_steel_TF, V_sc_TF, V_cu_TF, V_He_TF, V_In_TF
+            _nan, _nan, _nan, _nan, _nan,        # V_steel_CS, V_sc_CS, V_cu_CS, V_He_CS, V_In_CS
+            _nan, _nan,                          # L_cable_TF, L_cable_CS
+            _nan, _nan,                          # n_sc_TF, n_sc_CS
+            _nan, _nan,                          # L_sc_strand_TF, L_sc_strand_CS
+            _nan, _nan, _nan, _nan, _nan,        # M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF
+            _nan, _nan, _nan, _nan, _nan,        # M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS
+            _nan,                                # V_blanket
+            _nan, _nan,                          # t_life_bl_fpy, t_life_div_fpy
+            _nan, _nan,                          # t_life_bl_yr, t_life_div_yr
+            _nan, _nan,                          # T_op_limit, dt_rep_eff
+            _nan, _nan,                          # Av, CF
+            _nan,                                # V_rb_SOL
+            _nan, _nan,                          # V_rb_FW, V_rb_BB
+            _nan, _nan, _nan,                    # V_rb_shield, V_rb_VV, V_rb_gap_TF
+            _nan,                                # V_rb_divertor
+            _nan, _nan, _nan, _nan, _nan, _nan,  # M_rb_FW, M_rb_BB, M_rb_shield, M_rb_VV, M_rb_divertor, M_rb_total
             {},                                  # divertor_solution (empty on failure)
         )
 
@@ -1978,6 +1999,56 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             "Valid options: 'academic', 'refined', 'CIRCE'."
         )
 
+    # ── Return nan tuple if TF radial build failed ────────────────────────────
+    _nan = np.nan
+    if not np.isfinite(c):
+        return (
+            _nan, _nan, _nan,                  # B0, B_CS, B_pol
+            _nan, _nan,                          # tauE, W_th
+            _nan, _nan, _nan,                  # Q, Volume, Surface
+            _nan, _nan, _nan, _nan,            # Ip, Ib, I_CD, I_Ohm
+            _nan, _nan, _nan, _nan,            # nbar, nbar_line, nG, pbar
+            _nan, _nan, _nan,                  # betaN, betaT, betaP
+            _nan, _nan,                          # qstar, q95
+            _nan, _nan, _nan, _nan, _nan, _nan,  # P_CD, P_sep, P_Thresh, eta_CD, P_elec, P_wallplug
+            _nan, _nan, _nan, _nan,            # cost, P_Brem, P_syn, P_line
+            _nan,                               # P_line_core
+            _nan, _nan, _nan, _nan, _nan,      # heat, heat_par, heat_pol, lambda_q, q_target
+            _nan, _nan,                          # P_wall_rad, P_wall_div
+            _nan,                               # Gamma_n
+            _nan, _nan,                          # f_alpha, tau_alpha
+            _nan, _nan,                          # J_TF, J_CS
+            _nan, _nan, _nan, _nan, _nan, _nan, _nan,  # TF radial build + stresses
+            _nan, _nan, _nan, _nan, _nan, _nan, _nan,  # CS radial build + stresses
+            _nan, _nan, _nan, _nan,            # r_minor, r_sep, r_c, r_d
+            _nan, _nan, _nan, _nan,            # κ, κ_95, δ, δ_95
+            _nan, _nan, _nan, _nan, _nan, _nan, _nan,  # ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS, Vloop, li
+            _nan, _nan, _nan,                  # eta_LH, eta_EC, eta_NBI
+            _nan, _nan, _nan, _nan,            # P_LH, P_EC, P_NBI, P_ICR
+            _nan, _nan, _nan,                  # I_LH, I_EC, I_NBI
+            _nan, _nan, _nan, _nan, _nan, _nan,  # f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF
+            _nan, _nan, _nan, _nan, _nan, _nan,  # f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS
+            _nan, _nan, _nan, _nan,              # beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha
+            _nan, _nan,                          # V_TF_one, V_CS_geom
+            _nan, _nan, _nan, _nan, _nan,        # V_steel_TF, V_sc_TF, V_cu_TF, V_He_TF, V_In_TF
+            _nan, _nan, _nan, _nan, _nan,        # V_steel_CS, V_sc_CS, V_cu_CS, V_He_CS, V_In_CS
+            _nan, _nan,                          # L_cable_TF, L_cable_CS
+            _nan, _nan,                          # n_sc_TF, n_sc_CS
+            _nan, _nan,                          # L_sc_strand_TF, L_sc_strand_CS
+            _nan, _nan, _nan, _nan, _nan,        # M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF
+            _nan, _nan, _nan, _nan, _nan,        # M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS
+            _nan,                                # V_blanket
+            _nan, _nan,                          # t_life_bl_fpy, t_life_div_fpy
+            _nan, _nan,                          # t_life_bl_yr, t_life_div_yr
+            _nan, _nan,                          # T_op_limit, dt_rep_eff
+            _nan, _nan,                          # Av, CF
+            _nan,                                # V_rb_SOL
+            _nan, _nan,                          # V_rb_FW, V_rb_BB
+            _nan, _nan, _nan,                    # V_rb_shield, V_rb_VV, V_rb_gap_TF
+            _nan,                                # V_rb_divertor
+            _nan, _nan, _nan, _nan, _nan, _nan,  # M_rb_FW, M_rb_BB, M_rb_shield, M_rb_VV, M_rb_divertor, M_rb_total
+        )
+
     # ==============================================================================
     #    MAGNETIC FLUX REQUIREMENTS (Inductive Scenario)
     #    Volt-seconds budget for plasma initiation, ramp-up, and flat-top.
@@ -2069,10 +2140,107 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         alpha_GR=config.alpha_giacomin, f0=config.f0_zanca)
     if density_limit_model != 'greenwald':
         nG_solution = n_DL_line * Greenwald_limit
+    # ── TF Princeton-D cross-section geometry ─────────────────────────────────
+    (R_bore_TF, _R_TF_out, _H_TF_D, _A_cross_TF, L_turn_TF,
+     _R_out, _Z_out, _R_in, _Z_in) = f_TF_cross_section(a, b, R0, c, Delta_TF)
 
-    # Component volumes (Pappus centroid theorem, rectangular cross-sections)
-    (V_BB, V_TF, V_CS, V_FI) = f_volume(a, b, c, d, R0, κ)
-    cost_solution = (V_BB + V_TF + V_CS) / P_fus   # legacy cost proxy [m^3/MW]
+    # Component volumes — only V_FI used; Princeton-D H_TF for the FI cylinder
+    (_, _, _, V_FI) = f_volume(a, b, c, d, R0, κ, Delta_TF, _H_TF_D)
+
+    # ── Single-coil TF volume (inline: reuse A_cross and R_bore already computed) ──
+    # f_V_TF(a,b,R0,c,N_TF,Delta_TF) = A_cross * 2π * R_bore / N_TF but it would
+    # call f_TF_cross_section a second time (ODE solve). Use pre-computed values.
+    V_TF_one  = _A_cross_TF * 2.0 * np.pi * R_bore_TF / float(N_TF)
+    V_CS_geom = f_V_CS(a, b, c, d, R0, κ, Gap, Choice_Buck_Wedg)
+
+    # ── Radial build layer volumes ────────────────────────────────────────────
+    # All boundaries are real 3D contours; volumes via exact _moment_area integrals.
+    # Concept-specific layer stack (BLANKET_CONCEPTS[...]['radial_layers']) split
+    # around the single 'breeder' layer: plasma-side layers use cumulative Miller
+    # ellipses, TF-side layers use cumulative Princeton-D offsets, breeder fills
+    # the remaining shell.  No Pappus approximation; no post-hoc scaling.
+    V_blanket = f_V_blanket(a, b, R0, κ, δ, Delta_TF,
+                            R_outer=_R_in, Z_outer=_Z_in)
+    _rb = f_radial_build_layers(
+        a=a, b=b, κ=κ, δ=δ, R0=R0,
+        Delta_TF=Delta_TF,
+        f_kappa_SOL=config.f_kappa_SOL,
+        f_div_area_fraction=config.f_div_area_fraction,
+        R_tf_in=_R_in,
+        Z_tf_in=_Z_in,
+        Blanket_choice=config.Blanket_choice,
+    )
+    _BB_ROLES     = ('breeder', 'structure', 'multiplier')
+    _SHIELD_ROLES = ('shield_HT', 'shield_LT')
+
+    V_rb_SOL      = sum(L['V']     for L in _rb['layers'] if L['role'] == 'SOL')
+    V_rb_FW       = sum(L['V_eff'] for L in _rb['layers'] if L['role'] == 'FW')
+    V_rb_BB       = sum(L['V_eff'] for L in _rb['layers'] if L['role'] in _BB_ROLES)
+    V_rb_shield   = sum(L['V']     for L in _rb['layers'] if L['role'] in _SHIELD_ROLES)
+    V_rb_VV       = sum(L['V']     for L in _rb['layers'] if L['role'] == 'VV')
+    V_rb_gap_TF   = sum(L['V']     for L in _rb['layers'] if L['role'] == 'gap')
+    V_rb_divertor = _rb['V_divertor']
+
+    # ── Radial build layer masses ─────────────────────────────────────────────
+    M_rb_FW       = sum(L['M'] for L in _rb['layers'] if L['role'] == 'FW')
+    M_rb_BB       = sum(L['M'] for L in _rb['layers'] if L['role'] in _BB_ROLES)
+    M_rb_shield   = sum(L['M'] for L in _rb['layers'] if L['role'] in _SHIELD_ROLES)
+    M_rb_VV       = sum(L['M'] for L in _rb['layers'] if L['role'] == 'VV')
+    M_rb_divertor = V_rb_divertor * config.rho_divertor
+    M_rb_total    = M_rb_FW + M_rb_BB + M_rb_shield + M_rb_VV + M_rb_divertor
+
+    cost_solution = (V_rb_BB + V_TF_one * N_TF + V_CS_geom) / P_fus   # legacy cost proxy [m^3/MW]
+
+    # ── Material volumes (TF: total = V_TF_one × N_TF; CS: full solenoid) ─────
+    (V_steel_TF, V_sc_TF, V_cu_TF, V_He_TF, V_In_TF,
+     V_steel_CS, V_sc_CS, V_cu_CS, V_He_CS, V_In_CS) = f_coil_material_volumes(
+        V_TF_one, int(N_TF),
+        Steel_fraction_TF,
+        f_sc_TF, f_cu_TF, f_He_TF, f_In_TF,
+        V_CS_geom,
+        Steel_fraction_CS,
+        f_sc_CS, f_cu_CS, f_He_CS, f_In_CS)
+
+    # ── Cable conductor lengths ───────────────────────────────────────────────
+    R_CS_ext_val = R0 - a - b - c - _gap_eff
+    L_turn_CS    = np.pi * (R_CS_ext_val + R_CS_ext_val - d)   # 2π × R_mean
+    _R_TF_in     = R0 - a - b   # plasma-facing inner face, consistent with D0FUS NI convention
+    (L_cable_TF, L_cable_CS,
+     _Nturns_TF, _Nturns_CS) = f_cable_length(
+        int(N_TF), L_turn_TF, Bmax_TF, _R_TF_in,
+        I_cond,
+        N_sub_CS, L_turn_CS, B_CS, H_TF)   # H_TF = 2(κa+b+1) = H_CS_NI
+
+    # ── Material masses ───────────────────────────────────────────────────────
+    (M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF,
+     M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS) = f_coil_masses(
+        V_steel_TF, V_sc_TF, V_cu_TF, V_In_TF,
+        V_steel_CS, V_sc_CS, V_cu_CS, V_In_CS,
+        Chosen_Steel, Supra_choice, f_TF_steel_mass)
+
+    # ── SC strand counts and total SC strand lengths ───────────────────────────
+    (n_sc_TF, n_sc_CS,
+     L_sc_strand_TF, L_sc_strand_CS) = f_cable_strands(
+        V_sc_TF, L_cable_TF,
+        V_sc_CS, L_cable_CS,
+        Supra_choice)
+
+    # ── Component lifetimes and plant availability ────────────────────────────
+    A_div          = config.f_div_area_fraction * Surface_solution
+    A_blanket      = Surface_solution * (1.0 - config.f_div_area_fraction)
+    t_life_bl_fpy  = f_blanket_lifetime_fpy(P_fus, A_blanket,
+                                             config.dpa_lim, config.C_dpa)
+    t_life_div_fpy = f_divertor_lifetime_fpy(P_sep_solution, A_div,
+                                              config.epsilon_div, config.f_peak)
+    t_life_bl_yr   = f_lifetime_to_years(t_life_bl_fpy,
+                                          config.Util_factor, config.Dwell_factor)
+    t_life_div_yr  = f_lifetime_to_years(t_life_div_fpy,
+                                          config.Util_factor, config.Dwell_factor)
+    (T_op_limit, dt_rep_eff,
+     Av_solution, CF_solution) = f_availability_schedule(
+        t_life_bl_fpy, t_life_div_fpy,
+        config.dt_rep_bl, config.dt_rep_div,
+        config.Util_factor, config.Dwell_factor)
 
     return (B0_solution,  B_CS,  B_pol_solution,
             tauE_solution,  W_th_solution,
@@ -2106,7 +2274,31 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             f_sc_TF,  f_cu_TF,  f_He_pipe_TF,  f_void_TF,  f_He_TF,  f_In_TF,
             f_sc_CS,  f_cu_CS,  f_He_pipe_CS,  f_void_CS,  f_He_CS,  f_In_CS,
             beta_fast_alpha,  betaN_total,  tau_sd_alpha,  W_fast_alpha,
-            divertor_solution)
+            # ── Coil volumes and cable inventory (indices 99–116) ──────────────
+            V_TF_one,   V_CS_geom,                                 # 99, 100
+            V_steel_TF, V_sc_TF, V_cu_TF, V_He_TF, V_In_TF,      # 101–105
+            V_steel_CS, V_sc_CS, V_cu_CS, V_He_CS, V_In_CS,       # 106–110
+            L_cable_TF,     L_cable_CS,                            # 111, 112
+            n_sc_TF,        n_sc_CS,                               # 113, 114
+            L_sc_strand_TF, L_sc_strand_CS,                        # 115, 116
+            # ── Coil masses (indices 117–126) ──────────────────────────────────
+            M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF,   # 117–121
+            M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS,    # 122–126
+            V_blanket,                                             # 127
+            # ── Component lifetimes and availability (indices 128–135) ─────────
+            t_life_bl_fpy,  t_life_div_fpy,                        # 128, 129
+            t_life_bl_yr,   t_life_div_yr,                         # 130, 131
+            T_op_limit,     dt_rep_eff,                            # 132, 133
+            Av_solution,    CF_solution,                          # 134, 135
+            # ── Radial build component volumes (indices 136–142) ─────────────
+            V_rb_SOL,                                              # 136
+            V_rb_FW,        V_rb_BB,                              # 137, 138
+            V_rb_shield,    V_rb_VV,    V_rb_gap_TF,              # 139, 140, 141
+            V_rb_divertor,                                         # 142
+            # ── Radial build component masses (indices 143–148) ──────────────
+            M_rb_FW,      M_rb_BB,       M_rb_shield,             # 143, 144, 145
+            M_rb_VV,      M_rb_divertor, M_rb_total,
+            divertor_solution)              # 146, 147, 148
 
 
 #%% Output writer
@@ -2152,8 +2344,13 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
      kappa_edge, kappa_95, delta_edge, delta_95,
      *_rest) = results
 
+    # Refined divertor exhaust (two-point model) is appended as the very last
+    # element of the results tuple, after Mat's coil/volume/mass block (which
+    # occupies _rest[33:83]). Empty dict on failure or for older callers.
+    _divertor = _rest[83] if len(_rest) >= 84 else {}
+
     # ── Cable-level fractions (explicit positions in the new tuple layout) ─────
-    # Expected *_rest layout (33 values):
+    # Expected *_rest layout (55 values):
     #   [0:7]   ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS, Vloop, li
     #   [7:10]  eta_LH, eta_EC, eta_NBI
     #   [10:14] P_LH, P_EC, P_NBI, P_ICR
@@ -2161,6 +2358,15 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
     #   [17:23] f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF
     #   [23:29] f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS
     #   [29:33] beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha
+    #   [33:35] V_TF_one, V_CS_geom
+    #   [35:40] V_steel_TF, V_sc_TF, V_cu_TF, V_He_TF, V_In_TF
+    #   [40:45] V_steel_CS, V_sc_CS, V_cu_CS, V_He_CS, V_In_CS
+    #   [45:47] L_cable_TF, L_cable_CS
+    #   [47:49] n_sc_TF, n_sc_CS
+    #   [49:51] L_sc_strand_TF, L_sc_strand_CS
+    #   [51:56] M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF
+    #   [56:61] M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS
+    #   [61]    V_blanket
     if len(_rest) >= 29:
         _f_sc_TF      = _rest[17]
         _f_cu_TF      = _rest[18]
@@ -2174,6 +2380,39 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         _f_void_CS    = _rest[26]
         _f_He_CS      = _rest[27]
         _f_In_CS      = _rest[28]
+        # Coil volumes and cable inventory (present when len >= 55)
+        if len(_rest) >= 61:
+            _V_TF_one       = _rest[33];  _V_CS_geom  = _rest[34]
+            _V_steel_TF     = _rest[35];  _V_sc_TF    = _rest[36]
+            _V_cu_TF        = _rest[37];  _V_He_TF    = _rest[38];  _V_In_TF = _rest[39]
+            _V_steel_CS     = _rest[40];  _V_sc_CS    = _rest[41]
+            _V_cu_CS        = _rest[42];  _V_He_CS    = _rest[43];  _V_In_CS = _rest[44]
+            _L_cable_TF     = _rest[45];  _L_cable_CS = _rest[46]
+            _n_sc_TF        = _rest[47];  _n_sc_CS    = _rest[48]
+            _L_sc_strand_TF = _rest[49];  _L_sc_strand_CS = _rest[50]
+            _M_steel_TF     = _rest[51];  _M_sc_TF    = _rest[52]
+            _M_cu_TF        = _rest[53];  _M_In_TF    = _rest[54];  _M_total_TF = _rest[55]
+            _M_steel_CS     = _rest[56];  _M_sc_CS    = _rest[57]
+            _M_cu_CS        = _rest[58];  _M_In_CS    = _rest[59];  _M_total_CS = _rest[60]
+            _V_blanket      = _rest[61] if len(_rest) >= 62 else np.nan
+            # Radial build masses (layout [77:83] — after lifetimes [62:70] and V_rb [70:77])
+            if len(_rest) >= 83:
+                M_rb_FW       = _rest[77];  M_rb_BB       = _rest[78]
+                M_rb_shield   = _rest[79];  M_rb_VV       = _rest[80]
+                M_rb_divertor = _rest[81];  M_rb_total    = _rest[82]
+            else:
+                M_rb_FW = M_rb_BB = M_rb_shield = M_rb_VV = M_rb_divertor = M_rb_total = np.nan
+        else:
+            (_V_TF_one, _V_CS_geom,
+             _V_steel_TF, _V_sc_TF, _V_cu_TF, _V_He_TF, _V_In_TF,
+             _V_steel_CS, _V_sc_CS, _V_cu_CS, _V_He_CS, _V_In_CS,
+             _L_cable_TF, _L_cable_CS,
+             _n_sc_TF, _n_sc_CS,
+             _L_sc_strand_TF, _L_sc_strand_CS,
+             _M_steel_TF, _M_sc_TF, _M_cu_TF, _M_In_TF, _M_total_TF,
+             _M_steel_CS, _M_sc_CS, _M_cu_CS, _M_In_CS, _M_total_CS) = (np.nan,) * 28
+            _V_blanket = np.nan
+            M_rb_FW = M_rb_BB = M_rb_shield = M_rb_VV = M_rb_divertor = M_rb_total = np.nan
     elif len(_rest) >= 23:
         # Intermediate format: TF fracs only
         _f_sc_TF      = _rest[17]
@@ -2183,10 +2422,30 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         _f_He_TF      = _rest[21]
         _f_In_TF      = _rest[22]
         _f_sc_CS = _f_cu_CS = _f_He_pipe_CS = _f_void_CS = _f_He_CS = _f_In_CS = np.nan
+        (_V_TF_one, _V_CS_geom,
+         _V_steel_TF, _V_sc_TF, _V_cu_TF, _V_He_TF, _V_In_TF,
+         _V_steel_CS, _V_sc_CS, _V_cu_CS, _V_He_CS, _V_In_CS,
+         _L_cable_TF, _L_cable_CS,
+         _n_sc_TF, _n_sc_CS,
+         _L_sc_strand_TF, _L_sc_strand_CS,
+         _M_steel_TF, _M_sc_TF, _M_cu_TF, _M_In_TF, _M_total_TF,
+         _M_steel_CS, _M_sc_CS, _M_cu_CS, _M_In_CS, _M_total_CS) = (np.nan,) * 28
+        _V_blanket = np.nan
+        M_rb_FW = M_rb_BB = M_rb_shield = M_rb_VV = M_rb_divertor = M_rb_total = np.nan
     else:
         # Old tuple format: no cable fractions
         _f_sc_TF = _f_cu_TF = _f_He_pipe_TF = _f_void_TF = _f_He_TF = _f_In_TF = np.nan
         _f_sc_CS = _f_cu_CS = _f_He_pipe_CS = _f_void_CS = _f_He_CS = _f_In_CS = np.nan
+        (_V_TF_one, _V_CS_geom,
+         _V_steel_TF, _V_sc_TF, _V_cu_TF, _V_He_TF, _V_In_TF,
+         _V_steel_CS, _V_sc_CS, _V_cu_CS, _V_He_CS, _V_In_CS,
+         _L_cable_TF, _L_cable_CS,
+         _n_sc_TF, _n_sc_CS,
+         _L_sc_strand_TF, _L_sc_strand_CS,
+         _M_steel_TF, _M_sc_TF, _M_cu_TF, _M_In_TF, _M_total_TF,
+         _M_steel_CS, _M_sc_CS, _M_cu_CS, _M_In_CS, _M_total_CS) = (np.nan,) * 28
+        _V_blanket = np.nan
+        M_rb_FW = M_rb_BB = M_rb_shield = M_rb_VV = M_rb_divertor = M_rb_total = np.nan
 
     # ── Profile peaking / pedestal parameters ─────────────────────────────────
     # Use the module-level _PROFILE_PRESETS table (single source of truth).
@@ -2255,6 +2514,50 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         except (TypeError, ValueError):
             return fallback
 
+    # ── Techno-economic breakdown (Sheffield), recomputed here so the cost
+    # figure matches the run() report. Mirrors the run() cost block exactly;
+    # empty dict when cost_model is off or any required input is unavailable.
+    _cost_bd = {}
+    if getattr(config, "cost_model", "None") != "None":
+        try:
+            _P_th_c = config.P_fus * M_blanket_effective(config.Blanket_choice) + _P_CD
+            _P_e_c  = max(_P_elec, 1.0)
+            _T_op_c = results[132]; _CF_c = results[135]
+            _t_bl_c = results[130]; _t_div_c = results[131]; _V_rb_BB_c = results[138]
+            _, _, _H_TF_cb, *_ = f_TF_cross_section(config.a, config.b, config.R0, c_TF, Delta_TF)
+            (_, _, _, _V_FI_c) = f_volume(config.a, config.b, c_TF, c_CS, config.R0,
+                                          kappa_edge, Delta_TF, _H_TF_cb)
+            _cr = f_costs_Sheffield(
+                discount_rate=config.discount_rate, contingency=config.contingency,
+                T_life=config.T_life, T_build=config.T_build,
+                P_t=_P_th_c, P_e=_P_e_c, P_aux=_P_CD, Gamma_n=_Gamma_n,
+                T_op_limit=_T_op_c, CF=_CF_c, t_life_bl_yr=_t_bl_c,
+                t_life_div_yr=_t_div_c, V_FI=_V_FI_c,
+                V_pc=_V_TF_one * N_TF + _V_CS_geom, V_sg=_V_blanket,
+                V_bl=_V_rb_BB_c, S_tt=0.1 * _Surface,
+                Supra_cost_factor=config.Supra_cost_factor)
+            (_Top2, _CF2, _C_CO, _COE_c, _C_ind, _C_waste, _C_OM, _C_F,
+             _C_other, _C_BOP, _C_heat, _C_aux,
+             _C_tt, _C_bl, _C_sg, _C_pc) = _cr
+            _cost_bd = {
+                "COE": float(_COE_c), "C_invest": float(_C_CO),
+                "currency": "M EUR (2025)", "coe_unit": "EUR/MWh",
+                "capex": {"TF + CS coils":    float(_C_pc),
+                          "Breeding blanket":  float(_C_bl),
+                          "Shield + gaps":     float(_C_sg),
+                          "Divertor targets":  float(_C_tt),
+                          "Heating plant":     float(_C_heat),
+                          "Balance of plant":  float(_C_BOP),
+                          "Aux. heating":      float(_C_aux),
+                          "Buildings & other": float(_C_other),
+                          "Indirect":          float(_C_ind)},
+                "opex": {"O&M":               float(_C_OM),
+                         "Fuel / consumables": float(_C_F),
+                         "Waste":              float(_C_waste)},
+            }
+        except Exception:
+            _cost_bd = {}
+
     return {
         # Plasma geometry
         "R0":              config.R0,
@@ -2299,8 +2602,12 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         "c_nose":      _f(c_Nose_TF, 0.20),
         "c_CS":        _f(c_CS,      0.70),
         "N_TF":            N_TF,
+        "N_sub_CS":        config.N_sub_CS,   # CS axial segmentation (1 = monobloc)
         "Delta_TF":        Delta_TF,   # Extra outboard radial clearance from port-access constraint [m]
         "Gap":             config.Gap,
+        # ── Radial build sublayer widths ──────────────────────────────────────
+        "f_kappa_SOL": config.f_kappa_SOL,
+        "Blanket_choice":   config.Blanket_choice,
         # Mechanical configuration key — consumed by _resolve_build() in figures
         # to decide whether the TF-CS gap is applied to the CS outer radius.
         "Choice_Buck_Wedg": config.Choice_Buck_Wedg,
@@ -2328,10 +2635,484 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         "f_void_CS":    _f(_f_void_CS, np.nan),
         "f_He_CS":      _f(_f_He_CS, np.nan),
         "f_In_CS":      _f(_f_In_CS, np.nan),
-        # Refined divertor exhaust (two-point model). Empty dict on failure or
-        # when the trailing tuple element is absent (older callers).
-        "divertor":     (_rest[33] if len(_rest) >= 34 else {}),
+        # ── Coil volumes and cable inventory ─────────────────────────────────
+        "V_TF_one":        _f(_V_TF_one,       np.nan),   # Single TF coil [m³]
+        "V_CS_geom":       _f(_V_CS_geom,      np.nan),   # Total CS solenoid [m³]
+        "V_blanket":       _f(_V_blanket,      np.nan),   # Blanket torus [m³]
+        "V_steel_TF":      _f(_V_steel_TF,     np.nan),
+        "V_sc_TF":         _f(_V_sc_TF,        np.nan),
+        "V_cu_TF":         _f(_V_cu_TF,        np.nan),
+        "V_He_TF":         _f(_V_He_TF,        np.nan),
+        "V_In_TF":         _f(_V_In_TF,        np.nan),
+        "V_steel_CS":      _f(_V_steel_CS,     np.nan),
+        "V_sc_CS":         _f(_V_sc_CS,        np.nan),
+        "V_cu_CS":         _f(_V_cu_CS,        np.nan),
+        "V_He_CS":         _f(_V_He_CS,        np.nan),
+        "V_In_CS":         _f(_V_In_CS,        np.nan),
+        "L_cable_TF":      _f(_L_cable_TF,     np.nan),
+        "L_cable_CS":      _f(_L_cable_CS,     np.nan),
+        "n_sc_TF":         _f(_n_sc_TF,        np.nan),
+        "n_sc_CS":         _f(_n_sc_CS,        np.nan),
+        "L_sc_strand_TF":  _f(_L_sc_strand_TF, np.nan),
+        "L_sc_strand_CS":  _f(_L_sc_strand_CS, np.nan),
+        # ── Coil masses ─────────────────────────────────────────────────────
+        "M_steel_TF":  _f(_M_steel_TF,  np.nan),
+        "M_sc_TF":     _f(_M_sc_TF,     np.nan),
+        "M_cu_TF":     _f(_M_cu_TF,     np.nan),
+        "M_In_TF":     _f(_M_In_TF,     np.nan),
+        "M_total_TF":  _f(_M_total_TF,  np.nan),
+        "M_steel_CS":  _f(_M_steel_CS,  np.nan),
+        "M_sc_CS":     _f(_M_sc_CS,     np.nan),
+        "M_cu_CS":     _f(_M_cu_CS,     np.nan),
+        "M_In_CS":     _f(_M_In_CS,     np.nan),
+        "M_total_CS":  _f(_M_total_CS,  np.nan),
+        # ── Radial build component masses ────────────────────────────────────
+        "M_rb_FW":       _f(M_rb_FW,       np.nan),
+        "M_rb_BB":       _f(M_rb_BB,       np.nan),
+        "M_rb_shield":   _f(M_rb_shield,   np.nan),
+        "M_rb_VV":       _f(M_rb_VV,       np.nan),
+        "M_rb_divertor": _f(M_rb_divertor, np.nan),
+        "M_rb_total":    _f(M_rb_total,    np.nan),
+        "divertor":     _divertor,
+        "cost_breakdown": _cost_bd,
     }
+
+
+def _write_full_report(config, results, output_path, timestamp, input_file_path=None):
+    """Write an exhaustive run report (all inputs + all outputs) to disk.
+
+    Produces ``output_path/output_detailed.txt`` in addition to the
+    human-readable ``output_results.txt``. It lists every GlobalConfig field
+    (including values left at their defaults), followed by the full set of
+    computed quantities grouped into labelled sections, under a header that
+    records the code version, date, git commit, Python version and platform.
+
+    Outputs are gathered from two complementary sources: the curated run dict
+    (_build_run_dict) and the named unpacking of the raw results tuple, so both
+    the high-level geometry/build quantities and the lower-level physics scalars
+    are covered. Any value that cannot be resolved is written as 'n/a' rather
+    than aborting the run, so this never interferes with a calculation.
+
+    Parameters
+    ----------
+    config          : GlobalConfig  Input configuration.
+    results         : tuple         Return value of run().
+    output_path     : str           Timestamped run output folder.
+    timestamp       : str           Run timestamp (folder suffix).
+    input_file_path : str, optional Original input deck (for the header).
+
+    Returns
+    -------
+    str  Path of the detailed report file.
+    """
+    import platform as _platform
+    import subprocess as _subprocess
+    import dataclasses as _dc
+
+    # -- Code version: line-scan pyproject.toml (no tomllib dependency) -----
+    def _code_version():
+        pp = os.path.join(os.path.dirname(__file__), "..", "pyproject.toml")
+        try:
+            for line in open(pp, encoding="utf-8"):
+                t = line.strip()
+                if t.startswith("version"):
+                    return t.split("=", 1)[1].strip().strip('"').strip("'")
+        except Exception:
+            pass
+        return "unknown"
+
+    def _git_commit():
+        try:
+            h = _subprocess.check_output(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=os.path.dirname(__file__),
+                stderr=_subprocess.DEVNULL, timeout=2)
+            return h.decode().strip()
+        except Exception:
+            return "n/a"
+
+    def _fmt(v):
+        if v is None:
+            return "n/a"
+        if isinstance(v, bool):
+            return str(v)
+        if isinstance(v, (int,)):
+            return str(v)
+        if isinstance(v, float):
+            if not np.isfinite(v):
+                return "n/a"
+            av = abs(v)
+            if av != 0.0 and (av < 1e-3 or av >= 1e6):
+                return f"{v:.6e}"
+            return f"{v:.6g}"
+        return str(v)
+
+    W = 80
+    lines = []
+
+    def H(title):
+        lines.append("=" * W)
+        lines.append(" " + title)
+        lines.append("=" * W)
+
+    def row(name, val, unit=""):
+        u = f" [{unit}]" if unit else ""
+        lines.append(f"  {name:<46}: {_fmt(val)}{u}")
+
+    # -- Curated run dict (geometry, build, volumes, masses, divertor, cost) -
+    try:
+        rd = _build_run_dict(config, results)
+    except Exception:
+        rd = {}
+
+    # -- Named unpack of the raw results tuple (physics scalars) -------------
+    named = {}
+    try:
+        (B0, B_CS, B_pol, tauE, W_th, Q, Volume, Surface, Ip, Ib, I_CD, I_Ohm,
+         nbar, nbar_line, nG, pbar, betaN, betaT, betaP, qstar, q95,
+         P_CD, P_sep, P_Thresh, eta_CD, P_elec, P_wallplug,
+         cost, P_Brem, P_syn, P_line, P_line_core,
+         heat, heat_par, heat_pol, lambda_q, q_target,
+         P_wall_rad, P_wall_div, Gamma_n, f_alpha, tau_alpha,
+         J_TF, J_CS_1, c_TF, c_WP_TF, c_Nose_TF, sz_TF, st_TF, sr_TF, sf_TF,
+         c_CS, sz_CS, st_CS, sr_CS, sf_CS, B_CS2, J_CS2,
+         r_minor, r_sep, r_c, r_d, kappa_edge, kappa_95, delta_edge, delta_95,
+         *rest) = results
+        named = dict(
+            B0=B0, B_CS=B_CS, B_pol=B_pol, tauE=tauE, W_th=W_th, Q=Q,
+            Volume=Volume, Surface=Surface, Ip=Ip, Ib=Ib, I_CD=I_CD, I_Ohm=I_Ohm,
+            nbar=nbar, nbar_line=nbar_line, nG=nG, pbar=pbar,
+            betaN=betaN, betaT=betaT, betaP=betaP, qstar=qstar, q95=q95,
+            P_CD=P_CD, P_sep=P_sep, P_Thresh=P_Thresh, eta_CD=eta_CD,
+            P_elec=P_elec, P_wallplug=P_wallplug, cost=cost,
+            P_Brem=P_Brem, P_syn=P_syn, P_line=P_line, P_line_core=P_line_core,
+            heat=heat, heat_par=heat_par, heat_pol=heat_pol,
+            lambda_q=lambda_q, q_target=q_target,
+            P_wall_rad=P_wall_rad, P_wall_div=P_wall_div, Gamma_n=Gamma_n,
+            f_alpha=f_alpha, tau_alpha=tau_alpha,
+            J_TF=J_TF, J_CS_1=J_CS_1, sz_TF=sz_TF, st_TF=st_TF, sr_TF=sr_TF,
+            sf_TF=sf_TF, sz_CS=sz_CS, st_CS=st_CS, sr_CS=sr_CS, sf_CS=sf_CS,
+            B_CS2=B_CS2, J_CS2=J_CS2,
+            r_minor=r_minor, r_sep=r_sep, r_c=r_c, r_d=r_d,
+            kappa_edge=kappa_edge, kappa_95=kappa_95,
+            delta_edge=delta_edge, delta_95=delta_95)
+        # Documented head of *_rest (fluxes, CD breakdown, fast-alpha).
+        names_rest = [
+            "psi_PI", "psi_RampUp", "psi_plateau", "psi_PF", "psi_CS", "Vloop", "li",
+            "eta_LH", "eta_EC", "eta_NBI", "P_LH", "P_EC", "P_NBI", "P_ICR",
+            "I_LH", "I_EC", "I_NBI",
+            "f_sc_TF", "f_cu_TF", "f_He_pipe_TF", "f_void_TF", "f_He_TF", "f_In_TF",
+            "f_sc_CS", "f_cu_CS", "f_He_pipe_CS", "f_void_CS", "f_He_CS", "f_In_CS",
+            "beta_fast_alpha", "betaN_total", "tau_sd_alpha", "W_fast_alpha"]
+        for i, nm in enumerate(names_rest):
+            if i < len(rest):
+                named[nm] = rest[i]
+    except Exception:
+        pass
+
+    # Component lifetime / availability live at fixed absolute tuple indices.
+    def _at(idx):
+        try:
+            return results[idx]
+        except Exception:
+            return None
+    t_life_bl_yr = _at(130)
+    t_life_div_yr = _at(131)
+    T_op_limit = _at(132)
+    CF = _at(135)
+
+    def get(key):
+        if key in named:
+            return named[key]
+        return rd.get(key, None)
+
+    def emit(section, items):
+        H(section)
+        for label, key, unit in items:
+            row(label, get(key), unit)
+        lines.append("")
+
+    # ===================================================================
+    # HEADER
+    # ===================================================================
+    H("D0FUS - DETAILED RUN REPORT")
+    lines.append(f"  Code version  : {_code_version()}")
+    lines.append(f"  Date / time   : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append(f"  Git commit    : {_git_commit()}")
+    lines.append(f"  Python        : {_platform.python_version()}")
+    lines.append(f"  Platform      : {_platform.platform()}")
+    _deck = os.path.basename(input_file_path) if input_file_path else "n/a"
+    lines.append(f"  Input deck    : {_deck}")
+    lines.append(f"  Output folder : {os.path.basename(output_path)}")
+    lines.append(f"  Run timestamp : {timestamp}")
+    lines.append("")
+    lines.append("  This report lists every input (including defaults) and every")
+    lines.append("  computed output. It complements input_parameters.txt (inputs as")
+    lines.append("  given) and output_results.txt (human-readable summary).")
+    lines.append("")
+
+    # ===================================================================
+    # 1. INPUTS  (complete GlobalConfig, including default values)
+    # ===================================================================
+    H("1. INPUTS - complete GlobalConfig (including default values)")
+    try:
+        for fld in _dc.fields(config):
+            v = getattr(config, fld.name, None)
+            tname = getattr(fld.type, "__name__", str(fld.type))
+            lines.append(f"  {fld.name:<46}: {_fmt(v)}    [{tname}]")
+    except Exception as e:
+        lines.append(f"  (could not enumerate config fields: {e})")
+    lines.append("")
+
+    # ===================================================================
+    # OUTPUTS
+    # ===================================================================
+    A_val = None
+    try:
+        A_val = float(rd.get("R0")) / float(rd.get("a"))
+    except Exception:
+        A_val = None
+    rd_A = dict(rd)
+    rd_A["A"] = A_val
+    # local shadow so 'A' resolves through get()
+    named.setdefault("A", A_val)
+
+    emit("2. OUTPUTS - Plasma geometry & shape", [
+        ("Major radius R0", "R0", "m"),
+        ("Minor radius a", "a", "m"),
+        ("Aspect ratio A = R0/a", "A", "-"),
+        ("Geometry model", "Plasma_geometry", ""),
+        ("Elongation kappa_edge (LCFS)", "kappa_edge", "-"),
+        ("Elongation kappa_95", "kappa_95", "-"),
+        ("Triangularity delta_edge (LCFS)", "delta_edge", "-"),
+        ("Triangularity delta_95", "delta_95", "-"),
+        ("Plasma volume", "Volume", "m^3"),
+        ("Plasma surface", "Surface", "m^2"),
+        ("Minor radius (LCFS) r_minor", "r_minor", "m"),
+        ("Separatrix radius r_sep", "r_sep", "m"),
+        ("r_c", "r_c", "m"),
+        ("r_d", "r_d", "m"),
+    ])
+
+    emit("3. OUTPUTS - Magnetic field & current", [
+        ("Toroidal field on axis B0", "B0", "T"),
+        ("Peak field B_max", "B_max", "T"),
+        ("CS field B_CS", "B_CS", "T"),
+        ("Poloidal field B_pol", "B_pol", "T"),
+        ("Plasma current Ip", "Ip", "A"),
+        ("Bootstrap current Ib", "Ib", "A"),
+        ("Current-drive current I_CD", "I_CD", "A"),
+        ("Ohmic current I_Ohm", "I_Ohm", "A"),
+        ("Edge safety factor q95", "q95", "-"),
+        ("Cylindrical safety factor q*", "qstar", "-"),
+        ("Loop voltage Vloop", "Vloop", "V"),
+        ("Internal inductance li", "li", "-"),
+    ])
+
+    emit("4. OUTPUTS - Density, temperature, pressure, beta", [
+        ("Volume-avg density nbar", "nbar", "m^-3"),
+        ("Line-avg density nbar_line", "nbar_line", "m^-3"),
+        ("Greenwald density nG", "nG", "m^-3"),
+        ("Volume-avg temperature Tbar", "Tbar", "keV"),
+        ("Volume-avg pressure pbar", "pbar", "Pa"),
+        ("Effective charge Z_eff", "Z_eff", "-"),
+        ("Helium fraction f_He", "f_He", "-"),
+        ("Normalised beta betaN", "betaN", "-"),
+        ("Toroidal beta betaT", "betaT", "-"),
+        ("Poloidal beta betaP", "betaP", "-"),
+        ("Total normalised beta betaN_total", "betaN_total", "-"),
+        ("Fast-alpha beta beta_fast_alpha", "beta_fast_alpha", "-"),
+        ("Density peaking nu_n", "nu_n", "-"),
+        ("Temperature peaking nu_T", "nu_T", "-"),
+        ("Pedestal radius rho_ped", "rho_ped", "-"),
+        ("Pedestal density fraction n_ped_frac", "n_ped_frac", "-"),
+        ("Pedestal temperature fraction T_ped_frac", "T_ped_frac", "-"),
+    ])
+
+    emit("5. OUTPUTS - Confinement & fusion", [
+        ("Energy confinement time tauE", "tauE", "s"),
+        ("Thermal stored energy W_th", "W_th", "J"),
+        ("Fusion power P_fus", "P_fus", "MW"),
+        ("Fusion gain Q", "Q", "-"),
+        ("Alpha heating fraction f_alpha", "f_alpha", "-"),
+        ("Alpha slowing-down time tau_alpha", "tau_alpha", "s"),
+        ("Fast-alpha slowing time tau_sd_alpha", "tau_sd_alpha", "s"),
+        ("Fast-alpha stored energy W_fast_alpha", "W_fast_alpha", "J"),
+    ])
+
+    emit("6. OUTPUTS - Power balance", [
+        ("Auxiliary heating P_aux", "P_aux", "MW"),
+        ("Current-drive power P_CD", "P_CD", "MW"),
+        ("Power across separatrix P_sep", "P_sep", "MW"),
+        ("L-H threshold power P_Thresh", "P_Thresh", "MW"),
+        ("Net electric power P_elec", "P_elec", "MWe"),
+        ("Wall-plug power P_wallplug", "P_wallplug", "MW"),
+        ("CD efficiency eta_CD", "eta_CD", "A/W"),
+        ("Bremsstrahlung P_Brem", "P_Brem", "MW"),
+        ("Synchrotron P_syn", "P_syn", "MW"),
+        ("Line radiation P_line", "P_line", "MW"),
+        ("Core line radiation P_line_core", "P_line_core", "MW"),
+    ])
+
+    emit("7. OUTPUTS - Current-drive breakdown", [
+        ("LH efficiency eta_LH", "eta_LH", "-"),
+        ("EC efficiency eta_EC", "eta_EC", "-"),
+        ("NBI efficiency eta_NBI", "eta_NBI", "-"),
+        ("LH power P_LH", "P_LH", "MW"),
+        ("EC power P_EC", "P_EC", "MW"),
+        ("NBI power P_NBI", "P_NBI", "MW"),
+        ("ICRH power P_ICR", "P_ICR", "MW"),
+        ("LH-driven current I_LH", "I_LH", "A"),
+        ("EC-driven current I_EC", "I_EC", "A"),
+        ("NBI-driven current I_NBI", "I_NBI", "A"),
+    ])
+
+    emit("8. OUTPUTS - Poloidal flux budget", [
+        ("Plasma initiation flux psi_PI", "psi_PI", "Wb"),
+        ("Ramp-up flux psi_RampUp", "psi_RampUp", "Wb"),
+        ("Plateau flux psi_plateau", "psi_plateau", "Wb"),
+        ("PF flux psi_PF", "psi_PF", "Wb"),
+        ("CS flux psi_CS", "psi_CS", "Wb"),
+    ])
+
+    # Section 9: exhaust scalars + refined divertor dict.
+    H("9. OUTPUTS - Divertor & exhaust")
+    for label, key, unit in [
+        ("SOL elongation factor f_kappa_SOL", "f_kappa_SOL", "-"),
+        ("Divertor heat load (total) heat", "heat", "MW/m^2"),
+        ("Parallel heat flux heat_par", "heat_par", "MW/m^2"),
+        ("Poloidal heat flux heat_pol", "heat_pol", "MW/m^2"),
+        ("SOL power width lambda_q", "lambda_q", "m"),
+        ("Target heat flux q_target", "q_target", "MW/m^2"),
+        ("Wall radiated power P_wall_rad", "P_wall_rad", "MW"),
+        ("Divertor radiated power P_wall_div", "P_wall_div", "MW"),
+        ("Neutron wall load Gamma_n", "Gamma_n", "MW/m^2"),
+    ]:
+        row(label, get(key), unit)
+    _div = rd.get("divertor") or {}
+    if _div:
+        lines.append("  Refined two-point divertor model:")
+        for k in sorted(_div.keys()):
+            row("  " + str(k), _div[k])
+    else:
+        lines.append("  Refined two-point divertor model: (not computed)")
+    lines.append("")
+
+    emit("10. OUTPUTS - TF coil (winding pack, composition, structure)", [
+        ("TF current density J_TF", "J_TF", "A/m^2"),
+        ("TF radial thickness c_TF", "c_TF", "m"),
+        ("TF winding-pack thickness c_WP", "c_WP", "m"),
+        ("TF nose thickness c_nose", "c_nose", "m"),
+        ("TF shape exponent n_shape_TF", "n_shape_TF", "-"),
+        ("Number of TF coils N_TF", "N_TF", "-"),
+        ("TF steel fraction Steel_fraction_TF", "Steel_fraction_TF", "-"),
+        ("TF axial stress sz_TF", "sz_TF", "Pa"),
+        ("TF hoop stress st_TF", "st_TF", "Pa"),
+        ("TF radial stress sr_TF", "sr_TF", "Pa"),
+        ("TF von Mises stress sf_TF", "sf_TF", "Pa"),
+        ("TF SC fraction f_sc_TF", "f_sc_TF", "-"),
+        ("TF Cu fraction f_cu_TF", "f_cu_TF", "-"),
+        ("TF He-pipe fraction f_He_pipe_TF", "f_He_pipe_TF", "-"),
+        ("TF void fraction f_void_TF", "f_void_TF", "-"),
+        ("TF He fraction f_He_TF", "f_He_TF", "-"),
+        ("TF insulator fraction f_In_TF", "f_In_TF", "-"),
+        ("TF steel volume V_steel_TF", "V_steel_TF", "m^3"),
+        ("TF SC volume V_sc_TF", "V_sc_TF", "m^3"),
+        ("TF Cu volume V_cu_TF", "V_cu_TF", "m^3"),
+        ("TF He volume V_He_TF", "V_He_TF", "m^3"),
+        ("TF insulator volume V_In_TF", "V_In_TF", "m^3"),
+        ("Single-TF volume V_TF_one", "V_TF_one", "m^3"),
+        ("TF cable length L_cable_TF", "L_cable_TF", "m"),
+        ("TF strand count n_sc_TF", "n_sc_TF", "-"),
+        ("TF strand length L_sc_strand_TF", "L_sc_strand_TF", "m"),
+        ("TF steel mass M_steel_TF", "M_steel_TF", "kg"),
+        ("TF SC mass M_sc_TF", "M_sc_TF", "kg"),
+        ("TF Cu mass M_cu_TF", "M_cu_TF", "kg"),
+        ("TF insulator mass M_In_TF", "M_In_TF", "kg"),
+        ("TF total mass M_total_TF", "M_total_TF", "kg"),
+    ])
+
+    emit("11. OUTPUTS - CS coil (winding pack, composition, structure)", [
+        ("CS current density J_CS_1", "J_CS_1", "A/m^2"),
+        ("CS field (alt.) B_CS2", "B_CS2", "T"),
+        ("CS current density (alt.) J_CS2", "J_CS2", "A/m^2"),
+        ("CS radial thickness c_CS", "c_CS", "m"),
+        ("CS module count N_sub_CS", "N_sub_CS", "-"),
+        ("CS shape exponent n_shape_CS", "n_shape_CS", "-"),
+        ("CS steel fraction Steel_fraction_CS", "Steel_fraction_CS", "-"),
+        ("CS axial stress sz_CS", "sz_CS", "Pa"),
+        ("CS hoop stress st_CS", "st_CS", "Pa"),
+        ("CS radial stress sr_CS", "sr_CS", "Pa"),
+        ("CS von Mises stress sf_CS", "sf_CS", "Pa"),
+        ("CS SC fraction f_sc_CS", "f_sc_CS", "-"),
+        ("CS Cu fraction f_cu_CS", "f_cu_CS", "-"),
+        ("CS He-pipe fraction f_He_pipe_CS", "f_He_pipe_CS", "-"),
+        ("CS void fraction f_void_CS", "f_void_CS", "-"),
+        ("CS He fraction f_He_CS", "f_He_CS", "-"),
+        ("CS insulator fraction f_In_CS", "f_In_CS", "-"),
+        ("CS steel volume V_steel_CS", "V_steel_CS", "m^3"),
+        ("CS SC volume V_sc_CS", "V_sc_CS", "m^3"),
+        ("CS Cu volume V_cu_CS", "V_cu_CS", "m^3"),
+        ("CS He volume V_He_CS", "V_He_CS", "m^3"),
+        ("CS insulator volume V_In_CS", "V_In_CS", "m^3"),
+        ("CS solenoid volume V_CS_geom", "V_CS_geom", "m^3"),
+        ("CS cable length L_cable_CS", "L_cable_CS", "m"),
+        ("CS strand count n_sc_CS", "n_sc_CS", "-"),
+        ("CS strand length L_sc_strand_CS", "L_sc_strand_CS", "m"),
+        ("CS steel mass M_steel_CS", "M_steel_CS", "kg"),
+        ("CS SC mass M_sc_CS", "M_sc_CS", "kg"),
+        ("CS Cu mass M_cu_CS", "M_cu_CS", "kg"),
+        ("CS insulator mass M_In_CS", "M_In_CS", "kg"),
+        ("CS total mass M_total_CS", "M_total_CS", "kg"),
+    ])
+
+    emit("12. OUTPUTS - Radial build volumes & masses", [
+        ("Blanket+shield radial thickness b", "b", "m"),
+        ("Outboard clearance Delta_TF", "Delta_TF", "m"),
+        ("Assembly gap Gap", "Gap", "m"),
+        ("First-wall thickness e_fw", "e_fw", "m"),
+        ("Blanket thickness e_blanket", "e_blanket", "m"),
+        ("Shield thickness e_shield", "e_shield", "m"),
+        ("Blanket concept Blanket_choice", "Blanket_choice", ""),
+        ("Blanket torus volume V_blanket", "V_blanket", "m^3"),
+        ("First-wall mass M_rb_FW", "M_rb_FW", "kg"),
+        ("Breeding-blanket mass M_rb_BB", "M_rb_BB", "kg"),
+        ("Shield mass M_rb_shield", "M_rb_shield", "kg"),
+        ("Vacuum-vessel mass M_rb_VV", "M_rb_VV", "kg"),
+        ("Divertor mass M_rb_divertor", "M_rb_divertor", "kg"),
+        ("Radial-build total mass M_rb_total", "M_rb_total", "kg"),
+    ])
+
+    H("13. OUTPUTS - Component lifetime & availability")
+    row("Blanket calendar lifetime t_life_bl_yr", t_life_bl_yr, "yr")
+    row("Divertor calendar lifetime t_life_div_yr", t_life_div_yr, "yr")
+    row("Operation time per cycle T_op_limit", T_op_limit, "yr")
+    row("Capacity factor CF", CF, "-")
+    lines.append("")
+
+    H("14. OUTPUTS - Techno-economics (Sheffield 2016)")
+    row("Geometric cost proxy (V_build / P_fus)", get("cost"), "m^3/MW")
+    _cb = rd.get("cost_breakdown") or {}
+    if _cb:
+        cur = _cb.get("currency", "M EUR")
+        row("Cost of electricity COE", _cb.get("COE"), _cb.get("coe_unit", "EUR/MWh"))
+        row("Total constructed capital C_invest", _cb.get("C_invest"), cur)
+        lines.append(f"  CapEx components [{cur}]:")
+        for k, v in (_cb.get("capex") or {}).items():
+            row("  " + str(k), v)
+        lines.append(f"  Annual OpEx [{cur}/yr]:")
+        for k, v in (_cb.get("opex") or {}).items():
+            row("  " + str(k), v)
+    else:
+        lines.append("  (cost model disabled or unavailable)")
+    lines.append("")
+
+    H("END OF REPORT")
+
+    out_file = os.path.join(output_path, "output_detailed.txt")
+    with open(out_file, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    return out_file
 
 
 def save_run_output(config: GlobalConfig,
@@ -2363,6 +3144,11 @@ def save_run_output(config: GlobalConfig,
     timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_path = os.path.join(output_dir, 'run', f"Run_D0FUS_{timestamp}")
     os.makedirs(output_path, exist_ok=True)
+    # Exhaustive machine-readable report (all inputs + all outputs).
+    try:
+        _write_full_report(config, results, output_path, timestamp, input_file_path)
+    except Exception as _e:
+        print(f"[detailed report skipped: {_e}]")
 
     # ── Save input parameters ─────────────────────────────────────────────────
     input_copy = os.path.join(output_path, "input_parameters.txt")
@@ -2403,6 +3189,25 @@ def save_run_output(config: GlobalConfig,
      f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF,
      f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS,
      beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha,
+     V_TF_one, V_CS_geom,
+     V_steel_TF, V_sc_TF, V_cu_TF, V_He_TF, V_In_TF,
+     V_steel_CS, V_sc_CS, V_cu_CS, V_He_CS, V_In_CS,
+     L_cable_TF, L_cable_CS,
+     n_sc_TF, n_sc_CS,
+     L_sc_strand_TF, L_sc_strand_CS,
+     M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF,
+     M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS,
+     V_blanket,
+     t_life_bl_fpy, t_life_div_fpy,
+     t_life_bl_yr, t_life_div_yr,
+     T_op_limit, dt_rep_eff,
+     Av, CF,
+     V_rb_SOL,
+     V_rb_FW, V_rb_BB,
+     V_rb_shield, V_rb_VV, V_rb_gap_TF,
+     V_rb_divertor,
+     M_rb_FW, M_rb_BB, M_rb_shield,
+     M_rb_VV, M_rb_divertor, M_rb_total,
      divertor_out) = results
 
     # ── Recompute N_TF for display (not stored in results tuple) ──────────
@@ -2415,6 +3220,25 @@ def save_run_output(config: GlobalConfig,
     except Exception:
         N_TF_disp    = 16
         Delta_TF_disp = 0.0
+
+    # ── Blanket concept: TBR and radial-build layer breakdown (display only) ──
+    _, _, _, _, _, _, _, _R_in_disp, _Z_in_disp = f_TF_cross_section(
+        config.a, config.b, config.R0, c, Delta_TF_disp)
+    _rb_disp = f_radial_build_layers(
+        a=config.a, b=config.b, κ=κ, δ=δ, R0=config.R0,
+        Delta_TF=Delta_TF_disp,
+        f_kappa_SOL=config.f_kappa_SOL,
+        f_div_area_fraction=config.f_div_area_fraction,
+        R_tf_in=_R_in_disp, Z_tf_in=_Z_in_disp,
+        Blanket_choice=config.Blanket_choice,
+    )
+    _delta_BB_ib = _rb_disp['delta_BB_ib']
+    _delta_BB_ob = _rb_disp['delta_BB_ob']
+    _blanket_concept = material_blanket(config.Blanket_choice)
+    _RB_layers        = _rb_disp['layers']
+    _TBR_achieved     = f_TBR(_delta_BB_ib, config.Blanket_choice)
+    _M_blanket        = M_blanket_effective(config.Blanket_choice)
+    _eta_T            = eta_T_effective(config.Blanket_choice)
 
     # ── Magnetic stored energy and ampere-turns (display only) ────────────
     # TF bore geometry (same convention as run())
@@ -2564,6 +3388,89 @@ def save_run_output(config: GlobalConfig,
         print(f"[O]  ├ f_He      (total He = pipe + void)           : {f_He_CS*100:.2f} [%]", file=out)
         print(f"[O]  └ f_In      (insulation)                       : {f_In_CS*100:.2f} [%]", file=out)
         print("-------------------------------------------------------------------------", file=out)
+        print(f"[O] L_cable_TF (total cable, all TF coils)          : {L_cable_TF/1e3:.3f} [km]", file=out)
+        print(f"[O] L_cable_CS (total cable, all CS modules)        : {L_cable_CS/1e3:.3f} [km]", file=out)
+        print("-------------------------------------------------------------------------", file=out)
+        print(f"[O] SC strands per cable  ({config.Supra_choice})", file=out)
+        print(f"[O]  ├ n_sc_TF                                      : {n_sc_TF:.0f}", file=out)
+        print(f"[O]  └ n_sc_CS                                      : {n_sc_CS:.0f}", file=out)
+        print("-------------------------------------------------------------------------", file=out)
+        print(f"[O] Total SC strand length", file=out)
+        print(f"[O]  ├ L_sc_strand_TF                               : {L_sc_strand_TF/1e3:.0f} [km]", file=out)
+        print(f"[O]  └ L_sc_strand_CS                               : {L_sc_strand_CS/1e3:.0f} [km]", file=out)
+        print("-------------------------------------------------------------------------", file=out)
+        print(f"[O] V_TF_one  (Single TF coil volume, Princeton-D)  : {V_TF_one:.4f} [m³]",  file=out)
+        print(f"[O] V_CS_geom (Total CS solenoid volume)            : {V_CS_geom:.4f} [m³]", file=out)
+        print(f"[O] V_blanket (blanket, Miller LCFS→TF inner face)  : {V_blanket:.4f} [m³]", file=out)
+        print("-------------------------------------------------------------------------", file=out)
+        V_TF_total = V_TF_one * N_TF_disp if np.isfinite(V_TF_one) else np.nan
+        print(f"[O] TF material volumes  (total = V_TF_one × N_TF = {V_TF_one:.3f} × {N_TF_disp})", file=out)
+        print(f"[O]  ├ V_steel_TF  (structural steel)               : {V_steel_TF:.3f} [m³]", file=out)
+        print(f"[O]  ├ V_sc_TF     (superconductor)                 : {V_sc_TF:.3f} [m³]",   file=out)
+        print(f"[O]  ├ V_cu_TF     (copper stabiliser)              : {V_cu_TF:.3f} [m³]",   file=out)
+        print(f"[O]  ├ V_He_TF     (helium, pipe+void)              : {V_He_TF:.3f} [m³]",   file=out)
+        print(f"[O]  └ V_In_TF     (insulation)                     : {V_In_TF:.3f} [m³]",   file=out)
+        print(f"[O] CS material volumes  (total solenoid)", file=out)
+        print(f"[O]  ├ V_steel_CS  (structural steel)               : {V_steel_CS:.3f} [m³]", file=out)
+        print(f"[O]  ├ V_sc_CS     (superconductor)                 : {V_sc_CS:.3f} [m³]",   file=out)
+        print(f"[O]  ├ V_cu_CS     (copper stabiliser)              : {V_cu_CS:.3f} [m³]",   file=out)
+        print(f"[O]  ├ V_He_CS     (helium, pipe+void)              : {V_He_CS:.3f} [m³]",   file=out)
+        print(f"[O]  └ V_In_CS     (insulation)                     : {V_In_CS:.3f} [m³]",   file=out)
+        print(f"[O] Blanket components volumes (LCFS→TF inner face, exact body-of-revolution)", file=out)
+        print(f"[O]  ├ V_SOL        (scrape-off layer, all around)  : {V_rb_SOL:.1f} [m³]", file=out)
+        print(f"[O]  ├ V_FW         (first wall, excl. divertor)    : {V_rb_FW:.1f} [m³]", file=out)
+        print(f"[O]  ├ V_BB         (breeder/structure/multip., excl. div.) : {V_rb_BB:.1f} [m³]", file=out)
+        print(f"[O]  ├ V_divertor   (divertor, f_div={config.f_div_area_fraction:.2f})          : {V_rb_divertor:.1f} [m³]", file=out)
+        print(f"[O]  ├ V_shield     (HT+LT shield, all around)      : {V_rb_shield:.1f} [m³]", file=out)
+        print(f"[O]  ├ V_VV         (vacuum vessel, all around)     : {V_rb_VV:.1f} [m³]", file=out)
+        print(f"[O]  └ V_gap        (gaps/voids, all around)        : {V_rb_gap_TF:.1f} [m³]", file=out)
+        print("-------------------------------------------------------------------------", file=out)
+        _rho = material_rho(config.Chosen_Steel, config.Supra_choice)
+        print(f"[O] TF coil masses  (total all N_TF coils, {config.Chosen_Steel} / {config.Supra_choice})", file=out)
+        print(f"[O]  ├ M_steel_TF                                   : {M_steel_TF/1e3:.1f} [t]", file=out)
+        print(f"[O]  ├ M_sc_TF                                      : {M_sc_TF/1e3:.1f} [t]",    file=out)
+        print(f"[O]  ├ M_cu_TF                                      : {M_cu_TF/1e3:.1f} [t]",    file=out)
+        print(f"[O]  ├ M_In_TF                                      : {M_In_TF/1e3:.1f} [t]",    file=out)
+        print(f"[O]  └ M_total_TF                                   : {M_total_TF/1e3:.1f} [t]",       file=out)
+        print(f"[O] CS coil masses  (total solenoid)", file=out)
+        print(f"[O]  ├ M_steel_CS                                   : {M_steel_CS/1e3:.1f} [t]", file=out)
+        print(f"[O]  ├ M_sc_CS                                      : {M_sc_CS/1e3:.1f} [t]",   file=out)
+        print(f"[O]  ├ M_cu_CS                                      : {M_cu_CS/1e3:.1f} [t]",   file=out)
+        print(f"[O]  ├ M_In_CS                                      : {M_In_CS/1e3:.1f} [t]",   file=out)
+        print(f"[O]  └ M_total_CS                                   : {M_total_CS/1e3:.1f} [t]", file=out)
+        print(f"[O] Blanket components masses", file=out)
+        print(f"[O]  ├ M_rb_FW       (first wall, excl. div.)       : {M_rb_FW/1e3:.1f} [t]",      file=out)
+        print(f"[O]  ├ M_rb_BB       (breeder/structure/multip., excl. div.) : {M_rb_BB/1e3:.1f} [t]", file=out)
+        print(f"[O]  ├ M_rb_shield   (HT+LT shield)                 : {M_rb_shield/1e3:.1f} [t]",   file=out)
+        print(f"[O]  ├ M_rb_VV       (vacuum vessel)                : {M_rb_VV/1e3:.1f} [t]",      file=out)
+        print(f"[O]  ├ M_rb_divertor (divertor)                     : {M_rb_divertor/1e3:.1f} [t]", file=out)
+        print(f"[O]  └ M_rb_total    (FW+BB+shield+VV+div)          : {M_rb_total/1e3:.1f} [t]",   file=out)
+        print("-------------------------------------------------------------------------", file=out)
+        print(f"[I] Blanket_choice  ({_blanket_concept['label']})", file=out)
+        print(f"[I]  ├ Breeder / Multiplier  : {_blanket_concept['breeder']} / {_blanket_concept['multiplier']}", file=out)
+        print(f"[I]  ├ Coolant / Structure   : {_blanket_concept['coolant']} / {_blanket_concept['structure']}", file=out)
+        print(f"[I]  ├ 6Li enrichment        : {_blanket_concept['Li6_enrichment']}", file=out)
+        print(f"[I]  ├ Magnet shielding      : {_blanket_concept['shield_quality']}", file=out)
+        print(f"[I]  ├ VV feasible           : {_blanket_concept['VV_feasible']}", file=out)
+        print(f"[I]  └ M_blanket / eta_T     : {_M_blanket:.2f}  /  {_eta_T:.2f}  (eta_T_range = {_blanket_concept['eta_T_range']})", file=out)
+        print(f"[O] TBR_achieved  (delta_BB_ib = {_delta_BB_ib:.3f} m)        : {_TBR_achieved:.3f}  (TBR_max = {_blanket_concept['TBR_max']:.2f})", file=out)
+        print(f"[O] Radial build layers  (plasma → TF, delta_BB_ib = {_delta_BB_ib:.3f} m, delta_BB_ob = {_delta_BB_ob:.3f} m)", file=out)
+        for _i, _layer in enumerate(_RB_layers):
+            _last   = _i == len(_RB_layers) - 1
+            _branch = "├" if not _last else "└"
+            _cont   = "│" if not _last else " "
+            print(f"[O]  {_branch} {_layer['name']:<28s}: "
+                  f"d_ib={_layer['delta_ib']:.3f} m  d_ob={_layer['delta_ob']:.3f} m  "
+                  f"V={_layer['V']:.1f} m³  M={_layer['M']/1e3:.1f} t  "
+                  f"rho={_layer['rho']:.1f} kg/m³", file=out)
+            _comp_masses = _layer['component_masses']
+            _materials   = list(_comp_masses)
+            for _j, _mat in enumerate(_materials):
+                _mbranch = "├" if _j < len(_materials) - 1 else "└"
+                _frac    = _layer['composition'][_mat]
+                print(f"[O]  {_cont}    {_mbranch} {_mat:<12s}: "
+                      f"{_frac*100:5.1f} vol%  {_comp_masses[_mat]/1e3:.2f} t", file=out)
+        print("-------------------------------------------------------------------------", file=out)
         print(f"[O] Psi_PI      (Breakdown flux)                    : {ΨPI:.3f} [Wb]",      file=out)
         print(f"[O] Psi_RampUp  (Ramp-up flux)                      : {ΨRampUp:.3f} [Wb]",  file=out)
         print(f"[O] Psi_Plateau (Flat-top flux)                     : {Ψplateau:.3f} [Wb]", file=out)
@@ -2589,7 +3496,7 @@ def save_run_output(config: GlobalConfig,
                     _sp, _fc, nbar, config.Tbar, nu_n, nu_T, Volume,
                     rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
                     Vprime_data=Vprime_data, rho_core=rho_rad_core)
-                print(f"[O]  \u251c P_imp_{_sp:<3s} (f={_fc:.1e}, brem+line+recomb)   : {_Pt:.3f} [MW] "
+                print(f"[O]  \u251c P_imp_{_sp:<3s} (f={_fc:.1e}, brem+line+recomb)      : {_Pt:.3f} [MW] "
                       f"(core={_Pc:.3f}, edge={_Pt - _Pc:.3f})", file=out)
             print(f"[O]  f_imp_dilution (\u03a3 Z_j\u00b7f_j)                     : {f_imp_dilution:.4f} [-]", file=out)
         _P_rad_total = P_syn + P_Brem + P_line
@@ -2603,7 +3510,16 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] P_wallplug (Wall-plug heating/CD power)         : {P_wallplug:.3f} [MW]",     file=out)
         _P_gross = config.eta_T * config.M_blanket * config.P_fus
         print(f"[O] Q_eng  (Engineering gain = P_elec / P_wallplug) : {P_elec / P_wallplug:.3f}", file=out)
-        print(f"[O] Cost   ((V_BB+V_TF+V_CS) / P_fus)               : {cost:.3f} [m³/MW]",        file=out)
+        print(f"[O] Cost   ((V_BB+V_TF+V_CS) / P_fus)               : {cost:.3f} [m³/MW]",    file=out)
+        print("-------------------------------------------------------------------------", file=out)
+        print(f"[O] t_blanket_fpy  (Blanket lifetime, dpa model)       : {t_life_bl_fpy:.3f} [fpy]", file=out)
+        print(f"[O] t_div_fpy      (Divertor lifetime, heat model)     : {t_life_div_fpy:.3f} [fpy]", file=out)
+        print(f"[O] t_blanket_yr   (Blanket lifetime, calendar)        : {t_life_bl_yr:.3f} [yr]", file=out)
+        print(f"[O] t_div_yr       (Divertor lifetime, calendar)       : {t_life_div_yr:.3f} [yr]", file=out)
+        print(f"[O] T_op_limit     (Operation per replacement cycle)   : {T_op_limit:.3f} [yr]", file=out)
+        print(f"[O] dt_rep_eff     (Effective replacement downtime)    : {dt_rep_eff:.3f} [yr]", file=out)
+        print(f"[O] Av             (Plant availability)                : {Av:.4f} [-]", file=out)
+        print(f"[O] CF             (Capacity factor)                   : {CF:.4f} [-]", file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[I] H              (H-factor)                       : {config.H:.3f}",             file=out)
         print(f"[I] Operation mode                                  : {config.Operation_mode}",    file=out)
@@ -2611,10 +3527,10 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] tau_E          (Energy confinement time)        : {tauE:.3f} [s]",             file=out)
         print(f"[O] Ip             (Plasma current)                 : {Ip:.3f} [MA]",              file=out)
         print(f"[O] Ib             (Bootstrap current, {config.Bootstrap_choice}) : {Ib:.3f} [MA]", file=out)
-        print(f"[O] I_CD           (Driven current, {config.CD_source}) : {I_CD:.3f} [MA]", file=out)
+        print(f"[O] I_CD           (Driven current, {config.CD_source})       : {I_CD:.3f} [MA]", file=out)
         print(f"[O] I_Ohm          (Ohmic current)                  : {I_Ohm:.3f} [MA]",           file=out)
         print(f"[O] f_b            (Bootstrap fraction)             : {(Ib/Ip)*100:.3f} [%]",      file=out)
-        print(f"[O] l_i(3)         (Internal inductance, {config.q_profile_mode}) : {li_sc:.3f} [-]", file=out)
+        print(f"[O] l_i(3)         (Internal inductance, {config.q_profile_mode})   : {li_sc:.3f} [-]", file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[I] Tbar  (Volume-averaged electron temperature Te)  : {config.Tbar:.3f} [keV]",    file=out)
         print(f"[I] tau_i_e (Ion/electron temperature ratio Ti/Te)   : {config.tau_i_e:.3f} [-]",   file=out)
@@ -2720,7 +3636,7 @@ def save_run_output(config: GlobalConfig,
             print(f"[I] Te_final       (Post-TQ temperature)                : {RE['Te_final_eV']:.0f} [eV]", file=out)
             print(f"[I] pellet_dilution (SPI/MGI density factor)            : {RE['pellet_dilution']:.1f} [-]", file=out)
             print(f"[I] nbar_diluted   (Post-pellet density)                : {RE['nbar_diluted']:.3f} [1e20 m-3]", file=out)
-            print(f"[I] Tbar_diluted   (Pre-TQ temperature, {'isobaric' if RE['pellet_dilution_cools'] else 'unchanged'})      : {RE['Tbar_diluted']:.2f} [keV]", file=out)
+            print(f"[I] Tbar_diluted   (Pre-TQ temperature, {'isobaric' if RE['pellet_dilution_cools'] else 'unchanged'})       : {RE['Tbar_diluted']:.2f} [keV]", file=out)
             print(f"[O] f_RE_core      (Hot-tail fraction at rho=0)         : {RE['f_RE_core']:.3e} [-]", file=out)
             print(f"[O] f_RE_avg       (Volume-averaged hot-tail fraction)  : {RE['f_RE_avg']:.3e} [-]", file=out)
             print(f"[O] I_RE_seed      (Hot-tail seed, pre-pellet)          : {RE['I_RE_seed']:.3e} [A]", file=out)
@@ -2740,31 +3656,34 @@ def save_run_output(config: GlobalConfig,
             print("-------------------------------------------------------------------------", file=out)
             try:
                 # Derived quantities from D0FUS convergence
-                P_th = config.P_fus * config.M_blanket + P_CD   # total thermal [MW]
+                P_th = config.P_fus * M_blanket_effective(config.Blanket_choice) + P_CD   # total thermal [MW]
                 P_e  = max(P_elec, 1.0)                          # net electric [MWe]
                 S_FW = Surface                                   # first-wall surface [m^2]
 
                 # Component volumes from D0FUS radial build
-                (V_BB_c, V_TF_c, V_CS_c, V_FI_c) = f_volume(
-                    config.a, config.b, c, d, config.R0, κ)
+                _, _, _H_TF_c, _, _, _, _, _, _ = f_TF_cross_section(
+                    config.a, config.b, config.R0, c, Delta_TF_disp)
+                (_, _, _, V_FI_c) = f_volume(
+                    config.a, config.b, c, d, config.R0, κ, Delta_TF_disp, _H_TF_c)
 
                 _res = f_costs_Sheffield(
-                    discount_rate     = config.discount_rate,
-                    contingency       = config.contingency,
-                    T_life            = config.T_life,
-                    T_build           = config.T_build,
-                    P_t               = P_th,
-                    P_e               = P_e,
-                    P_aux             = P_CD,
-                    Gamma_n           = Gamma_n,
-                    Util_factor       = config.Util_factor,
-                    Dwell_factor      = config.Dwell_factor,
-                    dt_rep            = config.dt_rep,
-                    V_FI              = V_FI_c,
-                    V_pc              = V_TF_c + V_CS_c,
-                    V_sg              = V_BB_c,
-                    V_bl              = V_BB_c,
-                    S_tt              = 0.1 * S_FW,
+                    discount_rate  = config.discount_rate,
+                    contingency    = config.contingency,
+                    T_life         = config.T_life,
+                    T_build        = config.T_build,
+                    P_t            = P_th,
+                    P_e            = P_e,
+                    P_aux          = P_CD,
+                    Gamma_n        = Gamma_n,
+                    T_op_limit     = T_op_limit,
+                    CF             = CF,
+                    t_life_bl_yr   = t_life_bl_yr,
+                    t_life_div_yr  = t_life_div_yr,
+                    V_FI           = V_FI_c,
+                    V_pc           = V_TF_one * N_TF_disp + V_CS_geom,
+                    V_sg           = V_blanket,
+                    V_bl           = V_rb_BB,
+                    S_tt           = 0.1 * S_FW,
                     Supra_cost_factor = config.Supra_cost_factor,
                 )
                 (T_op_limit, CF, C_invest, COE,
@@ -2780,7 +3699,8 @@ def save_run_output(config: GlobalConfig,
                       f"  Supra_cost={config.Supra_cost_factor:.1f}x", file=out)
                 print(f"[I] Util={config.Util_factor:.2f}"
                       f"  Dwell={config.Dwell_factor:.2f}"
-                      f"  dt_rep={config.dt_rep:.1f}yr", file=out)
+                      f"  dt_rep_bl={config.dt_rep_bl:.1f}yr"
+                      f"  dt_rep_div={config.dt_rep_div:.1f}yr", file=out)
                 print("-------------------------------------------------------------------------", file=out)
 
                 # Derived inputs from D0FUS
@@ -2790,10 +3710,10 @@ def save_run_output(config: GlobalConfig,
                 print("-------------------------------------------------------------------------", file=out)
 
                 # Component volumes
-                print(f"[O] V_BB  (blanket + shield + VV + gaps)            : {V_BB_c:.1f} [m^3]", file=out)
-                print(f"[O] V_TF  (TF coil winding packs)                   : {V_TF_c:.1f} [m^3]", file=out)
-                print(f"[O] V_CS  (central solenoid)                        : {V_CS_c:.1f} [m^3]", file=out)
-                print(f"[O] V_FI  (fusion island envelope)                  : {V_FI_c:.1f} [m^3]", file=out)
+                print(f"[O] V_blanket (FW+BB+shield+VV+gaps, Miller)        : {V_blanket:.1f} [m^3]", file=out)
+                print(f"[O] V_TF_one*N_TF (TF winding packs, Princeton-D)   : {V_TF_one * N_TF_disp:.1f} [m^3]", file=out)
+                print(f"[O] V_CS_geom (central solenoid)                    : {V_CS_geom:.1f} [m^3]", file=out)
+                print(f"[O] V_FI      (fusion island envelope)              : {V_FI_c:.1f} [m^3]", file=out)
                 print("-------------------------------------------------------------------------", file=out)
 
                 # Availability
@@ -2844,7 +3764,7 @@ def save_run_output(config: GlobalConfig,
 def _generate_run_figures(config: GlobalConfig, results: tuple,
                           output_path: str, verbose: int = 0) -> None:
     """
-    Generate and save run-specific figures (11) into output_path/figures/.
+    Generate and save run-specific figures (12) into output_path/figures/.
 
     Calls D0FUS_figures.plot_run() which produces only the figures that
     depend on the current run geometry and results.
