@@ -4550,7 +4550,6 @@ def build_figure_registry():
     module conventions:
       run dict        -> 'run'          (rendered by plot_all on a run dict)
       results         -> 'uncertainty'  (Monte-Carlo robustness figures)
-      names           -> 'uncertainty'  (Sobol indices figure)
       scan_results    -> 'scan'
       anything else   -> 'standalone'   (parametric / validation figures
                                          taking explicit physics arguments)
@@ -4595,7 +4594,7 @@ _CATEGORY_LABEL = {
     'standalone':  'STANDALONE FIGURES — parametric / validation '
                    '(explicit physics arguments)',
     'scan':        'SCAN FIGURES — rendered from scan-mode outputs',
-    'uncertainty': 'UNCERTAINTY FIGURES — rendered from UQ / Sobol outputs',
+    'uncertainty': 'UNCERTAINTY FIGURES — rendered from UQ outputs',
 }
 
 
@@ -4688,63 +4687,10 @@ Each figure carries a one-line plain-language reading note so it stands on its o
   - fig_margins : headroom to each plasma limit (P5/P50/P95 of the normalised margin).
   - scan_feasibility + fig_scan : one-parameter feasibility scans with a traffic-light
     background, so a glance places the design value in a safe / marginal / unlikely zone.
-  - fig_models : impact of the model-form choices (confinement scaling, elongation, ...)
-    on feasibility and on a key physics output, one row per model combination.
+  - fig_inputs : histograms of the continuous uncertain inputs (with the design
+    value marked) plus a categorical panel for each model-form switch.
+  - fig_outputs : histogram of the main outputs over the converged samples.
 """
-def fig_sobol(names, sobol, meta, save_dir=None, show=False):
-    """
-    Sobol sensitivity bar charts: one panel per analysed QoI, horizontal bars
-    for the first-order (S1, filled) and total (ST, hatched outline) indices
-    of every uncertain parameter, per envelope combo (one figure per combo).
-
-    Parameters mirror the return values of
-    D0FUS_uncertainty.run_sobol_from_file.
-    """
-    figs = []
-    for label, per_out in sobol.items():
-        outputs = [k for k in per_out if np.isfinite(per_out[k]['ST']).any()]
-        if not outputs:
-            continue
-        ncol = min(3, len(outputs))
-        nrow = int(np.ceil(len(outputs) / ncol))
-        fig, axes = plt.subplots(nrow, ncol,
-                                 figsize=(4.2 * ncol, 0.6 * len(names) * nrow + 1.8),
-                                 squeeze=False)
-        y = np.arange(len(names))
-        for k, out_key in enumerate(outputs):
-            ax = axes[k // ncol][k % ncol]
-            idx = per_out[out_key]
-            order = np.argsort(np.nan_to_num(idx['ST']))
-            ax.barh(y - 0.18, idx['ST'][order], height=0.36, color='lightsteelblue',
-                    edgecolor='navy', hatch='//', label='ST (total)')
-            ax.barh(y + 0.18, idx['S1'][order], height=0.36, color='steelblue',
-                    label='S1 (first order)')
-            ax.set_yticks(y)
-            ax.set_yticklabels([names[j] for j in order], fontsize=8)
-            ax.axvline(0.0, color='k', lw=0.6)
-            ax.set_xlim(left=min(0.0, np.nanmin(idx['S1']) - 0.05),
-                        right=max(1.0, np.nanmax(idx['ST']) + 0.05))
-            _std = idx.get('std', None)
-            ax.set_title(out_key if _std is None
-                         else f"{out_key}  (std = {_std:.3g})", fontsize=10)
-            ax.grid(axis='x', alpha=0.3)
-            if k == 0:
-                ax.legend(fontsize=8, loc='lower right')
-        for k in range(len(outputs), nrow * ncol):
-            axes[k // ncol][k % ncol].axis('off')
-        fig.suptitle(f"Sobol indices — combo [{label}]  "
-                     f"(N={meta['n_base']}, {meta['n_eval']} evaluations)",
-                     fontsize=11)
-        fig.tight_layout(rect=(0, 0, 1, 0.96))
-        if save_dir is not None:
-            safe = label.replace(' ', '').replace(',', '_').replace('=', '-')
-            fig.savefig(os.path.join(save_dir, f"sobol_{safe}.png"), dpi=170)
-        figs.append(fig)
-        if not show:
-            plt.close(fig)
-    return figs
-
-
 # (os, Counter, numpy, matplotlib, pyplot and Patch are all exported by
 #  D0FUS_import.py through the wildcard import at the top of this module.)
 
@@ -4968,57 +4914,161 @@ def fig_scan(scan_results, save_dir=None):
 
 
 # =============================================================================
-# Figure 4 -- impact of the physics models (envelope combinations)
+# Figure 4 -- distribution of the main uncertain inputs
 # =============================================================================
-def fig_models(results, qoi='Q', save_dir=None):
+# Plain-language labels for the uncertain inputs; the raw parameter name is used
+# as a fallback for anything not listed here.
+_IN_NICE = {
+    'H': 'confinement H', 'Tbar': r'$\langle T \rangle$  [keV]', 'C_Alpha': r'$C_\alpha$',
+    'nu_n_manual': r'density peaking $\nu_n$', 'nu_T_manual': r'temp. peaking $\nu_T$',
+    'rho_ped': r'pedestal radius $\rho_{ped}$', 'n_ped_frac': 'pedestal density frac.',
+    'T_ped_frac': 'pedestal temp. frac.', 'eta_WP_acad': 'CD wall-plug eff.',
+    'gamma_CD_acad': r'CD figure of merit $\gamma_{CD}$', 'Ce': r'flux coeff. $C_e$',
+    'betaN_limit': r'$\beta_N$ limit', 'q_limit': r'kink limit on $q_{95}$',
+    'Greenwald_limit': 'Greenwald limit', 'Supra_cost_factor': 'SC cost factor',
+    'discount_rate': 'discount rate',
+    # model-form switches (shown as categorical panels)
+    'Scaling_Law': 'confinement scaling law', 'Option_Kappa': 'elongation model',
+    'Bootstrap_choice': 'bootstrap model',
+}
+
+
+def fig_inputs(names, X, base, spec=None, envelope=None, save_dir=None):
     """
-    How the model-form choices (confinement scaling law, elongation model, ...) move
-    feasibility. One row per model combination: a wide spread between rows means the
-    model assumptions matter, a tight spread means they do not. (qoi kept for backward
-    compatibility; no longer plotted.)
+    Distribution of every uncertain input: a histogram for each continuous (normal)
+    marginal with the design value marked, and a categorical bar panel for each
+    model-form switch (envelope), so the switches appear in the same table.
+
+    names    : list of str               column order of X (continuous inputs).
+    X        : ndarray (n_samples, d)     Latin-Hypercube sample in physical units.
+    base     : GlobalConfig               design point (provides the nominal value).
+    spec     : dict name -> dist tuple    optional; used only to tag the law (norm / ...).
+    envelope : dict switch -> [options]   optional; one categorical panel per switch.
     """
-    combos = [k for k in results if k != ('nominal',)]
-    if not combos:
-        return None                              # no model envelope in this study
+    envelope = envelope or {}
+    switches = list(envelope.keys())
+    n_cont = len(names)
+    total = n_cont + len(switches)
+    if total == 0:
+        return None
+    ncols = min(4, total)
+    nrows = int(np.ceil(total / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3.4 * ncols, 2.6 * nrows))
+    axes = np.atleast_1d(axes).ravel()
 
-    def _label(key):
-        d = dict(key)
-        order = ['Scaling_Law', 'Option_Kappa', 'Bootstrap_choice']
-        vals = [str(d[k]) for k in order if k in d]
-        vals += [str(v) for k, v in key if k not in order]
-        return '  ·  '.join(vals)
+    # --- continuous marginals: one histogram each ---------------------------
+    for j, name in enumerate(names):
+        ax = axes[j]
+        col = np.asarray(X[:, j], dtype=float)
+        col = col[np.isfinite(col)]
+        if col.size:
+            ax.hist(col, bins=40, color='steelblue', edgecolor='white', alpha=0.85)
+        nom = getattr(base, name, np.nan)
+        try:
+            nomf = float(nom)
+        except (TypeError, ValueError):
+            nomf = np.nan
+        if np.isfinite(nomf):
+            ax.axvline(nomf, color='0.15', ls='--', lw=1.6)
+            ax.annotate('design', xy=(nomf, 0.92), xycoords=('data', 'axes fraction'),
+                        rotation=90, va='top', ha='right', fontsize=7.5, color='0.15')
+        fam = spec.get(name, (None,))[0] if spec else None
+        tag = f"  ({fam})" if fam else ""
+        ax.set_title(f"{_IN_NICE.get(name, name)}{tag}", fontsize=9.5)
+        ax.tick_params(labelsize=8)
+        ax.set_yticks([])
 
-    labels, p_feas = [], []
-    for k in combos:
-        rws = results[k]
-        n = max(len(rws), 1)
-        feas = [r for r in rws if r.get('converged') and r.get('feasible')]
-        labels.append(_label(k))
-        p_feas.append(100.0 * len(feas) / n)
+    # --- model-form switches: one categorical bar panel each ----------------
+    # Each option is swept with equal weight (n_samples runs per combination),
+    # so the input distribution of a switch is uniform over its options.
+    for s, sw in enumerate(switches):
+        ax = axes[n_cont + s]
+        opts = list(envelope[sw])
+        xpos = np.arange(len(opts))
+        ax.bar(xpos, np.full(len(opts), 1.0 / len(opts)), color='slategray',
+               edgecolor='white', width=0.7)
+        ax.set_xticks(xpos)
+        ax.set_xticklabels(opts, fontsize=7.5, rotation=20, ha='right')
+        ax.set_ylim(0, 1)
+        ax.set_yticks([])
+        ax.set_title(f"{_IN_NICE.get(sw, sw)}  (switch)", fontsize=9.5)
 
-    order = np.argsort(p_feas)                    # worst feasibility at the bottom
-    labels = [labels[i] for i in order]
-    p_feas = [p_feas[i] for i in order]
-    y = np.arange(len(labels))
+    for ax in axes[total:]:
+        ax.axis('off')
 
-    fig, ax = plt.subplots(figsize=(10, 0.7 * len(labels) + 2.2))
-    grays = [str(max(0.25, 0.85 - 0.6 * p / 100.0)) for p in p_feas]   # darker = higher
-    ax.barh(y, p_feas, color=grays, edgecolor='black', lw=0.8)
-    for yi, p in zip(y, p_feas):
-        ax.text(min(p + 1.5, 97), yi, f'{p:.0f}%', va='center', fontsize=10)
-    ax.axvline(85, color='0.3', ls=':', lw=1)
-    ax.set_xlim(0, 105)
-    ax.set_yticks(y)
-    ax.set_yticklabels(labels, fontsize=11)
-    ax.set_xlabel('probability of staying feasible [%]', fontsize=11)
-    ax.set_title('Impact of the physics models on feasibility',
-                 fontsize=13, fontweight='bold')
-    ax.annotate('each row is one model combination (confinement scaling · elongation); '
-                'the spread shows how much the model assumptions drive feasibility',
-                xy=(0.5, -0.30 if len(labels) <= 4 else -0.18), xycoords='axes fraction',
-                ha='center', fontsize=9.5, color='dimgray')
-    plt.tight_layout()
-    return _save(fig, save_dir, 'uq_models')
+    plt.suptitle('Distribution of the uncertain inputs',
+                 fontsize=14, fontweight='bold')
+    fig.text(0.5, -0.01, 'sampled values fed to the Monte-Carlo (dashed line = design '
+             'value); switches are swept with equal weight',
+             ha='center', fontsize=9.5, color='dimgray')
+    plt.tight_layout(rect=(0, 0.02, 1, 0.96))
+    return _save(fig, save_dir, 'uq_inputs')
+
+
+# =============================================================================
+# Figure 5 -- distribution of the main outputs
+# =============================================================================
+# (key, precise label, unit) for the outputs shown; all are produced by
+# D0FUS_uncertainty.evaluate().
+_OUT_SPEC = [
+    ('Q',        r'fusion gain  $Q$',                          ''),
+    ('P_elec',   'net electric power',                         '[MW]'),
+    ('COE',      'levelised cost of electricity',              '[EUR/MWh]'),
+    ('C_invest', r'capital cost  $C_{invest}$',                '[B EUR]'),
+    ('beta_N',   r'normalised beta  $\beta_N$',                ''),
+    ('f_bs',     'bootstrap current fraction',                 '[%]'),
+    ('q95',      r'edge safety factor  $q_{95}$',              ''),
+    ('B0',       r'on-axis toroidal field  $B_0$',             '[T]'),
+    ('B_CS',     'peak field on the central solenoid',         '[T]'),
+    ('P_sep',    r'power crossing the separatrix  $P_{sep}$',  '[MW]'),
+    ('d_TF',     'inboard TF radial build (coil + gap)',       '[m]'),
+    ('d_CS',     'central solenoid radial thickness',          '[m]'),
+]
+
+
+def fig_outputs(results, save_dir=None):
+    """
+    Histogram of the main outputs over the converged Monte-Carlo samples (all model
+    combinations pooled).
+
+    results : dict combo -> list of per-sample row dicts (the run_uq_from_file output).
+    """
+    rows = [r for k in results for r in results[k] if r.get('converged')]
+    if not rows:
+        return None
+
+    specs = [(k, lab, unit) for (k, lab, unit) in _OUT_SPEC
+             if any(np.isfinite(r.get(k, np.nan)) for r in rows)]
+    d = len(specs)
+    if d == 0:
+        return None
+    ncols = min(4, d)
+    nrows = int(np.ceil(d / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3.4 * ncols, 2.6 * nrows))
+    axes = np.atleast_1d(axes).ravel()
+
+    for j, (key, label, unit) in enumerate(specs):
+        ax = axes[j]
+        vals = np.array([r.get(key, np.nan) for r in rows], dtype=float)
+        vals = vals[np.isfinite(vals)]
+        if vals.size:
+            ax.hist(vals, bins=40, color='tab:blue', edgecolor='white', alpha=0.85)
+        ttl = f"{label}  {unit}".strip()
+        ax.set_title(ttl, fontsize=9.5)
+        ax.tick_params(labelsize=8)
+        ax.set_yticks([])
+
+    for ax in axes[d:]:
+        ax.axis('off')
+
+    n_conv = len(rows)
+    plt.suptitle('Distribution of the main outputs',
+                 fontsize=14, fontweight='bold')
+    fig.text(0.5, -0.01, f'over {n_conv} converged Monte-Carlo samples',
+             ha='center', fontsize=9.5, color='dimgray')
+    plt.tight_layout(rect=(0, 0.02, 1, 0.96))
+    return _save(fig, save_dir, 'uq_outputs')
+
 
 if __name__ == "__main__":
     _standalone_main()
