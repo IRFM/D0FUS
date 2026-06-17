@@ -39,3 +39,4 @@ Pypi_Wheel_tuto.txt
 # Local publication script
 publish_d0fus.sh
 *.log
+D0FUS_figures_catalog/

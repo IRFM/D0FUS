@@ -293,6 +293,10 @@ class GlobalConfig:
     n_shape_TF           : float = 1.0      # TF conductor shape factor (1 = square, 0 = optimal) [-]
     c_BP                 : float = 0.07     # Backplate thickness [m]
     TF_grading           : bool  = False    # TF WP conductor grading: α(R) varies to saturate Tresca [-]
+    f_TF_steel_mass      : float = 2.0      # Multiplicative factor on total TF steel mass to account
+                                            # for geometry approximations, gravitational supports, and
+                                            # inter-coil structures [-]. Default = 2.0 (benchmarked
+                                            # against ITER TF coil set total steel mass).
 
     # ── 8. Central Solenoid ──────────────────────────────────────────────────
     Gap      : float = 0.10      # CS–TF mechanical clearance [m]
@@ -425,12 +429,47 @@ class GlobalConfig:
     # Availability & capacity factor
     Util_factor         : float = 0.85   # Utilisation factor [-]
     Dwell_factor        : float = 1.0    # Dwell factor (1.0 = SS, <1 for pulsed) [-]
-    dt_rep              : float = 1.5    # Scheduled replacement downtime [yr]
     # Superconductor cost multiplier (1.5 Nb3Sn mature — 3.0 REBCO FOAK)
     Supra_cost_factor   : float = 2.0    # SC coil cost multiplier vs Cu [-]
     # Budget constraint (genetic algorithm)
     # Designs exceeding C_invest_max are penalised. Set to 1e6 to disable.
     C_invest_max        : float = 25e3   # Capital cost ceiling [M EUR]
+
+    # ── 17. Radial build sublayer widths ─────────────────────────────────────
+    # b = total plasma→TF radial gap (drives all existing machinery).
+    # Per-concept layer widths (SOL, FW, breeder, structure, shields, VV, gaps)
+    # are defined in BLANKET_CONCEPTS[Blanket_choice]['radial_layers']; only the
+    # SOL/FW elongation factor remains a global geometric parameter.
+    f_kappa_SOL  : float = 0.25   # Elongation increase factor for SOL/FW shapes [-]
+
+    # ── Blanket concept selection ─────────────────────────────────────────────
+    # Selects the breeder/coolant/structure/multiplier combination and the
+    # breeding-blanket (BB) sub-layer breakdown from BLANKET_CONCEPTS below.
+    # Options: 'HCPB', 'HCLL', 'DCLL', 'SCLL', 'SCLV', 'F-LIB'
+    # Ref: "Infinity Two pilot plant blanket trade study",
+    #      J. Plasma Phys. 91, E79 (2025), doi:10.1017/S002237782500039X
+    Blanket_choice : str = 'HCPB'
+
+    # ── Effective volumetric densities for radial-build mass estimates ────────
+    # Plasma->TF radial_layers densities are derived per layer from their
+    # 'composition' (volume fractions) and BLANKET_MATERIAL_DENSITIES; see
+    # BLANKET_CONCEPTS[Blanket_choice]['radial_layers'].
+    rho_divertor : float = 13000.0   # Divertor             [kg/m³]
+
+    # ── 16. Component lifetime & availability model ───────────────────────────
+    # Blanket lifetime: t_bl [fpy] = dpa_lim * A_FW / (0.8 * C_dpa * P_fus)
+    # Ref: Gilbert et al. (2013); EUROfusion (2015)
+    dpa_lim             : float = 70.0   # Blanket structural damage limit [dpa]
+    C_dpa               : float = 12.0   # dpa rate per neutron wall load [dpa fpy⁻¹ / (MW m⁻²)]
+    # Divertor lifetime: t_div [fpy] = epsilon_div * A_div / (f_peak * P_sep)
+    # A_div = f_div_area_fraction * A_FW (first-wall area)
+    # Ref: ITER Organization (2025); CEA IRFM (2017)
+    epsilon_div         : float = 30.0   # Divertor integrated heat limit [MW yr / m²]
+    f_peak              : float = 3.0    # Divertor heat flux peaking factor [-]
+    f_div_area_fraction : float = 0.10   # A_div / A_FW ratio [-]
+    # Replacement downtimes (performed in parallel if scheduled together)
+    dt_rep_bl           : float = 0.5    # Blanket replacement downtime [yr]
+    dt_rep_div          : float = 0.4    # Divertor replacement downtime [yr]
 
 # Module-level default instance — import and reuse rather than reinstantiating
 DEFAULT_CONFIG = GlobalConfig()
@@ -633,3 +672,545 @@ def preset_refined(**overrides) -> 'GlobalConfig':
     # Merge: overrides take precedence over the preset defaults so the user
     # can change any single sub-mode without bypassing the preset entirely.
     return GlobalConfig(**{**_PRESET_REFINED_SUBMODES, **overrides})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Coil material volumetric mass densities [kg/m³]
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Structural steels
+# -----------------
+#   316LN  (ITER TF/CS casing, vacuum vessel) — austenitic stainless, cryogenic
+#           ρ = 7930 kg/m³.
+#           Ref: ITER DDD 1.6 (2013); Garland et al., Fusion Eng. Des. 2008.
+#
+#   N50H   (high-strength austenitic, ITER Nb3Sn conduit) — Incoloy-like
+#           ρ = 8050 kg/m³.
+#           Ref: Mitchell, Fusion Eng. Des. 75-79 (2005).
+#
+# Superconducting materials  (volume fraction in D0FUS = non-Cu SC material)
+# ---------------------------------------------------------------------------
+#   Nb3Sn  A15 compound (filaments without Cu matrix)
+#           ρ = 8600 kg/m³.
+#           Ref: Wilson, "Superconducting Magnets", Clarendon Press (1983);
+#                Larbalestier, MRS Bull. 29 (2004).
+#
+#   NbTi   alloy Ti-46.5 wt% Nb (filaments without Cu matrix)
+#           ρ = 6100 kg/m³.
+#           Ref: Iwasa, "Case Studies in Superconducting Magnets", 2nd ed.
+#                Springer (2009), Table A1.3.
+#
+#   REBCO  coated-conductor non-Cu stack (REBCO layer + buffer + Hastelloy
+#           substrate — weighted average for Fujikura / SuperPower 12 mm tape)
+#           ρ = 7800 kg/m³.
+#           Ref: Senatore et al., Supercond. Sci. Technol. 37 (2024);
+#                Fujikura HTS tape datasheet (2022).
+#
+# Copper stabiliser
+# -----------------
+#   OFHC copper (oxygen-free high-conductivity)
+#           ρ = 8960 kg/m³.
+#           Ref: ASM Handbook Vol. 2 (1990).
+#
+# Insulation
+# ----------
+#   Cryogenic glass-epoxy (GFRP, S-glass / CTD-101K binder)
+#           ρ = 1900 kg/m³.
+#           Ref: Weisend II (ed.), "Handbook of Cryogenic Engineering",
+#                Taylor & Francis (1998), p. 386;
+#                Bauer et al., Cryogenics 42 (2002).
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+COIL_MATERIAL_DENSITIES = {
+    # Structural steel — keyed by Chosen_Steel value
+    'steel': {
+        '316L':   7930.0,   # [kg/m³]  316LN austenitic stainless
+        'N50H':   8050.0,   # [kg/m³]  N50H high-strength austenitic
+        'Manual': 7930.0,   # [kg/m³]  fallback to 316LN
+    },
+    # Superconductor material (non-Cu fraction) — keyed by Supra_choice
+    'SC': {
+        'Nb3Sn':  8600.0,   # [kg/m³]  Nb3Sn A15 filament
+        'NbTi':   6100.0,   # [kg/m³]  NbTi alloy
+        'REBCO':  7800.0,   # [kg/m³]  REBCO tape non-Cu stack
+        'Manual': 8600.0,   # [kg/m³]  fallback to Nb3Sn
+    },
+    # Copper stabiliser
+    'Cu':         8960.0,   # [kg/m³]  OFHC copper
+    # Insulation (cryogenic glass-epoxy)
+    'insulation': 1900.0,   # [kg/m³]  GFRP CTD-101K
+}
+
+# Volumetric mass densities [kg/m³] of the constituent materials appearing in
+# the per-layer 'composition' (volume-fraction) dicts of
+# BLANKET_CONCEPTS[...]['radial_layers'], digitised from figures 10-15
+# (Appendix A) of the reference study. f_radial_build_layers() combines these
+# with each layer's 'composition' to obtain an effective smeared density
+# rho = sum(frac_i * BLANKET_MATERIAL_DENSITIES[i]) and per-material
+# component masses. Values are room-temperature/handbook densities unless
+# noted; this is a 0D mass estimate, not a substitute for detailed material
+# property sets.
+#
+# Citations:
+#  - void, airSTP:  vacuum (0) and standard air at 15C/101.325 kPa (ISA),
+#       rho_air = 1.225 kg/m3 (CRC Handbook of Chemistry and Physics).
+#  - Water: liquid water at 4C reference, rho = 1000 kg/m3 (CRC Handbook).
+#  - EUROFER97, MF82H, BMF82H: RAFM steels of the same Fe-9Cr-W-V-Ta family;
+#       rho(EUROFER97) = 7750 kg/m3, e.g. Lindau et al., J. Nucl. Mater.
+#       336 (2005) 81; same value adopted for F82H-class steels (MF82H,
+#       boron-doped BMF82H).
+#  - SS316L: 316L austenitic stainless steel, rho = 7990 kg/m3 (CRC Handbook /
+#       standard mill data sheets).
+#  - Inconel718: rho = 8190 kg/m3 (Special Metals / ESPI Metals datasheet,
+#       https://www.espimetals.com/index.php/technical-data/91-inconel-718).
+#  - W: tungsten, rho = 19250 kg/m3 (CRC Handbook).
+#  - WC: tungsten carbide, rho = 15630 kg/m3 (CRC Handbook).
+#  - SiC: silicon carbide, theoretical/fully-dense rho = 3210 kg/m3
+#       (e.g. Schunk Technical Ceramics datasheet; ScienceDirect SiC overview).
+#  - Li4SiO4: lithium orthosilicate breeder ceramic, theoretical rho =
+#       2350 kg/m3 (Hernandez et al./KIT HCPB pebble fabrication studies,
+#       ScienceDirect S1738573323002139).
+#  - Li2TiO3: lithium titanate breeder ceramic, theoretical rho = 3430 kg/m3
+#       (INL TPBAR/ITER data compilation, inldigitallibrary.inl.gov
+#       Sort_146241.pdf).
+#  - Be12Ti: beryllide neutron multiplier, rho = 2288 kg/m3
+#       (Kawamura et al., J. Nucl. Mater.; ScienceDirect S0966979518301122,
+#       S0920379611002791).
+#  - Be: beryllium metal, rho = 1850 kg/m3 (CRC Handbook).
+#  - CaO: calcium oxide (Li ceramic-breeder additive), rho = 3340 kg/m3
+#       (CRC Handbook / standard chemistry references).
+#  - PbLi: Pb-15.7Li eutectic breeder/coolant, rho ~ 9800 kg/m3 from the
+#       correlation rho(kg/m3) = 10520.35 - 1.19051*T[K] at T ~ 600 K (327C)
+#       (Mas de les Valls et al., J. Nucl. Mater. 376 (2008) 353, "Lead-lithium
+#       eutectic material database for nuclear fusion technology").
+#  - Li: pure liquid lithium breeder (SCLV), rho = 485 kg/m3 at 500C
+#       (NASA thermophysical compilation of liquid lithium,
+#       ntrs.nasa.gov/api/citations/19680018893).
+#  - FLiBe: 2LiF-BeF2 molten-salt breeder, rho ~ 2020 kg/m3 from the
+#       correlation rho(kg/m3) = 2413 - 0.488*T[K] at T ~ 800 K (527C)
+#       (Romatoski & Forsberg review; Lee et al., J. Chem. Eng. Data 68
+#       (2023), doi:10.1021/acs.jced.2c00212, PMC9743087).
+#  - V4Cr4Ti: V-4Cr-4Ti vanadium structural alloy, rho = 6060 kg/m3, computed
+#       via rule-of-mixtures from elemental densities (V 6110, Cr 7190,
+#       Ti 4506 kg/m3) at the nominal 92/4/4 wt% composition (Smith et al.,
+#       J. Nucl. Mater. 233-237 (1996) 356, "Reference vanadium alloy
+#       V-4Cr-4Ti for fusion application").
+#  - HeT410P80: helium coolant at T = 410 C, P = 8.0 MPa, rho = 5.64 kg/m3
+#       from the ideal-gas law rho = P*M/(R*T) (M_He = 4.003 g/mol).
+BLANKET_MATERIAL_DENSITIES = {
+    'void':       0.0,       # vacuum / gap
+    'airSTP':     1.225,     # air, 15 C / 101.325 kPa
+    'Water':      1000.0,    # liquid water, 4 C reference
+    'EUROFER97':  7750.0,    # RAFM steel
+    'MF82H':      7750.0,    # RAFM steel (F82H-class)
+    'BMF82H':     7750.0,    # RAFM steel (boron-doped F82H-class)
+    'SS316L':     7990.0,    # 316L austenitic stainless steel
+    'Inconel718': 8190.0,    # Ni-based superalloy
+    'W':          19250.0,   # tungsten armour
+    'WC':         15630.0,   # tungsten carbide (shield)
+    'SiC':        3210.0,    # silicon carbide
+    'Li4SiO4':    2350.0,    # lithium orthosilicate breeder ceramic
+    'Li2TiO3':    3430.0,    # lithium titanate breeder ceramic
+    'Be12Ti':     2288.0,    # beryllide neutron multiplier
+    'Be':         1850.0,    # beryllium multiplier
+    'CaO':        3340.0,    # calcium oxide additive
+    'PbLi':       9800.0,    # Pb-15.7Li eutectic, ~327 C
+    'Li':         485.0,     # pure liquid lithium, ~500 C
+    'FLiBe':      2020.0,    # 2LiF-BeF2 molten salt, ~527 C
+    'V4Cr4Ti':    6060.0,    # vanadium structural alloy
+    'HeT410P80':  5.64,      # He coolant, 410 C / 8.0 MPa (ideal gas)
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Breeding-blanket concepts
+# ─────────────────────────────────────────────────────────────────────────────
+# Six concepts compared in the "Infinity Two pilot plant blanket trade study"
+# (J. Plasma Phys. 91, E79 (2025), doi:10.1017/S002237782500039X).
+#
+# Each entry defines a concept-specific radial-build layer stack 'radial_layers'
+# (ordered plasma -> TF, widths in [m]), reflecting the inboard radial builds of
+# figures 10-15 of the reference study.  Exactly one entry per concept has
+# 'width': None and 'role': 'breeder' — its thickness is the residual of the
+# top-level design variable b once every other (fixed-width) layer in the stack
+# has been subtracted off (see radial_layers_effective()).  High/low-temperature
+# shield layers ('shield_HT' / 'shield_LT') use the DEFAULT_SHIELD_HT_WIDTH /
+# DEFAULT_SHIELD_LT_WIDTH defaults below where the source figures do not give a
+# value.  Every layer carries a 'composition' dict (volume fractions, keys
+# into BLANKET_MATERIAL_DENSITIES, summing to 1.0) digitised from figures
+# 10-15 (Appendix A); f_radial_build_layers() derives each layer's effective
+# density, per-material component masses and total mass from this
+# composition.  Where a single radial_layers entry (e.g. the FW) aggregates
+# several figure sub-layers, 'composition' is the volume-weighted average
+# over those sub-layers.
+#
+# TBR_max and delta_BB_sat (breeder-zone thickness for ~95% of TBR_max) feed the
+# saturation-curve model f_TBR():
+#   TBR(delta_BZ) = TBR_max * (1 - exp(-delta_BZ / delta_e)),
+#   delta_e = delta_BB_sat / ln(20)
+# where delta_BZ = delta_BB_ib (breeder-layer IB thickness).
+#
+# All numeric values are illustrative, smeared 0D estimates consistent with
+# the ranges reported in the reference study; they are not a substitute for
+# detailed neutronics.
+DEFAULT_SHIELD_HT_WIDTH = 0.20   # [m]  high-temperature shield default thickness
+DEFAULT_SHIELD_LT_WIDTH = 0.10   # [m]  low-temperature shield default thickness
+
+BLANKET_CONCEPTS = {
+    'HCPB': {
+        'label':       'Helium-Cooled Pebble Bed',
+        'breeder':     'Li4SiO4 (pebble bed)',
+        'multiplier':  'Be12Ti (pebble bed)',
+        'coolant':     'He',
+        'structure':   'EUROFER97',
+        'TBR_max':       1.46,   # [-]   saturated TBR (parametric study)
+        'delta_BB_sat':  0.50,   # [m]   breeder-zone thickness for ~saturated TBR
+        'M_blanket':     1.35,   # [-]   energy multiplication factor
+        'eta_T_range':  (0.30, 0.40),   # [-] net thermal efficiency range
+        'Li6_enrichment': 'Not required (natural Li)',
+        'shield_quality': 'Excellent (dense solid breeder)',
+        'VV_feasible':    True,
+        'sublayers': [
+            {'name': 'Breeder/Multiplier Zone (Li4SiO4 + Be12Ti)', 'f_width': 0.65, 'rho': 2700.0},
+            {'name': 'Manifold / Back Structure',                   'f_width': 0.35, 'rho': 7000.0},
+        ],
+        'radial_layers': [
+            {'name': 'SOL',         'role': 'SOL',       'width': 0.05,
+             'composition': {'void': 1.0}},
+            {'name': 'First wall',  'role': 'FW',        'width': 0.04,
+             # 0.2cm W armour + 3.8cm MF82H/HeT410P80 structural (fig. 10), volume-weighted
+             'composition': {'W': 0.05, 'MF82H': 0.323, 'HeT410P80': 0.627}},
+            {'name': 'Breeder/Multiplier Zone (Li4SiO4 + Be12Ti)', 'role': 'breeder', 'width': None,
+             'composition': {'Li4SiO4': 0.063, 'Li2TiO3': 0.022, 'EUROFER97': 0.110,
+                              'Be12Ti': 0.539, 'HeT410P80': 0.266}},
+            {'name': 'Back Wall',   'role': 'structure', 'width': 0.10,
+             'composition': {'Li4SiO4': 0.063, 'Li2TiO3': 0.022, 'EUROFER97': 0.459, 'HeT410P80': 0.455}},
+            {'name': 'Manifold',    'role': 'structure', 'width': 0.15,
+             'composition': {'EUROFER97': 0.890, 'HeT410P80': 0.110}},
+            {'name': 'High-Temp Shield', 'role': 'shield_HT', 'width': DEFAULT_SHIELD_HT_WIDTH,
+             'composition': {'MF82H': 0.28, 'WC': 0.52, 'HeT410P80': 0.20}},
+            {'name': 'Gap',         'role': 'gap',       'width': 0.02,
+             'composition': {'void': 1.0}},
+            {'name': 'Vacuum Vessel', 'role': 'VV',      'width': 0.10,
+             'composition': {'SS316L': 0.76, 'HeT410P80': 0.24}},
+            {'name': 'Gap',         'role': 'gap',       'width': 0.02,
+             'composition': {'airSTP': 1.0}},
+            {'name': 'Low-Temp Shield', 'role': 'shield_LT', 'width': DEFAULT_SHIELD_LT_WIDTH,
+             'composition': {'SS316L': 0.39, 'BMF82H': 0.29, 'Water': 0.32}},
+            {'name': 'Gap',         'role': 'gap',       'width': 0.10,
+             'composition': {'airSTP': 1.0}},
+        ],
+    },
+    'HCLL': {
+        'label':       'Helium-Cooled Lithium-Lead',
+        'breeder':     'PbLi (eutectic, inherent multiplier)',
+        'multiplier':  'None (PbLi self-multiplies)',
+        'coolant':     'He',
+        'structure':   'EUROFER97',
+        'TBR_max':       1.38,   # [-]   mid-range (1.35-1.40)
+        'delta_BB_sat':  0.60,   # [m]
+        'M_blanket':     1.32,   # [-]
+        'eta_T_range':  (0.30, 0.35),
+        'Li6_enrichment': '90% required',
+        'shield_quality': 'Intermediate',
+        'VV_feasible':    True,
+        'sublayers': [
+            {'name': 'Breeder Zone (PbLi + stiffening plates)', 'f_width': 0.75, 'rho': 9000.0},
+            {'name': 'Manifold / Back Structure',               'f_width': 0.25, 'rho': 6500.0},
+        ],
+        'radial_layers': [
+            {'name': 'SOL',         'role': 'SOL',       'width': 0.05,
+             'composition': {'void': 1.0}},
+            {'name': 'First wall',  'role': 'FW',        'width': 0.04,
+             # 0.2cm W armour + 3.8cm MF82H/HeT410P80 structural (fig. 11), volume-weighted
+             'composition': {'W': 0.05, 'MF82H': 0.323, 'HeT410P80': 0.627}},
+            {'name': 'Breeder Zone (PbLi + stiffening plates)', 'role': 'breeder', 'width': None,
+             'composition': {'PbLi': 0.79, 'EUROFER97': 0.158, 'HeT410P80': 0.052}},
+            {'name': 'Back Wall',   'role': 'structure', 'width': 0.02,
+             'composition': {'EUROFER97': 0.698, 'HeT410P80': 0.302}},
+            {'name': 'Manifold',    'role': 'structure', 'width': 0.16,
+             'composition': {'EUROFER97': 0.85, 'HeT410P80': 0.10, 'PbLi': 0.05}},
+            {'name': 'High-Temp Shield', 'role': 'shield_HT', 'width': DEFAULT_SHIELD_HT_WIDTH,
+             'composition': {'MF82H': 0.28, 'WC': 0.52, 'HeT410P80': 0.20}},
+            {'name': 'Gap',         'role': 'gap',       'width': 0.02,
+             'composition': {'void': 1.0}},
+            {'name': 'Vacuum Vessel', 'role': 'VV',      'width': 0.10,
+             'composition': {'SS316L': 0.76, 'HeT410P80': 0.24}},
+            {'name': 'Gap',         'role': 'gap',       'width': 0.02,
+             'composition': {'airSTP': 1.0}},
+            {'name': 'Low-Temp Shield', 'role': 'shield_LT', 'width': DEFAULT_SHIELD_LT_WIDTH,
+             'composition': {'SS316L': 0.39, 'BMF82H': 0.29, 'Water': 0.32}},
+            {'name': 'Gap',         'role': 'gap',       'width': 0.10,
+             'composition': {'airSTP': 1.0}},
+        ],
+    },
+    'DCLL': {
+        'label':       'Dual-Coolant Lithium-Lead',
+        'breeder':     'PbLi (eutectic, inherent multiplier)',
+        'multiplier':  'None (PbLi self-multiplies); SiC flow-channel inserts',
+        'coolant':     'He (primary) + PbLi (secondary, self-cooled)',
+        'structure':   'EUROFER97 / F82H',
+        'TBR_max':       1.42,   # [-]
+        'delta_BB_sat':  0.70,   # [m]
+        'M_blanket':     1.32,   # [-]
+        'eta_T_range':  (0.30, 0.40),
+        'Li6_enrichment': '90% required',
+        'shield_quality': 'Lower than HCPB (thicker shielding needed)',
+        'VV_feasible':    True,
+        'sublayers': [
+            {'name': 'Breeder Zone (PbLi + SiC FCIs)', 'f_width': 0.92, 'rho': 8200.0},
+            {'name': 'Manifold / Back Structure',      'f_width': 0.08, 'rho': 6000.0},
+        ],
+        'radial_layers': [
+            {'name': 'SOL',         'role': 'SOL',       'width': 0.05,
+             'composition': {'void': 1.0}},
+            {'name': 'First wall',  'role': 'FW',        'width': 0.04,
+             # 0.2cm W armour + 3.8cm MF82H/HeT410P80 structural (fig. 12), volume-weighted
+             'composition': {'W': 0.05, 'MF82H': 0.323, 'HeT410P80': 0.627}},
+            {'name': 'Breeder Zone (PbLi + SiC FCIs)', 'role': 'breeder',   'width': None,
+             'composition': {'PbLi': 0.77, 'SiC': 0.035, 'MF82H': 0.06, 'HeT410P80': 0.135}},
+            {'name': 'Back Wall',   'role': 'structure', 'width': 0.02,
+             'composition': {'MF82H': 0.80, 'HeT410P80': 0.20}},
+            {'name': 'Manifold',    'role': 'structure', 'width': 0.06,
+             'composition': {'MF82H': 0.30, 'HeT410P80': 0.70}},
+            {'name': 'High-Temp Shield', 'role': 'shield_HT', 'width': DEFAULT_SHIELD_HT_WIDTH,
+             'composition': {'MF82H': 0.28, 'WC': 0.52, 'HeT410P80': 0.20}},
+            {'name': 'Gap',         'role': 'gap',       'width': 0.02,
+             'composition': {'void': 1.0}},
+            {'name': 'Vacuum Vessel', 'role': 'VV',      'width': 0.10,
+             'composition': {'SS316L': 0.76, 'HeT410P80': 0.24}},
+            {'name': 'Gap',         'role': 'gap',       'width': 0.02,
+             'composition': {'airSTP': 1.0}},
+            {'name': 'Low-Temp Shield', 'role': 'shield_LT', 'width': DEFAULT_SHIELD_LT_WIDTH,
+             'composition': {'SS316L': 0.39, 'BMF82H': 0.29, 'Water': 0.32}},
+            {'name': 'Gap',         'role': 'gap',       'width': 0.10,
+             'composition': {'airSTP': 1.0}},
+        ],
+    },
+    'SCLL': {
+        'label':       'Self-Cooled Lithium-Lead',
+        'breeder':     'PbLi (eutectic, inherent multiplier)',
+        'multiplier':  'Optional Be booster/reflector',
+        'coolant':     'Self-cooled (PbLi flow)',
+        'structure':   'SiC composite',
+        'TBR_max':       1.47,   # [-]   highest among liquid concepts
+        'delta_BB_sat':  0.45,   # [m]   most compact radial build
+        'M_blanket':     1.30,   # [-]
+        'eta_T_range':  (0.35, 0.45),
+        'Li6_enrichment': '90% required',
+        'shield_quality': 'Adequate (limited by liquid-metal moderation)',
+        'VV_feasible':    True,
+        'sublayers': [
+            {'name': 'Breeder Zone (PbLi + SiC)',  'f_width': 0.88, 'rho': 8500.0},
+            {'name': 'Manifold / Back Structure',  'f_width': 0.12, 'rho': 5500.0},
+        ],
+        'radial_layers': [
+            {'name': 'SOL',         'role': 'SOL',       'width': 0.05,
+             'composition': {'void': 1.0}},
+            {'name': 'Breeder Zone (PbLi + SiC)', 'role': 'breeder',   'width': None,
+             'composition': {'PbLi': 0.696, 'SiC': 0.222, 'void': 0.082}},
+            {'name': 'High-Temp Shield', 'role': 'shield_HT', 'width': DEFAULT_SHIELD_HT_WIDTH,
+             'composition': {'MF82H': 0.28, 'WC': 0.52, 'HeT410P80': 0.20}},
+            {'name': 'Gap',         'role': 'gap',       'width': 0.02,
+             'composition': {'void': 1.0}},
+            {'name': 'Vacuum Vessel', 'role': 'VV',      'width': 0.10,
+             'composition': {'SS316L': 0.76, 'HeT410P80': 0.24}},
+            {'name': 'Gap',         'role': 'gap',       'width': 0.02,
+             'composition': {'airSTP': 1.0}},
+            {'name': 'Low-Temp Shield', 'role': 'shield_LT', 'width': DEFAULT_SHIELD_LT_WIDTH,
+             'composition': {'SS316L': 0.39, 'BMF82H': 0.29, 'Water': 0.32}},
+            {'name': 'Gap',         'role': 'gap',       'width': 0.10,
+             'composition': {'airSTP': 1.0}},
+        ],
+    },
+    'SCLV': {
+        'label':       'Self-Cooled Lithium-Vanadium',
+        'breeder':     'Li (pure liquid lithium, inherent multiplier)',
+        'multiplier':  'Optional external multiplier/reflector',
+        'coolant':     'Self-cooled (Li flow)',
+        'structure':   'V-4Cr-4Ti (vanadium alloy)',
+        'TBR_max':       1.47,   # [-]   equivalent to SCLL
+        'delta_BB_sat':  0.55,   # [m]   mid-range
+        'M_blanket':     1.35,   # [-]
+        'eta_T_range':  (0.35, 0.40),
+        'Li6_enrichment': 'Not required (natural Li)',
+        'shield_quality': 'Lower than solid breeders (thicker build needed)',
+        'VV_feasible':    False,   # oxidation/embrittlement concerns
+        'sublayers': [
+            {'name': 'Breeder Zone (Li + V-alloy structure)', 'f_width': 0.80, 'rho': 2200.0},
+            {'name': 'Manifold / Back Structure',             'f_width': 0.20, 'rho': 5000.0},
+        ],
+        'radial_layers': [
+            {'name': 'SOL',         'role': 'SOL',        'width': 0.05,
+             'composition': {'void': 1.0}},
+            {'name': 'First wall',  'role': 'FW',         'width': 0.032,
+             # 0.2cm W armour + 1cm V4Cr4Ti structural + 2cm Li coolant channel (fig. 14), volume-weighted
+             'composition': {'W': 0.0625, 'V4Cr4Ti': 0.3625, 'CaO': 0.0125, 'Li': 0.5625}},
+            {'name': 'Gap',         'role': 'gap',        'width': 0.01,
+             'composition': {'void': 1.0}},
+            {'name': 'Breeder Zone (Li + V-alloy structure)', 'role': 'breeder',    'width': None,
+             'composition': {'V4Cr4Ti': 0.08, 'CaO': 0.02, 'Li': 0.90}},
+            {'name': 'Multiplier (Be)', 'role': 'multiplier', 'width': 0.01,
+             'composition': {'Be': 1.0}},
+            {'name': 'High-Temp Shield', 'role': 'shield_HT',  'width': DEFAULT_SHIELD_HT_WIDTH,
+             'composition': {'MF82H': 0.28, 'WC': 0.52, 'HeT410P80': 0.20}},
+            {'name': 'Vacuum Vessel', 'role': 'VV',         'width': 0.10,
+             'composition': {'SS316L': 0.76, 'HeT410P80': 0.24}},
+            {'name': 'Low-Temp Shield', 'role': 'shield_LT',  'width': DEFAULT_SHIELD_LT_WIDTH,
+             'composition': {'SS316L': 0.39, 'BMF82H': 0.29, 'Water': 0.32}},
+            {'name': 'Gap',         'role': 'gap',        'width': 0.10,
+             'composition': {'airSTP': 1.0}},
+        ],
+    },
+    'F-LIB': {
+        'label':       'FLiBe Liquid-Immersion Blanket',
+        'breeder':     'FLiBe (2:1 LiF-BeF2 molten salt)',
+        'multiplier':  'Be (inherent + optional additions)',
+        'coolant':     'Self-cooled (quasi-stagnant salt pool)',
+        'structure':   'Inconel-718 (not low-activation)',
+        'TBR_max':       1.09,   # [-]   lowest of all concepts (self-shielding)
+        'delta_BB_sat':  0.35,   # [m]   smallest radial builds
+        'M_blanket':     1.20,   # [-]
+        'eta_T_range':  (0.35, 0.40),
+        'Li6_enrichment': 'Optional (not yet optimised)',
+        'shield_quality': 'Superior moderation/absorption, but self-shielding limits breeding',
+        'VV_feasible':    False,   # VV not adequately shielded for 5-yr lifetime
+        'sublayers': [
+            {'name': 'Breeder Zone (FLiBe + Be)',  'f_width': 0.90, 'rho': 2200.0},
+            {'name': 'Manifold / Back Structure',  'f_width': 0.10, 'rho': 7500.0},
+        ],
+        'radial_layers': [
+            {'name': 'SOL',         'role': 'SOL',        'width': 0.05,
+             'composition': {'void': 1.0}},
+            {'name': 'First wall',  'role': 'FW',         'width': 0.032,
+             # 0.2cm W armour + 1cm Inconel718 structural + 2cm FLiBe coolant channel (fig. 15), volume-weighted
+             'composition': {'W': 0.0625, 'Inconel718': 0.3125, 'FLiBe': 0.625}},
+            {'name': 'Multiplier (Be)', 'role': 'multiplier', 'width': 0.01,
+             'composition': {'Be': 1.0}},
+            {'name': 'Vacuum Vessel', 'role': 'VV',         'width': 0.03,
+             'composition': {'Inconel718': 1.0}},
+            {'name': 'Breeder Zone (FLiBe + Be)', 'role': 'breeder',    'width': None,
+             'composition': {'FLiBe': 1.0}},
+            {'name': 'Back Wall',   'role': 'structure',  'width': 0.06,
+             'composition': {'Inconel718': 0.99, 'FLiBe': 0.01}},
+            {'name': 'High-Temp Shield', 'role': 'shield_HT',  'width': DEFAULT_SHIELD_HT_WIDTH,
+             'composition': {'MF82H': 0.28, 'WC': 0.52, 'HeT410P80': 0.20}},
+            {'name': 'Gap',         'role': 'gap',        'width': 0.01,
+             'composition': {'airSTP': 1.0}},
+            {'name': 'Low-Temp Shield', 'role': 'shield_LT',  'width': DEFAULT_SHIELD_LT_WIDTH,
+             'composition': {'SS316L': 0.39, 'BMF82H': 0.29, 'Water': 0.32}},
+            {'name': 'Gap',         'role': 'gap',        'width': 0.02,
+             'composition': {'airSTP': 1.0}},
+        ],
+    },
+}
+
+
+def material_rho(Chosen_Steel: str, Supra_choice: str) -> dict:
+    """
+    Return volumetric mass densities [kg/m³] for all coil materials.
+
+    Parameters
+    ----------
+    Chosen_Steel : str  Steel grade key from GlobalConfig ('316L', 'N50H', 'Manual').
+    Supra_choice : str  SC type from GlobalConfig ('Nb3Sn', 'NbTi', 'REBCO', 'Manual').
+
+    Returns
+    -------
+    dict with keys: 'steel', 'SC', 'Cu', 'insulation'  — all in [kg/m³].
+    """
+    steel_key = Chosen_Steel if Chosen_Steel in COIL_MATERIAL_DENSITIES['steel'] else 'Manual'
+    sc_key    = Supra_choice  if Supra_choice  in COIL_MATERIAL_DENSITIES['SC']    else 'Manual'
+    return {
+        'steel':       COIL_MATERIAL_DENSITIES['steel'][steel_key],
+        'SC':          COIL_MATERIAL_DENSITIES['SC'][sc_key],
+        'Cu':          COIL_MATERIAL_DENSITIES['Cu'],
+        'insulation':  COIL_MATERIAL_DENSITIES['insulation'],
+    }
+
+
+def material_blanket(Blanket_choice: str) -> dict:
+    """
+    Return the BLANKET_CONCEPTS entry for the given concept choice.
+
+    Parameters
+    ----------
+    Blanket_choice : str  Concept key ('HCPB', 'HCLL', 'DCLL', 'SCLL', 'SCLV', 'F-LIB').
+                          Falls back to 'HCPB' if not recognised.
+
+    Returns
+    -------
+    dict  Concept entry (label, breeder, coolant, structure, multiplier,
+          TBR_max, delta_BB_sat, M_blanket, eta_T_range, Li6_enrichment,
+          shield_quality, VV_feasible, sublayers).
+    """
+    return BLANKET_CONCEPTS.get(Blanket_choice, BLANKET_CONCEPTS['HCPB'])
+
+
+def M_blanket_effective(Blanket_choice: str) -> float:
+    """
+    Blanket energy multiplication factor [-] for the selected concept.
+
+    Returns BLANKET_CONCEPTS[Blanket_choice]['M_blanket'], used in place of
+    the generic GlobalConfig.M_blanket default in the power balance.
+    """
+    return material_blanket(Blanket_choice)['M_blanket']
+
+
+def eta_T_effective(Blanket_choice: str) -> float:
+    """
+    Thermal-to-electric conversion efficiency [-] for the selected concept.
+
+    Returns the midpoint of BLANKET_CONCEPTS[Blanket_choice]['eta_T_range'],
+    used in place of the generic GlobalConfig.eta_T default in the power
+    balance.
+    """
+    eta_lo, eta_hi = material_blanket(Blanket_choice)['eta_T_range']
+    return 0.5 * (eta_lo + eta_hi)
+
+
+def radial_layers_effective(Blanket_choice: str, b: float, Delta_TF: float = 0.0) -> list:
+    """
+    Concept-specific radial-build layer stack with the breeder layer's width
+    resolved to a value.
+
+    Returns BLANKET_CONCEPTS[Blanket_choice]['radial_layers'] (ordered plasma ->
+    TF) as a list of dicts, each augmented with 'delta_ib' and 'delta_ob' [m]
+    (IB/OB thickness).  Every fixed-width layer has delta_ib == delta_ob ==
+    'width'.  The single 'breeder' layer's thickness is the residual of b (IB)
+    / b + Delta_TF (OB) once every other layer's width has been subtracted:
+
+        delta_breeder_ib = b            - sum(fixed widths)
+        delta_breeder_ob = b + Delta_TF - sum(fixed widths)
+
+    clipped to >= 0.
+
+    Parameters
+    ----------
+    Blanket_choice : str    Concept key (see BLANKET_CONCEPTS).
+    b              : float  Breeding blanket + shield radial thickness [m].
+    Delta_TF       : float  Outboard port-access radial clearance [m].
+
+    Returns
+    -------
+    list of dict, one per layer, each with: name, role, width (None for
+    breeder), rho (None if not concept-specific — falls back to GlobalConfig at
+    run time), delta_ib, delta_ob.
+    """
+    concept    = material_blanket(Blanket_choice)
+    fixed_sum  = sum(layer['width'] for layer in concept['radial_layers']
+                     if layer['width'] is not None)
+    delta_ib   = max(b - fixed_sum, 0.0)
+    delta_ob   = max(b + Delta_TF - fixed_sum, 0.0)
+
+    layers = []
+    for layer in concept['radial_layers']:
+        entry = dict(layer)
+        if entry['width'] is None:
+            entry['delta_ib'] = delta_ib
+            entry['delta_ob'] = delta_ob
+        else:
+            entry['delta_ib'] = entry['width']
+            entry['delta_ob'] = entry['width']
+        layers.append(entry)
+    return layers

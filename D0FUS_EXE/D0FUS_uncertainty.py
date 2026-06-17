@@ -51,6 +51,8 @@ except ModuleNotFoundError:
 from D0FUS_EXE import D0FUS_run as RUN
 from D0FUS_BIB.D0FUS_physical_functions import f_volume
 from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
+from D0FUS_BIB.D0FUS_parameterization import M_blanket_effective
+from D0FUS_BIB.D0FUS_radial_build_functions import Number_TF_coils
 
 # Backwards-compatible alias for dataclasses.replace, used throughout the module.
 dc_replace = replace
@@ -90,18 +92,30 @@ ENV_RE = re.compile(r'^envelope\((.*)\)$', re.IGNORECASE)
 # =============================================================================
 # Single-configuration evaluation (the engine brick)
 # =============================================================================
-def _compute_cost(cfg, P_CD, P_elec, Gamma_n, Surface, c, d, kappa):
-    """Sheffield (2016) COE [EUR/MWh] and capital cost [B EUR], as in D0FUS_scan."""
+def _compute_cost(cfg, P_CD, P_elec, Gamma_n, Surface, c, d, kappa,
+                  T_op_limit, CF, t_life_bl_yr, t_life_div_yr, V_rb_BB):
+    """Sheffield (2016) COE [EUR/MWh] and capital cost [B EUR], as in D0FUS_scan.
+
+    Aligned on the merged exact-volume cost path: f_volume now takes the
+    Princeton-D (Delta_TF, H_TF) signature, and f_costs_Sheffield consumes the
+    availability schedule (T_op_limit, CF) and component lifetimes
+    (t_life_bl_yr, t_life_div_yr) produced by run(), in place of the former
+    Util_factor / Dwell_factor / dt_rep inputs.
+    """
     try:
-        P_th = cfg.P_fus * cfg.M_blanket + P_CD
-        V_BB, V_TF, V_CS, V_FI = f_volume(cfg.a, cfg.b, c, d, cfg.R0, kappa)
+        P_th = cfg.P_fus * M_blanket_effective(cfg.Blanket_choice) + P_CD
+        _, _, Delta_TF = Number_TF_coils(cfg.R0, cfg.a, cfg.b, cfg.ripple_adm, cfg.L_min)
+        H_TF = 2.0 * (kappa * cfg.a + cfg.b + c)
+        (V_blanket, V_TF_Pappus, V_CS_geom, V_FI) = f_volume(
+            cfg.a, cfg.b, c, d, cfg.R0, kappa, Delta_TF, H_TF)
         cres = f_costs_Sheffield(
             discount_rate=cfg.discount_rate, contingency=cfg.contingency,
             T_life=cfg.T_life, T_build=cfg.T_build,
             P_t=P_th, P_e=max(P_elec, 1.0), P_aux=P_CD, Gamma_n=Gamma_n,
-            Util_factor=cfg.Util_factor, Dwell_factor=cfg.Dwell_factor,
-            dt_rep=cfg.dt_rep, V_FI=V_FI, V_pc=V_TF + V_CS, V_sg=V_BB,
-            V_bl=V_BB, S_tt=0.1 * Surface, Supra_cost_factor=cfg.Supra_cost_factor)
+            T_op_limit=T_op_limit, CF=CF,
+            t_life_bl_yr=t_life_bl_yr, t_life_div_yr=t_life_div_yr,
+            V_FI=V_FI, V_pc=V_TF_Pappus + V_CS_geom, V_sg=V_blanket,
+            V_bl=V_rb_BB, S_tt=0.1 * Surface, Supra_cost_factor=cfg.Supra_cost_factor)
         return float(cres[3]), float(cres[2]) * 1e-3
     except Exception:
         return np.nan, np.nan
@@ -138,7 +152,15 @@ def evaluate(cfg):
      eta_LH, eta_EC, eta_NBI, P_LH, P_EC, P_NBI, P_ICR, I_LH, I_EC, I_NBI,
      f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF,
      f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS,
-     beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha, _diag) = res
+     beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha, *_rest) = res
+
+    # Trailing tuple fields appended by the dev-Mat integration (the coil /
+    # volume / mass block, then the divertor dict as the very last element).
+    # Extract the cost inputs by absolute index, identical to D0FUS_scan.
+    _g = lambda i: (res[i] if len(res) > i else np.nan)
+    _t_bl_yr, _t_div_yr        = _g(130), _g(131)
+    _T_op_limit, _CF, _V_rb_BB = _g(132), _g(135), _g(138)
+    _diag = _rest[-1] if _rest else {}
 
     converged = bool(np.isfinite(Q) and np.isfinite(cost)
                      and np.isfinite(Ip) and Ip > 0)
@@ -149,7 +171,8 @@ def evaluate(cfg):
     d_CS = r_c - r_d   if np.isfinite(r_c) and np.isfinite(r_d)   else np.nan
     f_bs = (Ib / Ip * 100.0) if Ip > 0 else np.nan
     gw   = (nbar_line / nG) if nG > 0 else np.nan
-    COE, C_invest = _compute_cost(cfg, P_CD, P_elec, Gamma_n, Surface, c, d, kappa)
+    COE, C_invest = _compute_cost(cfg, P_CD, P_elec, Gamma_n, Surface, c, d, kappa,
+                                  _T_op_limit, _CF, _t_bl_yr, _t_div_yr, _V_rb_BB)
 
     q_kink = q95 if cfg.kink_parameter == 'q95' else qstar
 

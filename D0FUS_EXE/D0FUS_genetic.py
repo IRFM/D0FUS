@@ -156,9 +156,13 @@ except ModuleNotFoundError:
 #  by the D0FUS_import wildcard above.)
 
 # Project-specific D0FUS imports (kept here because they describe this
-# module's direct dependencies inside the D0FUS source tree).
-from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG, coerce_input_value
+# module's direct dependencies inside the D0FUS source tree). DEAP is already
+# provided by the centralised D0FUS_import wildcard above, so it is not
+# re-imported here. M_blanket_effective is required by the merged thermal-power
+# balance (P_th = P_fus * M_blanket + P_CD).
+from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG, coerce_input_value, M_blanket_effective
 from D0FUS_BIB.D0FUS_physical_functions import f_volume
+from D0FUS_BIB.D0FUS_radial_build_functions import Number_TF_coils, f_TF_cross_section
 from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
 from D0FUS_BIB.D0FUS_cost_data import *
 from D0FUS_EXE.D0FUS_run import run, save_run_output
@@ -172,7 +176,7 @@ dc_replace = replace
 #
 #   'COE'      : minimise cost of electricity (Sheffield 2016)     [EUR/MWh]
 #                 with C_invest <= C_invest_max budget constraint   (DEFAULT)
-#   'volume'   : minimise (V_BB + V_TF + V_CS) / P_fus  [m^3/MW]
+#   'volume'   : minimise (V_blanket + V_TF_one*N_TF + V_CS_geom) / P_fus  [m^3/MW]
 #   'C_invest' : minimise total capital cost (Sheffield 2016)      [M EUR]
 #   'P_elec'   : maximise net electric power (minimise -P_elec)    [MW]
 #   'R0'       : minimise the major radius (most compact machine)  [m]
@@ -306,6 +310,62 @@ _IDX = {
     'betaN_total':     96,
     'tau_sd_alpha':    97,
     'W_fast_alpha':    98,
+    # ── Coil volumes and cable inventory ───────────────────────────────
+    'V_TF_one':       99,    # Single TF coil volume (Pappus centroid) [m³]
+    'V_CS_geom':      100,   # Total CS solenoid volume [m³]
+    'V_steel_TF':     101,    # TF steel total (all coils) [m³]
+    'V_sc_TF':        102,    # TF SC material total [m³]
+    'V_cu_TF':        103,    # TF Cu total [m³]
+    'V_He_TF':        104,    # TF He total [m³]
+    'V_In_TF':        105,    # TF insulation total [m³]
+    'V_steel_CS':     106,    # CS steel [m³]
+    'V_sc_CS':        107,    # CS SC material [m³]
+    'V_cu_CS':        108,    # CS Cu [m³]
+    'V_He_CS':        109,    # CS He [m³]
+    'V_In_CS':        110,    # CS insulation [m³]
+    'L_cable_TF':     111,    # Total TF cable conductor length [m]
+    'L_cable_CS':     112,    # Total CS cable conductor length [m]
+    'n_sc_TF':        113,    # SC strands/tapes per TF cable [-]
+    'n_sc_CS':        114,    # SC strands/tapes per CS cable [-]
+    'L_sc_strand_TF': 115,    # Total TF SC strand length [m]
+    'L_sc_strand_CS': 116,    # Total CS SC strand length [m]
+    # ── Coil masses ─────────────────────────────────────────────────────────
+    'M_steel_TF':  117,   # TF steel mass [kg]
+    'M_sc_TF':     118,   # TF SC mass [kg]
+    'M_cu_TF':     119,   # TF Cu mass [kg]
+    'M_In_TF':     120,   # TF insulation mass [kg]
+    'M_total_TF':  121,   # TF total mass [kg]
+    'M_steel_CS':  122,   # CS steel mass [kg]
+    'M_sc_CS':     123,   # CS SC mass [kg]
+    'M_cu_CS':     124,   # CS Cu mass [kg]
+    'M_In_CS':     125,   # CS insulation mass [kg]
+    'M_total_CS':  126,   # CS total mass [kg]
+    # ── Blanket volume ───────────────────────────────────────────────────────
+    'V_blanket':       127,  # Blanket volume (Miller LCFS → TF) [m³]
+    # ── Component lifetimes and availability ─────────────────────────────────
+    't_life_bl_fpy':   128,  # [fpy]  # Blanket lifetime [fpy]
+    't_life_div_fpy':  129,  # Divertor lifetime [fpy]
+    't_life_bl_yr':    130,  # Blanket lifetime [yr]
+    't_life_div_yr':   131,  # Divertor lifetime [yr]
+    'T_op_limit':      132,  # Operation per replacement cycle [yr]
+    'dt_rep_eff':      133,  # Effective replacement downtime [yr]
+    'Av':              134,  # Plant availability [-]
+    'CF':              135,  # Capacity factor [-]
+    # ── Radial build component volumes ───────────────────────────────────────
+    'V_rb_SOL':        136,  # SOL / far-SOL volume (all around) [m³]
+    'V_rb_FW':         137,  # First wall volume (excl. divertor) [m³]
+    'V_rb_BB':         138,  # Breeding blanket volume (excl. divertor) [m³]
+    'V_rb_shield':     139,
+    'V_rb_VV':         140,
+    'V_rb_gap_TF':     141,
+    'V_rb_divertor':   142,
+    # ── Radial build component masses ────────────────────────────────────────
+    'M_rb_FW':         143,  # First wall mass [kg]
+    'M_rb_BB':         144,  # Breeding blanket mass [kg]
+    'M_rb_shield':     145,  # Neutron shield mass [kg]
+    'M_rb_VV':         146,  # Vacuum vessel mass [kg]
+    'M_rb_divertor':   147,  # Divertor mass [kg]
+    'M_rb_total':      148,  # Total radial build mass [kg]
 }
 
 #%% Global Variables (default values)
@@ -865,7 +925,7 @@ def evaluate_individual(individual, verbose=False):
         _C_inv = np.nan
 
         if objective == 'volume':
-            # Legacy cost proxy: (V_BB + V_TF + V_CS) / P_fus [m^3/MW]
+            # Legacy cost proxy: (V_blanket + V_TF_one*N_TF + V_CS_geom) / P_fus [m^3/MW]
             raw_fitness = cost
 
         elif objective == 'R0':
@@ -894,9 +954,18 @@ def evaluate_individual(individual, verbose=False):
                           f"Surface={Surface:.4g} kappa={κ:.4g}")
                 return (PENALTY_VALUE,)
 
-            P_th = config.P_fus * config.M_blanket + P_CD
-            (V_BB, V_TF, V_CS, V_FI) = f_volume(
-                config.a, config.b, c_TF, d_CS, config.R0, κ)
+            P_th         = config.P_fus * M_blanket_effective(config.Blanket_choice) + P_CD
+            T_op_limit_g = _safe_real(output[_IDX['T_op_limit']])
+            CF_g         = _safe_real(output[_IDX['CF']])
+            t_bl_yr_g    = _safe_real(output[_IDX['t_life_bl_yr']])
+            t_div_yr_g   = _safe_real(output[_IDX['t_life_div_yr']])
+            V_rb_BB_g    = _safe_real(output[_IDX['V_rb_BB']])
+            # Analytical H_TF approximation avoids the ODE solve inside
+            # f_TF_cross_section, which is called for every GA individual
+            _, _, Delta_TF_g = Number_TF_coils(config.R0, config.a, config.b, config.ripple_adm, config.L_min)
+            _H_TF_g = 2.0 * (κ * config.a + config.b + c_TF)
+            (V_blanket, V_TF_Pappus, V_CS_geom, V_FI) = f_volume(
+                config.a, config.b, c_TF, d_CS, config.R0, κ, Delta_TF_g, _H_TF_g)
 
             _cres = f_costs_Sheffield(
                 discount_rate=config.discount_rate,
@@ -907,13 +976,14 @@ def evaluate_individual(individual, verbose=False):
                 P_e=max(P_elec, 1.0),
                 P_aux=P_CD,
                 Gamma_n=Gamma_n,
-                Util_factor=config.Util_factor,
-                Dwell_factor=config.Dwell_factor,
-                dt_rep=config.dt_rep,
+                T_op_limit=T_op_limit_g,
+                CF=CF_g,
+                t_life_bl_yr=t_bl_yr_g,
+                t_life_div_yr=t_div_yr_g,
                 V_FI=V_FI,
-                V_pc=V_TF + V_CS,
-                V_sg=V_BB,
-                V_bl=V_BB,
+                V_pc=V_TF_Pappus + V_CS_geom,
+                V_sg=V_blanket,
+                V_bl=V_rb_BB_g,
                 S_tt=0.1 * Surface,
                 Supra_cost_factor=config.Supra_cost_factor,
             )
@@ -2871,21 +2941,28 @@ def run_genetic_optimization(input_file,
     _COE_best = np.nan
     _C_invest_best = np.nan
     try:
-        P_CD_best    = final_output[_IDX['P_CD']]
-        Gamma_n_best = final_output[_IDX['Gamma_n']]
-        Surface_best = final_output[_IDX['Surface']]
-        κ_best       = final_output[_IDX['kappa']]
-        P_th_best    = config.P_fus * config.M_blanket + P_CD_best
-        (V_BB_b, V_TF_b, V_CS_b, V_FI_b) = f_volume(
-            config.a, config.b, c_TF, d_CS, config.R0, κ_best)
+        P_CD_best      = final_output[_IDX['P_CD']]
+        Gamma_n_best   = final_output[_IDX['Gamma_n']]
+        Surface_best   = final_output[_IDX['Surface']]
+        κ_best         = final_output[_IDX['kappa']]
+        T_op_limit_b   = final_output[_IDX['T_op_limit']]
+        CF_b           = final_output[_IDX['CF']]
+        t_bl_yr_b      = final_output[_IDX['t_life_bl_yr']]
+        t_div_yr_b     = final_output[_IDX['t_life_div_yr']]
+        V_rb_BB_b      = final_output[_IDX['V_rb_BB']]
+        P_th_best      = config.P_fus * M_blanket_effective(config.Blanket_choice) + P_CD_best
+        _, _, Delta_TF_b = Number_TF_coils(config.R0, config.a, config.b, config.ripple_adm, config.L_min)
+        _H_TF_b = 2.0 * (κ_best * config.a + config.b + c_TF)
+        (V_blanket_b, V_TF_Pappus_b, V_CS_geom_b, V_FI_b) = f_volume(
+            config.a, config.b, c_TF, d_CS, config.R0, κ_best, Delta_TF_b, _H_TF_b)
         _cres_best = f_costs_Sheffield(
             discount_rate=config.discount_rate, contingency=config.contingency,
             T_life=config.T_life, T_build=config.T_build,
             P_t=P_th_best, P_e=max(P_elec, 1.0), P_aux=P_CD_best,
             Gamma_n=Gamma_n_best,
-            Util_factor=config.Util_factor, Dwell_factor=config.Dwell_factor,
-            dt_rep=config.dt_rep,
-            V_FI=V_FI_b, V_pc=V_TF_b+V_CS_b, V_sg=V_BB_b, V_bl=V_BB_b,
+            T_op_limit=T_op_limit_b, CF=CF_b,
+            t_life_bl_yr=t_bl_yr_b, t_life_div_yr=t_div_yr_b,
+            V_FI=V_FI_b, V_pc=V_TF_Pappus_b+V_CS_geom_b, V_sg=V_blanket_b, V_bl=V_rb_BB_b,
             S_tt=0.1*Surface_best,
             Supra_cost_factor=config.Supra_cost_factor)
         _COE_best     = _cres_best[3]

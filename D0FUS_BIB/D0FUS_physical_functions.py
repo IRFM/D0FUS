@@ -7964,7 +7964,7 @@ def f_tau_alpha(n_bar, T_bar, tauE, C_Alpha, nu_T,
 
 # ── Component volumes ─────────────────────────────────────────────────────────
 
-def f_volume(a, b, c, d, R0, κ):
+def f_volume(a, b, c, d, R0, κ, Delta_TF, H_TF):
     """
     Approximate volumes of the main reactor structural components.
 
@@ -7989,14 +7989,18 @@ def f_volume(a, b, c, d, R0, κ):
         Major radius [m].
     κ : float
         Plasma elongation (LCFS) (dimensionless).
+    Delta_TF : float
+        Outboard port-access radial clearance [m].
+    H_TF : float
+        Total TF coil height from Princeton-D cross-section [m].
 
     Returns
     -------
-    V_BB : float
+    V_blanket : float
         Volume of FW + BB + neutron shield + VV + gaps [m³].
-    V_TF : float
-        Volume of TF coil winding packs [m³].
-    V_CS : float
+    V_TF_Pappus : float
+        Volume of TF coil winding packs (Pappus approximation) [m³].
+    V_CS_geom : float
         Volume of the central solenoid [m³].
     V_FI : float
         Fusion-island bounding-cylinder volume [m³].
@@ -8011,54 +8015,165 @@ def f_volume(a, b, c, d, R0, κ):
             V = 2π R₀ × A_cross  (Pappus).
     - CS  : annular cylinder, height 2(κa + b + c),
             inner radius R₀ − a − b − c − d.
-    - FI  : solid cylinder, height 2(κa + b + c),
-            outer radius R₀ + a + b + c.
+    - FI  : solid cylinder, height H_TF,
+            outer radius R₀ + a + b + Delta_TF + c.
     """
     # Blanket shell (Pappus): A_cross = 4[(a+b)(κa+b) − a·κa] = 4b[a(1+κ)+b]
-    V_BB = 8 * np.pi * b * R0 * (a * (1 + κ) + b)
+    V_blanket = 8 * np.pi * b * R0 * (a * (1 + κ) + b)
 
     # TF shell (Pappus): A_cross = 4c[a(1+κ) + 2b + c]
-    V_TF = 8 * np.pi * c * R0 * (a * (1 + κ) + 2 * b + c)
+    V_TF_Pappus = 8 * np.pi * c * R0 * (a * (1 + κ) + 2 * b + c)
 
     # Central solenoid: π h (R_out² − R_in²), h = 2(κa + b + c)
     R_i = R0 - a - b - c
-    V_CS = 2 * np.pi * (κ * a + b + c) * (2 * d * R_i - d**2)
+    V_CS_geom = 2 * np.pi * (κ * a + b + c) * (2 * d * R_i - d**2)
 
-    # Fusion-island bounding cylinder: π R² h
-    V_FI = 2 * np.pi * (κ * a + b + c) * (R0 + a + b + c)**2
+    # Fusion-island bounding cylinder: π R² H_TF, R = R0 + a + b + Delta_TF + c
+    V_FI = 2 * np.pi * H_TF * (R0 + a + b + Delta_TF + c)**2
 
-    return (V_BB, V_TF, V_CS, V_FI)
+    return (V_blanket, V_TF_Pappus, V_CS_geom, V_FI)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# RUNAWAY ELECTRON INDICATORS (POST-DISRUPTION) developped by Puel Louis
-# ══════════════════════════════════════════════════════════════════════════════
-#
-# Indicative assessment of runaway electron (RE) generation during a tokamak
-# thermal quench (TQ) and subsequent current quench (CQ).
-#
-# Two mechanisms are modelled:
-#   1. Hot-tail seed  — Smith, Phys. Plasmas 15, 072502 (2008)
-#      Profile-integrated: the local RE fraction f_RE(ρ) depends nonlinearly
-#      on Te(ρ) ne(ρ) and J(ρ), so ⟨f_RE(Te)⟩ ≠ f_RE(⟨Te⟩).  The code evaluates
-#      the Smith model at each radial point and integrates over the plasma
-#      volume, following the same methodology as f_P_line_radiation_profile.
-#
-#   2. Avalanche amplification — Breizman et al., Nucl. Fusion 59, 083001 (2019)
-#      Inherently 0D (relates total I_p and I_RE through a transcendental
-#      equation).  Uses volume-averaged parameters.
-#
-# These outputs are purely diagnostic (post-convergence), they do NOT enter
-# the D0FUS self-consistent solver loop.
-#
+# COMPONENT LIFETIME & PLANT AVAILABILITY
 # ══════════════════════════════════════════════════════════════════════════════
 
+def f_blanket_lifetime_fpy(P_fus: float, A_FW: float,
+                           dpa_lim: float, C_dpa: float) -> float:
+    """
+    Blanket structural lifetime based on neutron displacement damage.
 
-# ── Physical constants (RE section) ──────────────────────────────────────────
-# M_E, EPS_0, C_LIGHT, E_ELEM, μ0 are all imported from D0FUS_parameterization.
+    t_bl = dpa_lim * A_FW / (0.8 * C_dpa * P_fus)
+
+    Derivation: neutron wall loading q_n = 0.8*P_fus/A_FW [MW/m²];
+    dpa rate = C_dpa * q_n [dpa/fpy]; lifetime = dpa_lim / dpa_rate.
+
+    Ref: Gilbert et al. (2013), EUROfusion (2015).
+
+    Parameters
+    ----------
+    P_fus   : float  Fusion power [MW].
+    A_FW    : float  First-wall area [m²].
+    dpa_lim : float  Allowable structural damage [dpa].
+    C_dpa   : float  dpa conversion coefficient [dpa fpy⁻¹ / (MW m⁻²)].
+
+    Returns
+    -------
+    float  Blanket lifetime [fpy].
+    """
+    return dpa_lim * A_FW / (0.8 * C_dpa * P_fus)
 
 
-# ── Coulomb logarithm (NRL Plasma Formulary) ────────────────────────────────
+def f_divertor_lifetime_fpy(P_sep: float, A_div: float,
+                            epsilon_div: float, f_peak: float) -> float:
+    """
+    Divertor lifetime based on integrated heat exposure.
+
+    t_div = epsilon_div * A_div / (f_peak * P_sep)
+
+    Derivation: peak heat flux q_div = f_peak * P_sep / A_div [MW/m²];
+    integrated limit epsilon_div [MW yr/m²]; lifetime = epsilon_div / q_div.
+
+    Ref: ITER Organization (2025), CEA IRFM (2017).
+
+    Parameters
+    ----------
+    P_sep       : float  Power crossing the separatrix [MW].
+    A_div       : float  Divertor wetted area [m²].
+    epsilon_div : float  Integrated heat limit [MW yr / m²].
+    f_peak      : float  Heat flux peaking factor [-].
+
+    Returns
+    -------
+    float  Divertor lifetime [fpy].
+    """
+    if P_sep <= 0.0:
+        return np.inf
+    return epsilon_div * A_div / (f_peak * P_sep)
+
+
+def f_lifetime_to_years(t_fpy: float, Util_factor: float,
+                        Dwell_factor: float) -> float:
+    """
+    Convert a lifetime in full-power years (fpy) to calendar years.
+
+    t_yr = t_fpy / (Util_factor * Dwell_factor)
+
+    Parameters
+    ----------
+    t_fpy        : float  Lifetime [fpy].
+    Util_factor  : float  Utilisation factor [-].
+    Dwell_factor : float  Dwell factor (1.0 for steady-state) [-].
+
+    Returns
+    -------
+    float  Lifetime [calendar years].
+    """
+    return t_fpy / (Util_factor * Dwell_factor)
+
+
+def f_availability_schedule(t_life_bl_fpy: float, t_life_div_fpy: float,
+                             dt_rep_bl: float, dt_rep_div: float,
+                             Util_factor: float, Dwell_factor: float) -> tuple:
+    """
+    Effective plant availability from a two-component replacement schedule.
+
+    Blanket (bl) and divertor (div) replacements are performed in parallel
+    whenever they coincide, avoiding additive downtime.
+
+    Algorithm
+    ---------
+    Let A = longer-lived component, B = shorter-lived.
+    n = floor(t_A / t_B)  — how many B-cycles fit inside one A-cycle.
+
+    Every t_B calendar years a replacement occurs:
+      - (n−1) out of n times: only B replaced  → downtime = dt_B
+      - 1 out of n times:     both replaced    → downtime = max(dt_A, dt_B)
+
+    Effective average downtime per t_B cycle:
+        dt_eff = [(n−1)*dt_B + max(dt_A, dt_B)] / n
+
+    Availability: Av = t_B_yr / (t_B_yr + dt_eff)
+    Capacity factor: CF = Av * Util_factor * Dwell_factor
+
+    Parameters
+    ----------
+    t_life_bl_fpy  : float  Blanket lifetime [fpy].
+    t_life_div_fpy : float  Divertor lifetime [fpy].
+    dt_rep_bl      : float  Blanket replacement downtime [yr].
+    dt_rep_div     : float  Divertor replacement downtime [yr].
+    Util_factor    : float  Utilisation factor [-].
+    Dwell_factor   : float  Dwell factor [-].
+
+    Returns
+    -------
+    T_op_limit : float  Calendar years of operation per replacement cycle [yr].
+    dt_rep_eff : float  Effective average replacement downtime per cycle [yr].
+    Av         : float  Plant availability [-].
+    CF         : float  Capacity factor [-].
+    """
+    UD = Util_factor * Dwell_factor
+    t_bl_yr  = t_life_bl_fpy  / UD
+    t_div_yr = t_life_div_fpy / UD
+
+    # Identify longer (A) and shorter (B) component
+    if t_bl_yr >= t_div_yr:
+        t_A, t_B   = t_bl_yr,  t_div_yr
+        dt_A, dt_B = dt_rep_bl, dt_rep_div
+    else:
+        t_A, t_B   = t_div_yr,  t_bl_yr
+        dt_A, dt_B = dt_rep_div, dt_rep_bl
+
+    # Number of B-cycles per A-cycle (floor, never exceed lifetime)
+    n = max(1, int(t_A / t_B))
+
+    dt_rep_eff = ((n - 1) * dt_B + max(dt_A, dt_B)) / n
+    T_op_limit = t_B
+
+    Av = T_op_limit / (T_op_limit + dt_rep_eff)
+    CF = Av * UD
+    return (T_op_limit, dt_rep_eff, Av, CF)
+
 
 def _coulomb_log_ee(ne, Te_eV):
     """
