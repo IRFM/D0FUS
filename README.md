@@ -1,17 +1,23 @@
 
-[![License: CeCILL-C](https://img.shields.io/badge/License-CeCILL--C-blue.svg)](https://cecill.info/licences/Licence_CeCILL-C_V1-en.html)
-[![PyPI version](https://badge.fury.io/py/d0fus.svg)](https://pypi.org/project/d0fus/)
-
 <a name="readme-top"></a>
 
-# D0FUS
+<p align="center">
+  <img src="docs/figures/D0FUS_logo.png" alt="D0FUS logo" width="190">
+</p>
+
+<h1 align="center">D0FUS</h1>
+
+<p align="center">
+  <a href="https://cecill.info/licences/Licence_CeCILL-C_V1-en.html"><img src="https://img.shields.io/badge/License-CeCILL--C-blue.svg" alt="License: CeCILL-C"></a>
+  <a href="https://pypi.org/project/d0fus/"><img src="https://badge.fury.io/py/d0fus.svg" alt="PyPI version"></a>
+</p>
 
 <p align="center">
   <img src="docs/figures/d0fus_capabilities_banner.png" alt="D0FUS capabilities" width="100%">
 </p>
 
 <p align="center">
-  <sub>Top: plasma geometry (Miller surfaces), kinetic profiles, safety factor, radiative cooling, and fusion reactivity. Bottom: radial build, superconductor critical current, TF and CS coil cross-sections, CICC conductors, and a multi-machine comparison.</sub>
+  <sub>Top: plasma geometry (Miller surfaces), kinetic profiles, safety factor, radiative cooling, and fusion reactivity. Bottom: radial build, superconductor critical current, TF and CS coil cross-sections, CICC conductors, and a multi-machine comparison. Right: the full poloidal radial build, from plasma out to the TF coil.</sub>
 </p>
 
 **D0FUS** (Design 0-dimensional for Fusion Systems) is a Python tokamak systems code for fast 0D/1D design-space exploration, covering plasma physics, superconducting magnet engineering, and techno-economic assessment. It is developed at CEA-IRFM.
