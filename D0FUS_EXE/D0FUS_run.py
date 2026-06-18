@@ -3468,8 +3468,12 @@ def save_run_output(config: GlobalConfig,
             for _j, _mat in enumerate(_materials):
                 _mbranch = "├" if _j < len(_materials) - 1 else "└"
                 _frac    = _layer['composition'][_mat]
+                # Effective (smeared) inboard thickness of this material within the
+                # layer: volume fraction x layer inboard thickness [m].
+                _d_mat_ib = _frac * _layer['delta_ib']
                 print(f"[O]  {_cont}    {_mbranch} {_mat:<12s}: "
-                      f"{_frac*100:5.1f} vol%  {_comp_masses[_mat]/1e3:.2f} t", file=out)
+                      f"{_frac*100:5.1f} vol%  d_ib={_d_mat_ib:.3f} m  "
+                      f"{_comp_masses[_mat]/1e3:.2f} t", file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[O] Psi_PI      (Breakdown flux)                    : {ΨPI:.3f} [Wb]",      file=out)
         print(f"[O] Psi_RampUp  (Ramp-up flux)                      : {ΨRampUp:.3f} [Wb]",  file=out)
