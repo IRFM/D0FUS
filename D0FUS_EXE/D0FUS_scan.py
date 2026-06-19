@@ -2384,13 +2384,23 @@ def plot_scan_results(outputs, param1_values, param2_values,
         iso_matrix_2 = (outputs[iso_param_2]
                         if iso_param_2 is not None else None)
     
-    # Set NaN where not the dominant limit
+    # ── Dominant (most-violated) stability limit per cell ────────────────────
+    # Each cell is coloured by whichever of the three normalised ratios
+    # (n/n_G, beta_N/beta_lim, q_lim/q95) is the largest, i.e. the most
+    # binding constraint. The selection must be NaN-safe: np.argmax treats the
+    # first NaN it encounters as the running maximum (since every comparison
+    # `x > NaN` is False), which would mis-assign a cell to a layer whose ratio
+    # is actually undefined there. We therefore (i) compete only finite ratios
+    # by replacing NaN with -inf, and (ii) blank cells where *all* three ratios
+    # are NaN (radial-build failure), so they are never falsely coloured.
     conditions = np.array([density_lim, beta_lim, q_lim])
-    idx_max = np.argmax(conditions, axis=0)
-    
-    density_plot = np.where(idx_max == 0, density_lim, np.nan)
-    beta_plot = np.where(idx_max == 1, beta_lim, np.nan)
-    q_plot = np.where(idx_max == 2, q_lim, np.nan)
+    finite_any = np.any(np.isfinite(conditions), axis=0)
+    conditions_safe = np.where(np.isfinite(conditions), conditions, -np.inf)
+    idx_max = np.argmax(conditions_safe, axis=0)
+
+    density_plot = np.where(finite_any & (idx_max == 0), density_lim, np.nan)
+    beta_plot    = np.where(finite_any & (idx_max == 1), beta_lim,    np.nan)
+    q_plot       = np.where(finite_any & (idx_max == 2), q_lim,       np.nan)
     
     # Only show where limits < 2
     mask_valid = limits_all < 2

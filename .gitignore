@@ -26,7 +26,16 @@ dist/
 build/
 *.egg-info/input/
 *.egg-info/
+# Ignore working/personal input decks in D0FUS_INPUTS by default, but keep the
+# canonical numbered ITER example decks (1..5) under version control so the
+# four execution modes (run / scan / genetic / uncertainty / popcon) ship with
+# a reproducible reference input.
 D0FUS_INPUTS/*.txt
+!D0FUS_INPUTS/1_run_ITER.txt
+!D0FUS_INPUTS/2_scan_ITER.txt
+!D0FUS_INPUTS/3_genetic_ITER.txt
+!D0FUS_INPUTS/4_uncertainty_ITER.txt
+!D0FUS_INPUTS/5_popcon_ITER.txt
 desktop.ini
 
 # Local inputs (not tracked)
