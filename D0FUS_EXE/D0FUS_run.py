@@ -1999,55 +1999,72 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             "Valid options: 'academic', 'refined', 'CIRCE'."
         )
 
-    # ── Return nan tuple if TF radial build failed ────────────────────────────
+    # ── TF radial build failed: keep the converged plasma, blank only the
+    #    magnet / engineering quantities ────────────────────────────────────────
+    # When f_TF_* cannot size a feasible inboard leg, c comes back non-finite:
+    # the winding pack reaching the requested peak field Bmax_TF within the steel
+    # stress allowable does not fit in the available inboard space R0 - a - b.
+    # The plasma equilibrium itself is still physical and was already solved
+    # above, so returning an all-NaN tuple here would discard a perfectly valid
+    # operating point (its density, beta, q95, Ip, Q, ...). That discarding is
+    # exactly what makes the plasma operating space appear blank in 2-D scans in
+    # regions where no plasma limit is reached but the TF coil is not buildable.
+    # We therefore return the plasma quantities and set to NaN only the
+    # quantities that genuinely depend on the (failed) coil build: the TF/CS
+    # geometry and stresses, the magnetic-flux scenario, and all coil/component
+    # volumes, masses, lifetimes and costs. The earlier convergence guard on
+    # (f_alpha, Q) still returns an all-NaN tuple, because without a converged
+    # burn there is no plasma to report at all.
     _nan = np.nan
     if not np.isfinite(c):
-        return (
-            _nan, _nan, _nan,                  # B0, B_CS, B_pol
-            _nan, _nan,                          # tauE, W_th
-            _nan, _nan, _nan,                  # Q, Volume, Surface
-            _nan, _nan, _nan, _nan,            # Ip, Ib, I_CD, I_Ohm
-            _nan, _nan, _nan, _nan,            # nbar, nbar_line, nG, pbar
-            _nan, _nan, _nan,                  # betaN, betaT, betaP
-            _nan, _nan,                          # qstar, q95
-            _nan, _nan, _nan, _nan, _nan, _nan,  # P_CD, P_sep, P_Thresh, eta_CD, P_elec, P_wallplug
-            _nan, _nan, _nan, _nan,            # cost, P_Brem, P_syn, P_line
-            _nan,                               # P_line_core
-            _nan, _nan, _nan, _nan, _nan,      # heat, heat_par, heat_pol, lambda_q, q_target
-            _nan, _nan,                          # P_wall_rad, P_wall_div
-            _nan,                               # Gamma_n
-            _nan, _nan,                          # f_alpha, tau_alpha
-            _nan, _nan,                          # J_TF, J_CS
-            _nan, _nan, _nan, _nan, _nan, _nan, _nan,  # TF radial build + stresses
-            _nan, _nan, _nan, _nan, _nan, _nan, _nan,  # CS radial build + stresses
-            _nan, _nan, _nan, _nan,            # r_minor, r_sep, r_c, r_d
-            _nan, _nan, _nan, _nan,            # κ, κ_95, δ, δ_95
-            _nan, _nan, _nan, _nan, _nan, _nan, _nan,  # ΨPI, ΨRampUp, Ψplateau, ΨPF, ΨCS, Vloop, li
-            _nan, _nan, _nan,                  # eta_LH, eta_EC, eta_NBI
-            _nan, _nan, _nan, _nan,            # P_LH, P_EC, P_NBI, P_ICR
-            _nan, _nan, _nan,                  # I_LH, I_EC, I_NBI
-            _nan, _nan, _nan, _nan, _nan, _nan,  # f_sc_TF, f_cu_TF, f_He_pipe_TF, f_void_TF, f_He_TF, f_In_TF
-            _nan, _nan, _nan, _nan, _nan, _nan,  # f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS
-            _nan, _nan, _nan, _nan,              # beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha
-            _nan, _nan,                          # V_TF_one, V_CS_geom
-            _nan, _nan, _nan, _nan, _nan,        # V_steel_TF, V_sc_TF, V_cu_TF, V_He_TF, V_In_TF
-            _nan, _nan, _nan, _nan, _nan,        # V_steel_CS, V_sc_CS, V_cu_CS, V_He_CS, V_In_CS
-            _nan, _nan,                          # L_cable_TF, L_cable_CS
-            _nan, _nan,                          # n_sc_TF, n_sc_CS
-            _nan, _nan,                          # L_sc_strand_TF, L_sc_strand_CS
-            _nan, _nan, _nan, _nan, _nan,        # M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF
-            _nan, _nan, _nan, _nan, _nan,        # M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS
-            _nan,                                # V_blanket
-            _nan, _nan,                          # t_life_bl_fpy, t_life_div_fpy
-            _nan, _nan,                          # t_life_bl_yr, t_life_div_yr
-            _nan, _nan,                          # T_op_limit, dt_rep_eff
-            _nan, _nan,                          # Av, CF
-            _nan,                                # V_rb_SOL
-            _nan, _nan,                          # V_rb_FW, V_rb_BB
-            _nan, _nan, _nan,                    # V_rb_shield, V_rb_VV, V_rb_gap_TF
-            _nan,                                # V_rb_divertor
-            _nan, _nan, _nan, _nan, _nan, _nan,  # M_rb_FW, M_rb_BB, M_rb_shield, M_rb_VV, M_rb_divertor, M_rb_total
-        )
+        return (B0_solution,  _nan,  B_pol_solution,          # B0, B_CS(nan), B_pol
+                tauE_solution,  W_th_solution,
+                Q_solution,  Volume_solution,  Surface_solution,
+                Ip_solution,  Ib_solution,  I_CD_solution,  I_Ohm_solution,
+                nbar_solution,  nbar_line_solution,  nG_solution,  pbar_solution,
+                betaN_solution,  betaT_solution,  betaP_solution,
+                qstar_solution,  q95_solution,
+                P_CD_solution,  P_sep_solution,  P_Thresh,  eta_CD_solution,
+                P_elec_solution,  P_wallplug_solution,
+                _nan,  P_Brem_solution,  P_syn_solution,  P_line_solution,  # cost(nan)
+                P_line_core_solution,
+                heat_refined_solution,  heat_par_solution,  heat_pol_solution,
+                lambda_q_Eich_m,  q_target_Eich,
+                P_1rst_wall_rad,  P_1rst_wall_div,
+                Gamma_n_solution,
+                f_alpha_solution,  tau_alpha,
+                J_max_TF_conducteur,  _nan,                    # J_TF, J_CS(nan)
+                _nan, _nan, _nan, _nan, _nan, _nan, _nan,      # c, c_WP_TF, c_Nose_TF, sigma_TF x3, Steel_TF
+                _nan, _nan, _nan, _nan, _nan, _nan, _nan,      # d, sigma_CS x3, Steel_CS, B_CS, J_CS
+                R0 - a,  R0 - a - b,  _nan,  _nan,             # r_minor, r_sep kept; r_c, r_d depend on c
+                κ,  κ_95,  δ,  δ_95,
+                _nan, _nan, _nan, _nan, _nan, _nan,  li_solution,  # Psi PI/RampUp/plateau/PF/CS, Vloop; li kept
+                eta_LH_solution,  eta_EC_solution,  eta_NBI_solution,
+                P_LH_solution,  P_EC_solution,  P_NBI_solution,  P_ICR_solution,
+                I_LH_solution,  I_EC_solution,  I_NBI_solution,
+                f_sc_TF,  f_cu_TF,  f_He_pipe_TF,  f_void_TF,  f_He_TF,  f_In_TF,
+                _nan, _nan, _nan, _nan, _nan, _nan,            # f_*_CS (CS conductor build)
+                beta_fast_alpha,  betaN_total,  tau_sd_alpha,  W_fast_alpha,
+                _nan, _nan,                                    # V_TF_one, V_CS_geom
+                _nan, _nan, _nan, _nan, _nan,                  # V_steel/sc/cu/He/In_TF
+                _nan, _nan, _nan, _nan, _nan,                  # V_steel/sc/cu/He/In_CS
+                _nan, _nan,                                    # L_cable_TF, L_cable_CS
+                _nan, _nan,                                    # n_sc_TF, n_sc_CS
+                _nan, _nan,                                    # L_sc_strand_TF, L_sc_strand_CS
+                _nan, _nan, _nan, _nan, _nan,                  # M_steel/sc/cu/In/total_TF
+                _nan, _nan, _nan, _nan, _nan,                  # M_steel/sc/cu/In/total_CS
+                _nan,                                          # V_blanket
+                _nan, _nan,                                    # t_life_bl_fpy, t_life_div_fpy
+                _nan, _nan,                                    # t_life_bl_yr, t_life_div_yr
+                _nan, _nan,                                    # T_op_limit, dt_rep_eff
+                _nan, _nan,                                    # Av, CF
+                _nan,                                          # V_rb_SOL
+                _nan, _nan,                                    # V_rb_FW, V_rb_BB
+                _nan, _nan, _nan,                              # V_rb_shield, V_rb_VV, V_rb_gap_TF
+                _nan,                                          # V_rb_divertor
+                _nan, _nan, _nan,                              # M_rb_FW, M_rb_BB, M_rb_shield
+                _nan, _nan, _nan,                              # M_rb_VV, M_rb_divertor, M_rb_total
+                divertor_solution)                             # two-point divertor model (kept)
 
     # ==============================================================================
     #    MAGNETIC FLUX REQUIREMENTS (Inductive Scenario)
@@ -2682,7 +2699,7 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
     """Write an exhaustive run report (all inputs + all outputs) to disk.
 
     Produces ``output_path/output_detailed.txt`` in addition to the
-    human-readable ``output_results.txt``. It lists every GlobalConfig field
+    human-readable ``output_highlight.txt``. It lists every GlobalConfig field
     (including values left at their defaults), followed by the full set of
     computed quantities grouped into labelled sections, under a header that
     records the code version, date, git commit, Python version and platform.
@@ -2848,7 +2865,7 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
     lines.append("")
     lines.append("  This report lists every input (including defaults) and every")
     lines.append("  computed output. It complements input_parameters.txt (inputs as")
-    lines.append("  given) and output_results.txt (human-readable summary).")
+    lines.append("  given) and output_highlight.txt (human-readable summary).")
     lines.append("")
 
     # ===================================================================
@@ -3305,7 +3322,7 @@ def save_run_output(config: GlobalConfig,
     rho_rad_core = config.rho_rad_core
 
     # ── Write results report (console + file) ─────────────────────────────────
-    output_file = os.path.join(output_path, "output_results.txt")
+    output_file = os.path.join(output_path, "output_highlight.txt")
     with open(output_file, "w", encoding="utf-8") as f:
 
         class DualWriter:

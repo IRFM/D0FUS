@@ -1,4 +1,3 @@
-
 <a name="readme-top"></a>
 
 <p align="center">
@@ -389,7 +388,8 @@ See `D0FUS_INPUTS/3_genetic_ITER.txt` for a complete example.
 ```
 D0FUS_OUTPUTS/Run_D0FUS_YYYYMMDD_HHMMSS/
 ├── input_parameters.txt        # Copy of input configuration
-├── output_results.txt          # Complete calculation results (99 scalars, 8 families)
+├── output_highlight.txt        # Human-readable synthesis of the key results
+├── output_detailed.txt         # Exhaustive report: every input (incl. defaults) + every output
 └── figures/                    # 10 run-specific PNG figures (150 dpi)
     ├── 01_cross_section.png
     ├── 02_miller_surfaces.png
