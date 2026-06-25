@@ -327,11 +327,11 @@ def f_Kappa(A, Option_Kappa, κ_manual, ms):
     A : float or ndarray
         Plasma aspect ratio R₀/a [-].
     Option_Kappa : str
-        'Stambaugh' | 'Freidberg' | 'Wenninger' | 'Manual'
+        'Stambaugh' | 'Freidberg' | 'Wenninger' | 'Blend' | 'Manual'
     κ_manual : float
         Used only when Option_Kappa == 'Manual'.
     ms : float
-        Vertical stability margin parameter (Wenninger scaling only).
+        Vertical stability margin parameter (Wenninger and Blend scalings).
 
     Returns
     -------
@@ -353,11 +353,25 @@ def f_Kappa(A, Option_Kappa, κ_manual, ms):
     elif Option_Kappa == 'Wenninger':
         κ = 1.12 * ((18.84 - 0.87*A
                      - np.sqrt(4.84*A**2 - 28.77*A + 52.52 + 14.74*ms)) / 7.37)
+    elif Option_Kappa == 'Blend':
+        # Freidberg toward the spherical limit (left) blended into Wenninger
+        # toward conventional / high aspect ratio (right), joined by a logistic
+        # crossover centred on the Wenninger turning point (A_t ≈ 2.235 at
+        # ms = 0.3), where the Wenninger fit ceases to be physical (it would
+        # otherwise re-decrease toward spherical). C∞ smooth and monotone, and
+        # inherits a realistic ITER value (≈ 1.89) from Wenninger on the right.
+        A_t, dA = 2.235, 0.35
+        κ_F = 0.95 * (1.81153991 * A**0.009042 + 1.5205 * A**(-1.63))
+        κ_W = 1.12 * ((18.84 - 0.87*A
+                       - np.sqrt(4.84*A**2 - 28.77*A + 52.52 + 14.74*ms)) / 7.37)
+        w = 1.0 / (1.0 + np.exp(-(A - A_t) / dA))
+        κ = (1.0 - w) * κ_F + w * κ_W
     elif Option_Kappa == 'Manual':
         κ = κ_manual
     else:
         raise ValueError(f"Unknown Option_Kappa: '{Option_Kappa}'. "
-                         "Valid: 'Stambaugh', 'Freidberg', 'Wenninger', 'Manual'")
+                         "Valid: 'Stambaugh', 'Freidberg', 'Wenninger', "
+                         "'Blend', 'Manual'")
     return np.where(np.asarray(κ) <= 0, np.nan, κ)
 
 

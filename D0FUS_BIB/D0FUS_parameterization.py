@@ -136,7 +136,7 @@ class GlobalConfig:
     #   'Sauter'    — uses LCFS values (κ_edge, δ_edge). Sauter, FED 112 (2016) Eq. 30.
     #   'ITER_1989' — uses ψ_N = 0.95 values (κ₉₅, δ₉₅). Uckan (1989), also Johner (2011).
     Option_q95         : str = 'Sauter'         # q₉₅ formula: 'Sauter' (default) or 'ITER_1989'
-    Option_Kappa       : str = 'Wenninger'      # Elongation model: 'Wenninger', 'Stambaugh', 'Freidberg', 'Manual'
+    Option_Kappa       : str = 'Wenninger'      # Elongation model: 'Wenninger', 'Stambaugh', 'Freidberg', 'Blend', 'Manual'
     κ_manual           : float = 1.9            # Elongation (Manual mode only) [-]
 
     # ── 2a. Safety factor and current density profiles ────────────────────────

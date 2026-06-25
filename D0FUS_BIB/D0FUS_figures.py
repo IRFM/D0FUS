@@ -198,6 +198,117 @@ def plot_kappa_scaling(
     _save_or_show(fig, save_dir, "kappa_scaling")
 
 
+def plot_kappa_blend(
+    A_min: float = 1.15,
+    A_max: float = 5.2,
+    kappa_manual: float = 1.7,
+    ms: float = 0.3,
+    show_machines: bool = True,
+    save_dir: str | None = None,
+) -> None:
+    """
+    Plot the blended elongation model against a reference set of tokamaks.
+
+    The blended model (Option_Kappa='Blend') uses Freidberg toward the
+    spherical limit and Wenninger toward conventional / high aspect ratio,
+    joined by a smooth logistic crossover. The aspect-ratio axis is split into
+    three zones (spherical / conventional / high A) and the reference machines
+    are marked as built or not yet built. Machine kappa values are nominal /
+    best-achieved edge elongations from the literature and are indicative only.
+
+    Complements plot_kappa_scaling (which compares the bare scaling laws).
+
+    Parameters
+    ----------
+    A_min, A_max   : float  Aspect-ratio scan bounds [-].
+    kappa_manual   : float  Passed through to f_Kappa (unused by 'Blend').
+    ms             : float  Vertical-stability margin (Wenninger / Blend) [-].
+    show_machines  : bool   Overlay the reference machine points.
+    save_dir       : str or None
+
+    References
+    ----------
+    Freidberg et al., J. Plasma Phys. 81, 515810607 (2015);
+    Wenninger et al., Nucl. Fusion 55, 063003 (2015).
+    Machine parameters from the respective device overview papers.
+    """
+    # reference machines: (name, A = R0/a, kappa_edge, built, dx, dy)
+    machines = [
+        ("MAST-U",  1.40, 2.50, True,  -0.03, -0.13),
+        ("NSTX-U",  1.50, 2.70, True,   0.06,  0.05),
+        ("JET",     2.40, 1.75, True,  -0.03, -0.14),
+        ("DIII-D",  2.50, 2.00, True,   0.00,  0.09),
+        ("ITER",    3.10, 1.85, False,  0.05, -0.16),
+        ("SPARC",   3.25, 1.97, False,  0.07,  0.06),
+        ("ASDEX-U", 3.30, 1.80, True,   0.08, -0.14),
+        ("KSTAR",   3.60, 2.00, True,   0.07,  0.06),
+        ("WEST",    5.00, 1.30, True,  -0.06,  0.09),
+    ]
+
+    A_arr = np.linspace(A_min, A_max, 400)
+    fig, ax = plt.subplots(figsize=(10, 6.2))
+
+    # --- three aspect-ratio zones ---
+    zones = [(1.0, 2.0, "#f1ecfb", "spherical"),
+             (2.0, 4.0, "#fbfbfb", "conventional"),
+             (4.0, 5.6, "#ebf5f1", "high A")]
+    for x0, x1, col, lab in zones:
+        ax.axvspan(x0, x1, color=col, zorder=0)
+        xc = 0.5 * (max(x0, A_min) + min(x1, A_max))
+        ax.text(xc, 0.97, lab, transform=ax.get_xaxis_transform(),
+                ha="center", va="top", fontsize=9.5, color="0.45")
+
+    # --- parent fits (faint context) ---
+    kF = f_Kappa(A_arr, "Freidberg", κ_manual=kappa_manual, ms=ms)
+    kW = f_Kappa(A_arr, "Wenninger", κ_manual=kappa_manual, ms=ms)
+    ax.plot(A_arr, kF, color="#e0913f", lw=1.3, ls="--", alpha=0.55, zorder=2)
+    ax.plot(A_arr, kW, color="#5a9e6f", lw=1.3, ls="--", alpha=0.55, zorder=2)
+    ax.text(A_min + 0.02, float(kF[0]) + 0.03, "Freidberg",
+            color="#c97a2c", fontsize=8, zorder=2)
+    ax.text(A_min + 0.02, float(kW[0]) - 0.10, "Wenninger",
+            color="#3f7d54", fontsize=8, zorder=2)
+
+    # --- blended model (soft white halo + dark line) ---
+    kB = f_Kappa(A_arr, "Blend", κ_manual=kappa_manual, ms=ms)
+    ax.plot(A_arr, kB, color="white", lw=5.5, zorder=3, solid_capstyle="round")
+    ax.plot(A_arr, kB, color="#1b2a4a", lw=2.8, zorder=4,
+            solid_capstyle="round", label="Blended model")
+
+    # --- reference machines: built vs not yet built ---
+    if show_machines:
+        for name, A_m, k_m, built, dx, dy in machines:
+            if built:
+                ax.scatter(A_m, k_m, s=78, marker="o", color="#2a9d8f",
+                           edgecolor="white", linewidth=0.8, zorder=6,
+                           label="Built")
+            else:
+                ax.scatter(A_m, k_m, s=92, marker="o", facecolor="white",
+                           edgecolor="#e76f51", linewidth=2.0, zorder=6,
+                           label="Not yet built")
+            ax.annotate(name, (A_m + dx, k_m + dy), fontsize=8, color="0.2",
+                        fontweight="bold", zorder=7)
+
+    # --- cosmetics ---
+    ax.set_xlabel(r"Aspect ratio  $A = R_0/a$", fontsize=12)
+    ax.set_ylabel(r"Maximum edge elongation  $\kappa_{\rm edge}$", fontsize=12)
+    ax.set_title("Blended elongation model vs tokamaks",
+                 fontsize=12.5, fontweight="bold")
+    ax.set_xlim(A_min, A_max)
+    ax.set_ylim(1.2, 3.0)
+    ax.grid(True, alpha=0.25, lw=0.6)
+    for s in ("top", "right"):
+        ax.spines[s].set_visible(False)
+
+    # de-duplicated, minimal legend
+    h, l = ax.get_legend_handles_labels()
+    uniq = dict(zip(l, h))
+    ax.legend(uniq.values(), uniq.keys(), loc="lower left", fontsize=9,
+              frameon=True, framealpha=0.9)
+
+    plt.tight_layout()
+    _save_or_show(fig, save_dir, "kappa_blend")
+
+
 def plot_shaping_profiles(
     kappa_edge: float = 1.85,
     delta_edge: float = 0.50,
