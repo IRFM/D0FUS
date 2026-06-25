@@ -1090,6 +1090,17 @@ def load_input_file(input_file):
 
     # Use asdict to iterate over DEFAULT_CONFIG fields cleanly
     default_dict = asdict(DEFAULT_CONFIG)
+
+    # Keys consumed by the GA driver itself (not GlobalConfig fields). Used to
+    # suppress false warnings when checking deck keys against GlobalConfig.
+    _GA_SETTING_KEYS = {
+        'population_size', 'generations', 'crossover_rate', 'mutation_rate',
+        'n_workers', 'fitness_objective', 'C_invest_max', 'local_refine_method',
+        'local_refine_top_k', 'local_refine_every', 'local_refine_max_iters',
+        'local_refine_initial_simplex_scale', 'local_refine_kwargs',
+        'diversity_inject_fraction', 'cloud_refinement_min_dist', 'make_gif',
+        'gif_var_x', 'gif_var_y', 'gif_resolution', 'gif_log_scale', 'gif_fps',
+    }
     
     with open(input_file, "r", encoding='utf-8') as f:
         for line_num, line in enumerate(f, 1):
@@ -1127,6 +1138,19 @@ def load_input_file(input_file):
                 # (e.g. a user might have 'a = 3.0' before 'a = [2, 4]').
                 if key in opt_ranges:
                     continue
+                # Warn on a key that is neither a GlobalConfig field nor a GA
+                # setting: it would otherwise be stored inertly in static_inputs
+                # (GlobalConfig construction filters it out), so a renamed or
+                # mistyped physics field is dropped without notice and silently
+                # falls back to its default. This is the single most common
+                # cause of an apparently healthy deck producing all-infeasible
+                # designs (e.g. a dropped TF field collapses the radial build).
+                if key not in default_dict and key not in _GA_SETTING_KEYS:
+                    import difflib
+                    _close = difflib.get_close_matches(key, default_dict.keys(),
+                                                       n=3, cutoff=0.6)
+                    print(f"  [warn] '{key}' is not a GlobalConfig field nor a "
+                          f"GA setting -> ignored. Closest fields: {_close}")
                 # Type-aware coercion shared with the run / scan loaders, so
                 # a boolean such as "False" is not silently kept as the
                 # truthy string "False", and optional fields decode "None"

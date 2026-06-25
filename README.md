@@ -21,7 +21,7 @@
 
 **D0FUS** (Design 0-dimensional for Fusion Systems) is a Python tokamak systems code for fast 0D/1D design-space exploration, covering plasma physics, superconducting magnet engineering, and techno-economic assessment. It is developed at CEA-IRFM.
 
-The codebase weighs about 18 000 lines of pure Python distributed across five functional modules and a visualisation library, totalling 236 documented functions.
+The codebase weighs about 35 000 lines of pure Python, organised into a core library (five functional modules plus a visualisation library, close to 300 documented functions) and a five-mode execution layer.
 
 ---
 
@@ -29,7 +29,7 @@ The codebase weighs about 18 000 lines of pure Python distributed across five fu
 
 - **Pure Python**, NumPy/SciPy only. No compilation, no Makefile, runs in Spyder, Jupyter or as a batch job.
 - **Two fidelity levels** (Academic and Refined) bundled by `preset_academic()` / `preset_refined()` factory functions, with each model carrying its own selector inside `GlobalConfig` for fine-grained control.
-- **Three execution modes** (RUN, SCAN, OPTIMIZATION) auto-detected from the input file syntax.
+- **Five execution modes** (RUN, SCAN, OPTIMIZATION, POPCON, UNCERTAINTY) auto-detected from the input file syntax.
 - **Library mode**: every physical and engineering function is callable in isolation, outside the solver loop.
 - **Distinctive engineering features**: radially graded TF coils, REBCO Jc scaling laws, three TF mechanical configurations (bucking, wedging, plug).
 
@@ -143,25 +143,34 @@ D0FUS/
 │   ├── D0FUS_radial_build_functions.py     # Engineering (TF/CS/CICC/quench)
 │   ├── D0FUS_cost_functions.py             # Techno-economic models (Sheffield, Whyte)
 │   ├── D0FUS_cost_data.py                  # Reference cost data and currency conversions
-│   └── D0FUS_figures.py                    # Full figure catalogue (42 plot functions)
+│   └── D0FUS_figures.py                    # Figure catalogue (run, scan, POPCON, UNCERTAINTY)
 │
 ├── D0FUS_INPUTS/                       # Input parameter files
 │   ├── 1_run_ITER.txt                      # ITER Q=10 reference case (RUN mode)
 │   ├── 2_scan_ITER.txt                     # 2D scan around ITER point (SCAN mode)
-│   └── 3_genetic_ITER.txt                  # Genetic optimisation around ITER (OPTIMIZATION mode)
+│   ├── 3_genetic_ITER.txt                  # Genetic optimisation around ITER (OPTIMIZATION mode)
+│   ├── 4_uncertainty_ITER.txt              # Monte-Carlo propagation around ITER (UNCERTAINTY mode)
+│   └── 5_popcon_ITER.txt                   # Operating-contour map for ITER (POPCON mode)
 │
 ├── D0FUS_OUTPUTS/                      # Generated outputs (auto-created)
 │   ├── Run_D0FUS_YYYYMMDD_HHMMSS/         # Single run results + figures
 │   ├── Scan_D0FUS_YYYYMMDD_HHMMSS/        # 2D scan maps
-│   └── Genetic_D0FUS_YYYYMMDD_HHMMSS/     # Optimisation results
+│   ├── Genetic_D0FUS_YYYYMMDD_HHMMSS/     # Optimisation results
+│   ├── Popcon_D0FUS_YYYYMMDD_HHMMSS/      # POPCON operating-contour map
+│   └── uncertainty/                       # UNCERTAINTY study folders
 │
 ├── D0FUS_EXE/                          # Execution modules
 │   ├── D0FUS_run.py                        # Single design point
 │   ├── D0FUS_scan.py                       # 2D parameter scan
-│   └── D0FUS_genetic.py                    # Genetic algorithm optimisation
+│   ├── D0FUS_genetic.py                    # Genetic algorithm optimisation
+│   ├── D0FUS_popcon.py                     # POPCON operating-space map
+│   └── D0FUS_uncertainty.py                # Monte-Carlo uncertainty propagation
 │
 ├── D0FUS.py                            # Main entry point
+├── pyproject.toml                      # Packaging metadata (PyPI)
 ├── requirements.txt
+├── CITATION.cff                        # Citation metadata
+├── DEVELOPMENT_NOTES.md
 └── README.md
 ```
 
@@ -176,6 +185,10 @@ D0FUS detects the execution mode from the input file syntax:
 | **RUN** | Single design point | `R0 = 9` | Fixed values only |
 | **SCAN** | 2D parameter space | `R0 = [3, 9, 25]` | Exactly 2 parameters with `[min, max, n_points]` |
 | **OPTIMIZATION** | Genetic algorithm cost minimisation | `R0 = [3, 9]` | 2+ parameters with `[min, max]` |
+| **POPCON** | Operating-space map at fixed machine | `[POPCON]` section | `nbar_line` and `Tbar` grids with `[min, max, n_points]` |
+| **UNCERTAINTY** | Monte-Carlo input uncertainty propagation | `[UNCERTAINTY]` section | Distributions `norm()`/`tri()`/`unif()`/`envelope()` on any inputs |
+
+The two modes added on top of the original three characterise a single design point in more depth. Both are detected before the bracket-based SCAN and OPTIMIZATION rules, so that their density and temperature grids and their input distributions are never mistaken for a 2D scan.
 
 **RUN mode** evaluates a single tokamak configuration and returns **99 scalar outputs grouped into 8 families** (plasma parameters, magnetic fields, power balance, radial build, current profile, techno-economics, RE indicators, diagnostics). Because several physical quantities are mutually coupled, a convergence loop is unavoidable: in pulsed mode the solver reduces to a scalar root-finding on the helium ash fraction $f_\alpha$, solved in 8 to 12 iterations by Brent's method; in steady-state mode the auxiliary power becomes $P_\mathrm{aux} = P_\mathrm{fus}/Q$ and the system becomes two-dimensional, solved by Powell's hybrid method on $(f_\alpha, Q)$. Post-convergence calculations cover TF mechanical sizing, magnetic flux budget and CS sizing, divertor heat loads, L-H power threshold, the techno-economic assessment, and runaway electron diagnostics.
 
@@ -191,6 +204,10 @@ D0FUS detects the execution mode from the input file syntax:
 | `volume` | Minimise the volume normalised to fusion power (geometry-based proxy) |
 
 Constraints (Greenwald, normalised beta, kink safety factor, optional capital cost ceiling) are enforced via soft penalties: a design that just barely fails one of the limits stays in the running, which helps the search converge toward the feasible boundary rather than fleeing it.
+
+**POPCON mode** fixes a machine and explores its plasma operating space in the (n̄, T̄) plane. The design point is first solved from the deck by the RUN driver and then frozen; the line-averaged density and the volume-averaged temperature are swept on a grid, and a full power balance is evaluated at every node, returning the fusion gain Q, the fusion and auxiliary powers, and the H-mode access margin P_sep/P_LH. The accessible operating window then emerges as the region bounded by the Greenwald density limit, the L-H power threshold, and a chosen iso-Q or iso-P_fus target contour. The implementation reproduces the logic of the open-source `cfspopcon` framework while reusing the same converged physics chain as every other mode. POPCON mode is triggered by a `[POPCON]` section in the deck, and the grid is evaluated in parallel across all available CPU cores.
+
+**UNCERTAINTY mode** quantifies how the spread on the inputs propagates to the outputs by Monte-Carlo sampling around a single design point. Any subset of inputs can be assigned a probability distribution (truncated normal `norm()`, triangular `tri()`, or uniform `unif()`), and any model-form choice can be turned into a discrete switch with `envelope(A | B)`, for instance the confinement scaling law or the elongation scaling. D0FUS then draws N samples by Latin-Hypercube sampling, runs a full RUN evaluation for each, and returns the distribution of every output together with its feasibility flag and constraint margins. The natural use is to take the large extrapolation carried by the empirical confinement scalings and translate it into a confidence band on the predicted performance and on the engineering feasibility of the design. The mode is triggered by an `[UNCERTAINTY]` section, or by any distribution function found in the deck, and reuses the same `joblib`/`loky` parallel backend as the SCAN mode.
 
 ### Two fidelity levels
 
@@ -227,8 +244,10 @@ On a modern 14-core laptop:
 | RUN | Single design point | ~200 ms |
 | SCAN | 50 × 50 grid (2500 points, parallel) | ~25 s |
 | OPTIMIZATION | 50 individuals × 10 generations | ~2 min 30 s |
+| POPCON | n̄–T̄ grid (e.g. 45 × 36 nodes) | Parallel batch of RUN evaluations |
+| UNCERTAINTY | Monte-Carlo (e.g. 1500 samples) | Parallel batch of RUN evaluations |
 
-These execution times make interactive design-space exploration entirely feasible without access to a computing cluster.
+POPCON and UNCERTAINTY run as embarrassingly parallel batches of single-point evaluations, so their wall time scales as roughly the number of grid nodes or samples times the single-run cost, divided by the number of cores. These execution times make interactive design-space exploration entirely feasible without access to a computing cluster.
 
 ---
 
@@ -236,7 +255,7 @@ These execution times make interactive design-space exploration entirely feasibl
 
 ### Parameter Handling
 
-All user-adjustable parameters are gathered into a single typed dataclass `GlobalConfig` (**118 fields organised into 15 categories**), each with a physically motivated default value inspired by ITER and EU-DEMO. When an input file is provided, only the specified parameters are overwritten, so a complete tokamak calculation can be set up in a few lines:
+All user-adjustable parameters are gathered into a single typed dataclass `GlobalConfig` (**about 140 fields organised into thematic categories**), each with a physically motivated default value inspired by ITER and EU-DEMO. When an input file is provided, only the specified parameters are overwritten, so a complete tokamak calculation can be set up in a few lines:
 
 ```ini
 R0 = 7
@@ -369,6 +388,34 @@ C_invest_max = 20000
 
 See `D0FUS_INPUTS/3_genetic_ITER.txt` for a complete example.
 
+**POPCON mode**: a complete RUN deck (machine geometry, field and physics) followed by a `[POPCON]` section that brackets the density and temperature grids:
+```ini
+# ... a full RUN deck above ...
+
+[POPCON]
+nbar_line = [0.35, 1.45, 45]   # line-averaged density grid [1e20 m^-3]
+Tbar      = [3.5, 24.0, 36]    # volume-averaged temperature grid [keV]
+```
+
+See `D0FUS_INPUTS/5_popcon_ITER.txt` for a complete example.
+
+**UNCERTAINTY mode**: a complete RUN deck (which provides the central value of every input) followed by an `[UNCERTAINTY]` section listing the distributions, and a `[CONTROLS]` section setting the sample budget:
+```ini
+# ... a full RUN deck above ...
+
+[UNCERTAINTY]
+H            = norm(0.75, 1.50)              # truncated normal, centred on the deck value
+rho_ped      = norm(0.90, 0.97)
+Scaling_Law  = envelope(IPB98(y,2) | ITPA20) # model-form switch (pipe-separated)
+Option_Kappa = envelope(Wenninger | Freidberg)
+
+[CONTROLS]
+n_samples = 1500
+seed      = 12345
+```
+
+Continuous distributions accept `norm(sigma)`, `norm(lo, hi)`, `norm(lo, centre, hi)`, `tri(lo, hi)`, `tri(lo, mode, hi)`, and `unif(lo, hi)`. Model-form switches use a pipe separator rather than a comma, because a name such as `IPB98(y,2)` already contains one. See `D0FUS_INPUTS/4_uncertainty_ITER.txt` for a complete example.
+
 ### Genetic Algorithm Settings
 
 | Parameter | Description | Default |
@@ -440,11 +487,29 @@ D0FUS_OUTPUTS/Genetic_D0FUS_YYYYMMDD_HHMMSS/
 └── convergence_plot.png        # Fitness evolution over generations
 ```
 
+### POPCON Mode Output
+
+```
+D0FUS_OUTPUTS/Popcon_D0FUS_YYYYMMDD_HHMMSS/
+├── deck_copy.txt               # Copy of the input deck
+└── popcon.png                  # (n̄, T̄) operating-contour map (log₁₀ Q, iso-P_fus/P_aux,
+                                #   Greenwald and L-H boundaries, target iso-Q contour)
+```
+
+### UNCERTAINTY Mode Output
+
+```
+D0FUS_OUTPUTS/uncertainty/Uncertainty_D0FUS_YYYYMMDD_HHMMSS/
+├── input_parameters.txt        # Copy of the input deck
+├── uncertainty_summary.txt     # Per-output medians and confidence intervals
+└── figures/                    # Input-distribution and robustness-decomposition plots
+```
+
 ---
 
 ## Figures Catalogue
 
-`plot_run()` generates 10 run-specific figures. `plot_all()` generates the full 30-figure catalogue, including:
+`plot_run()` generates 10 run-specific figures. `plot_all()` generates the full standalone catalogue, including:
 
 | Group | Figures |
 |-------|---------|
@@ -454,6 +519,7 @@ D0FUS_OUTPUTS/Genetic_D0FUS_YYYYMMDD_HHMMSS/
 | Current & q | q(ρ) with j_Ohm/j_CD/j_bs decomposition |
 | Magnets | Jc(B,T) scaling (NbTi/Nb₃Sn/REBCO), TF thickness vs B_max, CS thickness vs flux swing |
 | Engineering drawings | Princeton-D TF side view, CS cross-section, CICC cross-section (hex-packed strands) |
+| Mode-specific maps | POPCON operating-contour map, UNCERTAINTY input-distribution and robustness-decomposition plots |
 
 ---
 
