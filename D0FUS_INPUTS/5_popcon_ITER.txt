@@ -201,7 +201,7 @@ r_synch     = 0.6               # Synchrotron wall reflectivity [-]
                                 # Default EU-DEMO value; acceptable for ITER.
 
 C_Alpha     = 6.0                  # He confinement ratio tau_He*/tau_E [-]
-rho_rad_core = 0.85                # Core/edge radiation boundary (P_loss convention) [-]
+rho_rad_core = 0.6                 # Core/edge split; presets: 0.6 (PROCESS-aligned, optimistic) or 1.0 (conservative)
                                 # τ_He* / τ_E ≈ 5 (standard assumption)
 
 # Impurity mix: full-W wall (ITER re-baseline 2024) + Ne seeding.
