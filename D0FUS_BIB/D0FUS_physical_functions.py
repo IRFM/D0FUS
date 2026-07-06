@@ -1897,6 +1897,13 @@ def f_Bpol(q95, B_tor, a, R0, kappa=1.0):
         eliminate I_p gives exactly the same result as Route 1:
             B_pol = (a B_T / (R₀ q)) × √((1+κ²)/2)
 
+    Warning: the safety factor eliminated in both routes is the
+    cylindrical kink factor q*, not q95. Supplying the Sauter q95
+    biases B_pol low by q*/q95, that is 25 to 30 % in shaped H-mode
+    plasmas (quantified in test_verifications.py). For the solver
+    chain, prefer f_Bpol_ampere below, which is consistent with
+    f_beta_P by construction.
+
     Note: this function uses the Route 1 (q-inversion) result directly.
     The √((1+κ²)/2) factor is a physics correction, not a perimeter
     approximation. The Ramanujan perimeter (used elsewhere in D0FUS)
@@ -1930,6 +1937,53 @@ def f_Bpol(q95, B_tor, a, R0, kappa=1.0):
     kappa_corr = np.sqrt((1.0 + kappa**2) / 2.0)
     B_pol = (a * B_tor * kappa_corr) / (R0 * q95)
     return B_pol
+
+
+def f_Bpol_ampere(Ip_MA, a, kappa):
+    """
+    Perimeter-averaged poloidal magnetic field from Ampere's law.
+
+        <B_pol> = mu0 I_p / L_pol
+
+    with L_pol the Ramanujan perimeter of the (a, kappa a) ellipse.
+    This is the same convention as f_beta_P, so B_pol and beta_P are
+    mutually consistent. It replaces the q95-based estimate f_Bpol in
+    the solver chain: f_Bpol(q, ...) is exact only when q is the
+    cylindrical kink factor q* (Freidberg et al. 2015); feeding it the
+    Sauter q95 underestimates B_pol by 25 to 30 % in shaped H-mode
+    plasmas, which propagates to the Eich lambda_q (overestimated by
+    about 35 %) and to every downstream divertor metric. Quantified in
+    test_verifications.py.
+
+    Parameters
+    ----------
+    Ip_MA : float
+        Plasma current [MA]
+    a : float
+        Minor radius [m]
+    kappa : float
+        Plasma elongation at the LCFS [-]
+
+    Returns
+    -------
+    B_pol : float
+        Perimeter-averaged poloidal field [T]
+
+    Notes
+    -----
+    The Eich (2013) regression strictly calls for the outer-midplane
+    poloidal field; the perimeter average used here agrees with the
+    RMS-perimeter estimate to about 2 % and is standard systems-code
+    practice.
+
+    References
+    ----------
+    Eich et al., Nucl. Fusion 53 (2013) 093031.
+    Freidberg et al., Phys. Plasmas 22 (2015) 070901.
+    """
+    mu0 = 4.0e-7 * np.pi
+    L_pol = _ramanujan_perimeter(a, kappa * a)
+    return mu0 * Ip_MA * 1e6 / L_pol
 
 
 def f_beta_T(pbar_MPa, B0):
@@ -6908,7 +6962,8 @@ if __name__ == "__main__":
     _Bpol = f_Bpol(FROZEN['q95'], ITER['B0'], ITER['a'], ITER['R0'],
                    kappa=ITER['kappa'])
     _lam, _, _ = f_heat_PFU_Eich(ITER['P_sep'], _Bpol, ITER['R0'],
-                                 ITER['a'] / ITER['R0'], FROZEN['q95'],
+                                 ITER['a'] / ITER['R0'],
+                                 3.0,  # grazing angle [deg]; was FROZEN['q95'] by accident (same value)
                                  B0=ITER['B0'])
     _bench("ITER chain 10/12 - SOL heat-flux width (Eich #15)", [
         ("lambda_q paper inputs [mm]", _lam_pub * 1e3, 0.73, 0.08,
@@ -7871,7 +7926,8 @@ def _sigmav_vol(T_bar, nu_T, rho_ped=1.0, T_ped_frac=0.0, N=200,
 
 
 def f_He_fraction(n_bar, T_bar, tauE, C_Alpha, nu_T,
-                  rho_ped=1.0, T_ped_frac=0.0, Vprime_data=None, tau_i_e=1.0):
+                  rho_ped=1.0, T_ped_frac=0.0, Vprime_data=None, tau_i_e=1.0,
+                  f_imp=0.0):
     """
     Estimate the equilibrium helium ash fraction f_α = n_α / n_e.
 
@@ -7899,7 +7955,8 @@ def f_He_fraction(n_bar, T_bar, tauE, C_Alpha, nu_T,
         Energy confinement time [s]
     C_Alpha : float
         Alpha-particle removal efficiency parameter (dimensionless).
-        Defines τ_α = C_α τ_E; typical value C_α ≈ 5 for ITER.
+        Defines the effective ash confinement time τ_α* = C_α τ_E,
+        lumping transport and wall recycling; typical C_α ≈ 5 for ITER.
     nu_T : float
         Temperature profile peaking exponent (core power-law)
     rho_ped : float, optional
@@ -7916,24 +7973,41 @@ def f_He_fraction(n_bar, T_bar, tauE, C_Alpha, nu_T,
         Equilibrium helium fraction n_α / n_e (dimensionless).
         ITER operational target: 0.05–0.10.
 
+    f_imp : float, keyword-only in spirit (default 0.0)
+        Impurity charge fraction sum_j Z_j n_j / n_e diluting the fuel.
+        Must match the value passed to f_nbar for consistency; the
+        default 0.0 recovers the historical closed form exactly.
+
     Notes
     -----
-    Sarazin quadratic steady-state balance (Appendix B):
-        C = n̄ ⟨σv⟩_vol · C_α · τ_E
-        f_α = (C + 1 − √(2C + 1)) / (2C)
-    where ⟨σv⟩_vol is the volume-averaged D–T reactivity using the
-    volume weight consistent with the geometry mode (cylindrical 2ρ dρ
-    in Academic mode, Miller V'(ρ)/V in refined mode).
+    Steady-state reservoir balance (Sarazin et al. 2020, Appendix B),
+    generalised here to impurity dilution. With
+        C = n_bar <sigma.v>_vol * C_alpha * tau_E
+    the balance (C/4)(1 - f_imp - 2 f_alpha)^2 = f_alpha has the
+    physical root
+        f_alpha = s * (C_s + 1 - sqrt(2 C_s + 1)) / (2 C_s),
+        with s = 1 - f_imp and C_s = C * s,
+    reducing to (C + 1 - sqrt(2C + 1))/(2C) for f_imp = 0.
+    The correction lowers f_alpha by about 13 % at ITER-like impurity
+    content (f_imp ~ 0.07); the closed form is verified against a
+    direct root solve in test_verifications.py.
+    <sigma.v>_vol is the volume-averaged D-T reactivity using the
+    volume weight consistent with the geometry mode (cylindrical
+    2 rho drho in Academic mode, Miller V'(rho)/V in Refined mode).
 
     References
     ----------
-    Y. Sarazin et al., Nuclear Fusion (2021). Appendix B.
+    Y. Sarazin et al., Nucl. Fusion 60 (2020) 016010, Appendix B.
     """
     # Volume-averaged reactivity via shared helper (uses T_i = tau_i_e * T_e)
     sigmav_vol = _sigmav_vol(T_bar, nu_T, rho_ped, T_ped_frac,
                              Vprime_data=Vprime_data, tau_i_e=tau_i_e)
     C = n_bar * 1e20 * sigmav_vol * C_Alpha * tauE
-    return (C + 1 - np.sqrt(2 * C + 1)) / (2 * C)
+    # Impurity-diluted closed form: solves (C/4)(1 - f_imp - 2 f)^2 = f;
+    # reduces to the historical expression for f_imp = 0.
+    s = 1.0 - f_imp
+    Cs = C * s
+    return s * (Cs + 1.0 - np.sqrt(2.0 * Cs + 1.0)) / (2.0 * Cs)
 
 
 def f_tau_alpha(n_bar, T_bar, tauE, C_Alpha, nu_T,

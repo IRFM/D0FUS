@@ -119,7 +119,7 @@ class GlobalConfig:
     Temps_Plateau_input: float = 3600.0         # Flat-top duration (pulsed only) [s]
     P_aux_input        : float = 50.0           # Auxiliary heating power (pulsed only) [MW]
 
-    Plasma_profiles    : str   = 'H'            # Profile peaking: 'L', 'H', 'Advanced', 'Manual'
+    Plasma_profiles    : str   = 'H'            # Profile peaking: 'L', 'H', 'Advanced', 'EU-DEMO', 'Manual'
     nu_n_manual        : float = 0.1            # Density peaking factor (Manual mode only) [-]
     nu_T_manual        : float = 1.0            # Temperature peaking factor (Manual mode only) [-]
     rho_ped    : float = 1.0                    # Normalised pedestal radius (1.0 = no pedestal) [-]
@@ -229,12 +229,21 @@ class GlobalConfig:
     f_imp_core       : str = ''     # Matching concentrations: '5e-5', '1e-5, 3e-3'
     # Core/edge radiation boundary for τ_E and P_sep convention.
     # ρ < rho_rad_core → subtracted from P_heat (core). ρ > → edge (divertor load).
-    # Set to 1.0 to recover legacy behaviour (all radiation subtracted).
-    rho_rad_core : float = 0.75  # Core/edge radiation boundary (normalised radius) [-]
+    # Two canonical presets:
+    #   0.6 (default) : PROCESS-aligned core-region radius, optimistic
+    #                   (less radiation subtracted, lower required Ip).
+    #   1.0           : conservative, all radiation subtracted from P_loss.
+    #                   Can make f_GW-targeted decks infeasible: the ITER
+    #                   example deck cannot reach f_GW = 0.85 near 1.0.
+    # ITER-deck sensitivity 0.6 -> 0.85: Ip +6 %, L-H margin -12 %.
+    rho_rad_core : float = 0.6  # Core/edge radiation boundary (normalised radius) [-]
     # Fraction of computed core radiation (ρ < rho_rad_core) subtracted from
     # P_loss in the confinement power balance (τ_E, scaling-law inversion):
     # P_loss = P_α + P_aux + P_Ohm − coreradiationfraction × P_rad_core.
-    # Default: 1.0 (conservative). PROCESS convention: 0.6 (Kovari 2014).
+    # Default: 1.0, identical to PROCESS (f_p_plasma_core_rad_reduction,
+    # formerly coreradiationfraction, default 1.0 in the PROCESS sources).
+    # Beware: the PROCESS 0.6 often quoted is their core-region RADIUS
+    # (radius_plasma_core_norm, ex coreradius), analogue of rho_rad_core.
     coreradiationfraction : float = 1.0
 
     # ── 5. Magnetic flux model ───────────────────────────────────────────────

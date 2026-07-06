@@ -49,6 +49,8 @@ _PROFILE_PRESETS = {
                  'n_ped_frac': 0.00, 'T_ped_frac': 0.00},
     'H':        {'nu_n': 0.01, 'nu_T': 2.80, 'rho_ped': 0.95,
                  'n_ped_frac': 0.99, 'T_ped_frac': 0.55},
+    'Advanced': {'nu_n': 1.50, 'nu_T': 2.00, 'rho_ped': 0.96,
+                 'n_ped_frac': 0.95, 'T_ped_frac': 0.55},
     'EU-DEMO': {'nu_n': 1.00, 'nu_T': 1.45, 'rho_ped': 0.95,
                  'n_ped_frac': 0.78, 'T_ped_frac': 0.43},
 }
@@ -56,38 +58,7 @@ _PROFILE_PRESETS = {
 
 #%% Input file loader
 
-def _remap_legacy_value(key: str, val, verbose: int = 0):
-    """
-    Translate legacy input-file values that the refactor renamed.
-
-    Older input files used 'D0FUS' as the geometry / radial-build sub-mode
-    label and 'Sauter' / 'Redl' / 'Freidberg' as bootstrap labels.  These
-    are remapped to the new canonical values to keep legacy decks running
-    without manual edits.  A warning is printed at verbose >= 1 so the
-    user is reminded to update their files.
-    """
-    if not isinstance(val, str):
-        return val
-
-    legacy_map = {
-        # Plasma_geometry / Radial_build_model: 'D0FUS' (legacy) -> 'refined'
-        ('Plasma_geometry',    'D0FUS'):     'refined',
-        ('Radial_build_model', 'D0FUS'):     'refined',
-        # Bootstrap_choice: pure Sauter and pure Redl were merged into the
-        # composite 'Sauter-Redl' (Sauter 1999/2002 structure with Redl 2021
-        # refit).  Freidberg was removed; the closest surviving option is
-        # the Segal analytic fit.
-        ('Bootstrap_choice',   'Sauter'):    'Sauter-Redl',
-        ('Bootstrap_choice',   'Redl'):      'Sauter-Redl',
-        ('Bootstrap_choice',   'Freidberg'): 'Segal',
-    }
-    new = legacy_map.get((key, val))
-    if new is not None:
-        if verbose >= 1:
-            print(f"  [warn]   legacy value '{val}' for '{key}' "
-                  f"-> remapped to '{new}'.  Please update your input file.")
-        return new
-    return val
+# (legacy-value remap layer removed; see loader comment)
 
 
 def load_config_from_file(filepath: str,
@@ -146,11 +117,18 @@ def load_config_from_file(filepath: str,
 
             # Only accept keys that exist in GlobalConfig
             if key not in GlobalConfig.__dataclass_fields__:
-                if verbose >= 1:
-                    print(f"  [warn]   '{key}' is not a recognised GlobalConfig field — ignored")
+                # Always surface unknown keys: a stale deck silently
+                # falling back to defaults is exactly the hidden-
+                # assumption failure mode D0FUS aims to avoid.
+                print(f"  [warn]   '{key}' is not a recognised GlobalConfig field — ignored")
                 continue
 
-            overrides[key] = _remap_legacy_value(key, val, verbose=verbose)
+            # Legacy-value remapping removed by design: an unrecognised
+            # option value must fail loudly in the downstream validator
+            # (which lists the valid options) rather than being silently
+            # translated. Unknown KEYS still warn and fall back to the
+            # documented defaults.
+            overrides[key] = val
             if verbose >= 2:
                 print(f"  [input]  {key} = {overrides[key]}")
 
@@ -556,7 +534,15 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     else:
         raise ValueError(
             f"Unknown Plasma_profiles: '{Plasma_profiles}'. "
-            "Valid options: 'L', 'H', 'Advanced', 'Manual'."
+            "Valid options: 'L', 'H', 'Advanced', 'EU-DEMO', 'Manual'."
+        )
+
+    # Validate the bootstrap model early: fail fast at load time,
+    # before any physics evaluation, with the valid options listed.
+    if Bootstrap_choice not in ('Sauter-Redl', 'Segal'):
+        raise ValueError(
+            f"Unknown Bootstrap_choice: '{Bootstrap_choice}'. "
+            "Valid options: 'Sauter-Redl', 'Segal'."
         )
 
     # ── Validate manual superconductor option ─────────────────────────────────
@@ -1129,7 +1115,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         # Helium ash fraction from confinement time
         new_fa_loc = f_He_fraction(
             nbar_loc, Tbar, tau_E_loc, C_Alpha, nu_T,
-            rho_ped=rho_ped, T_ped_frac=T_ped_frac, tau_i_e=tau_i_e)
+            rho_ped=rho_ped, T_ped_frac=T_ped_frac, tau_i_e=tau_i_e,
+            f_imp=f_imp_dilution)
 
         if _dbg:
             print(f"    new_f_alpha={new_fa_loc:.6f} (input={f_alpha:.6f})")
@@ -1636,8 +1623,9 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 print("\n[ERROR] Pre-solver validation failed:")
                 _tb.print_exc()
             raise RuntimeError(
-                "Physics chain is broken at the initial guess. "
-                "Fix the error above before running D0FUS."
+                f"Physics chain is broken at the initial guess "
+                f"({type(_pre_exc).__name__}: {_pre_exc}). "
+                "Fix this error before running D0FUS."
             ) from _pre_exc
 
         f_alpha_solution, Q_solution = _solve_pulsed()
@@ -1656,8 +1644,9 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 print("\n[ERROR] Pre-solver validation failed:")
                 _tb.print_exc()
             raise RuntimeError(
-                "Physics chain is broken at the initial guess. "
-                "Fix the error above before running D0FUS."
+                f"Physics chain is broken at the initial guess "
+                f"({type(_pre_exc).__name__}: {_pre_exc}). "
+                "Fix this error before running D0FUS."
             ) from _pre_exc
 
         f_alpha_solution, Q_solution = _solve_steady_state()
@@ -1777,7 +1766,9 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     qstar_solution  = f_qstar(a, B0_solution, R0, Ip_solution, κ)
     
     # --- Remaining MHD quantities (qstar/q95 already computed above) ---
-    B_pol_solution  = f_Bpol(q95_solution, B0_solution, a, R0, kappa=κ)
+    # Ampere convention (mu0 Ip / L_pol), consistent with f_beta_P;
+    # the q95-based f_Bpol estimate is biased low by q*/q95 (~28 %).
+    B_pol_solution  = f_Bpol_ampere(Ip_solution, a, κ)
     betaT_solution  = f_beta_T(pbar_solution, B0_solution)
     betaP_solution  = f_beta_P(a, κ, pbar_solution, Ip_solution)
     beta_solution   = f_beta(betaP_solution, betaT_solution)
@@ -2916,7 +2907,7 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
         ("Peak field B_max", "B_max", "T"),
         ("CS field B_CS", "B_CS", "T"),
         ("Poloidal field B_pol", "B_pol", "T"),
-        ("Plasma current Ip", "Ip", "A"),
+        ("Plasma current Ip", "Ip", "MA"),
         ("Bootstrap current Ib", "Ib", "A"),
         ("Current-drive current I_CD", "I_CD", "A"),
         ("Ohmic current I_Ohm", "I_Ohm", "A"),
@@ -3979,9 +3970,11 @@ def main(input_file: str = None, save_figures: bool = False,
         return results
 
     except Exception as e:
+        # Always surface the error message: a silent exit(1) hides
+        # physics infeasibilities (e.g. unreachable f_GW target).
+        print(f"\n!!! ERROR during calculation !!!")
+        print(f"Error message: {str(e)}")
         if verbose >= 1:
-            print(f"\n!!! ERROR during calculation !!!")
-            print(f"Error message: {str(e)}")
             import traceback
             traceback.print_exc()
         sys.exit(1)
