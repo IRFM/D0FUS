@@ -437,7 +437,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # ── Plasma geometry ───────────────────────────────────────────────────────
     κ             = f_Kappa(R0 / a, Option_Kappa, κ_manual, ms)
     κ_95          = f_Kappa_95(κ)
-    δ             = f_Delta(κ)
+    # δ             = f_Delta(κ)
+    δ             = - 0.5
     δ_95          = f_Delta_95(δ)
 
     # Precompute Miller volume derivative V'(ρ) for refined geometry mode.
