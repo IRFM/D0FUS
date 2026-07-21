@@ -587,7 +587,22 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # ── Plasma geometry ───────────────────────────────────────────────────────
     κ             = f_Kappa(R0 / a, Option_Kappa, κ_manual, ms)
     κ_95          = f_Kappa_95(κ)
-    δ             = f_Delta(κ)
+    # Triangularity sign. 'positive' keeps the TREND correlation
+    # delta = +0.6*(kappa-1) (ordinary D-shape). 'negative' flips the sign,
+    # delta = -0.6*(kappa-1), so negative-triangularity configurations can be
+    # requested from the deck; at the LUCIOLE elongation this lands near
+    # delta ~ -0.5. The refined Miller geometry already supports delta < 0
+    # downstream (arcsin(delta) contour), and delta_95 follows the same ITER
+    # 1989 ratio with the sign preserved.
+    δ_mag         = f_Delta(κ)
+    _tri = getattr(config, 'Triangularity', 'positive')
+    if _tri == 'negative':
+        δ         = -δ_mag
+    elif _tri == 'positive':
+        δ         = δ_mag
+    else:
+        raise ValueError(f"Unknown Triangularity: '{_tri}'. "
+                         "Valid options: 'positive', 'negative'.")
     δ_95          = f_Delta_95(δ)
 
     # Precompute Miller volume derivative V'(ρ) for refined geometry mode.
