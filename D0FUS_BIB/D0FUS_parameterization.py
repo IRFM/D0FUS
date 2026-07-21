@@ -138,6 +138,8 @@ class GlobalConfig:
     Option_q95         : str = 'Sauter'         # q₉₅ formula: 'Sauter' (default) or 'ITER_1989'
     Option_Kappa       : str = 'Wenninger'      # Elongation model: 'Wenninger', 'Stambaugh', 'Freidberg', 'Blend', 'Manual'
     κ_manual           : float = 1.9            # Elongation (Manual mode only) [-]
+    Triangularity      : str = 'positive'       # Triangularity sign: 'positive' (delta = +0.6*(kappa-1), TREND)
+    #                                             or 'negative' (delta = -0.6*(kappa-1), negative-triangularity)
 
     # ── 2a. Safety factor and current density profiles ────────────────────────
     # Two strictly distinct philosophies for q(ρ) and j(ρ):
