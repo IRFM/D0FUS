@@ -9,3 +9,4 @@ matplotlib
 tqdm
 deap
 joblib
+pyvista   # optional at runtime: only needed for the 3D machine view figure

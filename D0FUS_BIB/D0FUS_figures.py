@@ -3316,6 +3316,459 @@ def plot_CS_cross_section(
     _save_or_show(fig, save_dir, "run_CS_cross_section")
 
 
+# =============================================================================
+# B3 — 3D machine concept view (PyVista)
+# =============================================================================
+#
+# Three-dimensional rendering of the converged D0FUS design, with a one-third
+# toroidal wedge cut away so the poloidal cross-section exposes the internal
+# elements.  Adapted from the WEST concept-figure generator (T. Auclair);
+# geometry is driven entirely by the run dict:
+#
+#   - plasma        : Miller LCFS (kappa_edge, delta_edge from the run),
+#                     nested flux surfaces on the cut faces drawn with the
+#                     D0FUS PCHIP shaping profiles kappa(rho), delta(rho)
+#   - TF coils      : Princeton-D contour from f_TF_cross_section (radial
+#                     build c_TF, Delta_TF), N_TF coils from the ripple
+#                     criterion; toroidal width from the wedged-vault
+#                     contact condition w = 2 pi R_leg / N_TF
+#   - CS            : solenoid R_CS_int -> R_CS_ext from the radial build
+#                     (flux-swing sizing), height convention shared with
+#                     plot_CS_cross_section, clamped inside the TF bore
+#   - PF coils      : ILLUSTRATIVE ONLY.  D0FUS does not size the PF set;
+#                     a generic ITER-like set of six ring coils is placed
+#                     automatically along the TF outer contour, scaled to
+#                     the machine size, for visual completeness.
+#
+# PyVista (VTK) is an OPTIONAL dependency: if it is not installed the figure
+# is skipped with a message and the rest of the figure bank is unaffected.
+# ---------------------------------------------------------------------------
+
+# Palette (soft pastels) and technical-drawing edge style
+_PV3D_PLASMA_COL = "#c9b6e8"
+_PV3D_TF_COL     = "#f6bcb6"
+_PV3D_CS_COL     = "#b6cfec"
+_PV3D_PF_COL     = "#bcdfbe"
+_PV3D_EDGE_COL   = "#1a1a1a"
+_PV3D_EDGE_LW    = 2.2
+_PV3D_FLUX_COL   = "#6a4a9e"          # darker violet: flux surfaces and axis
+_PV3D_FLUX_FRACS = (0.3, 0.55, 0.8)   # nested flux-surface radii (frac of LCFS)
+
+# Wedge and camera conventions (one-third cut, centred on the viewer)
+_PV3D_GAP_CENTER_DEG = -60.0
+_PV3D_GAP_HALF_DEG   = 60.0
+_PV3D_CAM_AZIM_DEG   = -60.0
+_PV3D_CAM_ELEV_DEG   = 24.0
+
+
+def _pv3d_keep_range():
+    """Kept toroidal interval [phi0, phi1] (rad) once the wedge is removed."""
+    gc = np.deg2rad(_PV3D_GAP_CENTER_DEG)
+    gh = np.deg2rad(_PV3D_GAP_HALF_DEG)
+    return gc + gh, gc - gh + 2.0 * np.pi
+
+
+def _pv3d_grid(pv, X, Y, Z):
+    """Wrap coordinate arrays of shape (m, n) as a PyVista StructuredGrid."""
+    g = pv.StructuredGrid()
+    g.points = np.stack([X.ravel(order="F"), Y.ravel(order="F"),
+                         Z.ravel(order="F")], axis=1)
+    g.dimensions = (X.shape[0], X.shape[1], 1)
+    return g
+
+
+def _pv3d_rect_tube(cx, cy, cz, half_n, half_b, refx, refy, refz, closed=True):
+    """
+    Surface of a rectangular-section conductor swept along a 3D centreline.
+
+    (cx, cy, cz) is the centreline; half_n and half_b are the half-widths
+    along the local in-plane normal and along the projected reference
+    direction (refx, refy, refz).  Returns (X, Y, Z) of shape (5, n): the
+    closed rectangular section at each centreline point.
+    """
+    P = np.stack([cx, cy, cz], axis=1)
+    if closed and np.allclose(P[0], P[-1]):
+        P = P[:-1]                    # drop the duplicated closing point
+    n = len(P)
+    if closed:
+        T = np.roll(P, -1, axis=0) - np.roll(P, 1, axis=0)
+    else:
+        T = np.gradient(P, axis=0)
+    T /= np.linalg.norm(T, axis=1, keepdims=True) + 1e-12
+    ref = np.stack([np.broadcast_to(refx, (len(cx),))[:n],
+                    np.broadcast_to(refy, (len(cx),))[:n],
+                    np.broadcast_to(refz, (len(cx),))[:n]], axis=1).astype(float)
+    B = ref - np.sum(ref * T, axis=1, keepdims=True) * T
+    B /= np.linalg.norm(B, axis=1, keepdims=True) + 1e-12
+    Nv = np.cross(T, B)
+    corners = [(1, 1), (1, -1), (-1, -1), (-1, 1), (1, 1)]
+    X = np.empty((5, n)); Y = np.empty((5, n)); Z = np.empty((5, n))
+    for i, (sN, sB) in enumerate(corners):
+        C = P + half_n * sN * Nv + half_b * sB * B
+        X[i], Y[i], Z[i] = C[:, 0], C[:, 1], C[:, 2]
+    if closed:                        # re-close the swept surface cleanly
+        X = np.concatenate([X, X[:, :1]], axis=1)
+        Y = np.concatenate([Y, Y[:, :1]], axis=1)
+        Z = np.concatenate([Z, Z[:, :1]], axis=1)
+    return X, Y, Z
+
+
+def _pv3d_add_edges(pv, pl, mesh, angle=45.0):
+    """Black feature/boundary edges, for the technical-drawing look."""
+    import warnings as _warnings
+    with _warnings.catch_warnings():
+        # PyVistaFutureWarning subclasses Warning directly (not
+        # FutureWarning), so the whole Warning category is silenced in
+        # this tight scope only.
+        _warnings.simplefilter("ignore")
+        surf = mesh.extract_surface().clean(tolerance=1e-6)
+    edges = surf.extract_feature_edges(feature_angle=angle, boundary_edges=True,
+                                       non_manifold_edges=False,
+                                       manifold_edges=False)
+    if edges.n_points:
+        pl.add_mesh(edges, color=_PV3D_EDGE_COL, line_width=_PV3D_EDGE_LW,
+                    render_lines_as_tubes=True)
+
+
+def _pv3d_add_tube(pv, pl, cx, cy, cz, half_n, half_b, ref, color, closed=True):
+    """Swept rectangular-section conductor with edge overlay and end caps."""
+    X, Y, Z = _pv3d_rect_tube(cx, cy, cz, half_n, half_b,
+                              ref[0], ref[1], ref[2], closed)
+    g = _pv3d_grid(pv, X, Y, Z)
+    pl.add_mesh(g, color=color, smooth_shading=False,
+                specular=0.2, specular_power=10, diffuse=0.85, ambient=0.3)
+    _pv3d_add_edges(pv, pl, g)
+    if not closed:
+        # Cap the two open ends with the rectangular section, so the
+        # conductor reads as a solid bar rather than a hollow duct.
+        for idx in (0, -1):
+            pts = np.stack([X[:4, idx], Y[:4, idx], Z[:4, idx]], axis=1)
+            cap = pv.PolyData(pts, faces=np.array([4, 0, 1, 2, 3]))
+            pl.add_mesh(cap, color=color, specular=0.1, diffuse=0.85,
+                        ambient=0.4)
+            loop = np.vstack([pts, pts[:1]])
+            pl.add_mesh(pv.lines_from_points(loop), color=_PV3D_EDGE_COL,
+                        line_width=_PV3D_EDGE_LW, render_lines_as_tubes=True)
+
+
+def _pv3d_add_cap(pv, pl, R, Z, phi_c, color, edge=True, opacity=1.0):
+    """Filled, triangulated cross-section polygon in the plane phi = phi_c."""
+    pts = np.stack([R * np.cos(phi_c), R * np.sin(phi_c), Z], axis=1)
+    n = len(pts)
+    poly = pv.PolyData(pts, faces=np.concatenate([[n], np.arange(n)]))
+    poly = poly.triangulate()
+    pl.add_mesh(poly, color=color, specular=0.1, diffuse=0.85, ambient=0.4,
+                opacity=opacity)
+    if edge:
+        loop = np.vstack([pts, pts[:1]])
+        pl.add_mesh(pv.lines_from_points(loop), color=_PV3D_EDGE_COL,
+                    line_width=_PV3D_EDGE_LW, render_lines_as_tubes=True)
+
+
+def _pv3d_cyl_sector(pv, pl, r_in, r_out, z_lo, z_hi, color):
+    """Thick-walled cylinder sector (solenoid) over the kept toroidal range,
+    with winding-pack cut faces on both cut planes."""
+    phi0, phi1 = _pv3d_keep_range()
+    tt = np.linspace(phi0, phi1, 80)
+    zz = np.array([z_lo, z_hi])
+    TT, ZZ = np.meshgrid(tt, zz)
+    for r in (r_in, r_out):
+        wall = _pv3d_grid(pv, r * np.cos(TT), r * np.sin(TT), ZZ)
+        pl.add_mesh(wall, color=color, specular=0.25, diffuse=0.85,
+                    ambient=0.35)
+        _pv3d_add_edges(pv, pl, wall)
+    rr = np.array([r_in, r_out])
+    RR, TT2 = np.meshgrid(rr, tt)
+    for zc in (z_lo, z_hi):
+        ann = _pv3d_grid(pv, RR * np.cos(TT2), RR * np.sin(TT2),
+                         np.full_like(RR, zc))
+        pl.add_mesh(ann, color=color, specular=0.25, diffuse=0.85,
+                    ambient=0.35)
+    for pc in (phi0, phi1):           # winding-pack cut faces
+        Rw = np.array([r_in, r_out, r_out, r_in])
+        Zw = np.array([z_lo, z_lo, z_hi, z_hi])
+        _pv3d_add_cap(pv, pl, Rw, Zw, pc, color)
+
+
+def _pv3d_camera(distance, azim_deg=_PV3D_CAM_AZIM_DEG,
+                 elev_deg=_PV3D_CAM_ELEV_DEG, focus=(0.0, 0.0, 0.0)):
+    """Camera position from spherical angles about the machine centre."""
+    az, el = np.deg2rad(azim_deg), np.deg2rad(elev_deg)
+    pos = (focus[0] + distance * np.cos(el) * np.cos(az),
+           focus[1] + distance * np.cos(el) * np.sin(az),
+           focus[2] + distance * np.sin(el))
+    return [pos, focus, (0.0, 0.0, 1.0)]
+
+
+def _pv3d_autotrim(png_path, pad=14):
+    """Crop the white margins of a rendered PNG in place (PIL)."""
+    from PIL import Image
+    im = Image.open(png_path).convert("RGB")
+    arr = np.asarray(im)
+    ink = (arr < 250).any(axis=2)
+    ys, xs = np.where(ink)
+    if len(xs) == 0:
+        return im.size
+    box = (max(xs.min() - pad, 0), max(ys.min() - pad, 0),
+           min(xs.max() + pad + 1, im.width), min(ys.max() + pad + 1, im.height))
+    im = im.crop(box)
+    im.save(png_path, dpi=(200, 200))
+    return im.size
+
+
+def _pv3d_legend_strip(entries, ncol, path):
+    """Render a standalone horizontal legend strip (matplotlib patches)."""
+    from matplotlib.patches import Patch
+    fig = plt.figure(figsize=(8.4, 1.2))
+    ax = fig.add_axes([0, 0, 1, 1]); ax.axis("off")
+    handles = [Patch(facecolor=c, edgecolor="black", linewidth=1.4,
+                     label=lab) for lab, c in entries]
+    ax.legend(handles=handles, loc="center", ncol=ncol, fontsize=13,
+              frameon=False, handlelength=1.4, columnspacing=1.8)
+    fig.savefig(path, dpi=210)
+    plt.close(fig)
+    _pv3d_autotrim(path, pad=6)
+
+
+def _pv3d_stack_legend(legend_path, machine_path, out_png, gap=14):
+    """Stack the legend strip above the machine render into one PNG."""
+    from PIL import Image
+    L = Image.open(legend_path); M = Image.open(machine_path)
+    W = max(L.width, M.width)
+    canvas = Image.new("RGB", (W, L.height + gap + M.height), "white")
+    canvas.paste(L, ((W - L.width) // 2, 0))
+    canvas.paste(M, ((W - M.width) // 2, L.height + gap))
+    canvas.save(out_png, dpi=(200, 200))
+
+
+def plot_tokamak_3D(run: dict, save_dir: str | None = None) -> None:
+    """
+    3D machine view: plasma, CS, TF cage and illustrative PF set (PyVista).
+
+    The machine is rendered with a one-third toroidal wedge cut away, so the
+    poloidal cross-section exposes the plasma flux surfaces and the coil
+    build.  All plasma / TF / CS dimensions are taken from the converged
+    D0FUS run; the PF ring coils are ILLUSTRATIVE (D0FUS does not size the
+    poloidal-field set) and are auto-placed along the TF outer contour.
+
+    Requires PyVista (optional dependency).  If PyVista is not installed the
+    figure is skipped with an informative message; the caller is unaffected.
+
+    Parameters
+    ----------
+    run      : dict   D0FUS run output including radial build keys.
+    save_dir : str or None
+        If provided, the figure is saved as ``run_tokamak_3D.png``.
+        Pass ``None`` to display the rendered image via matplotlib.
+
+    References
+    ----------
+    Gralnick & Tenney, J. Appl. Phys. 47 (1976) — Princeton-D contour.
+    Miller et al., Phys. Plasmas 5 (1998) — flux-surface parameterisation.
+    """
+    # ── Optional dependency guard ────────────────────────────────────
+    try:
+        import pyvista as pv
+    except ImportError:
+        print("  [skip] plot_tokamak_3D: PyVista not installed "
+              "(pip install pyvista) — 3D view skipped.")
+        return
+    pv.OFF_SCREEN = True
+
+    # ── Geometry from the run dict ───────────────────────────────────
+    R0         = float(run["R0"])
+    a          = float(run["a"])
+    kappa_edge = float(run.get("kappa_edge", 1.85))
+    delta_edge = float(run.get("delta_edge", 0.33))
+    kappa_95   = float(run.get("kappa_95", kappa_edge / 1.12))
+    delta_95   = float(run.get("delta_95", delta_edge / 1.5))
+    bd         = _resolve_build(run)
+    b, c_TF    = bd["b"], bd["c_TF"]
+    N_TF       = max(int(bd["N_TF"]), 4)
+    Delta_TF   = bd["Delta_TF"]
+    R_CS_int, R_CS_ext = bd["R_CS_int"], bd["R_CS_ext"]
+
+    # TF Princeton-D contours (outer face and constant-offset inner face)
+    (R_bore, R_TF_out, H_TF, _A_cross, _L_turn,
+     R_out, Z_out, R_in, Z_in) = f_TF_cross_section(a, b, R0, c_TF, Delta_TF)
+
+    # Winding-pack centreline: midway between outer and inner contours
+    # (both arrays share the same sampling by construction of the offset).
+    # The contour is smoothed periodically to round the slope discontinuity
+    # where the straight inboard leg meets the arcs; otherwise the local
+    # sweep frame twists at the junction and produces jagged edge artefacts.
+    R_c = 0.5 * (np.asarray(R_out) + np.asarray(R_in))
+    Z_c = 0.5 * (np.asarray(Z_out) + np.asarray(Z_in))
+    R_c, Z_c = _smooth_closed(R_c, Z_c, frac=0.030)
+    # Resample uniformly in arc length: solve_ivp sampling is highly
+    # non-uniform, which degrades the sweep-frame quality after smoothing.
+    _s = np.concatenate([[0.0], np.cumsum(np.hypot(np.diff(R_c),
+                                                   np.diff(Z_c)))])
+    _su = np.linspace(0.0, _s[-1], 400)
+    R_c = np.interp(_su, _s, R_c)
+    Z_c = np.interp(_su, _s, Z_c)
+
+    # Toroidal width from the wedged-vault contact condition at the inboard
+    # leg centreline (Choice_Buck_Wedg = Wedging convention): adjacent coils
+    # touch at radius R_leg = R_bore + c_TF/2.  A 0.96 packing factor leaves
+    # a thin visible gap between neighbouring coils.
+    w_tor = 0.96 * 2.0 * np.pi * (R_bore + 0.5 * c_TF) / N_TF
+
+    phi0, phi1 = _pv3d_keep_range()
+
+    # ── Miller LCFS parameterisation (edge shaping) ──────────────────
+    def _lcfs(theta, frac=1.0):
+        """Miller boundary at normalised radius ``frac`` with the D0FUS
+        PCHIP shaping profiles kappa(rho), delta(rho)."""
+        kap = float(kappa_profile(frac, kappa_edge, kappa_95))
+        dlt = float(delta_profile(frac, delta_edge, delta_95))
+        r = a * frac
+        R = R0 + r * np.cos(theta + np.arcsin(np.clip(dlt, -1, 1))
+                            * np.sin(theta))
+        Z = kap * r * np.sin(theta)
+        return R, Z
+
+    # ── Soft geometric consistency checks (printed, never raising) ───
+    th_chk = np.linspace(0.0, 2.0 * np.pi, 720)
+    R_lcfs, Z_lcfs = _lcfs(th_chk)
+    d_pl_TF = np.min([np.min(np.hypot(R_in - Rp, Z_in - Zp))
+                      for Rp, Zp in zip(R_lcfs[::24], Z_lcfs[::24])])
+    if not (R_lcfs.max() < R_in.max() and abs(Z_lcfs).max() < Z_in.max()):
+        print("  [warn] plot_tokamak_3D: LCFS exceeds the TF bore envelope "
+              "— check the radial build inputs.")
+    if R_CS_ext > R_bore + 1e-9:
+        print("  [warn] plot_tokamak_3D: CS outer face overlaps the TF "
+              "inboard leg (R_CS_ext > R_bore).")
+
+    # ── Scene assembly ───────────────────────────────────────────────
+    pl = pv.Plotter(off_screen=True, window_size=[1500, 1150])
+    pl.set_background("white")
+
+    # Plasma: opaque shaped torus over the kept range, plus cut-face caps
+    # decorated with nested flux surfaces and the magnetic axis.
+    phi = np.linspace(phi0, phi1, 240)
+    th = np.linspace(0.0, 2.0 * np.pi, 160)
+    P, T = np.meshgrid(phi, th)
+    Rp, Zp = _lcfs(T)
+    plasma = _pv3d_grid(pv, Rp * np.cos(P), Rp * np.sin(P), Zp)
+    pl.add_mesh(plasma, color=_PV3D_PLASMA_COL, smooth_shading=True,
+                specular=0.3, specular_power=16, diffuse=0.85, ambient=0.35)
+    try:
+        import warnings as _warnings
+        with _warnings.catch_warnings():
+            # Same rationale as _pv3d_add_edges: PyVistaFutureWarning is
+            # not a FutureWarning subclass.
+            _warnings.simplefilter("ignore")
+            pl.add_silhouette(plasma.extract_surface(), color=_PV3D_EDGE_COL,
+                              line_width=_PV3D_EDGE_LW)
+    except Exception:
+        pass
+    thc = np.linspace(0.0, 2.0 * np.pi, 200)
+    Rcap, Zcap = _lcfs(thc)
+    for pc, side in ((phi0, -1), (phi1, +1)):
+        _pv3d_add_cap(pv, pl, Rcap, Zcap, pc, _PV3D_PLASMA_COL)
+        # Nested flux surfaces, drawn slightly toward the removed wedge so
+        # the thin lines do not z-fight with the filled cross-section.
+        eps = 0.008 * side
+        for f in _PV3D_FLUX_FRACS:
+            Rf, Zf = _lcfs(thc, frac=f)
+            pts = np.stack([Rf * np.cos(pc + eps), Rf * np.sin(pc + eps), Zf],
+                           axis=1)
+            pl.add_mesh(pv.lines_from_points(np.vstack([pts, pts[:1]])),
+                        color=_PV3D_FLUX_COL, line_width=1.8,
+                        render_lines_as_tubes=True)
+        pl.add_mesh(pv.Sphere(radius=0.015 * R0,
+                              center=(R0 * np.cos(pc + eps),
+                                      R0 * np.sin(pc + eps), 0.0)),
+                    color=_PV3D_FLUX_COL)
+
+    # TF coils: Princeton-D winding packs, one every 2 pi / N_TF, keeping
+    # those inside the kept range (a coil sits on the first cut plane).
+    step = 2.0 * np.pi / N_TF
+    ang = phi0 + np.arange(N_TF + 1) * step
+    ang = ang[ang <= phi1 + 1e-9]
+    for ph in ang:
+        cx = R_c * np.cos(ph)
+        cy = R_c * np.sin(ph)
+        _pv3d_add_tube(pv, pl, cx, cy, Z_c, 0.5 * c_TF, 0.5 * w_tor,
+                       (-np.sin(ph), np.cos(ph), 0.0), _PV3D_TF_COL)
+
+    # Central solenoid: annulus R_CS_int -> R_CS_ext from the flux-swing
+    # sizing.  Height convention shared with plot_CS_cross_section,
+    # clamped inside the TF bore interior.  The CS is drawn segmented into
+    # N_sub_CS axial modules (quench-protection subdivision computed by
+    # D0FUS; 1 = monobloc), with the same 2 % inter-module gap convention
+    # as plot_assembly_side_view.
+    H_CS  = min(2.0 * (kappa_edge * a + b + 1.0), H_TF - 2.0 * c_TF - 0.1)
+    n_mod = max(1, int(run.get("N_sub_CS", 1)))
+    g_mod = 0.02 * H_CS if n_mod > 1 else 0.0
+    mod_h = (H_CS - (n_mod - 1) * g_mod) / n_mod
+    for k in range(n_mod):
+        z_lo = -0.5 * H_CS + k * (mod_h + g_mod)
+        _pv3d_cyl_sector(pv, pl, R_CS_int, R_CS_ext, z_lo, z_lo + mod_h,
+                         _PV3D_CS_COL)
+
+    # PF coils: ILLUSTRATIVE ITER-like set of six ring coils, auto-placed
+    # along the TF outer contour at fixed poloidal angles about the TF
+    # radial midpoint, offset outward for clearance.  Sections scale with
+    # the minor radius.  D0FUS does not size the PF system.
+    R_mid = 0.5 * (R_bore + R_TF_out)
+    pf_angles_deg = (78.0, 48.0, 15.0, -15.0, -48.0, -78.0)
+    pf_sides      = (0.38, 0.44, 0.48, 0.48, 0.44, 0.38)
+    ang_contour = np.arctan2(Z_out, R_out - R_mid)
+    pf_extent = 0.0
+    for psi_deg, s_fac in zip(pf_angles_deg, pf_sides):
+        s = s_fac * a                             # square section side [m]
+        psi = np.deg2rad(psi_deg)
+        i_near = int(np.argmin(np.abs(np.angle(
+            np.exp(1j * (ang_contour - psi))))))
+        u = np.array([np.cos(psi), np.sin(psi)])  # outward unit vector
+        off = 0.18 * a + 0.5 * s * np.sqrt(2.0)
+        Rc_pf = R_out[i_near] + off * u[0]
+        Zc_pf = Z_out[i_near] + off * u[1]
+        t = np.linspace(phi0, phi1, 160)
+        _pv3d_add_tube(pv, pl, Rc_pf * np.cos(t), Rc_pf * np.sin(t),
+                       np.full_like(t, Zc_pf), 0.5 * s, 0.5 * s,
+                       (0.0, 0.0, 1.0), _PV3D_PF_COL, closed=False)
+        pf_extent = max(pf_extent, np.hypot(Rc_pf, abs(Zc_pf)) + s)
+
+    # ── Camera and render ────────────────────────────────────────────
+    reach = 1.05 * max(R_TF_out, 0.5 * H_TF, pf_extent)
+    pl.camera_position = _pv3d_camera(3.35 * reach)
+
+    cs_label = ("Central solenoid" if n_mod == 1
+                else f"Central solenoid ({n_mod} modules)")
+    legend = [("Plasma", _PV3D_PLASMA_COL),
+              (cs_label, _PV3D_CS_COL),
+              (f"TF coils ({N_TF})", _PV3D_TF_COL),
+              ("PF coils (illustrative)", _PV3D_PF_COL)]
+
+    import tempfile
+    if save_dir is not None:
+        os.makedirs(save_dir, exist_ok=True)
+        out_png = os.path.join(save_dir, "run_tokamak_3D.png")
+    else:
+        out_png = os.path.join(tempfile.gettempdir(), "run_tokamak_3D.png")
+
+    machine_tmp = out_png[:-4] + "_machine.png"
+    legend_tmp  = out_png[:-4] + "_legend.png"
+    pl.screenshot(machine_tmp)
+    pl.close()
+    _pv3d_autotrim(machine_tmp)
+    _pv3d_legend_strip(legend, ncol=2, path=legend_tmp)
+    _pv3d_stack_legend(legend_tmp, machine_tmp, out_png)
+    os.remove(machine_tmp); os.remove(legend_tmp)
+
+    if save_dir is None:
+        # Interactive fallback: display the rendered PNG via matplotlib.
+        from PIL import Image
+        img = np.asarray(Image.open(out_png))
+        fig, ax = plt.subplots(figsize=(9, 7.5))
+        ax.imshow(img); ax.axis("off")
+        plt.tight_layout()
+        plt.show()
+
+
 # ---------------------------------------------------------------------------
 # B — Convenience wrapper
 # ---------------------------------------------------------------------------
@@ -3477,29 +3930,30 @@ def plot_run(
     save_dir: str | None = None,
 ) -> None:
     """
-    Render the run-specific figure set (16 figures).
+    Render the run-specific figure set (17 figures).
 
     This is the subset called after each D0FUS run.  It contains only the
     figures that depend on the current run configuration and results —
     no validation curves, no benchmarks, no scaling-law surveys.
 
     Figures produced:
-      [ 1/16]  Tokamak LCFS comparison (with D0FUS overlay)
-      [ 2/16]  Miller flux surfaces (run geometry)
-      [ 3/16]  Shaping profiles κ(ρ), δ(ρ)
-      [ 4/16]  Kinetic profiles n(ρ), T(ρ), p(ρ)
-      [ 5/16]  Safety factor q(ρ) and current decomposition
-      [ 6/16]  Radiation profiles
-      [ 7/16]  Divertor two-point model (detachment vs SOL dissipation)
-      [ 8/16]  Radial build assembly (CS / TF / blanket)
-      [ 9/16]  Breeding-blanket concept comparison
-      [10/16]  TF coil side view
-      [11/16]  CICC TF conductor
-      [12/16]  CS cross-section
-      [13/16]  CICC CS conductor
-      [14/16]  Cost breakdown (Sheffield 2016, CapEx / OpEx / COE)
-      [15/16]  Plasma temperature map T(rho)
-      [16/16]  Plasma density map n(rho)
+      [ 1/17]  Tokamak LCFS comparison (with D0FUS overlay)
+      [ 2/17]  Miller flux surfaces (run geometry)
+      [ 3/17]  Shaping profiles κ(ρ), δ(ρ)
+      [ 4/17]  Kinetic profiles n(ρ), T(ρ), p(ρ)
+      [ 5/17]  Safety factor q(ρ) and current decomposition
+      [ 6/17]  Radiation profiles
+      [ 7/17]  Divertor two-point model (detachment vs SOL dissipation)
+      [ 8/17]  Radial build assembly (CS / TF / blanket)
+      [ 9/17]  Breeding-blanket concept comparison
+      [10/17]  TF coil side view
+      [11/17]  CICC TF conductor
+      [12/17]  CS cross-section
+      [13/17]  CICC CS conductor
+      [14/17]  Cost breakdown (Sheffield 2016, CapEx / OpEx / COE)
+      [15/17]  Plasma temperature map T(rho)
+      [16/17]  Plasma density map n(rho)
+      [17/17]  3D machine view (PyVista; skipped if PyVista is missing)
 
     Parameters
     ----------
@@ -3508,7 +3962,7 @@ def plot_run(
         If provided, figures are saved as PNG files.
         Pass ``None`` to display interactively.
     """
-    N = 16
+    N = 17
 
     # When saving, prefix each PNG with its order index so that the files sort
     # in the logical reading order: geometry (Miller), profiles, physics detail,
@@ -3571,6 +4025,17 @@ def plot_run(
     # ── Plasma field maps ────────────────────────────────────
     _emit(15, "Plasma temperature map", lambda: plot_temperature_map(run, save_dir=save_dir))
     _emit(16, "Plasma density map", lambda: plot_density_map(run, save_dir=save_dir))
+
+    # ── 3D machine view (optional PyVista dependency) ─────────────────
+    # plot_tokamak_3D guards its own import and any render failure, so a
+    # missing or broken PyVista installation never aborts the figure bank.
+    def _fig_3d():
+        try:
+            plot_tokamak_3D(run, save_dir=save_dir)
+        except Exception as _e:
+            print(f"  [warn] 3D machine view failed ({type(_e).__name__}: "
+                  f"{_e}) — skipped.")
+    _emit(17, "3D machine view (PyVista)", _fig_3d)
 
     print("Done.")
 
