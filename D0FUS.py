@@ -18,6 +18,12 @@ import os
 project_root = os.path.dirname(__file__)
 sys.path.insert(0, project_root)
 
+# Silence tqdm's cosmetic notebook-widget probe ("IProgress not found") as
+# early as possible, before any import that might pull tqdm.auto (Spyder /
+# plain interpreters trigger it even though the text progress bar works).
+import warnings as _warnings
+_warnings.filterwarnings("ignore", message=".*IProgress not found.*")
+
 # Import all necessary modules
 from D0FUS_BIB.D0FUS_parameterization import *
 from D0FUS_EXE import D0FUS_scan, D0FUS_run, D0FUS_genetic, D0FUS_uncertainty, D0FUS_popcon

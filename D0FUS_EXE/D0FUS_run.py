@@ -3499,17 +3499,16 @@ def save_run_output(config: GlobalConfig,
                   f"d_ib={_layer['delta_ib']:.3f} m  d_ob={_layer['delta_ob']:.3f} m  "
                   f"V={_layer['V']:.1f} m³  M={_layer['M']/1e3:.1f} t  "
                   f"rho={_layer['rho']:.1f} kg/m³", file=out)
-            _comp_masses = _layer['component_masses']
-            _materials   = list(_comp_masses)
-            for _j, _mat in enumerate(_materials):
-                _mbranch = "├" if _j < len(_materials) - 1 else "└"
-                _frac    = _layer['composition'][_mat]
-                # Effective (smeared) inboard thickness of this material within the
-                # layer: volume fraction x layer inboard thickness [m].
-                _d_mat_ib = _frac * _layer['delta_ib']
-                print(f"[O]  {_cont}    {_mbranch} {_mat:<12s}: "
-                      f"{_frac*100:5.1f} vol%  d_ib={_d_mat_ib:.3f} m  "
-                      f"{_comp_masses[_mat]/1e3:.2f} t", file=out)
+            # Compact one-line composition (volume fractions, dominant first).
+            # The per-material smeared thicknesses and masses are dropped from
+            # the text report to keep it readable; the full breakdown remains
+            # available in the run dict (_layer['component_masses']) and in the
+            # radial-build assembly figure.
+            _comp = _layer['composition']
+            if _comp and not (len(_comp) == 1 and next(iter(_comp)) == 'void'):
+                _parts = " · ".join(f"{_mat} {_frac*100:.0f}%" for _mat, _frac
+                                    in sorted(_comp.items(), key=lambda kv: -kv[1]))
+                print(f"[O]  {_cont}    └ {_parts}", file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[O] Psi_PI      (Breakdown flux)                    : {ΨPI:.3f} [Wb]",      file=out)
         print(f"[O] Psi_RampUp  (Ramp-up flux)                      : {ΨRampUp:.3f} [Wb]",  file=out)
