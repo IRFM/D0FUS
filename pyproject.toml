@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "d0fus"
-version = "2.4.3"
+version = "2.5.0"
 description = "Design 0-dimensional for Fusion Systems - Tokamak power plant design and optimization tool"
 readme = "README.md"
 license = {text = "CeCILL-C"}
@@ -49,6 +49,7 @@ dependencies = [
     "pandas>=1.3.0",
     "sympy>=1.9",
     "deap>=1.3.0",
+    "joblib>=1.1.0",
 ]
 
 [project.optional-dependencies]
@@ -58,6 +59,7 @@ dev = [
     "black>=23.0.0",
     "flake8>=6.0.0",
 ]
+viz3d = ["pyvista>=0.40"]
 
 [project.urls]
 Homepage = "https://github.com/IRFM/D0FUS"
