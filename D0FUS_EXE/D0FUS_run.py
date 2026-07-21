@@ -1038,9 +1038,14 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 I_CD_loc   = f_I_CD(R0, nbar_loc, eta_CD_loc, P_CD_loc)
 
             I_Ohm_loc = f_I_Ohm(Ip_loc, Ib_loc, I_CD_loc)
-            P_Ohm_loc = f_P_Ohm(I_Ohm_loc, Tbar, R0, a, κ, Z_eff=Zeff,
-                                nbar=nbar_loc, eta_model=eta_model,
-                                q95=q95_loc)
+            # Ohmic power from the profile-integrated neoclassical resistance
+            # (R_eff from f_Reff), replacing the simplified straight-conductor
+            # estimate f_P_Ohm.
+            P_Ohm_loc = f_P_Ohm_integrated(
+                I_Ohm_loc, a, κ, R0, Tbar, nbar_loc, Zeff, q95_loc, nu_T, nu_n,
+                eta_model=eta_model,
+                rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
+                Vprime_data=Vprime_data)
             Q_loc     = f_Q(P_fus, P_CD_loc, P_Ohm_loc)
 
         # ── q,j profile cache for bootstrap collisionality ───────────────
@@ -1786,17 +1791,20 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     B_pol_solution  = f_Bpol_ampere(Ip_solution, a, κ)
     betaT_solution  = f_beta_T(pbar_solution, B0_solution)
     betaP_solution  = f_beta_P(a, κ, pbar_solution, Ip_solution)
-    beta_solution   = f_beta(betaP_solution, betaT_solution)
-    betaN_solution  = f_beta_N(beta_solution, a, B0_solution, Ip_solution)
+    # Troyon normalisation uses the TOROIDAL beta, NOT the total-field beta:
+    #   beta_N = beta_T * a * B0 / Ip   (Troyon 1984; Wesson 2011, §6.7).
+    # betaN_solution is the thermal beta_N, reported as a diagnostic.
+    betaN_solution  = f_beta_N(betaT_solution, a, B0_solution, Ip_solution)
 
     # Fast-alpha pressure contribution (Stix slowing-down model)
     beta_fast_alpha, tau_sd_alpha, W_fast_alpha = f_beta_fast_alpha(
         P_Alpha, Tbar, nbar_solution, B0_solution, Volume_solution, Z_eff=Zeff)
-    # Total beta including fast alphas (for MHD stability comparison)
+    # Toroidal beta INCLUDING the fast-alpha pressure — the MHD-relevant beta
+    # for the Troyon limit (kink / ballooning / NTM modes respond to the TOTAL
+    # pressure, thermal + fast).  betaN_total is the quantity compared against
+    # betaN_limit in the scan / genetic / uncertainty feasibility checks.
     betaT_total     = betaT_solution + beta_fast_alpha
-    betaP_total     = betaP_solution + beta_fast_alpha * (B0_solution / B_pol_solution)**2
-    beta_total      = f_beta(betaP_total, betaT_total)
-    betaN_total     = f_beta_N(beta_total, a, B0_solution, Ip_solution)
+    betaN_total     = f_beta_N(betaT_total, a, B0_solution, Ip_solution)
     # Greenwald limit is defined in terms of line-averaged density;
     # f_nG returns n_G [1e20 m-3], which must be compared with nbar_line, not nbar_vol.
     nG_solution     = f_nG(Ip_solution, a) * Greenwald_limit
@@ -1844,9 +1852,14 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac)
             I_CD_solution = f_I_CD(R0, nbar_solution, eta_CD_solution, P_CD_solution)
         I_Ohm_solution = f_I_Ohm(Ip_solution, Ib_solution, I_CD_solution)
-        P_Ohm_solution = f_P_Ohm(I_Ohm_solution, Tbar, R0, a, κ, Z_eff=Zeff,
-                                  nbar=nbar_solution, eta_model=eta_model,
-                                  q95=q95_solution)
+        # Ohmic power from the profile-integrated neoclassical resistance
+        # (R_eff from f_Reff), replacing the simplified straight-conductor
+        # estimate f_P_Ohm.
+        P_Ohm_solution = f_P_Ohm_integrated(
+            I_Ohm_solution, a, κ, R0, Tbar, nbar_solution, Zeff, q95_solution,
+            nu_T, nu_n, eta_model=eta_model,
+            rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
+            Vprime_data=Vprime_data)
         # Effective γ computed a posteriori for reporting only:
         # γ_eff = I_CD · R₀ · n̄ / P_CD_non_ICRH  (ICRH denominator excluded since it
         # drives no current — using P_CD_total would artifically dilute the figure of merit)
@@ -3598,8 +3611,8 @@ def save_run_output(config: GlobalConfig,
         print("-------------------------------------------------------------------------", file=out)
         print(f"[O] beta_T (Toroidal beta)                          : {betaT*100:.3f} [%]", file=out)
         print(f"[O] beta_P (Poloidal beta)                          : {betaP:.3f}",         file=out)
-        print(f"[O] beta_N (Normalised beta, thermal)               : {betaN:.3f}",         file=out)
-        print(f"[O] beta_N_total (incl. fast α, Stix model)         : {betaN_total:.3f}",   file=out)
+        print(f"[O] beta_N (Normalised beta, toroidal, thermal)     : {betaN:.3f}",         file=out)
+        print(f"[O] beta_N Troyon (toroidal, incl. fast α)          : {betaN_total:.3f}",   file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[O] q*   (Kink safety factor)                       : {qstar:.3f}", file=out)
         if config.q_profile_mode == 'academic':

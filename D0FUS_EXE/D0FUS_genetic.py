@@ -876,8 +876,9 @@ def evaluate_individual(individual, verbose=False):
         cost      = _safe_real(output[_IDX['cost']])
         nbar_line = _safe_real(output[_IDX['nbar_line']])
         nG        = _safe_real(output[_IDX['nG']])
-        betaN     = _safe_real(output[_IDX['betaN']])
-        betaT     = _safe_real(output[_IDX['betaT']])
+        betaN       = _safe_real(output[_IDX['betaN']])
+        betaN_total = _safe_real(output[_IDX['betaN_total']])
+        betaT       = _safe_real(output[_IDX['betaT']])
         qstar     = _safe_real(output[_IDX['qstar']])
         q95       = _safe_real(output[_IDX['q95']])
         R0_abcd   = _safe_real(output[_IDX['r_d']])
@@ -901,8 +902,9 @@ def evaluate_individual(individual, verbose=False):
 
         # ── Stability penalty ────────────────────────────────────────────
         q_lim = static_inputs.get('q_limit', DEFAULT_CONFIG.q_limit)
+        # Troyon check uses the toroidal beta_N incl. fast alphas (betaN_total).
         is_stable, penalty_multiplier, violations = compute_stability_penalty(
-            nbar_line, nG, betaT, betaN, q_kink,
+            nbar_line, nG, betaT, betaN_total, q_kink,
             q_min=q_lim,
             betaN_limit=static_inputs.get('betaN_limit', DEFAULT_CONFIG.betaN_limit),
             Ip=Ip, Ip_limit=static_inputs.get('Ip_limit', DEFAULT_CONFIG.Ip_limit),
@@ -2935,8 +2937,9 @@ def run_genetic_optimization(input_file,
     # Extract key metrics via centralised index map
     nbar_line = final_output[_IDX['nbar_line']]
     nG        = final_output[_IDX['nG']]
-    betaN     = final_output[_IDX['betaN']]
-    betaT     = final_output[_IDX['betaT']]
+    betaN       = final_output[_IDX['betaN']]
+    betaN_total = final_output[_IDX['betaN_total']]
+    betaT       = final_output[_IDX['betaT']]
     qstar     = final_output[_IDX['qstar']]
     q95_val   = final_output[_IDX['q95']]
     cost      = final_output[_IDX['cost']]
@@ -2958,7 +2961,7 @@ def run_genetic_optimization(input_file,
     betaN_lim = static_inputs.get('betaN_limit', DEFAULT_CONFIG.betaN_limit)
     Ip_lim = static_inputs.get('Ip_limit', DEFAULT_CONFIG.Ip_limit)
     is_stable, _, violations = compute_stability_penalty(
-        nbar_line, nG, betaT, betaN, q_kink, q_min=q_lim, betaN_limit=betaN_lim,
+        nbar_line, nG, betaT, betaN_total, q_kink, q_min=q_lim, betaN_limit=betaN_lim,
         Ip=Ip, Ip_limit=Ip_lim)
 
     # Compute Sheffield COE for the best design (regardless of objective)
@@ -3010,7 +3013,8 @@ def run_genetic_optimization(input_file,
     print(f"    Ip:                         {Ip:.2f} MA")
     print(f"    P_elec:                     {P_elec:.1f} MW")
     print(f"    n_line/nG: {nbar_line/nG:.3f} ({(1-nbar_line/nG)*100:+.1f}% margin)")
-    print(f"    betaN/betaN_limit: {betaN/betaN_lim:.3f} ({(1-betaN/betaN_lim)*100:+.1f}% margin)")
+    print(f"    betaN_total/betaN_limit: {betaN_total/betaN_lim:.3f} "
+          f"({(1-betaN_total/betaN_lim)*100:+.1f}% margin, toroidal incl. fast α)")
     if Ip_lim is not None:
         print(f"    Ip/Ip_limit: {Ip/Ip_lim:.3f} ({(1-Ip/Ip_lim)*100:+.1f}% margin)")
     q_lim = static_inputs.get('q_limit', DEFAULT_CONFIG.q_limit)
@@ -3126,7 +3130,7 @@ def run_genetic_optimization(input_file,
             "n_line_over_nG": to_serializable(nbar_line/nG),
             "q_kink_over_qlim": to_serializable(q_kink/q_lim),
             "kink_parameter": _kink_param,
-            "betaN_over_betaN_limit": to_serializable(betaN/betaN_lim) if betaN_lim > 0 else None,
+            "betaN_over_betaN_limit": to_serializable(betaN_total/betaN_lim) if betaN_lim > 0 else None,
             "Ip_over_Ip_limit": to_serializable(Ip/Ip_lim) if Ip_lim is not None else None
         },
         "radial_build": {

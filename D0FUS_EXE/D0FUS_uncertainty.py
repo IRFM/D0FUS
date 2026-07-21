@@ -178,13 +178,13 @@ def evaluate(cfg):
 
     build_ok  = _radial_build_ok(cost, r_d, c_TF, d_CS, q_kink, betaT, nbar_line)
     gw_ok     = bool(np.isfinite(gw)    and gw    <= cfg.Greenwald_limit)
-    troyon_ok = bool(np.isfinite(betaN) and betaN <= cfg.betaN_limit)
+    troyon_ok = bool(np.isfinite(betaN_total) and betaN_total <= cfg.betaN_limit)
     kink_ok   = bool(np.isfinite(q_kink) and q_kink >= cfg.q_limit)
     stable_ok = bool(gw_ok and troyon_ok and kink_ok)
     feasible  = bool(build_ok and stable_ok)
 
     gw_margin     = (1.0 - gw / cfg.Greenwald_limit) if np.isfinite(gw)    else np.nan
-    troyon_margin = (1.0 - betaN / cfg.betaN_limit)  if np.isfinite(betaN) else np.nan
+    troyon_margin = (1.0 - betaN_total / cfg.betaN_limit)  if np.isfinite(betaN_total) else np.nan
     kink_margin   = (q_kink / cfg.q_limit - 1.0)     if np.isfinite(q_kink) else np.nan
 
     binding = None
