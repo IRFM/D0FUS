@@ -14,6 +14,14 @@ Author: Auclair Timothé
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
+# Silence tqdm's notebook-widget probe: under Spyder / a plain interpreter,
+# importing tqdm.auto emits a cosmetic "IProgress not found" TqdmWarning even
+# though the plain-text progress bar works fine. The message filter is
+# registered here (before tqdm is imported below) so tqdm.auto's import-time
+# probe is caught wherever it is triggered.
+import warnings as _warnings
+_warnings.filterwarnings("ignore", message=".*IProgress not found.*")
+
 #%% Standard Library Imports
 
 import itertools

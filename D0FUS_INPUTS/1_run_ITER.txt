@@ -132,8 +132,6 @@ Plasma_geometry = refined            # Full Miller flux-surface integration (PCH
                                      # [Shimada07] Table 2: δ_95 = 0.33, δ_sep = 0.48
                                      # → non-trivial δ(ρ) → refined mode beneficial.
 
-N_rho_miller   = 50                 # Radial grid points for V'(ρ) numerical integration
-N_theta_miller = 50                 # Poloidal grid points
 
 # ── 2b'. q,j profile builder ────────────────────────────────────────────────
 #
@@ -257,11 +255,9 @@ eta_model = sauter              # Sauter neoclassical resistivity model
                                 # Consistent with Bootstrap_choice = Sauter.
                                 # Used for li, Ψ_resistive, loop voltage.
 
-E_phi_BD  = 0.3                 # Breakdown toroidal E-field [V/m]
                                 # [Lloyd91]: ITER uses actively aided breakdown
                                 # → 0.3 V/m sufficient (EC-assisted pre-ionisation).
 
-t_BD      = 0.5                 # Breakdown duration [s]
 f_heat_ramp = 0.0               # 0% du ramp-up assisté par NBI/ECCD (ITER : ~33 MW NBI disponibles)
 
 # ── 6. Structural materials ──────────────────────────────────────────────────
@@ -281,7 +277,7 @@ Choice_Buck_Wedg     = Wedging  # ITER TF coils are wedged inboard
 Supra_choice         = Nb3Sn   # TF conductor: Nb3Sn (CICC)
                                 # [Shimada07] Table 2 / Fig. 1
 
-n_TF                 = 1.0     # Square conductor shape factor (ITER CICC)
+n_shape_TF           = 1.0     # Square conductor shape factor (ITER CICC)
 c_BP                 = 0.07    # Backplate (intercoil structure) thickness [m]
 coef_inboard_tension = 0.5     # Inboard/outboard vertical tension ratio [-]
 F_CClamp             = 0.0     # No C-clamp contribution (ITER uses intercoil wedging)
@@ -294,9 +290,8 @@ N_sub_CS = 6                    # 6 CS sub-modules: CS1U/L, CS2U/L, CS3U/L
                                 # [Shimada07] Fig. 1: "6 modules"
                                 # [Kim18] Fig. 1: CS3U, CS2U, CS1U, CS1L, CS2L, CS3L
 
-n_CS     = 1.0                  # CS conductor shape factor (square CICC)
+n_shape_CS = 1.0                  # CS conductor shape factor (square CICC)
 
-cs_axial_stress = True          # Include fringe-field axial stress in Tresca criterion
                                 # Non-negligible at ITER scale:
                                 # B_z ~ 1–2 T at coil ends → σ_z contribution to Tresca.
                                 # Refined analytical formula (finite-length solenoid).
@@ -396,7 +391,6 @@ rho_NBI     = 0.30              # Normalised deposition radius [-]
                                 # Deep central deposition at 1 MeV in ITER-scale plasma.
                                 # [Kim18] Fig. 2(b): NBI current peaks at rho ~ 0.2–0.4
 
-C_NBI = 0.70                    # Cordey (1982) tangential co-injection factor
                                 # [Kim18] §3, Fig. 2(d): CORSICA gives I_NBI ≈ 2 MA
 
 # ECCD parameters — 170 GHz O-mode
@@ -405,7 +399,6 @@ rho_EC      = 0.40              # Off-axis deposition: rho_tor ~ 0.35–0.45
                                 # → deposited near q=3/2 surface (rho ~ 0.4–0.5)
                                 # Also used for central heating in some phases.
 
-C_EC        = 0.32              # O-mode tangential injection pre-factor
                                 # Kim (1991) default for ECCD efficiency.
 
 # ── 12. Plasma-facing components ─────────────────────────────────────────────
