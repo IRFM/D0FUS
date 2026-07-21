@@ -1962,7 +1962,9 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
         q_limit_value     = config.q_limit
 
         n_condition    = nbar_line / nG      if nG > 0       else np.nan
-        beta_condition = betaN / betaN_limit_value
+        # Troyon limit uses the toroidal beta_N including the fast-alpha
+        # pressure (betaN_total), per the MHD stability convention.
+        beta_condition = betaN_total / betaN_limit_value
         _q_kink        = q95 if config.kink_parameter == 'q95' else qstar
         q_condition    = q_limit_value / _q_kink
         max_limit      = max(n_condition, beta_condition, q_condition)

@@ -2344,6 +2344,15 @@ def f_P_Ohm(I_Ohm, Tbar, R0, a, kappa, Z_eff=1.0,
     """
     Ohmic (resistive) heating power from 0D volume-averaged quantities.
 
+    .. note:: Legacy 0D estimate — superseded in the production chain.
+       This straight-conductor model (R_eff = eta * 2 R0 / (a^2 kappa)) is
+       retained for the resistivity-model benchmark (chain 7/12) and the
+       POPCON frozen-column approximation.  The production run (D0FUS_run)
+       now derives P_Ohm from the profile-integrated neoclassical resistance
+       via f_P_Ohm_integrated / f_Reff, which captures the T(rho)/n(rho)
+       profiles, the trapped-particle enhancement and the 1/R correction
+       that this simplified formula ignores.
+
     Ohmic heating arises from resistive dissipation of the inductive plasma
     current.  The Spitzer resistivity η ∝ Z_eff T_e^{-3/2} renders this term
     negligible at reactor-grade temperatures (T_e > 5 keV), but it contributes
@@ -5020,6 +5029,61 @@ def f_Reff(a, kappa, R0, Tbar, nbar, Z_eff, q95, nu_T, nu_n,
     return (2.0 * np.pi * R0)**2 / sigma_integral
 
 
+def f_P_Ohm_integrated(I_Ohm, a, kappa, R0, Tbar, nbar, Z_eff, q95, nu_T, nu_n,
+                       eta_model='redl',
+                       rho_ped=1.0, n_ped_frac=0.0, T_ped_frac=0.0,
+                       Vprime_data=None):
+    """
+    Ohmic heating power from the profile-integrated plasma resistance.
+
+    Production replacement for the simplified 0D straight-conductor estimate
+    f_P_Ohm.  The effective resistance R_eff is obtained from the neoclassical
+    conductivity integrated over the plasma cross-section (with the 1/R
+    toroidicity correction), i.e. R_eff = f_Reff(...), and the Joule
+    dissipation is:
+
+        P_Ohm = R_eff * I_Ohm^2
+
+    Because R_eff is built from the local resistivity eta_neo(rho) weighted by
+    the shaped volume element V'(rho) and the flux-surface average <R0/R>, this
+    estimate captures the temperature and density profiles, the trapped-particle
+    (neoclassical) enhancement, and the toroidicity correction that the
+    straight-conductor formula R_eff = eta * 2 R0 / (a^2 kappa) ignores.
+
+    Parameters
+    ----------
+    I_Ohm : float
+        Inductive (Ohmic) plasma current component [MA].
+    a, kappa, R0, Tbar, nbar, Z_eff, q95, nu_T, nu_n : see f_Reff.
+    eta_model, rho_ped, n_ped_frac, T_ped_frac, Vprime_data : see f_Reff.
+
+    Returns
+    -------
+    float
+        Ohmic heating power [MW].  Returns 0.0 for I_Ohm <= 0
+        (fully non-inductive, steady-state scenario).
+
+    References
+    ----------
+    Sauter O. et al., Phys. Plasmas 6, 2834 (1999).
+    Redl A. et al., Phys. Plasmas 28, 022502 (2021).
+    Johner J., Fusion Sci. Technol. 59, 308 (2011), Eq. 31 — 1/R correction.
+
+    See Also
+    --------
+    f_Reff  : effective plasma resistance (the integral this wraps).
+    f_Vloop : steady-state loop voltage from the same R_eff.
+    f_P_Ohm : legacy 0D straight-conductor estimate (kept for benchmarking).
+    """
+    if I_Ohm <= 0:
+        return 0.0
+    R_eff = f_Reff(a, kappa, R0, Tbar, nbar, Z_eff, q95, nu_T, nu_n,
+                   eta_model=eta_model,
+                   rho_ped=rho_ped, n_ped_frac=n_ped_frac,
+                   T_ped_frac=T_ped_frac, Vprime_data=Vprime_data)
+    return R_eff * (I_Ohm * 1e6)**2 * 1e-6   # [W] -> [MW]
+
+
 def f_Vloop(I_Ohm, a, kappa, R0, Tbar, nbar, Z_eff, q95, nu_T, nu_n,
             eta_model='redl',
             rho_ped=1.0, n_ped_frac=0.0, T_ped_frac=0.0,
@@ -7693,7 +7757,14 @@ def f_tauE(pbar, V, P_Alpha, P_Aux, P_Ohm, P_rad):
     is W_th = (3/2) p̄ V and the net heating power is
     P_loss = P_α + P_Ohm + P_aux − P_rad.
 
-    .. note:: P_loss convention debate
+    .. note:: P_loss convention (ACTIVE in D0FUS: core radiation subtracted)
+       D0FUS uses  P_loss = P_α + P_aux + P_Ohm − P_rad_core  (PROCESS
+       convention).  The SAME convention is applied in f_Ip, and the run
+       passes P_rad_core (NOT P_rad_total) to both f_tauE and f_Ip, so the
+       confinement time and the scaling-law current inversion are mutually
+       consistent.  Edge/SOL radiation is never subtracted here — it is
+       already outside the confined region.
+
        The IPB98(y,2) scaling was originally fitted using
        P = P_heat = P_α + P_aux + P_Ohm (radiation NOT subtracted),
        because radiation is a loss mechanism that the scaling captures
