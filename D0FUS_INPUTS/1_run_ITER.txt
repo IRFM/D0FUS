@@ -192,7 +192,14 @@ betaN_limit     = 2.8           # Troyon normalised beta stability limit [-]
                                 # [Shimada07] Table 3: ITER operates at βN = 1.8
                                 # No-wall ideal MHD limit ~ 2.4–3.5.
 
-q_limit         = 2.5           # Kink safety factor limit [-]
+q_limit         = 2.5           # Kink / disruptivity feasibility threshold on q95 [-].
+                                # Set at the physical boundary: JET disruptivity stays low
+                                # above q95 ~ 2.5 and rises steeply toward the hard m=2/n=1
+                                # kink at q95 = 2 [deVries09]. ITER's DESIGN limit is the
+                                # more conservative q95 >= 3.0 (a margin-laden operational
+                                # choice, met here at the nominal q95 = 3.016); in the
+                                # uncertainty study it appears as the upper tail of the
+                                # sampled limit rather than the centre.
                                 # [Shimada07] Table 2: q95 = 3 at Ip = 15 MA, B = 5.3 T
 
 Greenwald_limit = 1.0           # Density / Greenwald density [-]

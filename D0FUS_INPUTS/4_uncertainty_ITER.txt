@@ -182,11 +182,12 @@ betaN_limit     = 2.8           # Troyon normalised beta stability limit [-]
                                 # [Shimada07] Table 3: ITER operates at βN = 1.8
                                 # No-wall ideal MHD limit ~ 2.4–3.5.
 
-q_limit         = 2.5           # kink limit on q95, aligned with the reference run
-                                # [Shimada07] Table 2: q95 = 3 at Ip = 15 MA, B = 5.3 T
-                                # Constraint is q95 >= q_limit; with q95 ~ 3.0 the nominal
-                                # stays above 2.5. A limit of 3.5 would push q95 below the
-                                # limit and make the nominal kink-infeasible by construction.
+q_limit         = 2.5           # kink / disruptivity feasibility threshold on q95, aligned
+                                # on the 1_run_ITER base deck. Physical boundary: JET
+                                # disruptivity is low above q95 ~ 2.5 and rises toward the
+                                # hard m=2/n=1 kink at q95 = 2 [deVries09]. Nominal q95 =
+                                # 3.016 keeps ~20% margin. ITER's conservative DESIGN limit
+                                # q95 >= 3.0 is the upper tail of the sampled limit below.
 
 Greenwald_limit = 1.0           # Density / Greenwald density [-]
                                 # [Shimada07] §2: new ITER operates at or below n_GW
@@ -198,19 +199,27 @@ ms              = 0.3           # Vertical stability margin parameter [-]
 # ── 4. Plasma composition ────────────────────────────────────────────────────
 
 Atomic_mass = 2.5               # D-T: <A> = 2.5 AMU
-Zeff        = 1.65              # Target Zeff for Q=10 scenario
-                                # [Kim18] §3: Zeff ~ 1.4 (low W, nBe/ne = 1.9%)
-                                # [Kim18] §4.3: Zeff = 1.4–1.67 depending on W conc.
-                                # Adopt 1.65 as a realistic mid-range estimate
-                                # including Be first-wall + W divertor erosion.
+Zeff        = None              # Computed self-consistently from the impurity
+                                # inventory (impurity_species + f_imp_core) and
+                                # the helium ash fraction. The W + Ne mix below
+                                # is calibrated to reproduce Zeff ~ 1.65
+                                # [Kim18] §3, §4.3: Zeff = 1.4-1.67 vs W content.
+                                # Sampling acts on the W content (uncertainty
+                                # block), and Zeff follows consistently.
 
 r_synch     = 0.6               # Synchrotron wall reflectivity [-]
                                 # ITER first wall (Be-coated) has moderate reflectivity
                                 # Default EU-DEMO value; acceptable for ITER.
 
-C_Alpha     = 6.0                  # He confinement ratio tau_He*/tau_E [-]
-rho_rad_core = 0.6                 # Core/edge split; presets: 0.6 (PROCESS-aligned, optimistic) or 1.0 (conservative)
-                                # τ_He* / τ_E ≈ 5 (standard assumption)
+C_Alpha     = 7.5                  # tau_He*/tau_E, nominal aligned on the 1_run_ITER base deck
+                                # (recovers the Shimada 2007 He projection with the
+                                # impurity-diluted ash balance). ITER design assumption is
+                                # 5 [Kovari14, Table 5B]; DIII-D cryopumped H-mode measured
+                                # 10-20 [Wade95]; both are covered by the marginal below,
+                                # now centred on this nominal.
+rho_rad_core = 0.85                # ITER-calibrated core/edge split, nominal aligned on the
+                                # 1_run_ITER base deck (presets: 0.6 PROCESS-aligned,
+                                # 1.0 conservative)
 
 # Impurity mix: full-W wall (ITER re-baseline 2024) + Ne seeding.
 #
@@ -429,31 +438,158 @@ discount_rate     = 0.07         # real discount rate
 # from the design point above:
 #   norm(lo, hi)         truncated normal centred on the design value, sigma = (hi-lo)/4
 #   norm(lo, centre, hi) truncated normal with explicit bounds and centre
+#   unif(lo, hi)         uniform (epistemic conventions with no preferred value)
 # Model-form switches use a pipe-separated list (never a comma, because a name
 # such as IPB98(y,2) already contains one): envelope(A | B). They cannot be
 # normal and appear as categorical panels in the input-distribution figure.
-H                 = norm(0.75, 1.50)
-Tbar              = norm(6.90, 8.60)   # centred on the 7.75 keV benchmark value
-C_Alpha           = norm(3.00, 7.00)
-nu_n_manual       = norm(0.00, 0.21)
-nu_T_manual       = norm(1.80, 3.80)
-rho_ped           = norm(0.90, 0.97)
-n_ped_frac        = norm(0.85, 0.99)
-T_ped_frac        = norm(0.40, 0.70)
-eta_WP_acad       = norm(0.20, 0.50)
-gamma_CD_acad     = norm(0.05, 0.50)
-Ce                = norm(0.20, 0.50)
-betaN_limit       = norm(2.80, 3.60)
-q_limit           = norm(2.50, 3.00)   # recentred on the run value 2.5 (was 3.00-3.50)
-Greenwald_limit   = norm(0.80, 1.50)
-Supra_cost_factor = norm(1.50, 3.50)
-discount_rate     = norm(0.05, 0.10)
-Scaling_Law       = envelope(IPB98(y,2) | ITPA20)
-Option_Kappa      = envelope(Wenninger | Freidberg)
+#
+# Default science-machine presets, v3 (ITER context). Stance: the study
+# evaluates an OPTIMISED scenario, not a blind draw from the multi-machine
+# database. Distributions on scenario-quality inputs (H, Greenwald fraction,
+# Ce) are therefore skewed towards the optimised side, while model-form
+# uncertainty stays in the envelopes. Full justification in the thesis
+# Chapter 4 preset table.
+#
+# ── Confinement ──────────────────────────────────────────────────────────────
+H                 = norm(0.80, 1.60)   # auto-centred on the deck value 1.0, mode at
+                                       # H98 = 1. Lower tail pushed to 0.80 (mildly
+                                       # pessimistic: a genuinely degraded confinement
+                                       # excursion of an optimised scenario). Upper
+                                       # anchor 1.6: improved H-mode / high-beta_p
+                                       # regimes reach H98 ~ 1.4-1.6 on AUG, DIII-D,
+                                       # EAST, TCV (metal-wall stationarity less
+                                       # established - kept as upside tail).
+# Tbar is NOT sampled: at fixed fusion power the operating temperature is the
+# operator's control knob (set indirectly through density control), not an
+# uncertainty. It is handled by the retuning search in [CONTROLS]: samples
+# that fail at the deck value Tbar = 7.75 keV are re-evaluated across the
+# admissible operating window before being declared infeasible.
+# ── Profiles and pedestal ────────────────────────────────────────────────────
+nu_n_manual       = norm(0.00, 0.40)   # flat baseline [Kim18] up to gyrokinetic/empirical
+                                       # peaking n0/<n> ~ 1.3-1.45 [Angioni07]
+nu_T_manual       = norm(2.20, 3.40)   # stiff profiles; Te0/<Te> 2.3-2.9 [Kessel09]
+rho_ped           = norm(0.92, 0.98)   # EPED width 0.076*sqrt(beta_p,ped) -> psiN_ped
+                                       # 0.95-0.96 for ITER [Snyder09, Snyder11]
+n_ped_frac        = norm(0.75, 1.00)   # n_ped 0.85-0.90 <n> peaked [Polevoi05] to 0.99
+                                       # flat; lower tail extended to 0.75 to admit a
+                                       # more strongly peaked density profile.
+T_ped_frac        = norm(0.42, 0.68)   # T_ped 4-5.5 keV / <T> 8.9 keV, widened by the
+                                       # 15-20% EPED accuracy [Snyder11]
+# ── Helium and composition ───────────────────────────────────────────────────
+C_Alpha           = norm(4.00, 7.50, 14.00)  # centre 7.5 = base-deck nominal (recentred).
+                                             # Lower reach 4.0 toward the ITER design
+                                             # assumption 5 [Kovari14]; upper tail 14 toward
+                                             # the DIII-D cryopumped measurement 10-20 tau_E
+                                             # [Wade95] (worse He exhaust). Right-skewed.
+f_imp_core[0]     = norm(1.0e-5, 2.0e-5, 8.0e-5)
+                                       # W core concentration (index 0 of the W, Ne
+                                       # inventory; Ne stays at its deck value).
+                                       # Tolerable core W ~1e-5 [Dux07]; H-mode access
+                                       # marginal at 2-3e-5, reliable at ~1e-5
+                                       # [Kim18 §4.3]. Upper tail raised to 8e-5 to
+                                       # admit central W accumulation, which the flat
+                                       # transport assumption understates; H-mode is
+                                       # reported lost above ~5e-5 [Ivanova-Stanik15],
+                                       # so the tail beyond 5e-5 is genuine risk, not
+                                       # comfort. Zeff = None in the deck, so Zeff and
+                                       # radiation follow the sampled inventory.
+r_synch           = norm(0.50, 0.80)   # metallic-wall band, PROCESS default 0.6;
+                                       # P_syn ~ (1-r)^0.62 [Albajar01]
+rho_rad_core      = norm(0.60, 0.85, 1.00)   # centre 0.85 = base-deck nominal (recentred,
+                                       # ITER-calibrated). Bounds are the two documented
+                                       # conventions: PROCESS 0.6 (optimistic) to conservative
+                                       # 1.0 [Kovari14]. Truncated normal rather than uniform
+                                       # now that a calibrated preferred value exists.
+# ── Stability limits ─────────────────────────────────────────────────────────
+betaN_limit       = norm(2.60, 3.50)   # auto-centred on Troyon 2.8 [Troyon84]. Lower
+                                       # bound raised to 2.60: operating below the
+                                       # Troyon coefficient is already very improbable,
+                                       # so most of the mass sits at 2.8 and above.
+                                       # Operational ~3.5, no-wall 2.4li-4li [Hender07];
+                                       # no RWM credit (>4 excluded).
+q_limit           = norm(2.00, 2.50, 3.00)
+                                       # centre 2.5 = JET disruptivity boundary (disruptivity
+                                       # low above q95 ~ 2.5 [deVries09]); lower reach 2.0 =
+                                       # the hard m=2/n=1 kink. Upper tail to 3.0 = ITER's
+                                       # conservative DESIGN limit, so the role of q95 >= 3
+                                       # is kept as the pessimistic edge rather than the
+                                       # centre. sigma ~ 0.25.
+Greenwald_limit   = norm(0.80, 1.50)   # auto-centred on the deck value 1.0 (design
+                                       # basis: at or below nGW). Above-nGW operation
+                                       # is regularly achieved with peaked/pellet
+                                       # fuelling: 0.75-1.5 nGW reproducible [Lang12],
+                                       # 1.2 nGW sustained at H98 ~ 1.5 [Ding24];
+                                       # H-mode limit clusters 0.8-1.0 with flat gas
+                                       # fuelling [Greenwald02] -> lower tail kept.
+# ── Flux budget and current drive ────────────────────────────────────────────
+Ce                = norm(0.25, 0.45, 0.58)
+                                       # centre 0.45 = base-deck nominal (ITER design basis
+                                       # [Ejima82], recentred on the calibrated run; was
+                                       # 0.40). Lower reach 0.25 toward EC-assisted
+                                       # breakdown [Jackson08] and heated ramp-up < 0.27
+                                       # [Wakatsuki19]; upper 0.58 = ohmic-dominated.
+eta_WP_acad       = norm(0.05, 0.30, 0.45)
+                                       # explicit centre 0.30 (NBI 0.25-0.28, EC 0.35,
+                                       # mix ~0.29 [Franke17, Fantz18]). Lower tail
+                                       # pushed to ~0.05: a fully ohmic / ICRH-dominated
+                                       # heating choice would recirculate a large
+                                       # wall-plug power (low effective eta_WP), low
+                                       # probability but physically possible. Affects
+                                       # the recirculating-power accounting, not the
+                                       # plasma-limit feasibility.
+gamma_CD_acad     = norm(0.10, 0.35)   # ITER EC ~0.2, NB ~0.3 (1e20 A/W/m2) [Poli13];
+                                       # survey band [Mikkelsen18]
+# ── Techno-economics ─────────────────────────────────────────────────────────
+Supra_cost_factor = norm(1.20, 3.00)   # Nb3Sn mature; assumption informed by unit costs
+                                       # [Sheffield16, Molodyk21] - flagged as assumption
+discount_rate     = norm(0.04, 0.10)   # 7% real [Entler18]; Sheffield FCR 0.078
+# ── Model-form envelopes ─────────────────────────────────────────────────────
+Scaling_Law       = envelope(IPB98(y,2) | ITPA20 | ITPA20-IL)
+                                       # ITER predictions 3.62 / 3.07 / 2.90 s, ratios
+                                       # 1.00 / 0.85 / 0.80 [Verdoolaege21]
+Option_Kappa      = envelope(Wenninger | Freidberg | Blend | Stambaugh)
+
 
 [CONTROLS]
-n_samples   = 1500
+n_samples   = 500
 seed        = 12345
+retune      = Tbar          # Operator retuning: a sample failing at the deck
+                            # Tbar is re-evaluated along a short temperature
+                            # ladder inside the window below, in the direction
+                            # suggested by the failing constraint (density and
+                            # beta limits call for higher T, kink and flux
+                            # closure for lower T). Feasible = an operating
+                            # point EXISTS in the window for that draw. The
+                            # summary reports both readings (as designed and
+                            # within the operating window).
+Tbar_window = 6.0, 12.0     # Admissible operating window [keV]: bounded by
+                            # H-mode operation at 500 MW (feasibility support
+                            # observed ~6-11 keV in the Tbar scan panel).
+                            # The temperature ladder is built RELATIVE to this
+                            # window (fractions of the distance to each bound),
+                            # so the bounds are always reachable whatever the
+                            # deck's design temperature: nothing to retune per
+                            # machine.
+# retune_points = 4         # Optional: ladder resolution per direction
+                            # (4 default -> at most 8 extra solves per
+                            # failing sample; raise for a finer search).
+pulse_retune    = Temps_Plateau_input
+                            # Pulse relaxation of the flux budget: a draw that
+                            # closes structurally but exhausts the CS flux is
+                            # not simply infeasible, it can run on a shorter
+                            # flat-top. Flux/build-closure failures are re-tried
+                            # at reduced flat-top duration; the largest feasible
+                            # pulse fraction is reported, so the study can say
+                            # 'X% keep the full pulse, Y% must halve it, Z% are
+                            # flux-infeasible even at the floor'. Only failures
+                            # a shorter pulse can address are re-tried; kink and
+                            # density excursions are untouched.
+pulse_fractions = 0.75, 0.5, 0.25
+                            # tranches of the deck flat-top (450 s) tried below
+                            # the full pulse: 337, 225, 112 s.
+pulse_floor     = 10.0      # absolute floor [s]; if even a 10 s flat-top does
+                            # not close on flux, the design is genuinely
+                            # flux-infeasible.
 # NOTE: the current code reads only n_samples and seed; the study is a forward
 #   Monte-Carlo propagation (Latin-Hypercube). 'sampling' and 'sensitivity' below
 #   are inert and kept only to document intent (PRCC is not implemented).

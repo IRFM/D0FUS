@@ -5857,32 +5857,80 @@ def _standalone_main():
 """
 D0FUS_uncertainty_figures.py -- decision-oriented plots for the uncertainty study.
 
-Figures, in the D0FUS figure style (matplotlib, tab: palette, 150 dpi, tight box).
-Each figure carries a one-line plain-language reading note so it stands on its own:
+Restyled for the thesis: one restrained, colourblind-safe palette (validated
+status + categorical + single-blue slots), recessive axes, and a per-figure
+style applied through a context manager so it never leaks into the module's
+other (RUN/SCAN/GENETIC) figures. Each figure carries a one-line plain-language
+reading note so it stands on its own:
 
-  - fig_robustness : single decomposition bar of the whole Monte-Carlo. Green is
-    feasible, coloured shares are infeasible cases split by the binding limit, grey
-    did not converge. P(feasible) is over ALL samples (a non-converging corner counts
-    as a failure).
-  - fig_margins : headroom to each plasma limit (P5/P50/P95 of the normalised margin).
-  - scan_feasibility + fig_scan : one-parameter feasibility scans with a traffic-light
-    background, so a glance places the design value in a safe / marginal / unlikely zone.
-  - fig_inputs : histograms of the continuous uncertain inputs (with the design
-    value marked) plus a categorical panel for each model-form switch.
-  - fig_outputs : histogram of the main outputs over the converged samples.
+  - fig_robustness : single 100% decomposition bar of the whole Monte-Carlo.
+    Green/aqua/blue are the feasible family (as designed / after Tbar retuning /
+    on a shorter pulse), warm+violet shares are the binding limit, grey is
+    'no solution'. The verdict is over the CONVERGED samples.
+  - fig_margins : headroom to each plasma limit (P5-P95 range + P50 dot), the
+    colour tracking the status of the P5 tail.
+  - scan_feasibility + fig_scan : one-parameter feasibility scans with a single
+    'safe zone' band (>= 85%), the design value marked.
+  - fig_inputs : distribution of every uncertain input, grouped into thematic
+    families on a uniform grid; each histogram carries its analytic marginal and
+    the design value, and the model-form switches form a final categorical family.
+  - fig_outputs : distribution of the main outputs over the converged samples,
+    grouped into families, with the median marked.
 """
 # (os, Counter, numpy, matplotlib, pyplot and Patch are all exported by
 #  D0FUS_import.py through the wildcard import at the top of this module.)
 
-_GREEN, _AMBER, _RED = 'tab:green', 'tab:orange', 'tab:red'
-_BIND_COLOR = {'greenwald': 'tab:blue', 'troyon': 'tab:red',
-               'kink': 'tab:purple', 'build': 'tab:brown'}
-_BIND_LABEL = {'greenwald': 'Greenwald-limited', 'troyon': 'Troyon-limited',
-               'kink': 'kink-limited', 'build': 'build infeasible'}
+import functools
+from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
+
+# --- validated, colourblind-safe palette (status + categorical + one blue) ----
+_INK, _INK2, _MUTED = "#1a1a19", "#52514e", "#8a8880"
+_GRIDC, _SURF = "#e4e3dd", "#ffffff"
+_GOOD, _AQUA, _BLUE, _BLUE_L = "#0ca30c", "#1baf7a", "#2a78d6", "#86b6ef"
+_WARN, _SERIOUS, _CRIT, _NOSOL = "#fab219", "#ec835a", "#d03b3b", "#bcb9ae"
+# backward-compatible aliases (the traffic-light helper below uses these)
+_GREEN, _AMBER, _RED = _GOOD, _WARN, _CRIT
+
+# per-limit binding causes: warm + violet, deliberately distinct from the
+# blue/green/aqua "feasible" family and the grey "no solution".
+_CAUSE_COL = {"kink": "#d03b3b", "greenwald": "#eb6834",
+              "troyon": "#eda100", "build": "#4a3aa7"}
+_CAUSE_LAB = {"kink": "kink (q95)", "greenwald": "Greenwald",
+              "troyon": "Troyon", "build": "radial build"}
+
 # nice axis names for the scan
-_NICE = {'P_fus': 'fusion power  $P_{fus}$', 'R0': 'major radius  $R_0$',
-         'a': 'minor radius  $a$', 'Tbar': r'temperature  $\langle T \rangle$'}
+_NICE = {'P_fus': r'fusion power  $P_{fus}$', 'R0': r'major radius  $R_0$',
+         'a': r'minor radius  $a$', 'Tbar': r'temperature  $\langle T \rangle$'}
 _UNIT = {'P_fus': '[MW]', 'R0': '[m]', 'a': '[m]', 'Tbar': '[keV]'}
+
+# Shared thesis-quality style, applied per figure through a context manager so it
+# never leaks into the RUN/SCAN/GENETIC figures rendered by the rest of the module.
+_UQ_RC = {
+    "figure.facecolor": _SURF, "axes.facecolor": _SURF, "savefig.facecolor": _SURF,
+    "font.size": 11, "font.family": "DejaVu Sans",
+    "axes.edgecolor": _MUTED, "axes.linewidth": 0.9, "axes.labelcolor": _INK2,
+    "text.color": _INK, "xtick.color": _MUTED, "ytick.color": _MUTED,
+    "xtick.labelsize": 9, "ytick.labelsize": 9,
+    "axes.titlesize": 11, "axes.titleweight": "regular",
+    "axes.spines.top": False, "axes.spines.right": False,
+    "grid.color": _GRIDC, "grid.linewidth": 0.8,
+}
+
+
+def _uq_style(fn):
+    """Run a figure builder under the uncertainty style, restoring rcParams after."""
+    @functools.wraps(fn)
+    def _wrapped(*args, **kwargs):
+        with plt.rc_context(_UQ_RC):
+            return fn(*args, **kwargs)
+    return _wrapped
+
+
+def _lab_col(hexcol):
+    """Readable label colour on a filled segment (single luminance rule)."""
+    from matplotlib.colors import to_rgb
+    r, g, b = to_rgb(hexcol)
+    return _INK if (0.299 * r + 0.587 * g + 0.114 * b) > 0.6 else "white"
 
 
 def _save(fig, save_dir, fname):
@@ -5897,123 +5945,196 @@ def _zone_color(p):
 
 
 # =============================================================================
-# Figure 1 -- robustness verdict (single decomposition bar)
+# Figure 1 -- robustness verdict (three-family decomposition bar)
 # =============================================================================
+@_uq_style
 def fig_robustness(results, save_dir=None):
-    """Decompose the Monte-Carlo into feasible / per-limit infeasible / non-converged."""
+    """Decompose the Monte-Carlo into three colour families.
+
+      FEASIBLE (green)          : feasible as designed / after operator Tbar
+                                  retuning.
+      PLASMA STABILITY (warm)   : the kink, Greenwald and Troyon walls, a hard
+                                  physics boundary that no engineering relief
+                                  removes.
+      RADIAL BUILD (cool)       : the radial build (TF and/or CS) does not close
+                                  as designed; shaded light to dark by the CS
+                                  inductive-flux reduction needed to close it
+                                  (25 / 50 / 75%, obtainable via H&CD ramp assist
+                                  and/or a shorter pulse), and finally a hard wall
+                                  that never closes, which also collects the
+                                  non-flux-relievable failures such as a TF that
+                                  cannot be built (e.g. under a peak-field scan).
+
+    A grey tail collects draws with no plasma operating point at all (radiation
+    exceeding the heating power). The verdict is stated over the whole sample.
+    """
+    _STAB_COL = {'kink': '#b3261e', 'greenwald': '#e0662f', 'troyon': '#f4b13c'}
+    _STAB_LAB = {'kink': 'kink (q95)', 'greenwald': 'Greenwald', 'troyon': 'Troyon'}
+    _BUILD_COL = {'f25': '#bcd7f6', 'f50': '#6da7ec', 'f75': '#2a78d6',
+                  'wall': '#2b1d5e'}
+    _BUILD_LAB = {'f25': 'radial build, 25% flux relief',
+                  'f50': 'radial build, 50% flux relief',
+                  'f75': 'radial build, 75% flux relief',
+                  'wall': 'no radial-build closure'}
+    _NOSOL_COL = {'no_operating_point': '#bcb9ae', 'crash': '#7d7059'}
+    _NOSOL_LAB = {'no_operating_point': 'no operating point', 'crash': 'solver crash'}
+
+    def _cat(r):
+        c = r.get('category')
+        if c:
+            return c
+        if r.get('feasible'):
+            return 'feasible'
+        if r.get('binding') == 'build' or r.get('failure') == 'no_closure':
+            return 'radial_build'
+        if r.get('failure') == 'no_operating_point':
+            return 'no_operating_point'
+        if r.get('failure') == 'crash':
+            return 'crash'
+        return 'stability'
+
+    def _build_bucket(r):
+        if not r.get('build_relieved'):
+            return 'wall'
+        fc = r.get('flux_cut', 0.0)
+        if fc <= 0.25 + 1e-9:
+            return 'f25'
+        if fc <= 0.5 + 1e-9:
+            return 'f50'
+        return 'f75'
+
     all_rows = [r for k in results for r in results[k]]
     n = max(len(all_rows), 1)
-    conv = [r for r in all_rows if r.get('converged')]
-    feas = [r for r in conv if r.get('feasible')]
-    n_noconv = len(all_rows) - len(conv)
-    binding = Counter(r.get('binding') for r in conv if not r.get('feasible'))
+    feas_design = feas_ret = 0
+    stab, build, nosol = Counter(), Counter(), Counter()
+    for r in all_rows:
+        c = _cat(r)
+        if c == 'feasible':
+            if r.get('feasible_as_designed', True):
+                feas_design += 1
+            else:
+                feas_ret += 1
+        elif c == 'stability':
+            stab[r.get('binding', 'kink')] += 1
+        elif c == 'radial_build':
+            build[_build_bucket(r)] += 1
+        elif c == 'crash':
+            nosol['crash'] += 1
+        else:
+            nosol['no_operating_point'] += 1
 
-    seg = [('feasible', len(feas), _GREEN)]
-    for c in ['greenwald', 'troyon', 'kink', 'build']:
-        if binding.get(c, 0):
-            seg.append((_BIND_LABEL[c], binding[c], _BIND_COLOR[c]))
-    if n_noconv:
-        seg.append(('did not converge', n_noconv, 'lightgray'))
+    seg = []
+    if feas_design:
+        seg.append(('feasible as designed', feas_design, _GOOD))
+    if feas_ret:
+        seg.append(('feasible after retuning', feas_ret, _AQUA))
+    for k in ('kink', 'greenwald', 'troyon'):
+        if stab.get(k):
+            seg.append((_STAB_LAB[k], stab[k], _STAB_COL[k]))
+    for k in ('f25', 'f50', 'f75', 'wall'):
+        if build.get(k):
+            seg.append((_BUILD_LAB[k], build[k], _BUILD_COL[k]))
+    for k in ('no_operating_point', 'crash'):
+        if nosol.get(k):
+            seg.append((_NOSOL_LAB[k], nosol[k], _NOSOL_COL[k]))
 
-    fig, ax = plt.subplots(figsize=(11, 3.4))
+    n_feas = feas_design + feas_ret
+    n_stab, n_build, n_nos = sum(stab.values()), sum(build.values()), sum(nosol.values())
+    p_feas = 100.0 * n_feas / n
+    verdict = ("largely feasible" if p_feas >= 85 else
+               "marginal" if p_feas >= 60 else "at risk")
+
+    fig, ax = plt.subplots(figsize=(11.0, 2.7))
     left = 0.0
     for label, count, col in seg:
         w = 100.0 * count / n
-        ax.barh(0, w, left=left, color=col, edgecolor='white', height=0.5)
+        ax.barh(0, w, left=left, color=col, height=0.62, edgecolor=_SURF, linewidth=2)
         if w >= 4:
-            ax.text(left + w / 2, 0, f'{w:.0f}%', ha='center', va='center',
-                    fontsize=11, fontweight='bold',
-                    color='white' if col != 'lightgray' else 'black')
+            ax.text(left + w / 2, 0, f"{w:.0f}%", ha="center", va="center",
+                    fontsize=11, fontweight="bold", color=_lab_col(col))
         left += w
-
-    p_feas = 100.0 * len(feas) / n
-    verdict = ('LARGELY FEASIBLE' if p_feas >= 85 else
-               'MARGINAL' if p_feas >= 60 else 'AT RISK')
     ax.set_xlim(0, 100)
-    ax.set_ylim(-0.5, 0.55)
+    ax.set_ylim(-0.5, 0.5)
     ax.set_yticks([])
-    ax.set_xlabel('share of Monte-Carlo samples [%]', fontsize=12)
-    ax.set_title(f'Design robustness: {p_feas:.0f}% feasible over N = {n} samples'
-                 f'  --  verdict: {verdict}', fontsize=13, fontweight='bold')
-
-    # plain-language reading note
-    if binding:
-        top = max(binding, key=binding.get)
-        cause = _BIND_LABEL.get(top, top).replace('-limited', ' limit').replace(' infeasible', '')
-        note = f"about {p_feas:.0f} designs out of 100 stay within every limit; " \
-               f"the rest are mostly held back by the {cause}"
-    else:
-        note = f"about {p_feas:.0f} designs out of 100 stay within every limit"
-    if n_noconv:
-        note += "; grey = solver did not converge at extreme corners"
-    ax.annotate(note, xy=(0.5, -0.55), xycoords='axes fraction', ha='center',
-                fontsize=10, color='dimgray')
-
-    ax.legend(handles=[Patch(color=c, label=l) for l, _, c in seg],
-              fontsize=9, ncol=len(seg), loc='upper center',
-              bbox_to_anchor=(0.5, -0.55))
-    plt.tight_layout()
-    return _save(fig, save_dir, 'uq_robustness')
+    ax.set_xlabel("share of Monte-Carlo samples  [%]", fontsize=10)
+    for s in ("left", "right", "top"):
+        ax.spines[s].set_visible(False)
+    ax.spines["bottom"].set_color(_MUTED)
+    ax.set_title(f"Design robustness: {p_feas:.0f}% feasible  ({verdict}, N={n})",
+                 fontsize=12.5, fontweight="bold", color=_INK, loc="left", pad=10)
+    ax.legend(handles=[Patch(facecolor=c, edgecolor="none", label=l) for l, _, c in seg],
+              fontsize=8.5, ncol=min(5, len(seg)), loc="upper center",
+              bbox_to_anchor=(0.5, -0.42), frameon=False, handlelength=1.1,
+              columnspacing=1.3)
+    return _save(fig, save_dir, "uq_robustness")
 
 
 # =============================================================================
 # Figure 2 -- headroom to each limit (margin spread)
 # =============================================================================
+@_uq_style
 def fig_margins(results, save_dir=None):
-    """P5/P50/P95 of the normalised margin to each continuous-margin limit."""
-    rows = [r for k in results for r in results[k] if r.get('converged')]
+    """P5-P95 range with a P50 dot for the normalised headroom to each limit.
+    0 = at the limit; further right = safer. Colour = status of the P5 tail."""
+    rows = [r for k in results for r in results[k] if r.get("converged")]
     margins = {
-        'Greenwald':  [r.get('gw_margin', np.nan) for r in rows],
-        'Troyon':     [r.get('troyon_margin', np.nan) for r in rows],
-        'Kink (q95)': [r.get('kink_margin', np.nan) for r in rows],
+        "Greenwald":  [r.get("gw_margin", np.nan) for r in rows],
+        "Troyon":     [r.get("troyon_margin", np.nan) for r in rows],
+        "Kink (q95)": [r.get("kink_margin", np.nan) for r in rows],
     }
-    ynames = list(margins)
-    y = np.arange(len(ynames))
+    ynames = [k for k in margins
+              if np.isfinite(np.asarray(margins[k], float)).any()]
+    y = np.arange(len(ynames))[::-1]
 
-    fig, ax = plt.subplots(figsize=(9.5, 4.2))
-    # safe side shading (everything right of the limit)
-    ax.axvspan(0, 1.0, color=_GREEN, alpha=0.05)
+    fig, ax = plt.subplots(figsize=(8.4, 3.2))
+    ax.axvspan(0, 10, color=_GOOD, alpha=0.05, zorder=0)
+    xmax = 0.3
     for yi, name in zip(y, ynames):
         a = np.array([v for v in margins[name] if np.isfinite(v)])
         if a.size == 0:
             continue
         p5, p50, p95 = np.percentile(a, [5, 50, 95])
-        col = _RED if p5 < 0 else (_AMBER if p5 < 0.05 else _GREEN)
-        ax.plot([p5, p95], [yi, yi], color=col, lw=8, alpha=0.45, solid_capstyle='round')
-        ax.plot(p50, yi, 'o', color=col, ms=11)
-        ax.text(p95 + 0.015, yi, f'P50={p50:+.2f}', va='center', fontsize=9.5)
-    ax.axvline(0, color='k', lw=1.4)
-    ax.annotate('at the limit', xy=(0, len(ynames) - 0.45), fontsize=9,
-                color='k', ha='center', va='bottom')
+        xmax = max(xmax, p95)
+        col = _CRIT if p5 < 0 else (_WARN if p5 < 0.05 else _GOOD)
+        ax.plot([p5, p95], [yi, yi], color=col, lw=7, alpha=0.5,
+                solid_capstyle="round", zorder=2)
+        ax.plot(p50, yi, "o", color=col, ms=10, zorder=3,
+                markeredgecolor=_SURF, markeredgewidth=1.4)
+        ax.text(p95 + 0.012, yi, f"P50 {p50:+.2f}", va="center",
+                fontsize=9, color=_INK2)
+    ax.axvline(0, color=_INK, lw=1.3, zorder=1)
+    ax.text(0, len(ynames) - 0.4, "the limit", fontsize=8.5, color=_INK,
+            ha="center", va="bottom")
     ax.set_yticks(y)
-    ax.set_yticklabels(ynames, fontsize=12)
-    ax.set_ylim(-0.7, len(ynames) - 0.2)
-    ax.set_xlabel('headroom to the limit     (0 = at the limit, further right = safer)',
-                  fontsize=11)
-    ax.set_title('Headroom to each plasma limit under uncertainty',
-                 fontsize=13, fontweight='bold')
-    ax.legend(handles=[Patch(color=_GREEN, label='comfortable margin'),
-                       Patch(color=_AMBER, label='tight margin'),
-                       Patch(color=_RED, label='margin can reach the limit')],
-              fontsize=9, ncol=3, loc='upper center', bbox_to_anchor=(0.5, -0.26))
-    ax.annotate('bar = P5 to P95 over the Monte-Carlo; touching the line on the left '
-                'means that limit can be crossed',
-                xy=(0.5, -0.44), xycoords='axes fraction', ha='center',
-                fontsize=9.5, color='dimgray')
-    plt.tight_layout()
-    return _save(fig, save_dir, 'uq_margins')
+    ax.set_yticklabels(ynames, fontsize=11, color=_INK)
+    ax.set_ylim(-0.6, len(ynames) - 0.15)
+    ax.set_xlim(min(-0.05, ax.get_xlim()[0]), xmax + 0.09)
+    ax.set_xlabel("headroom to the limit   (0 = at the limit, right = safer)",
+                  fontsize=10)
+    for s in ("left", "right", "top"):
+        ax.spines[s].set_visible(False)
+    ax.tick_params(left=False)
+    ax.set_title("Headroom to each plasma limit under uncertainty",
+                 fontsize=12, fontweight="bold", color=_INK, loc="left", pad=10)
+    ax.legend(handles=[Patch(facecolor=_GOOD, edgecolor="none", label="comfortable"),
+                       Patch(facecolor=_WARN, edgecolor="none", label="tight"),
+                       Patch(facecolor=_CRIT, edgecolor="none", label="can reach the limit")],
+              fontsize=9, ncol=3, loc="upper center", bbox_to_anchor=(0.5, -0.22),
+              frameon=False, handlelength=1.1)
+    return _save(fig, save_dir, "uq_margins")
 
 
 # =============================================================================
-# Figure 3 -- one-parameter feasibility scan (Monte-Carlo at each value)
+# scan_feasibility -- Monte-Carlo feasibility sweep feeding fig_scan
 # =============================================================================
-def scan_feasibility(uq_file, scan_specs, n_samples=200, n_jobs=-1, combo=None, seed=0, verbose=10):
+def scan_feasibility(uq_file, scan_specs, n_samples=200, n_jobs=-1, combo=None,
+                     seed=0, verbose=10):
     """
     Sweep each design parameter and run a Monte-Carlo over all the other uncertain
     inputs at every value. A common LHS sample is reused across a parameter's scan
-    points (common random numbers) so the curve is smooth. The whole scan is evaluated
-    in ONE parallel pass over all (parameter, point, sample) tasks, which avoids the
-    overhead of opening a separate worker pool at every scan point.
+    points (common random numbers) so the curve is smooth. The whole scan is
+    evaluated in ONE parallel pass over all (parameter, point, sample) tasks,
+    which avoids opening a separate worker pool at every scan point.
 
     scan_specs : {param: (lo, hi, n_points)}
     Returns    : {param: (x_values, P_feasible[%], design_value)}
@@ -6025,7 +6146,7 @@ def scan_feasibility(uq_file, scan_specs, n_samples=200, n_jobs=-1, combo=None, 
 
     grids, tasks = {}, []
     for p, (lo, hi, npts) in scan_specs.items():
-        reduced = {k: v for k, v in spec.items() if k != p}    # exclude the scanned input
+        reduced = {k: v for k, v in spec.items() if k != p}    # exclude scanned input
         names = list(reduced.keys())
         _, X = UQ.sample_lhs(reduced, n_samples, seed=seed)
         xs = np.unique(np.concatenate([np.linspace(lo, hi, npts),
@@ -6037,7 +6158,8 @@ def scan_feasibility(uq_file, scan_specs, n_samples=200, n_jobs=-1, combo=None, 
 
     # Single tqdm bar in place of joblib's per-batch log lines. return_as
     # 'generator' keeps submission order so the per-parameter slicing below holds.
-    _gen = Parallel(n_jobs=n_jobs, return_as="generator")(delayed(UQ._uq_worker)(*t) for t in tasks)
+    _gen = Parallel(n_jobs=n_jobs, return_as="generator")(
+        delayed(UQ._uq_worker)(*t) for t in tasks)
     rows = list(tqdm(_gen, total=len(tasks), desc="Feasibility scan",
                      unit="run", disable=(verbose == 0)))
 
@@ -6053,201 +6175,266 @@ def scan_feasibility(uq_file, scan_specs, n_samples=200, n_jobs=-1, combo=None, 
     return out
 
 
+# =============================================================================
+# Figure 3 -- one-parameter feasibility scan
+# =============================================================================
+@_uq_style
 def fig_scan(scan_results, save_dir=None):
-    """Four-panel feasibility scan with a traffic-light background; a vertical band
-    marks the design value of each parameter."""
+    """Feasible fraction vs each design parameter. Single safe-zone reference
+    (>= 85%) instead of a three-band traffic light; the design value is marked."""
     params = list(scan_results)
     ncols = 2
     nrows = int(np.ceil(len(params) / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(5.7 * ncols, 3.9 * nrows))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5.4 * ncols, 3.4 * nrows))
     axes = np.atleast_1d(axes).ravel()
 
     for ax, p in zip(axes, params):
         xs, pf, nom = scan_results[p]
-        # traffic-light zones
-        ax.axhspan(85, 105, color=_GREEN, alpha=0.10)
-        ax.axhspan(60, 85, color=_AMBER, alpha=0.10)
-        ax.axhspan(0, 60, color=_RED, alpha=0.10)
-        ax.plot(xs, pf, '-o', color='black', lw=2, ms=3, zorder=4)
-        # vertical band marking the design value
-        ax.axvline(nom, color='0.15', ls='--', lw=1.6, zorder=5)
-        ax.text(nom, 50, ' design value ', rotation=90, va='center', ha='center',
-                fontsize=8.5, color='0.15', zorder=6,
-                bbox=dict(boxstyle='round,pad=0.15', fc='white', ec='0.6', alpha=0.85))
-        ax.set_xlabel(f"{_NICE.get(p, p)}  {_UNIT.get(p, '')}", fontsize=11)
-        ax.set_ylabel('chance of staying feasible [%]', fontsize=10)
-        ax.set_ylim(0, 105)
+        ax.axhspan(85, 100, color=_GOOD, alpha=0.07, zorder=0)
+        ax.axhline(85, color=_GOOD, lw=1.0, ls=(0, (4, 3)), alpha=0.7, zorder=1)
+        ax.plot(xs, pf, "-", color=_BLUE, lw=2.2, zorder=3)
+        ax.plot(xs, pf, "o", color=_BLUE, ms=4, zorder=4,
+                markeredgecolor=_SURF, markeredgewidth=0.8)
+        ax.axvline(nom, color=_MUTED, ls="--", lw=1.3, zorder=2)
+        ax.annotate("design", xy=(nom, 8), fontsize=8, color=_INK2, ha="center",
+                    rotation=90,
+                    bbox=dict(boxstyle="round,pad=0.15", fc=_SURF, ec=_GRIDC, alpha=0.9))
+        ax.set_xlabel(f"{_NICE.get(p, p)}  {_UNIT.get(p, '')}", fontsize=10)
+        ax.set_ylim(0, 100)
         ax.set_xlim(xs.min(), xs.max())
-
+        ax.grid(axis="y", alpha=0.7)
+        ax.set_axisbelow(True)
+    axes[0].set_ylabel("feasible fraction  [%]", fontsize=10)
+    if len(axes) > 2:
+        axes[2].set_ylabel("feasible fraction  [%]", fontsize=10)
     for ax in axes[len(params):]:
-        ax.axis('off')
+        ax.axis("off")
 
-    plt.suptitle('How feasibility responds to each design choice',
-                 fontsize=14, fontweight='bold')
-    fig.legend(handles=[Patch(color=_GREEN, alpha=0.35, label='safe (>= 85%)'),
-                        Patch(color=_AMBER, alpha=0.35, label='marginal (60-85%)'),
-                        Patch(color=_RED, alpha=0.35, label='unlikely (< 60%)')],
-               loc='lower center', ncol=3, fontsize=9, frameon=False,
-               bbox_to_anchor=(0.5, -0.02))
-    plt.tight_layout(rect=[0, 0.04, 1, 0.96])
-    return _save(fig, save_dir, 'uq_scan_feasibility')
+    fig.suptitle("How feasibility responds to each design choice",
+                 fontsize=13, fontweight="bold", color=_INK, x=0.5)
+    fig.text(0.5, 0.005, "shaded band = safe zone (>= 85% feasible);  "
+             "dashed line = design value", ha="center", fontsize=9, color=_MUTED)
+    fig.tight_layout(rect=(0, 0.03, 1, 0.96))
+    return _save(fig, save_dir, "uq_scan_feasibility")
 
 
 # =============================================================================
-# Figure 4 -- distribution of the main uncertain inputs
+# Figures 4 & 5 -- input and output distributions, grouped by family
 # =============================================================================
-# Plain-language labels for the uncertain inputs; the raw parameter name is used
-# as a fallback for anything not listed here.
+# Plain-language labels for the uncertain inputs; the raw name is the fallback.
 _IN_NICE = {
-    'H': 'confinement H', 'Tbar': r'$\langle T \rangle$  [keV]', 'C_Alpha': r'$C_\alpha$',
-    'nu_n_manual': r'density peaking $\nu_n$', 'nu_T_manual': r'temp. peaking $\nu_T$',
-    'rho_ped': r'pedestal radius $\rho_{ped}$', 'n_ped_frac': 'pedestal density frac.',
-    'T_ped_frac': 'pedestal temp. frac.', 'eta_WP_acad': 'CD wall-plug eff.',
-    'gamma_CD_acad': r'CD figure of merit $\gamma_{CD}$', 'Ce': r'flux coeff. $C_e$',
-    'betaN_limit': r'$\beta_N$ limit', 'q_limit': r'kink limit on $q_{95}$',
-    'Greenwald_limit': 'Greenwald limit', 'Supra_cost_factor': 'SC cost factor',
-    'discount_rate': 'discount rate',
-    # model-form switches (shown as categorical panels)
-    'Scaling_Law': 'confinement scaling law', 'Option_Kappa': 'elongation model',
-    'Bootstrap_choice': 'bootstrap model',
+    "H": "confinement H", "C_Alpha": r"$C_\alpha$",
+    "nu_n_manual": r"density peaking $\nu_n$", "nu_T_manual": r"temp. peaking $\nu_T$",
+    "rho_ped": r"pedestal radius $\rho_{ped}$", "n_ped_frac": "pedestal density frac.",
+    "T_ped_frac": "pedestal temp. frac.", "eta_WP_acad": "CD wall-plug eff.",
+    "gamma_CD_acad": r"CD merit $\gamma_{CD}$", "Ce": r"flux coeff. $C_e$",
+    "betaN_limit": r"$\beta_N$ limit", "q_limit": r"kink limit $q_{95}$",
+    "Greenwald_limit": "Greenwald limit", "Supra_cost_factor": "SC cost factor",
+    "discount_rate": "discount rate", "r_synch": "wall reflectivity",
+    "rho_rad_core": "core/edge rad. split",
+    "Scaling_Law": "confinement scaling", "Option_Kappa": "elongation model",
+    "Bootstrap_choice": "bootstrap model",
 }
 
+_OUT_SPEC = [
+    ("Q", r"fusion gain  $Q$", ""),
+    ("P_elec", "net electric power", "[MW]"),
+    ("COE", "cost of electricity", "[EUR/MWh]"),
+    ("C_invest", r"capital cost", "[B EUR]"),
+    ("beta_N", r"$\beta_N$", ""),
+    ("f_bs", "bootstrap fraction", "[%]"),
+    ("q95", r"$q_{95}$", ""),
+    ("B0", r"$B_0$", "[T]"),
+    ("B_CS", "peak CS field", "[T]"),
+    ("P_sep", r"$P_{sep}$", "[MW]"),
+    ("d_TF", "inboard TF build", "[m]"),
+    ("d_CS", "CS thickness", "[m]"),
+]
 
-def fig_inputs(names, X, base, spec=None, envelope=None, save_dir=None):
-    """
-    Distribution of every uncertain input: a histogram for each continuous (normal)
-    marginal with the design value marked, and a categorical bar panel for each
-    model-form switch (envelope), so the switches appear in the same table.
+# Family groupings (mirror the [UNCERTAINTY] section structure of the deck).
+_IN_FAMILIES = [
+    ("Confinement", ["H"]),
+    ("Profiles and pedestal",
+     ["nu_n_manual", "nu_T_manual", "rho_ped", "n_ped_frac", "T_ped_frac"]),
+    ("Helium and composition",
+     ["C_Alpha", "f_imp_core[0]", "r_synch", "rho_rad_core"]),
+    ("Stability limits", ["betaN_limit", "q_limit", "Greenwald_limit"]),
+    ("Flux budget and current drive", ["Ce", "eta_WP_acad", "gamma_CD_acad"]),
+    ("Techno-economics", ["Supra_cost_factor", "discount_rate"]),
+]
+_OUT_FAMILIES = [
+    ("Plasma performance", ["Q", "beta_N", "f_bs", "q95"]),
+    ("Power exhaust", ["P_sep", "P_elec"]),
+    ("Magnets and radial build", ["B0", "B_CS", "d_TF", "d_CS"]),
+    ("Techno-economics", ["COE", "C_invest"]),
+]
 
-    names    : list of str               column order of X (continuous inputs).
-    X        : ndarray (n_samples, d)     Latin-Hypercube sample in physical units.
-    base     : GlobalConfig               design point (provides the nominal value).
-    spec     : dict name -> dist tuple    optional; used only to tag the law (norm / ...).
-    envelope : dict switch -> [options]   optional; one categorical panel per switch.
-    """
-    envelope = envelope or {}
-    switches = list(envelope.keys())
-    n_cont = len(names)
-    total = n_cont + len(switches)
-    if total == 0:
+
+def _trunc_pdf(dist, lo_x, hi_x):
+    """Analytic PDF (x, y) for a parsed marginal tuple, for overlay. Returns
+    (None, None) for families we do not draw a curve for."""
+    try:
+        from scipy import stats
+    except Exception:
+        return None, None
+    fam = dist[0]
+    xs = np.linspace(lo_x, hi_x, 200)
+    if fam == "norm" and len(dist) == 5:              # ('norm', mu, sigma, lo, hi)
+        mu, s, lo, hi = dist[1], dist[2], dist[3], dist[4]
+        a, b = (lo - mu) / s, (hi - mu) / s
+        return xs, stats.truncnorm.pdf(xs, a, b, loc=mu, scale=s)
+    if fam == "unif":                                  # ('unif', lo, hi)
+        lo, hi = dist[1], dist[2]
+        y = np.where((xs >= lo) & (xs <= hi), 1.0 / max(hi - lo, 1e-9), 0.0)
+        return xs, y
+    return None, None
+
+
+def _panel(ax, it):
+    """Render one small-multiple panel (a histogram or a categorical switch)."""
+    if it["kind"] == "switch":
+        opts = it["opts"]
+        xpos = np.arange(len(opts))
+        ax.bar(xpos, np.full(len(opts), 1.0 / len(opts)), color=_BLUE_L,
+               edgecolor=_SURF, width=0.66, zorder=2)
+        ax.set_xticks(xpos)
+        ax.set_xticklabels(opts, fontsize=7.5, rotation=18, ha="right", color=_INK2)
+        ax.set_ylim(0, 1)
+    else:
+        vals = it["vals"]
+        ax.hist(vals, bins=30, color=_BLUE, edgecolor=_SURF, linewidth=0.5,
+                alpha=0.92, density=True, zorder=2)
+        if it.get("dist") is not None:
+            xs, ys = _trunc_pdf(it["dist"], vals.min(), vals.max())
+            if xs is not None:
+                ax.fill_between(xs, ys, color=_INK, alpha=0.06, zorder=1)
+                ax.plot(xs, ys, color=_INK, lw=1.6, zorder=3)
+        if np.isfinite(it.get("nom", np.nan)):
+            ax.axvline(it["nom"], color=_CRIT, ls="--", lw=1.6, zorder=4)
+    ax.set_title(it["label"], fontsize=10.5, color=_INK)
+    ax.set_yticks([])
+    ax.tick_params(labelsize=8)
+    for s in ("left", "top", "right"):
+        ax.spines[s].set_visible(False)
+
+
+def _grouped_grid(families, title, note, save_dir, name):
+    """Small-multiple grid organised into titled family blocks on a single
+    uniform column grid: every panel is the same size and columns stay aligned
+    from one family to the next. The number of columns equals the largest
+    family, so each family occupies one row (the figure stays wide and short);
+    smaller families leave the trailing cells of their row empty."""
+    families = [(f, its) for f, its in families if its]
+    if not families:
         return None
-    ncols = min(4, total)
-    nrows = int(np.ceil(total / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(3.4 * ncols, 2.6 * nrows))
-    axes = np.atleast_1d(axes).ravel()
+    ncols = max(len(its) for _, its in families)
+    plan = []                                        # ('h', fam) | ('p', chunk)
+    for fam, its in families:
+        plan.append(("h", fam))
+        for i in range(0, len(its), ncols):
+            plan.append(("p", its[i:i + ncols]))
+    ratios = [0.30 if kind == "h" else 1.0 for kind, _ in plan]
+    panel_rows = sum(1 for k, _ in plan if k == "p")
+    n_head = len(families)
+    figw = 2.65 * ncols
+    figh = panel_rows * 2.15 + n_head * 0.5 + 1.1
+    fig = plt.figure(figsize=(figw, figh))
+    gs = GridSpec(len(plan), ncols, figure=fig, height_ratios=ratios,
+                  hspace=0.5, wspace=0.22,
+                  left=0.04, right=0.99, top=0.955, bottom=0.05)
+    for r, (kind, payload) in enumerate(plan):
+        if kind == "h":
+            ax = fig.add_subplot(gs[r, :])
+            ax.axis("off")
+            ax.plot([0, 1], [0.85, 0.85], transform=ax.transAxes,
+                    color=_GRIDC, lw=1.1, clip_on=False)
+            ax.text(0.0, 0.20, payload, transform=ax.transAxes, ha="left",
+                    va="bottom", fontsize=12, fontweight="bold", color=_INK2)
+        else:
+            for i, it in enumerate(payload):
+                ax = fig.add_subplot(gs[r, i])
+                _panel(ax, it)
+    fig.suptitle(title, fontsize=14, fontweight="bold", color=_INK, y=0.99)
+    if note:
+        fig.text(0.5, 0.014, note, ha="center", fontsize=9, color=_MUTED)
+    return _save(fig, save_dir, name)
 
-    # --- continuous marginals: one histogram each ---------------------------
-    for j, name in enumerate(names):
-        ax = axes[j]
-        col = np.asarray(X[:, j], dtype=float)
+
+@_uq_style
+def fig_inputs(names, X, base, spec=None, envelope=None, save_dir=None):
+    """Distribution of each uncertain input, grouped into thematic families:
+    histogram + analytic marginal with the design value marked, and the
+    model-form switches as a final family of equal-weight categorical panels."""
+    by_name = {}
+    for j, nm in enumerate(names):
+        col = np.asarray(X[:, j], float)
         col = col[np.isfinite(col)]
-        if col.size:
-            ax.hist(col, bins=40, color='steelblue', edgecolor='white', alpha=0.85)
-        nom = getattr(base, name, np.nan)
+        nom = getattr(base, nm, np.nan)
         try:
             nomf = float(nom)
         except (TypeError, ValueError):
             nomf = np.nan
-        if np.isfinite(nomf):
-            ax.axvline(nomf, color='0.15', ls='--', lw=1.6)
-            ax.annotate('design', xy=(nomf, 0.92), xycoords=('data', 'axes fraction'),
-                        rotation=90, va='top', ha='right', fontsize=7.5, color='0.15')
-        fam = spec.get(name, (None,))[0] if spec else None
-        tag = f"  ({fam})" if fam else ""
-        ax.set_title(f"{_IN_NICE.get(name, name)}{tag}", fontsize=9.5)
-        ax.tick_params(labelsize=8)
-        ax.set_yticks([])
+        label = _IN_NICE.get(nm, nm)
+        m = re.match(r"^(\w+)\[(\d+)\]$", nm)
+        if m is not None and not np.isfinite(nomf):
+            raw = getattr(base, m.group(1), None)
+            try:
+                nomf = float(str(raw).split(",")[int(m.group(2))].strip())
+            except (TypeError, ValueError, IndexError):
+                nomf = np.nan
+            if m.group(1) == "f_imp_core":
+                sp = [s.strip() for s in str(getattr(base, "impurity_species", "")).split(",")]
+                try:
+                    label = f"core fraction {sp[int(m.group(2))]}"
+                except IndexError:
+                    pass
+        by_name[nm] = dict(kind="hist", label=label, vals=col, nom=nomf,
+                           dist=(spec or {}).get(nm))
 
-    # --- model-form switches: one categorical bar panel each ----------------
-    # Each option is swept with equal weight (n_samples runs per combination),
-    # so the input distribution of a switch is uniform over its options.
-    for s, sw in enumerate(switches):
-        ax = axes[n_cont + s]
-        opts = list(envelope[sw])
-        xpos = np.arange(len(opts))
-        ax.bar(xpos, np.full(len(opts), 1.0 / len(opts)), color='slategray',
-               edgecolor='white', width=0.7)
-        ax.set_xticks(xpos)
-        ax.set_xticklabels(opts, fontsize=7.5, rotation=20, ha='right')
-        ax.set_ylim(0, 1)
-        ax.set_yticks([])
-        ax.set_title(f"{_IN_NICE.get(sw, sw)}  (switch)", fontsize=9.5)
+    families, placed = [], set()
+    for fam, keys in _IN_FAMILIES:
+        its = [by_name[k] for k in keys if k in by_name and by_name[k]["vals"].size]
+        placed.update(keys)
+        if its:
+            families.append((fam, its))
+    leftover = [by_name[k] for k in by_name if k not in placed and by_name[k]["vals"].size]
+    if leftover:
+        families.append(("Other inputs", leftover))
+    sw_items = [dict(kind="switch", label=_IN_NICE.get(sw, sw), opts=list(envelope[sw]))
+                for sw in (envelope or {})]
+    if sw_items:
+        families.append(("Model-form switches (equal weight)", sw_items))
 
-    for ax in axes[total:]:
-        ax.axis('off')
-
-    plt.suptitle('Distribution of the uncertain inputs',
-                 fontsize=14, fontweight='bold')
-    fig.text(0.5, -0.01, 'sampled values fed to the Monte-Carlo (dashed line = design '
-             'value); switches are swept with equal weight',
-             ha='center', fontsize=9.5, color='dimgray')
-    plt.tight_layout(rect=(0, 0.02, 1, 0.96))
-    return _save(fig, save_dir, 'uq_inputs')
-
-
-# =============================================================================
-# Figure 5 -- distribution of the main outputs
-# =============================================================================
-# (key, precise label, unit) for the outputs shown; all are produced by
-# D0FUS_uncertainty.evaluate().
-_OUT_SPEC = [
-    ('Q',        r'fusion gain  $Q$',                          ''),
-    ('P_elec',   'net electric power',                         '[MW]'),
-    ('COE',      'levelised cost of electricity',              '[EUR/MWh]'),
-    ('C_invest', r'capital cost  $C_{invest}$',                '[B EUR]'),
-    ('beta_N',   r'normalised beta  $\beta_N$',                ''),
-    ('f_bs',     'bootstrap current fraction',                 '[%]'),
-    ('q95',      r'edge safety factor  $q_{95}$',              ''),
-    ('B0',       r'on-axis toroidal field  $B_0$',             '[T]'),
-    ('B_CS',     'peak field on the central solenoid',         '[T]'),
-    ('P_sep',    r'power crossing the separatrix  $P_{sep}$',  '[MW]'),
-    ('d_TF',     'inboard TF radial build (coil + gap)',       '[m]'),
-    ('d_CS',     'central solenoid radial thickness',          '[m]'),
-]
+    return _grouped_grid(
+        families, "Distribution of the uncertain inputs",
+        "histogram = sampled values;  black line = analytic marginal;  "
+        "red dashed = design value", save_dir, "uq_inputs")
 
 
+@_uq_style
 def fig_outputs(results, save_dir=None):
-    """
-    Histogram of the main outputs over the converged Monte-Carlo samples (all model
-    combinations pooled).
-
-    results : dict combo -> list of per-sample row dicts (the run_uq_from_file output).
-    """
-    rows = [r for k in results for r in results[k] if r.get('converged')]
+    """Distribution of the main outputs over the converged samples, grouped into
+    families, with the median marked."""
+    rows = [r for k in results for r in results[k] if r.get("converged")]
     if not rows:
         return None
-
-    specs = [(k, lab, unit) for (k, lab, unit) in _OUT_SPEC
-             if any(np.isfinite(r.get(k, np.nan)) for r in rows)]
-    d = len(specs)
-    if d == 0:
-        return None
-    ncols = min(4, d)
-    nrows = int(np.ceil(d / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(3.4 * ncols, 2.6 * nrows))
-    axes = np.atleast_1d(axes).ravel()
-
-    for j, (key, label, unit) in enumerate(specs):
-        ax = axes[j]
-        vals = np.array([r.get(key, np.nan) for r in rows], dtype=float)
+    lab_unit = {k: (lab, unit) for k, lab, unit in _OUT_SPEC}
+    by_key = {}
+    for key, (lab, unit) in lab_unit.items():
+        vals = np.array([r.get(key, np.nan) for r in rows], float)
         vals = vals[np.isfinite(vals)]
         if vals.size:
-            ax.hist(vals, bins=40, color='tab:blue', edgecolor='white', alpha=0.85)
-        ttl = f"{label}  {unit}".strip()
-        ax.set_title(ttl, fontsize=9.5)
-        ax.tick_params(labelsize=8)
-        ax.set_yticks([])
-
-    for ax in axes[d:]:
-        ax.axis('off')
-
-    n_conv = len(rows)
-    plt.suptitle('Distribution of the main outputs',
-                 fontsize=14, fontweight='bold')
-    fig.text(0.5, -0.01, f'over {n_conv} converged Monte-Carlo samples',
-             ha='center', fontsize=9.5, color='dimgray')
-    plt.tight_layout(rect=(0, 0.02, 1, 0.96))
-    return _save(fig, save_dir, 'uq_outputs')
+            by_key[key] = dict(kind="hist", label=f"{lab}  {unit}".strip(),
+                               vals=vals, nom=float(np.median(vals)), dist=None)
+    families = []
+    for fam, keys in _OUT_FAMILIES:
+        its = [by_key[k] for k in keys if k in by_key]
+        if its:
+            families.append((fam, its))
+    return _grouped_grid(
+        families, "Distribution of the main outputs",
+        f"over {len(rows)} converged samples;  red dashed = median",
+        save_dir, "uq_outputs")
 
 
 if __name__ == "__main__":

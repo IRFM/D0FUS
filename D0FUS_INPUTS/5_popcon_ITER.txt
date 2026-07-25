@@ -175,7 +175,11 @@ betaN_limit     = 2.8           # Troyon normalised beta stability limit [-]
                                 # [Shimada07] Table 3: ITER operates at βN = 1.8
                                 # No-wall ideal MHD limit ~ 2.4–3.5.
 
-q_limit         = 2.5           # Kink safety factor limit [-]
+q_limit         = 2.5           # Kink / disruptivity feasibility threshold on q95 [-].
+                                # Physical boundary: JET disruptivity low above q95 ~ 2.5,
+                                # hard kink at q95 = 2 [deVries09]. ITER's DESIGN limit is
+                                # the conservative q95 >= 3.0 (met at the nominal q95 = 3.016).
+                                # Aligned on the 1_run_ITER base deck.
                                 # [Shimada07] Table 2: q95 = 3 at Ip = 15 MA, B = 5.3 T
 
 Greenwald_limit = 1.0           # Density / Greenwald density [-]
@@ -198,8 +202,11 @@ r_synch     = 0.6               # Synchrotron wall reflectivity [-]
                                 # ITER first wall (Be-coated) has moderate reflectivity
                                 # Default EU-DEMO value; acceptable for ITER.
 
-C_Alpha     = 6.0                  # He confinement ratio tau_He*/tau_E [-]
-rho_rad_core = 0.6                 # Core/edge split; presets: 0.6 (PROCESS-aligned, optimistic) or 1.0 (conservative)
+C_Alpha     = 7.5                  # tau_He*/tau_E: recovers the Shimada 2007 He projection
+                                # with the impurity-diluted ash balance (was 6.0).
+                                # Aligned on the 1_run_ITER base deck.
+rho_rad_core = 0.85                # ITER-calibrated core/edge split (presets: 0.6 PROCESS-aligned,
+                                # 1.0 conservative). Aligned on the 1_run_ITER base deck.
                                 # τ_He* / τ_E ≈ 5 (standard assumption)
 
 # Impurity mix: full-W wall (ITER re-baseline 2024) + Ne seeding.
