@@ -87,6 +87,34 @@ FIXED_OVERRIDES = {'CD_source': 'Academic', 'kink_parameter': 'q95',
 
 DIST_RE = re.compile(r'^(tri|norm|unif)\((.*)\)$', re.IGNORECASE)
 ENV_RE = re.compile(r'^envelope\((.*)\)$', re.IGNORECASE)
+# Indexed access into a comma-separated string field, e.g. 'f_imp_core[0]'
+# samples the FIRST impurity concentration of the deck (species order given by
+# impurity_species) while leaving the other entries at their deck values.
+IDX_RE = re.compile(r'^(\w+)\[(\d+)\]$')
+
+
+def design_value(base, name):
+    """Design-deck value of a (possibly indexed) uncertain input, or None.
+
+    Plain names read the GlobalConfig attribute directly. Indexed names such as
+    'f_imp_core[0]' read element i of the comma-separated string attribute, so
+    the truncated normals can auto-centre on the deck value exactly as for
+    scalar fields.
+    """
+    m = IDX_RE.match(name)
+    if m is None:
+        val = getattr(base, name, None)
+        try:
+            return float(val)
+        except (TypeError, ValueError):
+            return None
+    raw = getattr(base, m.group(1), None)
+    if raw is None:
+        return None
+    try:
+        return float(str(raw).split(',')[int(m.group(2))].strip())
+    except (ValueError, IndexError):
+        return None
 
 
 # =============================================================================
@@ -134,11 +162,31 @@ def _radial_build_ok(cost, r_d, c_TF, d_CS, q_kink, betaT, nbar_line):
 
 
 def evaluate(cfg):
-    """Run one configuration in memory and return QoIs plus feasibility."""
+    """Run one configuration in memory and return QoIs plus feasibility.
+
+    Non-converged samples are tagged with a 'failure' category so that the
+    summary and figures can separate physically distinct outcomes:
+      'no_operating_point' : the plasma solver found no solution at the
+                             prescribed (P_fus, Tbar) point, typically because
+                             radiation exceeds the heating power for that draw;
+      'no_closure'         : a plasma solution exists but the engineering chain
+                             (radial build, flux budget, cost) returned NaN;
+      'crash'              : the solver raised an exception.
+    """
+    # The Monte-Carlo deliberately visits corners where the solver has no
+    # solution (radiation exceeding the heating power, non-closing builds):
+    # the diagnostic RuntimeWarnings that D0FUS_run emits there are expected
+    # by construction in this mode and are silenced locally. The information
+    # is not lost: it comes back through the 'failure' tag of each sample.
+    # This filter is process-local (loky workers), so RUN mode keeps its
+    # warnings untouched.
+    import warnings
     try:
-        res = RUN.run(cfg, verbose=0)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            res = RUN.run(cfg, verbose=0)
     except Exception:
-        return {'converged': False, 'feasible': False}
+        return {'converged': False, 'feasible': False, 'failure': 'crash'}
 
     (B0, B_CS, B_pol, tauE, W_th, Q, Volume, Surface, Ip, Ib, I_CD, I_Ohm,
      nbar, nbar_line, nG, pbar, betaN, betaT, betaP, qstar, q95,
@@ -162,10 +210,12 @@ def evaluate(cfg):
     _T_op_limit, _CF, _V_rb_BB = _g(132), _g(135), _g(138)
     _diag = _rest[-1] if _rest else {}
 
-    converged = bool(np.isfinite(Q) and np.isfinite(cost)
-                     and np.isfinite(Ip) and Ip > 0)
+    plasma_ok  = bool(np.isfinite(Q) and np.isfinite(Ip) and Ip > 0)
+    closure_ok = bool(np.isfinite(cost))
+    converged  = plasma_ok and closure_ok
     if not converged:
-        return {'converged': False, 'feasible': False}
+        return {'converged': False, 'feasible': False,
+                'failure': 'no_operating_point' if not plasma_ok else 'no_closure'}
 
     c_TF = r_sep - r_c if np.isfinite(r_c) and np.isfinite(r_sep) else np.nan
     d_CS = r_c - r_d   if np.isfinite(r_c) and np.isfinite(r_d)   else np.nan
@@ -206,6 +256,316 @@ def evaluate(cfg):
 
 
 # =============================================================================
+# Operator retuning of the operating point
+# =============================================================================
+def _retune_ladder(T0, T_lo, T_hi, n_points=4):
+    """Candidate operating temperatures covering the admissible window.
+
+    The ladder is built RELATIVE to the window rather than in absolute keV
+    steps: each direction is probed at n_points fractions of the distance
+    between the starting temperature T0 and the corresponding bound, the last
+    fraction landing exactly on the bound. The search therefore spans the full
+    window whatever the machine scale (ITER at 7.75 keV, a plant at 9 keV or a
+    compact device at 4.5 keV need no per-deck tuning), and the evaluation
+    budget stays at most 2 * n_points extra solver calls per failing sample.
+
+    Returns (up, down): the candidate temperatures above and below T0,
+    ordered from the nearest to the farthest.
+    """
+    fractions = [(k + 1) / n_points for k in range(n_points)]
+    up = [T0 + f * (T_hi - T0) for f in fractions if T_hi > T0]
+    down = [T0 - f * (T0 - T_lo) for f in fractions if T_lo < T0]
+    return up, down
+
+
+def evaluate_retuned(cfg, window):
+    """Feasibility WITH operator retuning of the volume-averaged temperature.
+
+    Rationale: the forward Monte-Carlo holds the operating point (P_fus, Tbar)
+    frozen, so a favourable confinement draw is converted by the inverse solve
+    into a lower plasma current and a higher Greenwald fraction instead of
+    extra margin. In reality the operator controls the density, hence
+    indirectly the temperature at fixed fusion power, and would move the
+    operating point. This function asks the corresponding question: does a
+    feasible operating temperature EXIST inside `window` = (T_lo, T_hi)?
+
+    The as-designed point (deck Tbar) is evaluated first; if it is feasible
+    the sample is accepted unchanged. Otherwise the temperature is moved along
+    RETUNE_LADDER, trying first the direction suggested by the failure
+    signature: density-limit, beta-limit and radiative no-operating-point
+    failures call for a HIGHER temperature (lower density at fixed fusion
+    power), kink and flux-closure failures for a LOWER one; both directions
+    are eventually tried. The first feasible point is accepted and tagged
+    retuned=True with its Tbar_used. If no temperature in the window is
+    feasible, the best converged attempt is returned (so the margin statistics
+    stay meaningful), tagged feasible=False. In every case the key
+    'feasible_as_designed' preserves the frozen-point verdict, so summaries
+    can report both readings side by side.
+    """
+    T_lo, T_hi = window[0], window[1]
+    n_points = int(window[2]) if len(window) > 2 else 4
+    r0 = evaluate(cfg)
+    r0['feasible_as_designed'] = bool(r0.get('feasible'))
+    r0['retuned'] = False
+    r0['Tbar_used'] = float(cfg.Tbar)
+    if r0['feasible_as_designed']:
+        return r0
+
+    up_first = (r0.get('binding') in ('greenwald', 'troyon')
+                or r0.get('failure') == 'no_operating_point')
+    up, down = _retune_ladder(float(cfg.Tbar), T_lo, T_hi, n_points)
+    first, second = (up, down) if up_first else (down, up)
+    # Interleave the two directions, preferred one first, nearest steps first.
+    steps = [t for pair in zip(first, second) for t in pair]
+    steps += first[len(second):] + second[len(first):]
+
+    tried = {round(float(cfg.Tbar), 3)}
+    best = r0 if r0.get('converged') else None
+    for T in steps:
+        key = round(float(T), 3)
+        if key in tried:
+            continue
+        tried.add(key)
+        r = evaluate(dc_replace(cfg, Tbar=float(T)))
+        r['feasible_as_designed'] = False
+        r['Tbar_used'] = T
+        if r.get('feasible'):
+            r['retuned'] = True
+            return r
+        if best is None and r.get('converged'):
+            r['retuned'] = False
+            best = r
+    if best is None:
+        best = r0
+    best.setdefault('retuned', False)
+    return best
+
+
+def evaluate_pulse(cfg, tbar_window, pulse_cfg):
+    """Feasibility WITH pulse-length relaxation of the flux budget.
+
+    A design that closes structurally but exhausts the central-solenoid flux
+    is not simply infeasible: it can still run, on a shorter flat-top. This
+    function first evaluates the point at the full design pulse (with operator
+    temperature retuning when tbar_window is given). If that already passes,
+    the sample keeps pulse_frac = 1.0. Otherwise, and ONLY when the failure is
+    flux/build related (no build-flux closure, or the radial build binds), the
+    flat-top duration is walked down a ladder of pulse fractions and, last, an
+    absolute floor (e.g. 10 s). The largest pulse fraction that yields a
+    feasible design is recorded in 'pulse_frac' (with pulse_limited=True); if
+    even the floor fails, the design is genuinely flux-infeasible and keeps
+    its full-pulse verdict with pulse_frac = 0.0.
+
+    pulse_cfg = (fractions, floor_s). Pulse tranches are evaluated at the deck
+    operating temperature (a well-defined operating point), so the reported
+    pulse capability answers 'how much flat-top can this draw sustain on
+    flux', decoupled from the plasma-limit retuning of stage one.
+    """
+    r = evaluate_retuned(cfg, tbar_window) if tbar_window else evaluate(cfg)
+    r.setdefault('feasible_as_designed', bool(r.get('feasible')))
+    r['pulse_frac'] = 1.0
+    r['pulse_limited'] = False
+    if r.get('feasible') or pulse_cfg is None:
+        return r
+
+    # Only flux / build-closure failures are addressable by a shorter pulse.
+    addressable = (r.get('failure') == 'no_closure' or r.get('binding') == 'build')
+    if not addressable:
+        return r
+
+    fractions, floor_s = pulse_cfg
+    t_full = float(cfg.Temps_Plateau_input)
+    durations = sorted({f * t_full for f in fractions} | {float(floor_s)},
+                       reverse=True)
+    durations = [t for t in durations if 0.0 < t < t_full]
+    last_closed = None
+    for t in durations:
+        rp = evaluate(dc_replace(cfg, Temps_Plateau_input=float(t)))
+        if rp.get('feasible'):
+            rp['feasible_as_designed'] = False
+            rp['retuned'] = r.get('retuned', False)
+            rp['Tbar_used'] = r.get('Tbar_used', float(cfg.Tbar))
+            rp['pulse_frac'] = t / t_full
+            rp['pulse_limited'] = True
+            rp['Temps_Plateau_used'] = t
+            return rp
+        if rp.get('converged'):
+            last_closed = rp     # closes on flux at this pulse but plasma-limited
+    if last_closed is not None:
+        # A shorter pulse relieves the CS flux, but the design is still held
+        # back by a plasma limit (kink, Greenwald, ...). Report it by that TRUE
+        # binding rather than as a flux/build wall: the full-pulse no-closure
+        # was only the first symptom of the same (usually high-current) draw.
+        last_closed['feasible_as_designed'] = False
+        last_closed['retuned'] = r.get('retuned', False)
+        last_closed['Tbar_used'] = r.get('Tbar_used', float(cfg.Tbar))
+        last_closed['pulse_frac'] = 0.0
+        last_closed['pulse_limited'] = False
+        last_closed['pulse_relieved'] = True
+        return last_closed
+    r['pulse_frac'] = 0.0     # genuine CS wall: no closure at any pulse
+    return r
+
+
+# =============================================================================
+# Radial-build (central-solenoid) relief ladder
+# =============================================================================
+def _family_of(r):
+    """Coarse feasibility family of a non-feasible evaluate() result:
+    'radial_build' when the central solenoid / build does not close,
+    'stability' when a plasma limit (Greenwald, Troyon, kink) binds,
+    'no_operating_point' when the plasma solver found no solution at all,
+    'crash' when the solver raised."""
+    if r.get('feasible'):
+        return 'feasible'
+    if r.get('binding') == 'build' or r.get('failure') == 'no_closure':
+        return 'radial_build'
+    if r.get('failure') == 'no_operating_point':
+        return 'no_operating_point'
+    if r.get('failure') == 'crash':
+        return 'crash'
+    return 'stability'
+
+
+def _relief_outcome(rp, r0, flux_cut):
+    """Interpret one relief attempt (the CS is asked to supply flux_cut less
+    inductive flux). Returns a finished result dict when the CS then closes,
+    else None to keep escalating. If the CS closes but a plasma limit now binds,
+    the sample is reclassified as stability-limited: the CS was only the first
+    symptom of a high-current draw, and no CS relief removes a plasma-limit
+    wall."""
+    if not rp.get('converged'):
+        return None
+    rp['feasible_as_designed'] = bool(r0.get('feasible_as_designed', False))
+    rp['retuned']   = bool(r0.get('retuned', False))
+    rp['Tbar_used'] = r0.get('Tbar_used', np.nan)
+    rp['flux_cut']  = float(flux_cut)
+    rp['build_relieved'] = True
+    rp['category'] = 'radial_build' if rp.get('feasible') else 'stability'
+    return rp
+
+
+def evaluate_relief(cfg, tbar_window, relief_cfg):
+    """Feasibility with operator Tbar retuning followed by a radial-build relief
+    ladder for central-solenoid (flux-closure) failures.
+
+    A design whose CS cannot supply the inductive volt-seconds is not simply
+    infeasible: the flux it must provide can be shed. Rather than tracking each
+    engineering lever separately, the relief is expressed as ONE transparent
+    quantity, the fraction of CS inductive flux that must be removed for the
+    design to close. That reduction is realised by shedding the same fraction of
+    the two reducible volt-second terms, the current ramp-up (assisted
+    non-inductively by H&CD, through f_heat_ramp) and the flat-top (a shorter
+    burn); so a reported '25% flux relief' reads as 'obtainable with H&CD ramp
+    assist and/or a 25% shorter pulse'. The CS coil field is NOT a relief lever.
+
+    The smallest flux reduction that closes the CS is recorded in 'flux_cut'. If
+    closing the CS reveals a plasma-stability limit the sample is reclassified as
+    stability-limited. Samples that never close, even at the largest reduction,
+    are a genuine radial-build wall. That wall also collects build failures that
+    flux relief cannot address, since the shed levers act on the CS volt-seconds
+    only: a TF coil that cannot be built (for instance under a peak-field scan)
+    is not flux-relievable and falls straight through to the wall.
+
+    relief_cfg = list of flux-reduction fractions to try (e.g. 0.25, 0.5, 0.75);
+    None or empty disables relief entirely.
+    """
+    r = evaluate_retuned(cfg, tbar_window) if tbar_window else evaluate(cfg)
+    r.setdefault('feasible_as_designed', bool(r.get('feasible')))
+    r.setdefault('retuned', False)
+    r.setdefault('Tbar_used', float(cfg.Tbar))
+    r['flux_cut'] = 0.0
+    r['build_relieved'] = False
+
+    if r.get('feasible'):
+        r['category'] = 'feasible'
+        return r
+    if not relief_cfg:
+        r['category'] = _family_of(r)
+        return r
+
+    # Only CS flux / build-closure failures are addressable by shedding flux.
+    addressable = (r.get('failure') == 'no_closure' or r.get('binding') == 'build')
+    if not addressable:
+        r['category'] = _family_of(r)   # stability / no_operating_point / crash
+        return r
+
+    t_full = float(cfg.Temps_Plateau_input)
+    for delta in sorted(f for f in relief_cfg if 0.0 < f < 1.0):
+        # Shed the same fraction from both reducible flux terms: assist the
+        # ramp-up (f_heat_ramp = delta) and shorten the flat-top (x (1 - delta)),
+        # so the reducible CS flux is reduced by delta overall.
+        rp = evaluate(dc_replace(cfg, f_heat_ramp=float(delta),
+                                 Temps_Plateau_input=float((1.0 - delta) * t_full)))
+        out = _relief_outcome(rp, r, flux_cut=delta)
+        if out is not None:
+            return out
+
+    # genuine CS / radial-build wall: closes at no achievable flux reduction
+    r['category']       = 'radial_build'
+    r['build_relieved'] = False
+    r['flux_cut']       = 1.0
+    return r
+
+
+def parse_relief_controls(controls):
+    """Read the CS radial-build relief control.
+
+    [CONTROLS] key:
+      cs_relief = 0.25, 0.5, 0.75   fractions of the reducible CS inductive flux
+                                    to try shedding (via H&CD ramp assist and/or
+                                    a shorter flat-top) to close a non-closing CS.
+    Returns the list of fractions, or None when relief is off. Backward
+    compatible: a deck that still sets pulse_retune or ramp_retune activates
+    relief with the default fractions.
+    """
+    raw = controls.get('cs_relief', controls.get('flux_relief', None))
+    if raw is None:
+        if (str(controls.get('pulse_retune', '')).strip() or
+                str(controls.get('ramp_retune', '')).strip()):
+            raw = '0.25, 0.5, 0.75'
+        else:
+            return None
+    return [float(x) for x in str(raw).split(',')]
+
+
+def parse_pulse_controls(controls):
+    """Read the optional pulse-relaxation controls.
+
+    [CONTROLS] keys:
+      pulse_retune    = Temps_Plateau_input   activates the pulse search
+      pulse_fractions = 0.75, 0.5, 0.25       tranches below the full pulse
+      pulse_floor     = 10.0                  absolute floor [s]
+    Returns (fractions, floor_s) or None when pulse relaxation is off.
+    """
+    if str(controls.get('pulse_retune', '')).strip() not in (
+            'Temps_Plateau_input', 'pulse', 'Temps_Plateau'):
+        return None
+    raw = str(controls.get('pulse_fractions', '0.75, 0.5, 0.25'))
+    fractions = [float(t) for t in raw.split(',')]
+    floor_s = float(controls.get('pulse_floor', 10.0))
+    return (fractions, floor_s)
+
+
+def parse_retune_controls(controls):
+    """Read the optional operator-retuning controls.
+
+    [CONTROLS] keys:
+      retune        = Tbar          activates the retuning search
+      Tbar_window   = 6.0, 12.0     admissible operating window [keV]
+      retune_points = 4             ladder resolution per direction (optional)
+    Returns (T_lo, T_hi, n_points) or None when retuning is off. The ladder is
+    built relative to the window (see _retune_ladder), so the window bounds are
+    always reachable whatever the deck's design temperature.
+    """
+    if str(controls.get('retune', '')).strip().lower() != 'tbar':
+        return None
+    win = str(controls.get('Tbar_window', '6.0, 12.0'))
+    lo, hi = (float(t) for t in win.split(','))
+    return (lo, hi, int(controls.get('retune_points', 4)))
+
+
+# =============================================================================
 # Sampling
 # =============================================================================
 def _triangular_ppf(u, lo, mode, hi):
@@ -215,6 +575,38 @@ def _triangular_ppf(u, lo, mode, hi):
     return stats.triang.ppf(u, c=c, loc=lo, scale=(hi - lo))
 
 
+def _split_truncnorm_ppf(u, mu, s_lo, s_hi, lo, hi):
+    """Inverse CDF of a SPLIT (two-piece) truncated normal on [lo, hi].
+
+    The density is a half-normal of width s_lo below the mode mu and of width
+    s_hi above it, joined continuously at mu (Fechner two-piece normal), then
+    truncated to [lo, hi]. This gives an asymmetric belief with a single mode
+    at mu: a sharp side and a long tail on the other, which a symmetric normal
+    cannot represent. With s_lo = s_hi it reduces to the ordinary truncated
+    normal. The two sides are sampled from their own truncnorm, with the split
+    weight set so the joined density is continuous (mass on each side is
+    proportional to its sigma times the truncated area of that side).
+    """
+    u = np.asarray(u, dtype=float)
+    Phi = stats.norm.cdf
+    # truncated area of each half (unnormalised, continuity-weighted by sigma)
+    m_lo = s_lo * (0.5 - Phi((lo - mu) / s_lo))
+    m_hi = s_hi * (Phi((hi - mu) / s_hi) - 0.5)
+    p_lo = m_lo / (m_lo + m_hi)
+    out = np.empty_like(u)
+    low = u < p_lo
+    # lower half: truncnorm on [lo, mu], quantile rescaled into [0, 1]
+    if np.any(low):
+        a, b = (lo - mu) / s_lo, 0.0
+        out[low] = stats.truncnorm.ppf(u[low] / p_lo, a, b, loc=mu, scale=s_lo)
+    # upper half: truncnorm on [mu, hi]
+    if np.any(~low):
+        a, b = 0.0, (hi - mu) / s_hi
+        out[~low] = stats.truncnorm.ppf((u[~low] - p_lo) / (1.0 - p_lo),
+                                        a, b, loc=mu, scale=s_hi)
+    return out
+
+
 def _marginal_ppf(u, dist):
     """Inverse CDF of one marginal evaluated on u in [0, 1]."""
     fam = dist[0]
@@ -222,6 +614,11 @@ def _marginal_ppf(u, dist):
         _, lo, mode, hi = dist
         return _triangular_ppf(u, lo, mode, hi)
     if fam == 'norm':
+        if len(dist) == 6:                      # SPLIT truncated normal
+            _, mu, s_lo, s_hi, lo, hi = dist
+            if s_lo <= 0 or s_hi <= 0:
+                return np.full_like(np.asarray(u, dtype=float), mu)
+            return _split_truncnorm_ppf(u, mu, s_lo, s_hi, lo, hi)
         mu, sigma = dist[1], dist[2]
         if sigma <= 0:                          # degenerate width -> point mass at mu
             return np.full_like(u, mu, dtype=float)
@@ -285,6 +682,18 @@ def build_config(base, names, row, extra_overrides=None):
             if k in fields:
                 changes[k] = _coerce(v, getattr(base, k))
     for name, val in zip(names, row):
+        m = IDX_RE.match(name)
+        if m is not None and m.group(1) in fields:
+            # Indexed entry of a comma-separated string field: rebuild the
+            # string with element i replaced by the sampled value, preserving
+            # the other entries (possibly already modified by a previous name).
+            fname, i = m.group(1), int(m.group(2))
+            parts = [p.strip() for p in
+                     str(changes.get(fname, getattr(base, fname))).split(',')]
+            if i < len(parts):
+                parts[i] = f'{float(val):.6g}'
+                changes[fname] = ', '.join(parts)
+            continue
         if name in fields:
             changes[name] = float(val)
     return dc_replace(base, **changes)
@@ -320,11 +729,15 @@ def _build_marginal(name, fam, args, central):
         return ('unif', args[0], args[1])
     if fam == 'norm':
         # Truncated normal parameterised by the user as bounds and centre.
-        #   norm(sigma)            -> mean = design value, unbounded
-        #   norm(lo, hi)           -> mean = design value (or midpoint if undefined)
-        #   norm(lo, centre, hi)   -> mean = centre, bounds lo/hi
-        # In every bounded case the standard deviation is set so that lo and hi sit
-        # at about mean +/- 2 sigma, i.e. sigma = (hi - lo) / 4.
+        #   norm(sigma)                       -> mean = design value, unbounded
+        #   norm(lo, hi)                      -> mean = design value / midpoint
+        #   norm(lo, centre, hi)              -> mean = centre, bounds lo/hi
+        #   norm(lo, centre, hi, sigma)       -> explicit symmetric sigma
+        #   norm(lo, centre, hi, s_lo, s_hi)  -> SPLIT normal: sharp side / long tail
+        # For the 2/3-argument forms the standard deviation is set so that lo and hi
+        # sit at about mean +/- 2 sigma, i.e. sigma = (hi - lo) / 4. Use the 4th
+        # argument to decouple the width from the bounds (e.g. a narrow peak with a
+        # far-reaching but rare tail), and the 5th to make the two sides asymmetric.
         if len(args) == 1:                       # (sigma) -> mean = design value
             if central is None:
                 raise ValueError(f"norm() for '{name}': sigma-only form needs a "
@@ -333,15 +746,26 @@ def _build_marginal(name, fam, args, central):
         if len(args) == 2:                       # (lo, hi) -> mean = design value
             lo, hi = args
             mu = central if central is not None else 0.5 * (lo + hi)
+            sig_args = ()
         elif len(args) == 3:                     # (lo, centre, hi) explicit
             lo, mu, hi = args
+            sig_args = ()
+        elif len(args) == 4:                     # (lo, centre, hi, sigma)
+            lo, mu, hi, sig = args
+            sig_args = (sig,)
+        elif len(args) == 5:                     # (lo, centre, hi, s_lo, s_hi) split
+            lo, mu, hi, s_lo, s_hi = args
+            sig_args = (s_lo, s_hi)
         else:
-            raise ValueError(f"norm() for '{name}' expects 1, 2 or 3 arguments")
+            raise ValueError(f"norm() for '{name}' expects 1 to 5 arguments")
         if not (lo <= mu <= hi):
             print(f"  [UQ] warning: '{name}' centre {mu:g} outside "
                   f"[{lo:g}, {hi:g}] -> clamped.")
             mu = min(max(mu, lo), hi)
-        return ('norm', mu, (hi - lo) / 4.0, lo, hi)
+        if len(sig_args) == 2:                   # split (two-piece) truncated normal
+            return ('norm', mu, sig_args[0], sig_args[1], lo, hi)
+        sigma = sig_args[0] if sig_args else (hi - lo) / 4.0
+        return ('norm', mu, sigma, lo, hi)
     raise ValueError(f"unknown marginal {fam}{tuple(args)}")
 
 
@@ -409,7 +833,7 @@ def parse_uq_file(path):
         dist = DIST_RE.match(rhs)
         fam = dist.group(1).lower()
         args = [float(a) for a in dist.group(2).split(',')]
-        spec[key] = _build_marginal(key, fam, args, getattr(base, key, None))
+        spec[key] = _build_marginal(key, fam, args, design_value(base, key))
     return base, spec, envelope, controls, deck_path
 
 
@@ -460,7 +884,7 @@ def _load_base_cached(deck_path):
     return base
 
 
-def _uq_worker(deck_path, names, row, combo):
+def _uq_worker(deck_path, names, row, combo, retune=None, relief=None):
     """
     Worker for the parallel Monte-Carlo. Every dependency is imported LOCALLY.
 
@@ -478,8 +902,15 @@ def _uq_worker(deck_path, names, row, combo):
         os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
     if _parent not in sys.path:
         sys.path.insert(0, _parent)
-    from D0FUS_EXE.D0FUS_uncertainty import _load_base_cached, build_config, evaluate
-    return evaluate(build_config(_load_base_cached(deck_path), names, row, combo))
+    from D0FUS_EXE.D0FUS_uncertainty import (_load_base_cached, build_config,
+                                             evaluate, evaluate_retuned,
+                                             evaluate_relief)
+    cfg = build_config(_load_base_cached(deck_path), names, row, combo)
+    if relief is not None:
+        return evaluate_relief(cfg, retune, relief)
+    if retune is not None:
+        return evaluate_retuned(cfg, retune)
+    return evaluate(cfg)
 
 
 def run_uq(base_deck_path, spec=UNCERTAIN_SPEC, n=200, seed=0, overrides=None):
@@ -504,6 +935,8 @@ def run_uq_from_file(path, n_override=None, n_jobs=-1, verbose=5):
 
     base, spec, envelope, controls, deck_path = parse_uq_file(path)
     n = n_override or controls.get('n_samples', 1000)
+    retune = parse_retune_controls(controls)
+    relief = parse_relief_controls(controls)
     names, X = sample_lhs(spec, n, seed=controls.get('seed', 0))
 
     if envelope:
@@ -518,7 +951,8 @@ def run_uq_from_file(path, n_override=None, n_jobs=-1, verbose=5):
     # 'generator' preserves submission order, so the index-based slicing below
     # that maps results back to each model combo stays valid.
     _gen = Parallel(n_jobs=n_jobs, return_as="generator")(
-        delayed(_uq_worker)(deck_path, names, row, combo) for combo, row in flat)
+        delayed(_uq_worker)(deck_path, names, row, combo, retune, relief)
+        for combo, row in flat)
     out = list(tqdm(_gen, total=len(flat), desc="UQ Monte-Carlo",
                     unit="run", disable=(verbose == 0)))
 
@@ -540,34 +974,88 @@ def _pct(vals):
 # Entry point for the UNCERTAINTY mode (called by D0FUS.py)
 # =============================================================================
 def summarize_results(results):
-    """Return (n_total, n_converged, n_feasible, binding_counter)."""
+    """Return (n_total, n_converged, n_feasible, binding_counter, failure_counter).
+
+    binding counts the most-violated limit among CONVERGED infeasible samples;
+    failures counts the non-convergence categories ('no_operating_point',
+    'no_closure', 'crash') so that 'this draw has no solution' is reported
+    separately from 'this draw violates an operational limit'.
+    """
     all_rows = [r for k in results for r in results[k]]
     conv = [r for r in all_rows if r.get('converged')]
     feas = [r for r in conv if r.get('feasible')]
     binding = Counter(r.get('binding') for r in conv if not r.get('feasible'))
-    return len(all_rows), len(conv), len(feas), binding
+    failures = Counter(r.get('failure', 'unknown')
+                       for r in all_rows if not r.get('converged'))
+    return len(all_rows), len(conv), len(feas), binding, failures
 
 
 def _write_summary(path, input_file, results, controls, scans=None):
     """Write a concise human-readable summary of the uncertainty study."""
-    n, n_conv, n_feas, binding = summarize_results(results)
-    p_feas = 100.0 * n_feas / max(n, 1)
-    verdict = ('LARGELY FEASIBLE' if p_feas >= 85 else
-               'MARGINAL' if p_feas >= 60 else 'AT RISK')
+    n, n_conv, n_feas, binding, failures = summarize_results(results)
+    # The headline verdict is taken over the CONVERGED samples: a draw with no
+    # operating point is a different (and separately reported) outcome from a
+    # converged design that violates an operational limit.
+    p_feas_conv = 100.0 * n_feas / max(n_conv, 1)
+    p_feas_all  = 100.0 * n_feas / max(n, 1)
+    verdict = ('LARGELY FEASIBLE' if p_feas_conv >= 85 else
+               'MARGINAL' if p_feas_conv >= 60 else 'AT RISK')
     conv = [r for k in results for r in results[k] if r.get('converged')]
 
     def pct(key):
         a = np.array([r[key] for r in conv if np.isfinite(r.get(key, np.nan))])
         return tuple(np.percentile(a, [5, 50, 95])) if a.size else (np.nan, np.nan, np.nan)
 
+    fail_txt = ", ".join(f"{k}={v}" for k, v in failures.items()) or "none"
     L = ["D0FUS uncertainty study summary",
          f"Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
          f"Input file : {os.path.basename(input_file)}",
          "",
-         f"Samples    : {n} total ({n_conv} converged)",
-         f"Verdict    : {p_feas:.0f}% feasible  ->  {verdict}"]
+         f"Samples    : {n} total = {n_conv} converged + "
+         f"{n - n_conv} without a solution ({fail_txt})",
+         f"Feasible   : {p_feas_conv:.0f}% of converged samples "
+         f"({p_feas_all:.0f}% of all samples)",
+         f"Verdict    : {verdict}  (thresholds on the converged share)"]
+    # Two-reading breakdown when operator retuning was active: the frozen
+    # design-point verdict versus the operating-window verdict.
+    if any('feasible_as_designed' in r for k in results for r in results[k]):
+        n_design = sum(1 for r in conv if r.get('feasible_as_designed'))
+        n_ret = sum(1 for r in conv if r.get('feasible') and r.get('retuned'))
+        L.append(f"Retuning   : {100.0 * n_design / max(n_conv, 1):.0f}% feasible "
+                 f"as designed; +{100.0 * n_ret / max(n_conv, 1):.0f}% recovered "
+                 f"by moving Tbar inside the operating window")
+    # Pulse-capability breakdown when pulse relaxation was active.
+    if any('pulse_frac' in r for k in results for r in results[k]):
+        all_rows = [r for k in results for r in results[k]]
+        pl = [r for r in conv if r.get('pulse_limited')]
+        n_full = sum(1 for r in conv if r.get('feasible')
+                     and not r.get('pulse_limited'))
+        # Genuinely flux/build-infeasible: went through the pulse ladder and
+        # still did not close (pulse_frac forced to 0.0). These live in the
+        # non-converged pool, so count them over all rows, as a share of the
+        # whole Monte-Carlo.
+        n_floor = sum(1 for r in all_rows
+                      if r.get('pulse_frac') == 0.0 and not r.get('feasible'))
+        buckets = [('>=3/4 pulse', 0.75, 1.0), ('1/2-3/4 pulse', 0.5, 0.75),
+                   ('1/4-1/2 pulse', 0.25, 0.5), ('<1/4 pulse', 0.0, 0.25)]
+        L.append("")
+        L.append(f"Pulse      : of the converged designs, "
+                 f"{100.0 * n_full / max(n_conv, 1):.0f}% keep the full flat-top and "
+                 f"{100.0 * len(pl) / max(n_conv, 1):.0f}% are feasible only on a "
+                 f"shorter one; {100.0 * n_floor / max(n, 1):.0f}% of all samples do "
+                 f"not close on flux even at the floor pulse")
+        for name, lo, hi in buckets:
+            k = sum(1 for r in pl if lo < r.get('pulse_frac', 0.0) <= hi)
+            if k:
+                L.append(f"  reduced to {name:14s}: {100.0 * k / max(n_conv, 1):.0f}% "
+                         f"of converged")
+        n_relieved = sum(1 for r in conv if r.get('pulse_relieved'))
+        if n_relieved:
+            L.append(f"  note: {100.0 * n_relieved / max(n_conv, 1):.0f}% of converged "
+                     f"exhaust the CS flux at full pulse but are ultimately held by a "
+                     f"plasma limit (counted under that binding, not as a flux wall)")
     if binding:
-        L.append("Binding limit among infeasible: "
+        L.append("Binding limit among converged infeasible: "
                  + ", ".join(f"{k}={v}" for k, v in binding.items()))
     L += ["",
           "Headroom to each limit (normalised margin, P5 / P50 / P95):"]
@@ -608,14 +1096,18 @@ def main(input_file, save_figures=True, output_dir=None, n_override=None,
     names, X, results, controls = run_uq_from_file(
         input_file, n_override=n_override, n_jobs=n_jobs, verbose=5)
 
-    n, n_conv, n_feas, binding = summarize_results(results)
-    p_feas = 100.0 * n_feas / max(n, 1)
-    verdict = ('LARGELY FEASIBLE' if p_feas >= 85 else
-               'MARGINAL' if p_feas >= 60 else 'AT RISK')
-    print(f"\n  UNCERTAINTY verdict: {p_feas:.0f}% feasible over {n} samples "
-          f"({n_conv} converged)  ->  {verdict}")
+    n, n_conv, n_feas, binding, failures = summarize_results(results)
+    p_feas_conv = 100.0 * n_feas / max(n_conv, 1)
+    p_feas_all  = 100.0 * n_feas / max(n, 1)
+    verdict = ('LARGELY FEASIBLE' if p_feas_conv >= 85 else
+               'MARGINAL' if p_feas_conv >= 60 else 'AT RISK')
+    print(f"\n  UNCERTAINTY verdict: {p_feas_conv:.0f}% of the {n_conv} converged "
+          f"samples feasible ({p_feas_all:.0f}% of all {n})  ->  {verdict}")
+    if failures:
+        print("  Samples without a solution: "
+              + ', '.join(f'{k}={v}' for k, v in failures.items()))
     if binding:
-        print("  Binding limit among infeasible: "
+        print("  Binding limit among converged infeasible: "
               + ', '.join(f'{k}={v}' for k, v in binding.items()))
 
     scans = None
