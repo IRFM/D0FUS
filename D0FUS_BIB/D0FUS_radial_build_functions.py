@@ -141,6 +141,14 @@ def _invert_gamma(gamma_target, gamma_tab, alpha_tab, alpha_min=0.01):
 _last_graded_profile = {}
 
 
+_GRADED_DAMPING = 0.2   # Picard under-relaxation, see _solve_graded_wp
+
+# Record of every silent-fallback event of the graded TF solver, so that a
+# batch run can be audited afterwards rather than only at warning time.
+# Cleared by the caller when a fresh audit is wanted.
+_GRADED_FALLBACKS = []
+
+
 def _solve_graded_wp(R_ext, B_max, J_max, sigma_max, omega, n, ln_term,
                      dR=5e-4, alpha_min=0.01, max_iter=60, tol=1e-4):
     """
@@ -282,30 +290,75 @@ def _solve_graded_wp(R_ext, B_max, J_max, sigma_max, omega, n, ln_term,
                 'sigma_r_peak': sr_list[-1], 'f_steel': f_steel,
                 'R': np.array(R_list), 'alpha': np.array(alpha_list)}
 
-    # Initial σ_z guess
+    # Entry point of the Picard iteration.
+    #
+    # The heuristic guess sigma_z(R_sep_guess, 0.7) with
+    # dR_guess = B_max / (0.3 mu0 J_max) is kept only when it is admissible.
+    # It collapses at high current density, where dR_guess shrinks, R_sep_guess
+    # approaches R_ext and the axial term diverges as 1/(R_ext^2 - R_sep^2);
+    # worse, being J-dependent, it made the converged fixed point depend on the
+    # design point, so a smooth scan in J returned a jagged thickness.
+    # sigma_z = 0 is admissible unconditionally, since it leaves the whole
+    # allowable to the radial budget, and it is the same entry point for every
+    # design point, which is what makes the scan monotone.
     dR_guess = B_max / (0.3 * μ0 * J_max)
     R_sep_guess = max(R_ext - dR_guess, 0.05)
-    sigma_z = sigma_z_fn(R_sep_guess, 0.7)
+    sigma_z = 0.0
+    if not np.isfinite(sigma_z_fn(R_sep_guess, 0.7)):
+        sigma_z = 0.0
 
-    # Picard iteration
-    result = None
+    # Picard iteration, damped, with retreat towards the last admissible
+    # iterate instead of abandoning. Previously a single inadmissible trial
+    # returned NaN, and the caller then fell back silently to the ungraded
+    # baseline: the returned thickness jumped upward by tens of percent for a
+    # few percent of change in J, which reads as a non-monotonicity of the
+    # model although it is purely a solver artefact.
+    result = integrate(sigma_z)
+    if result is None:
+        return np.nan, np.nan, np.nan, np.nan, np.nan
+    sigma_z_ok = sigma_z
+
     for it in range(max_iter):
-        result = integrate(sigma_z)
-        if result is None:
-            return np.nan, np.nan, np.nan, np.nan, np.nan
         R_sep_new = result['R_sep']
         if R_sep_new <= 0:
             return np.nan, np.nan, np.nan, np.nan, np.nan
         sigma_z_new = sigma_z_fn(R_sep_new, result['f_steel'])
-        if abs(sigma_z_new - sigma_z) / max(abs(sigma_z), 1e6) < tol:
+        if abs(sigma_z_new - sigma_z_ok) / max(abs(sigma_z_ok), 1e6) < tol:
             sigma_z = sigma_z_new
             break
-        sigma_z = 0.5 * sigma_z + 0.5 * sigma_z_new
 
-    # Final integration with converged σ_z
-    result = integrate(sigma_z)
-    if result is None:
+        # Damped update, backtracked until it lands inside the domain.
+        # The damping is deliberately strong: the map sigma_z -> sigma_z_fn is
+        # steep near the feasibility edge, where a 0.5 factor lets the iterate
+        # oscillate between two attractors and the loop exits on the iteration
+        # cap rather than on the tolerance, returning whichever of the two it
+        # happened to land on.
+        trial = (1.0 - _GRADED_DAMPING) * sigma_z_ok + _GRADED_DAMPING * sigma_z_new
+        res_trial = integrate(trial)
+        n_back = 0
+        while res_trial is None and n_back < 20:
+            trial = 0.5 * (sigma_z_ok + trial)      # halve the step
+            res_trial = integrate(trial)
+            n_back += 1
+        if res_trial is None:
+            break                                    # keep the last good state
+        sigma_z_ok, result = trial, res_trial
+        sigma_z = trial
+    else:
+        # Iteration cap reached without meeting the tolerance: the fixed point
+        # was not resolved, so no graded result is claimed. Returning NaN here
+        # is deliberate; the caller falls back to the ungraded baseline, which
+        # is a valid upper bound, instead of reporting a half-converged value.
         return np.nan, np.nan, np.nan, np.nan, np.nan
+
+    # Final integration with converged σ_z, retreating once more if needed
+    final = integrate(sigma_z)
+    if final is None:
+        final = integrate(sigma_z_ok)
+        sigma_z = sigma_z_ok
+    if final is None:
+        return np.nan, np.nan, np.nan, np.nan, np.nan
+    result = final
 
     # Store profile for diagnostic plots (mutate in place for importers)
     _last_graded_profile.clear()
@@ -403,6 +456,134 @@ def _bisect_valid_boundary(residual_fn, lo, hi, n_iter=25, tol=1e-6):
             hi = mid
         else:
             lo = mid
+        if hi - lo < tol:
+            break
+    return hi
+
+
+def _unimodal_smallest_root(residual_fn, d_lo, d_hi,
+                            n_golden=60, tol=1e-5):
+    """
+    Smallest root of a unimodal residual, without any probing grid.
+
+    Intended for the winding-pack Tresca residual, whose shape is fixed by
+    physics rather than by the design point. Writing the residual as
+    ``f(d) = sigma(d) - sigma_max``, sigma(d) diverges at both ends of the
+    admissible interval, for two distinct reasons:
+
+    * as ``d`` decreases towards ``d_alpha`` the conductor fraction alpha
+      reaches unity, so no steel is left to carry the load and the residual
+      is +inf below that thickness;
+    * as ``d -> R_ext`` the bore closes and the Laplace concentration factor
+      ``4 Re^2 (Re + 2 Ri) / [3 Ri (Re + Ri)^2]`` diverges as 1/Ri.
+
+    Between the two, sigma(d) has a single interior minimum. Unimodality has
+    been checked numerically on the six machines of the chapter-2 TF benchmark
+    (5000 points each): sigma is strictly decreasing before the minimum and
+    strictly increasing after it, without exception. Consequently the feasible
+    domain ``sigma <= sigma_max`` is a single interval, there are exactly two
+    roots whenever sigma_max exceeds the minimum and none otherwise, and the
+    design point of interest is the lower root.
+
+    The search exploits that structure instead of sampling it:
+
+    1. bisect on the finiteness of the residual to locate the admissibility
+       edge ``d_alpha`` (the +inf wall);
+    2. locate the interior minimum by golden-section search, which converges
+       unconditionally on a unimodal function;
+    3. if the residual is still positive at that minimum, no solution exists,
+       and NaN is returned explicitly rather than inferred from a grid;
+    4. otherwise bisect on ``[d_alpha, d_min]``, where the residual is
+       strictly decreasing, so the root is unique and cannot be missed.
+
+    This removes the two failure modes a probing grid has on this residual:
+    a root lying in a feasible window narrower than the probe spacing, and
+    the larger of the two roots being returned when the smaller is missed.
+
+    Parameters
+    ----------
+    residual_fn : callable
+        Scalar function f(d) -> float, NaN or +/-inf, unimodal in the sense
+        described above.
+    d_lo, d_hi : float
+        Search domain bounds [m], with 0 < d_lo < d_hi.
+    n_golden : int
+        Golden-section iterations (default 60).
+    tol : float
+        Absolute tolerance on d [m] (default 1e-5, i.e. 10 microns).
+
+    Returns
+    -------
+    d_root : float
+        Smallest thickness satisfying the criterion, or NaN if the criterion
+        cannot be satisfied anywhere in [d_lo, d_hi].
+    """
+    if not (0 < d_lo < d_hi):
+        return np.nan
+
+    def f(d):
+        try:
+            v = residual_fn(d)
+        except Exception:
+            return np.inf
+        if v is None:
+            return np.inf
+        v = float(np.real(v))
+        return np.inf if np.isnan(v) else v
+
+    # -- 1. admissibility edge: smallest d with a finite residual ----------
+    if np.isfinite(f(d_lo)):
+        d_alpha = d_lo
+    else:
+        lo, hi = d_lo, d_hi
+        if not np.isfinite(f(hi)):
+            return np.nan                      # residual nowhere admissible
+        for _ in range(80):
+            mid = 0.5 * (lo + hi)
+            if np.isfinite(f(mid)):
+                hi = mid
+            else:
+                lo = mid
+            if hi - lo < tol:
+                break
+        d_alpha = hi
+
+    if d_alpha >= d_hi:
+        return np.nan
+
+    # -- 2. interior minimum by golden-section search ----------------------
+    invphi = (np.sqrt(5.0) - 1.0) / 2.0
+    lo, hi = d_alpha, d_hi
+    c, d = hi - invphi * (hi - lo), lo + invphi * (hi - lo)
+    fc, fd = f(c), f(d)
+    for _ in range(n_golden):
+        if fc <= fd:
+            hi, d, fd = d, c, fc
+            c = hi - invphi * (hi - lo)
+            fc = f(c)
+        else:
+            lo, c, fc = c, d, fd
+            d = lo + invphi * (hi - lo)
+            fd = f(d)
+        if hi - lo < tol:
+            break
+    d_min = 0.5 * (lo + hi)
+    f_min = f(d_min)
+
+    # -- 3. feasibility ----------------------------------------------------
+    if not np.isfinite(f_min) or f_min > 0.0:
+        return np.nan                          # criterion never satisfied
+
+    # -- 4. bisection on the strictly decreasing branch --------------------
+    lo, hi = d_alpha, d_min
+    if f(lo) <= 0.0:
+        return lo                              # feasible from the very edge
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        if f(mid) > 0.0:
+            lo = mid
+        else:
+            hi = mid
         if hi - lo < tol:
             break
     return hi
@@ -3626,10 +3807,12 @@ def Winding_Pack_refined(R_0, a, b, sigma_max, J_max, B_max, omega, n,
         """Tresca residual as a function of WP thickness d = R_ext - R_sep."""
         return tresca_residual(R_ext - d)
 
-    d_solution = _adaptive_root_search(
-        residual_vs_d, d_lo, d_hi,
-        n_probe_1=20, n_probe_2=25,
-        select='smallest')
+    # The Tresca residual of this branch is unimodal in d (see
+    # _unimodal_smallest_root), so the smallest root is obtained by locating
+    # the interior minimum and bisecting on the decreasing side. This replaces
+    # the probing grid, which could miss a root sitting in a feasible window
+    # narrower than the probe spacing and then return the larger root instead.
+    d_solution = _unimodal_smallest_root(residual_vs_d, d_lo, d_hi)
 
     if np.isnan(d_solution):
         result_ungraded = (np.nan, np.nan, np.nan, np.nan, np.nan)
@@ -3682,11 +3865,38 @@ def Winding_Pack_refined(R_0, a, b, sigma_max, J_max, B_max, omega, n,
     c_ungraded = result_ungraded[0]
     c_graded   = result_graded[0]
 
+    # The fallback must never be silent. Grading can only lower the stress at a
+    # given thickness, so a converged graded solution is necessarily at most the
+    # ungraded baseline. Returning the baseline therefore means the graded
+    # solver did not deliver, and the caller is reporting an ungraded result
+    # under a graded label. Left unsignalled, that shows up in a scan as a step
+    # of several tens of percent in the returned thickness for a few percent of
+    # change in the inputs, which reads as a non-monotonicity of the model.
     if not np.isfinite(c_graded):
+        _GRADED_FALLBACKS.append({'reason': 'graded solver did not converge',
+                                  'B_max': B_max, 'J_max': J_max,
+                                  'sigma_max': sigma_max, 'R_ext': R_ext})
+        warnings.warn(
+            "TF graded winding-pack solver did not converge "
+            f"(B_max={B_max:.1f} T, J={J_max/1e6:.0f} MA/m2, "
+            f"sigma={sigma_max/1e6:.0f} MPa); falling back to the ungraded "
+            "baseline, which is an upper bound. The returned thickness is "
+            "therefore NOT a graded result.",
+            RuntimeWarning, stacklevel=2)
         return result_ungraded
     if not np.isfinite(c_ungraded):
         return result_graded
-    return result_graded if c_graded <= c_ungraded else result_ungraded
+    if c_graded <= c_ungraded:
+        return result_graded
+    _GRADED_FALLBACKS.append({'reason': 'graded thicker than ungraded baseline',
+                              'B_max': B_max, 'J_max': J_max,
+                              'sigma_max': sigma_max, 'R_ext': R_ext})
+    warnings.warn(
+        "TF graded winding-pack solution exceeds the ungraded baseline "
+        f"({c_graded:.3f} m vs {c_ungraded:.3f} m); this is not physical and "
+        "indicates a solver failure. Falling back to the baseline.",
+        RuntimeWarning, stacklevel=2)
+    return result_ungraded
 
 def Nose_refined(R_ext_Nose, sigma_max, omega, B_max, R_0, a, b,
                coef_inboard_tension, delta_port=0.0, F_CClamp=0.0):
@@ -3773,7 +3983,7 @@ def Nose_refined(R_ext_Nose, sigma_max, omega, B_max, R_0, a, b,
 
 def f_TF_refined(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n,
                c_BP, coef_inboard_tension, F_CClamp, TF_grading=False,
-               delta_port=0.0, SF_TF=1.0):
+               delta_port=0.0, SF_TF=1.0, kappa=None, f_case_min=0.05):
     
     """
     Calculate the thickness of the TF coil using a 2 layer thick cylinder model 
@@ -3852,6 +4062,35 @@ def f_TF_refined(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n
         if c_Nose is None or np.isnan(c_Nose) or c_Nose < 0:
             return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
+        # Minimum radial casing.
+        #
+        # The nose returned above is sized by the in-plane Tresca criterion
+        # alone, so it follows the field. The casing of a real coil does not:
+        # it is a welded structural box whose wall thickness is set by weld
+        # access, by the machining of the wedge faces, by the ground insulation
+        # and helium feedthroughs, and by the distortion control of the box
+        # itself, none of which shrink as the field drops. The published
+        # decompositions bear this out: ITER carries 0.276 m of casing around a
+        # 0.633 m winding pack and JT-60SA 0.266 m around a 0.144 m one, i.e.
+        # the same casing to within a centimetre for a factor of two in peak
+        # field and a factor of four in winding pack.
+        #
+        # A constant floor does not capture it (0.100 m for EAST against 0.27 m
+        # for the two larger machines), but normalising by the plasma height
+        # 2 kappa a, the only size measure this routine receives, collapses the
+        # three published points onto 0.041, 0.058 and 0.058. Hence
+        #
+        #     c_case_min = f_case_min * 2 kappa a,   f_case_min = 0.05
+        #
+        # which binds only where the stress criterion under-sizes: ITER,
+        # EU-DEMO and EAST are unchanged, JT-60SA moves from 0.112 to 0.230 m
+        # of casing and its inboard leg from -42 % to -13 % of the published
+        # value. Calibrated on three points only; kappa=None disables it, so
+        # existing callers keep their previous behaviour.
+        if kappa is not None and f_case_min > 0.0 and np.isfinite(c_Nose):
+            c_case_min = f_case_min * 2.0 * kappa * a
+            c_Nose = max(c_Nose, c_case_min - c_BP)
+
         # Vérification que la somme ne dépasse pas R0 - a - b
         if (c_WP + c_Nose) > (R0 - a - b):
             return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan

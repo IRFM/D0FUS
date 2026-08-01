@@ -18,9 +18,7 @@ import os
 project_root = os.path.dirname(__file__)
 sys.path.insert(0, project_root)
 
-# Silence tqdm's cosmetic notebook-widget probe ("IProgress not found") as
-# early as possible, before any import that might pull tqdm.auto (Spyder /
-# plain interpreters trigger it even though the text progress bar works).
+# Silence tqdm's cosmetic notebook-widget probe ("IProgress not found")
 import warnings as _warnings
 _warnings.filterwarnings("ignore", message=".*IProgress not found.*")
 
