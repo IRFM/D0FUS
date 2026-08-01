@@ -4139,6 +4139,9 @@ def plot_CIRCE_stress_validation(
 # 8. TF coil benchmark table
 # =============================================================================
 
+mu_0 = 4e-7 * np.pi
+
+
 def plot_TF_benchmark_table(cfg=None, save_dir=None) -> None:
     """
     Display a TF coil benchmark table comparing D0FUS thickness predictions
@@ -4261,31 +4264,65 @@ def plot_TF_benchmark_table(cfg=None, save_dir=None) -> None:
     #   Sorbom et al. (2015), FED 100, 378 — Table 1, Table 3.
     # -----------------------------------------------------------------
 
+    # -----------------------------------------------------------------
+    # Inputs re-derived from the references, August 2026 audit.
+    #
+    # J_wost is obtained at winding-pack level, the only level at which the
+    # published data close: J_wost = I_total / [A_WP (1 - f_steel)], with A_WP
+    # and I_total published and f_steel from the published jacket geometry.
+    #   ITER    35.2  Sborchia Fig. 2, WP 633 x 835 mm, 134 turns x 68 kA
+    #   JT60-SA 50.8  Yoshida Tab. 4, WP 144 x 341 mm, 72 turns x 25.7 kA;
+    #                 Tab. 6, cable 18 x 22 mm inside a 22 x 26 mm conductor.
+    #                 The previous 20 MA/m2 matched no published quantity.
+    #   EAST    35.5  Chen Tab. 2, A_He / V_f = 286 mm2 in a 20.4 mm CICC
+    #   ARC,
+    #   SPARC   216   PIT VIPER (Sanabria 2024). The tabulated 113 A/mm2 is a
+    #                 total-section density, as its own Table 1 proves by
+    #                 internal consistency (module 1 WP 0.250 x 0.984 m ->
+    #                 27.8 MA-turns -> 556 turns at 50 kA -> 442 mm2 per turn
+    #                 -> 21.0 mm pitch). J_wost excludes the jacket only, hence
+    #                 113 / 0.523 = 216, the non-steel fraction coming from the
+    #                 published model-coil conductor (18 mm former, 23 mm square
+    #                 jacket, 0.5 mm insulation). Corroborated to within 9 % by
+    #                 50 kA over the former alone, 196 A/mm2.
+    #
+    # Structural allowables follow the 2/3 x Sy(4 K) convention throughout,
+    # verified against the source for JT60-SA: Table I of Tsuchiya gives the
+    # allowable Pm = 547 MPa for Sy(SS316LN, N 0.15 wt%) = 820 MPa.
+    #   EAST 660 -> 547 MPa, grade corrected to 316LN (Chen p. 45, Wei p. 557).
+    #   ARC, SPARC 1000 MPa = 2/3 x 1500, Wang et al. 2024 measuring
+    #   YS > 1500 MPa at 4.2 K on the compacted N50H jacket.
+    #
+    # Inboard builds: ARC 0.89 -> 0.86 m so that the CS outer radius lands on
+    # Sorbom's 0.70 m; SPARC 0.18 -> 0.26 m so that it lands on the 0.695 m
+    # published by Sanabria (module 1: 0.445 / 0.695 m).
+    # -----------------------------------------------------------------
     machines_TF = {
         "ITER":    {"a": 2.00, "b": 1.104,"R0": 6.20, "σ": 660e6,  "T_op": 4.2,
                     "B_max": 11.8, "n_TF": 1,   "sc": "Nb3Sn", "config": "Wedging",
                     "κ": 1.7,  "I_cond": 68e3, "V_max": 10e3, "N_sub": 9,
-                    "tau_h": 2.0,  "J_wost": 35e6},
+                    "tau_h": 2.0,  "J_wost": 35.2e6, "grading": False},
         "EU-DEMO": {"a": 2.883,"b": 1.821,"R0": 8.938,"σ": 600e6,  "T_op": 4.75,
                     "B_max": 10.61,"n_TF": 0.5, "sc": "Nb3Sn", "config": "Wedging",
                     "κ": 1.65, "I_cond": 90e3, "V_max": 8.6e3,"N_sub": 8,
-                    "tau_h": 2.0,  "J_wost": 30e6},
+                    "tau_h": 2.0,  "J_wost": 30e6, "grading": False},
         "JT60-SA": {"a": 1.18, "b": 0.36, "R0": 2.96, "σ": 547e6,  "T_op": 4.5,
                     "B_max":  5.65, "n_TF": 1,   "sc": "NbTi",  "config": "Wedging",
                     "κ": 1.95, "I_cond": 25.7e3,"V_max": 2.8e3,"N_sub": 3,
-                    "tau_h": 1.0,  "J_wost": 20e6},
-        "EAST":    {"a": 0.45, "b": 0.15, "R0": 1.85, "σ": 660e6,  "T_op": 4.5,
+                    "tau_h": 1.0,  "J_wost": 50.8e6, "grading": False},
+        "EAST":    {"a": 0.45, "b": 0.15, "R0": 1.85, "σ": 547e6,  "T_op": 4.5,
                     "B_max":  5.8,  "n_TF": 1,   "sc": "NbTi",  "config": "Wedging",
                     "κ": 1.9,  "I_cond": 14.3e3,"V_max": 5e3,  "N_sub": 4,
-                    "tau_h": 1.0,  "J_wost": 30e6},
-        "ARC":     {"a": 1.10, "b": 0.89, "R0": 3.30, "σ": 1000e6, "T_op": 20.0,
+                    "tau_h": 1.0,  "J_wost": 35.5e6, "grading": False},
+        "ARC":     {"a": 1.10, "b": 0.86, "R0": 3.30, "σ": 1000e6, "T_op": 20.0,
                     "B_max": 23.0,  "n_TF": 1,   "sc": "REBCO", "config": "Plug",
                     "κ": 1.84, "I_cond": 50e3, "V_max": 10e3, "N_sub": 6,
-                    "tau_h": 20,   "J_wost": 200e6},
-        "SPARC":   {"a": 0.57, "b": 0.18, "R0": 1.85, "σ": 1000e6, "T_op": 20.0,
+                    "tau_h": 20,   "J_wost": 216e6, "grading": False,
+                    "n_shape": 0.0, "f_clamp": 0.20},
+        "SPARC":   {"a": 0.57, "b": 0.26, "R0": 1.85, "σ": 1000e6, "T_op": 20.0,
                     "B_max": 20.0,  "n_TF": 1,   "sc": "REBCO", "config": "Bucking",
-                    "κ": 1.75, "I_cond": 40.5e3,"V_max": 10e3, "N_sub": 6,
-                    "tau_h": 20,   "J_wost": 200e6},
+                    "κ": 1.97, "I_cond": 40.5e3,"V_max": 10e3, "N_sub": 6,
+                    "tau_h": 20,   "J_wost": 216e6, "grading": False},
     }
 
     def _clean(val):
@@ -4312,10 +4349,31 @@ def plot_TF_benchmark_table(cfg=None, save_dir=None) -> None:
             return f_TF_academic(a, b, R0, sigma, J_wost, B_max,
                                  conf, cfg.coef_inboard_tension, cfg.F_CClamp)
         else:
+            # Grading is left off for every machine of this table.
+            #
+            # Only Sorbom states that his coils are graded, and the graded
+            # solver does not converge in the plug branch anyway, so the ARC
+            # entry was an ungraded result carrying a graded label: switching
+            # the flag off changes nothing numerically and removes a spurious
+            # warning. Nothing in the SPARC references supports grading, and
+            # assuming it there degraded the agreement from +6/+19 % to
+            # -27/-21 % of the measured leg. Since grading can only thin the
+            # pack, both entries are upper bounds.
+            #
+            # Both plug and bucking branches react the whole vertical
+            # separating force on the winding pack; ARC does not, its top joint
+            # carrying a steel tension ring, so a pre-compression of 20 % of
+            # that force is passed through F_CClamp. Without it the plug branch
+            # admits no solution at any current density.
+            F_z_tot = (np.pi * B_max**2 * (R0 - a - b)**2
+                       * np.log((R0 + a + b) / (R0 - a - b)) / mu_0)
             # f_TF_refined returns the same tuple layout
             return f_TF_refined(a, b, R0, sigma, J_wost, B_max,
-                              conf, omega, n_frac,
-                              cfg.c_BP, cfg.coef_inboard_tension, cfg.F_CClamp)
+                              conf, omega, p.get("n_shape", n_frac),
+                              cfg.c_BP, cfg.coef_inboard_tension,
+                              p.get("f_clamp", 0.0) * F_z_tot,
+                              TF_grading=p.get("grading", False),
+                              kappa=p["κ"])
 
     # Model definitions: (label, header colour)
     # Note: there is no separate f_TF_CIRCE yet; Academic / D0FUS are the two
@@ -4583,10 +4641,22 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
     cfg.f_swing_usable = 1.0
 
     machines = {
-        "ITER":    {"Ψplateau": 233,  "a_cs": 2.00, "b_cs": 1.104,"c_cs": 0.90,
+        # August 2026 audit. Delta_TF aligned on the TF thicknesses verified in
+        # plot_TF_benchmark_table, with Gap absorbing the change so that the CS
+        # outer radius stays on its published value (ITER 2.096 m per Libeyre,
+        # EAST 0.71 m per Wu): both CS lines are therefore unchanged.
+        # ARC: flux 19.2 -> 27.2 Wb, the value Eq. Psi_CS_acad returns for
+        # Sorbom's own build (0.45 to 0.70 m) at his published 12.9 T, since the
+        # 32 Wb he announces is not consistent with those same two numbers under
+        # uniform current density; steel 316LN at 700 MPa = 2/3 x 1050, which
+        # also matches the 660 MPa service stress he quotes; optimal conductor
+        # cross-section, without which no solution exists at that flux.
+        # SPARC: build set so that the CS outer radius lands on the 0.695 m
+        # published by Sanabria (module 1: 0.445 / 0.695 m, i.e. 0.250 m thick).
+        "ITER":    {"Ψplateau": 233,  "a_cs": 2.00, "b_cs": 1.104,"c_cs": 0.909,
                     "R0_cs": 6.20, "B_TF": 11.8, "B_cs": 13,   "σ_CS": 667e6,
                     "config": "Wedging", "SupraChoice": "Nb3Sn", "T_CS": 4.2,
-                    "kappa": 1.7, "J_wost": 45e6, "H_CS": 12.96},
+                    "kappa": 1.7, "J_wost": 45e6, "H_CS": 12.96, "Gap": 0.091},
         "EU-DEMO": {"Ψplateau": 500,  "a_cs": 2.883,"b_cs": 1.820,"c_cs": 0.962,
                     "R0_cs": 8.938,"B_TF": 10.61,"B_cs": 11.35,"σ_CS": 600e6,
                     "config": "Wedging", "SupraChoice": "Nb3Sn", "T_CS": 4.75,
@@ -4595,16 +4665,16 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
                     "R0_cs": 2.96, "B_TF":  5.65, "B_cs":  8.9, "σ_CS": 547e6,
                     "config": "Wedging", "SupraChoice": "Nb3Sn", "T_CS": 4.5,
                     "kappa": 1.95, "J_wost": 45e6, "Gap": 0.015, "H_CS": 6.34},
-        "EAST":    {"Ψplateau":  10,  "a_cs": 0.45, "b_cs": 0.15, "c_cs": 0.25,
+        "EAST":    {"Ψplateau":  10,  "a_cs": 0.45, "b_cs": 0.15, "c_cs": 0.347,
                     "R0_cs": 1.85, "B_TF":  5.8,  "B_cs":  4.5, "σ_CS": 547e6,
                     "config": "Wedging", "SupraChoice": "NbTi",  "T_CS": 4.5,
-                    "kappa": 1.9,  "J_wost": 45e6, "Gap": 0.29, "H_CS": 2.75},
-        "ARC":     {"Ψplateau": 19.2, "a_cs": 1.10, "b_cs": 0.89, "c_cs": 0.64,
-                    "R0_cs": 3.30, "B_TF": 23,   "B_cs": 13,   "σ_CS": 1000e6,
+                    "kappa": 1.9,  "J_wost": 45e6, "Gap": 0.193, "H_CS": 2.75},
+        "ARC":     {"Ψplateau": 27.2, "a_cs": 1.10, "b_cs": 0.86, "c_cs": 0.64,
+                    "R0_cs": 3.30, "B_TF": 23,   "B_cs": 12.9, "σ_CS": 700e6,
                     "config": "Plug",    "SupraChoice": "REBCO",  "T_CS": 20,
-                    "kappa": 1.84,  "J_wost": 120e6},
-        "SPARC":   {"Ψplateau": 25.2, "a_cs": 0.57, "b_cs": 0.18, "c_cs": 0.35,
-                    "R0_cs": 1.85, "B_TF": 20,   "B_cs": None, "σ_CS": 1000e6,
+                    "kappa": 1.84,  "J_wost": 120e6, "n_shape_CS": 0.0},
+        "SPARC":   {"Ψplateau": 25.2, "a_cs": 0.57, "b_cs": 0.26, "c_cs": 0.325,
+                    "R0_cs": 1.85, "B_TF": 20,   "B_cs": 25,   "σ_CS": 1000e6,
                     "config": "Bucking", "SupraChoice": "REBCO",  "T_CS": 20,
                     "kappa": 1.97, "J_wost": 120e6},
     }
@@ -4640,9 +4710,10 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
             # "Supra_Choice" key absent in dict → always "Manual" (consistent with original)
             Supra = p.get("Supra_Choice", "Manual")
 
-            # Override Gap and H_CS if specified per machine
+            # Override Gap, H_CS and the conductor shape factor per machine
             cfg.Gap = p.get("Gap", 0.10)
             cfg.H_CS = p.get("H_CS", None)
+            cfg.n_shape_CS = p.get("n_shape_CS", 1.0)
 
             res = model_func(0, 0, psi, 0, a, b, c, R0, B_TF, 25, sigma,
                              Supra, J_cs, T_He, conf, kap, 6, 5, cfg)
