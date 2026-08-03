@@ -800,35 +800,52 @@ def plot_DT_reactivity(
     Bosch & Hale, Nucl. Fusion 32, 611 (1992) — DT reactivity fit (Table IV).
     Freidberg, Plasma Physics and Fusion Energy (2007) — pressure-limited optimum.
     """
-    # Temperature grid (linear, since the operating window lies in the rapid-rise zone)
-    T_arr  = np.linspace(T_min_keV, T_max_keV, n_points)
+    # Grille de temperature logarithmique, pour que le panneau gauche puisse
+    # etre trace en log-log sans sous-resoudre la premiere decade (YS023).
+    T_arr  = np.geomspace(T_min_keV, T_max_keV, n_points)
     sv_arr = f_sigmav(T_arr)
 
-    # Reactivity maximum
-    i_peak           = int(np.argmax(sv_arr))
-    T_peak, sv_peak  = T_arr[i_peak], sv_arr[i_peak]
+    # Reactivity maximum.
+    # Grid-independent: coarse argmax, then a dense local rescan between the
+    # two neighbouring nodes. A plain argmax on the plotted grid returns
+    # 65.9 to 66.8 keV depending on n_points, which would make the value
+    # printed in the legend non-reproducible (review point YS023).
+    def _refine_max(x, y, f):
+        k = int(np.argmax(y))
+        lo, hi = x[max(k - 1, 0)], x[min(k + 1, len(x) - 1)]
+        xs = np.linspace(lo, hi, 20001)
+        ys = f(xs)
+        j = int(np.argmax(ys))
+        return xs[j], ys[j]
+
+    T_peak, sv_peak = _refine_max(T_arr, sv_arr, f_sigmav)
 
     # Pressure-limited metric ⟨σv⟩/T² (units arbitrary, normalised below)
     metric           = sv_arr / T_arr**2
-    i_opt            = int(np.argmax(metric))
-    T_opt, m_opt     = T_arr[i_opt], metric[i_opt]
+    T_opt, m_opt = _refine_max(T_arr, metric, lambda t: f_sigmav(t) / t**2)
 
     # --- Figure ------------------------------------------------------------
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
 
-    # Left panel: reactivity curve on log scale
+    # Left panel: reactivity curve in log-log coordinates.
+    # YS023: sur un axe de temperature lineaire la courbe se lit comme un
+    # plateau au-dela de ~30 keV et le maximum est introuvable. Le log-log
+    # comprime la montee rapide et rend le retournement explicite.
     ax = axes[0]
-    ax.semilogy(T_arr, sv_arr, color="tab:red", lw=2.0,
+    ax.loglog(T_arr, sv_arr, color="tab:red", lw=2.0,
                 label="Bosch & Hale (1992)")
     ax.axvspan(T_op_min, T_op_max, color="goldenrod", alpha=0.20,
                label=f"Operating window\n{T_op_min:.0f}–{T_op_max:.0f} keV")
     ax.axvline(T_peak, color="k", lw=1.0, ls="--",
-               label=f"peak: T = {T_peak:.0f} keV")
+               label=f"peak: T = {T_peak:.1f} keV")
+    ax.plot([T_peak], [sv_peak], marker="o", ms=5, color="k", zorder=5)
     ax.set_xlabel(r"Ion temperature $T$  [keV]", fontsize=11)
     ax.set_ylabel(r"$\langle\sigma v\rangle_{DT}$  [m$^3$ s$^{-1}$]", fontsize=11)
     ax.set_title("D-T Maxwellian reactivity", fontsize=11)
     ax.set_xlim(T_min_keV, T_max_keV)
-    ax.set_ylim(1e-25, 3e-21)
+    # Bornes tirees des donnees plutot que codees en dur, pour que la courbe
+    # reste entiere dans le cadre quelle que soit la plage de balayage.
+    ax.set_ylim(0.5 * sv_arr.min(), 3.0 * sv_peak)
     ax.grid(True, which="both", alpha=0.25)
     ax.legend(fontsize=9, loc="lower right")
 
@@ -3133,7 +3150,10 @@ def plot_blanket_concepts_comparison(save_dir: str | None = None) -> None:
         delta_e   = concept["delta_BB_sat"] / np.log(20.0)
         TBR_curve = concept["TBR_max"] * (1.0 - np.exp(-delta_BZ / delta_e))
         ax1.plot(delta_BZ, TBR_curve, color=col, lw=2, label=c)
-        ax1.axvline(concept["delta_BB_sat"], color=col, lw=0.8, ls=":", alpha=0.6)
+        # YS053: a lw=0.8 / alpha=0.6 ces marqueurs de saturation se confondaient
+        # avec le quadrillage. Trait plus epais, opacite pleine et tirets longs.
+        ax1.axvline(concept["delta_BB_sat"], color=col, lw=1.6,
+                    ls=(0, (6, 3)), alpha=0.95, zorder=3)
 
     ax1.axhline(1.0, color="grey", lw=1.0, ls="--", alpha=0.7)
     ax1.set_xlabel(r"Breeder/multiplier-zone thickness  $\delta_{BZ}$  [m]", fontsize=11)
@@ -3142,7 +3162,8 @@ def plot_blanket_concepts_comparison(save_dir: str | None = None) -> None:
     ax1.set_xlim(0, 1.2)
     ax1.set_ylim(0, 1.6)
     ax1.legend(fontsize=9, loc="lower right")
-    ax1.grid(alpha=0.3)
+    # YS053: grille attenuee pour que les marqueurs de saturation passent devant.
+    ax1.grid(alpha=0.18, lw=0.6, zorder=0)
 
     # ── Right: TBR_max and M_blanket comparison bars ────────────────────
     x     = np.arange(len(concepts))
@@ -4306,7 +4327,14 @@ def plot_TF_benchmark_table(cfg=None, save_dir=None) -> None:
                     "B_max": 10.61,"n_TF": 0.5, "sc": "Nb3Sn", "config": "Wedging",
                     "κ": 1.65, "I_cond": 90e3, "V_max": 8.6e3,"N_sub": 8,
                     "tau_h": 2.0,  "J_wost": 30e6, "grading": False},
-        "JT60-SA": {"a": 1.18, "b": 0.36, "R0": 2.96, "σ": 547e6,  "T_op": 4.5,
+        # JT60-SA radial build, fully re-sourced. Nannini et al., IEEE Trans.
+        # Appl. Supercond. 20(3) 521 (2010), Fig. 1, dimensions the as-built
+        # inboard leg between R = 1.065 m and R = 1.320 m. Hence
+        # b = R0 - a - 1.320 = 0.46 m and a published leg thickness of 0.255 m
+        # (0.246 m from the dimension chain 64 + 5 + 144 + 3 + 10 + 20 of the
+        # same figure). The 0.36 m and 0.41 m used previously had no source and
+        # belonged to the pre-rebaselining 90-turn, 6.4 T design of Tsuchiya.
+        "JT60-SA": {"a": 1.18, "b": 0.46, "R0": 2.96, "σ": 547e6,  "T_op": 4.5,
                     "B_max":  5.65, "n_TF": 1,   "sc": "NbTi",  "config": "Wedging",
                     "κ": 1.95, "I_cond": 25.7e3,"V_max": 2.8e3,"N_sub": 3,
                     "tau_h": 1.0,  "J_wost": 50.8e6, "grading": False},
@@ -4372,8 +4400,12 @@ def plot_TF_benchmark_table(cfg=None, save_dir=None) -> None:
                               conf, omega, p.get("n_shape", n_frac),
                               cfg.c_BP, cfg.coef_inboard_tension,
                               p.get("f_clamp", 0.0) * F_z_tot,
-                              TF_grading=p.get("grading", False),
-                              kappa=p["κ"])
+                              TF_grading=p.get("grading", False))
+            # kappa is deliberately not passed, which keeps the optional casing
+            # floor of f_TF_refined inert. That floor had been introduced to
+            # close a 42 % deficit on JT-60SA which turned out to be an
+            # artefact of an unsourced published thickness; see the JT-60SA
+            # entry of machines_TF above.
 
     # Model definitions: (label, header colour)
     # Note: there is no separate f_TF_CIRCE yet; Academic / D0FUS are the two
@@ -4661,10 +4693,21 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
                     "R0_cs": 8.938,"B_TF": 10.61,"B_cs": 11.35,"σ_CS": 600e6,
                     "config": "Wedging", "SupraChoice": "Nb3Sn", "T_CS": 4.75,
                     "kappa": 1.65, "J_wost": 60e6, "Gap": 0.106, "H_CS": 15.15},
-        "JT60-SA": {"Ψplateau":  40,  "a_cs": 1.18, "b_cs": 0.361,"c_cs": 0.410,
+        # JT60-SA, re-sourced with the TF radial build of Nannini et al. (2010).
+        # b_cs, c_cs and Gap are all changed, but only their sum enters the
+        # solver through the CS outer radius, which stays at
+        # 2.96 - 1.18 - 0.46 - 0.255 - 0.071 = 0.994 m. That radius is now
+        # independently confirmed by Yoshida et al. (2010), Table 3, which
+        # gives the CS mean radius Rc = 0.824 m and a winding dR = 0.340 m,
+        # hence an outer radius of 0.994 m. The 0.071 m clearance is what the
+        # geometry then leaves between the CS winding and the TF nose at
+        # R = 1.065 m: CS pre-load tie-plates and thermal shield. The previous
+        # triplet (0.361, 0.410, 0.015) landed on the same 0.994 m through two
+        # compensating errors, so the CS row is numerically unchanged.
+        "JT60-SA": {"Ψplateau":  40,  "a_cs": 1.18, "b_cs": 0.46, "c_cs": 0.255,
                     "R0_cs": 2.96, "B_TF":  5.65, "B_cs":  8.9, "σ_CS": 547e6,
                     "config": "Wedging", "SupraChoice": "Nb3Sn", "T_CS": 4.5,
-                    "kappa": 1.95, "J_wost": 45e6, "Gap": 0.015, "H_CS": 6.34},
+                    "kappa": 1.95, "J_wost": 45e6, "Gap": 0.071, "H_CS": 6.34},
         "EAST":    {"Ψplateau":  10,  "a_cs": 0.45, "b_cs": 0.15, "c_cs": 0.347,
                     "R0_cs": 1.85, "B_TF":  5.8,  "B_cs":  4.5, "σ_CS": 547e6,
                     "config": "Wedging", "SupraChoice": "NbTi",  "T_CS": 4.5,
@@ -4676,7 +4719,23 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
         "SPARC":   {"Ψplateau": 25.2, "a_cs": 0.57, "b_cs": 0.26, "c_cs": 0.325,
                     "R0_cs": 1.85, "B_TF": 20,   "B_cs": 25,   "σ_CS": 1000e6,
                     "config": "Bucking", "SupraChoice": "REBCO",  "T_CS": 20,
-                    "kappa": 1.97, "J_wost": 120e6},
+                    # J_wost convention. D0FUS consumes the current density over the
+                    # non-steel cross-section: it excludes the steel jacket but KEEPS
+                    # the turn insulation (calculate_cable_current_density l.2325-2327
+                    # and l.2350). PIT-VIPER geometry, Sanabria et al., SuST 37 (2024)
+                    # 115010, Table 5: 18 mm former in a 23 mm square jacket with 0.5 mm
+                    # turn insulation, hence a 24 mm winding pitch. Non-steel area =
+                    # former 254.5 + insulation 47.0 = 301.5 mm2 out of 576, i.e. 0.5234.
+                    # Table 1 publishes 113 A/mm2 at peak field for the SPARC CS, so
+                    #   J_wost = 113 / 0.5234 = 216e6 A/m2
+                    # which is the SAME value the TF benchmark uses for ARC and SPARC:
+                    # one PIT-VIPER current density throughout (harmonised 03/08/2026).
+                    # Two readings tested and rejected: 50 kA over the former alone gives
+                    # 196.5e6 but excludes the insulation, so it is a cable-space density
+                    # and not J_wost; 50 kA over former + insulation gives 165.9e6 but
+                    # that current belongs to the model coil, whose peak field is 5.7 T.
+                    # At the previous 120e6 the model had NO SOLUTION at 42 Wb.
+                    "kappa": 1.97, "J_wost": 216e6},
     }
 
     def _clean(val):

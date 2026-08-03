@@ -3983,7 +3983,7 @@ def Nose_refined(R_ext_Nose, sigma_max, omega, B_max, R_0, a, b,
 
 def f_TF_refined(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n,
                c_BP, coef_inboard_tension, F_CClamp, TF_grading=False,
-               delta_port=0.0, SF_TF=1.0, kappa=None, f_case_min=0.05):
+               delta_port=0.0, SF_TF=1.0, kappa=None, f_case_min=0.0):
     
     """
     Calculate the thickness of the TF coil using a 2 layer thick cylinder model 
@@ -4027,6 +4027,16 @@ def f_TF_refined(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n
         Winding_Pack_refined and Nose_refined is σ_TF / SF_TF. Default 1.0
         (no margin). Realistic engineering value ≈ 1.5 for large-magnet
         CICC designs.
+    kappa : float or None, optional
+        Plasma elongation, used only by the optional casing floor below.
+        Default None, which disables the floor whatever f_case_min is.
+    f_case_min : float, optional
+        Opt-in empirical floor on the casing, expressed as a fraction of the
+        plasma height, c_case_min = f_case_min * 2 kappa a. Default 0.0, i.e.
+        inactive. See the annotation at the floor itself: it is a one-parameter
+        fit on three published decompositions, offered as a convenience and not
+        as part of the mechanical model. Without it the returned thickness is a
+        lower bound on the built one, reached when the casing is stress-driven.
 
     Returns:
     c : TF total inboard radial thickness [m]
@@ -4062,31 +4072,38 @@ def f_TF_refined(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n
         if c_Nose is None or np.isnan(c_Nose) or c_Nose < 0:
             return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
-        # Minimum radial casing.
+        # Optional minimum radial casing, DISABLED BY DEFAULT.
         #
-        # The nose returned above is sized by the in-plane Tresca criterion
-        # alone, so it follows the field. The casing of a real coil does not:
-        # it is a welded structural box whose wall thickness is set by weld
-        # access, by the machining of the wedge faces, by the ground insulation
-        # and helium feedthroughs, and by the distortion control of the box
-        # itself, none of which shrink as the field drops. The published
-        # decompositions bear this out: ITER carries 0.276 m of casing around a
-        # 0.633 m winding pack and JT-60SA 0.266 m around a 0.144 m one, i.e.
-        # the same casing to within a centimetre for a factor of two in peak
-        # field and a factor of four in winding pack.
+        # Rationale and status. An earlier revision applied this floor
+        # unconditionally, on the grounds that the criterion under-predicted
+        # the JT-60SA inboard leg by 42 %. That premise was wrong. The 0.41 m
+        # taken as the published JT-60SA thickness had no traceable source and
+        # described the pre-rebaselining 90-turn design; Nannini et al., IEEE
+        # Trans. Appl. Supercond. 20(3) 521 (2010), Fig. 1, dimensions the
+        # as-built inboard leg between R = 1.065 m and R = 1.320 m, i.e.
+        # 0.255 m, with the dimension chain 64 + 5 + 144 + 3 + 10 + 20 giving
+        # 0.246 m and the text quoting a 0.235 m wedged radial length. Against
+        # 0.25 m the criterion alone returns 0.240 m, i.e. -4 %, so there is no
+        # deficit to correct and the floor is retired.
         #
-        # A constant floor does not capture it (0.100 m for EAST against 0.27 m
-        # for the two larger machines), but normalising by the plasma height
-        # 2 kappa a, the only size measure this routine receives, collapses the
-        # three published points onto 0.041, 0.058 and 0.058. Hence
+        # The physical observation behind it survives and is documented in the
+        # sources: the casing of a small machine is not stress-driven. Tsuchiya
+        # et al. (2008) report a case Tresca of 280 MPa against a 547 MPa
+        # allowable and state that the "coil case has margin of mechanical
+        # strength"; Nannini et al. (2010) write that "the stresses are
+        # relatively low in the casing". Its thickness is set instead by weld
+        # access and distortion control, by the machining of the wedge faces,
+        # by helium manifolds and ground insulation, and by the case acting as
+        # the primary structure of the whole magnet system. None of these
+        # shrink with the field, so the criterion returns a LOWER BOUND on the
+        # built thickness, reached when the casing is stress-driven.
         #
-        #     c_case_min = f_case_min * 2 kappa a,   f_case_min = 0.05
-        #
-        # which binds only where the stress criterion under-sizes: ITER,
-        # EU-DEMO and EAST are unchanged, JT-60SA moves from 0.112 to 0.230 m
-        # of casing and its inboard leg from -42 % to -13 % of the published
-        # value. Calibrated on three points only; kappa=None disables it, so
-        # existing callers keep their previous behaviour.
+        # The floor below is kept as an opt-in for users who need a single
+        # number rather than a lower bound. It is a fit on three published
+        # decompositions normalised by the plasma height 2 kappa a (ratios
+        # 0.041, 0.058, 0.058), i.e. one parameter on three points, and it is
+        # not part of the model. It is active only if BOTH kappa is not None
+        # and f_case_min > 0; both defaults now make it inert.
         if kappa is not None and f_case_min > 0.0 and np.isfinite(c_Nose):
             c_case_min = f_case_min * 2.0 * kappa * a
             c_Nose = max(c_Nose, c_case_min - c_BP)
