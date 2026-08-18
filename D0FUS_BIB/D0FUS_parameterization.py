@@ -342,9 +342,7 @@ class GlobalConfig:
                                 # Set explicitly (e.g. 0.30) to override.
     # Insulation split over two levels after the MADMACS cross-check: turn
     # wrap around each conductor, and winding-pack insulation and clearances
-    # (not accounted for before v2.3). Both are inert and additive.
-    # f_In_cable is calibrated on the ITER inboard leg, 0.90 m with backplate.
-    f_In_cable : float = 0.10   # Turn insulation area fraction in wost [-]
+    f_In_cable : float = 0.05   # Turn insulation area fraction in wost [-]
     f_In_WP    : float = 0.15   # WP insulation + clearance fraction in wost [-]
 
     # Temperature margins above T_helium defining T_operating [K]
