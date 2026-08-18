@@ -302,7 +302,7 @@ f_void         = 0.30          # Interstitial void fraction in strand bundle [-]
                                 # NOTE: class-level attributes, not dataclass fields.
                                 # Add ': float' annotation in GlobalConfig to enable
                                 # input-file override.
-f_In           = 0.15           # Insulation fraction [-]
+f_In_cable           = 0.10           # Turn insulation fraction [-], calibrated on ITER c ~ 0.90 m
 
 Eps            = -6e-3          # Effective axial strain on Nb3Sn [-]
                                 # [Corato16]; accounts for thermal + mechanical strain

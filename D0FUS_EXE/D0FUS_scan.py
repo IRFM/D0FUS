@@ -28,7 +28,7 @@ from D0FUS_BIB.D0FUS_physical_functions import *
 from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
 from D0FUS_BIB.D0FUS_cost_data import *
 from D0FUS_EXE.D0FUS_run import run, load_config_from_file, _PROFILE_PRESETS, _compute_Zeff_effective
-from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG, coerce_input_value
+from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG, coerce_input_value, resolve_deprecated_key
 
 # Backwards-compatible alias for dataclasses.replace (from D0FUS_import).
 dc_replace = replace
@@ -1412,6 +1412,7 @@ def load_scan_parameters(input_file):
                     continue
                 
                 # Type-aware coercion shared with the run / genetic loaders.
+                param_name = resolve_deprecated_key(param_name)
                 fixed_params[param_name] = coerce_input_value(
                     param_name, param_value)
     
@@ -1562,9 +1563,14 @@ INPUT_PARAMETER_REGISTRY = {
     'f_void': InputParameter(
         name='f_void', display_name='Interstitial void fraction in CICC strand bundle',
         unit='', min_val=0.20, max_val=0.45, n_default=8, tick_step=0.05),
-    'f_In': InputParameter(
-        name='f_In', display_name='Insulation area fraction in CICC cross-section',
-        unit='', min_val=0.08, max_val=0.25, n_default=8, tick_step=0.05),
+    'f_In_cable': InputParameter(
+        name='f_In_cable',
+        display_name='Turn insulation area fraction in CICC cross-section',
+        unit='', min_val=0.02, max_val=0.15, n_default=8, tick_step=0.02),
+    'f_In_WP': InputParameter(
+        name='f_In_WP',
+        display_name='Winding-pack insulation and clearance fraction',
+        unit='', min_val=0.05, max_val=0.30, n_default=8, tick_step=0.05),
 
     # ── 10. Quench protection ─────────────────────────────────────────────────
     'I_cond': InputParameter(
@@ -1697,7 +1703,7 @@ def display_input_parameters():
         ('TF/CS engineering',        ['fatigue_CS', 'SF_TF', 'SF_CS', 'coef_inboard_tension', 'Gap', 'c_BP']),
         ('Superconductor',           ['T_helium', 'Marge_T_He', 'Marge_T_Nb3Sn',
                                       'Marge_T_NbTi', 'Marge_T_REBCO',
-                                      'f_He_pipe', 'f_void', 'f_In']),
+                                      'f_He_pipe', 'f_void', 'f_In_cable', 'f_In_WP']),
         ('Quench protection',        ['I_cond', 'V_max', 'T_hotspot', 'RRR']),
         ('Power conversion',         ['eta_T', 'M_blanket', 'eta_RF']),
         ('Multi-source CD',          ['f_heat_LH', 'f_heat_EC', 'f_heat_NBI',

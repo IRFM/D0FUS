@@ -160,7 +160,7 @@ except ModuleNotFoundError:
 # provided by the centralised D0FUS_import wildcard above, so it is not
 # re-imported here. M_blanket_effective is required by the merged thermal-power
 # balance (P_th = P_fus * M_blanket + P_CD).
-from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG, coerce_input_value, M_blanket_effective
+from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG, coerce_input_value, resolve_deprecated_key, M_blanket_effective
 from D0FUS_BIB.D0FUS_physical_functions import f_volume
 from D0FUS_BIB.D0FUS_radial_build_functions import Number_TF_coils, f_TF_cross_section
 from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
@@ -1157,6 +1157,7 @@ def load_input_file(input_file):
                 # a boolean such as "False" is not silently kept as the
                 # truthy string "False", and optional fields decode "None"
                 # to the Python None.
+                key = resolve_deprecated_key(key)
                 static_inputs[key] = coerce_input_value(key, value)
 
     # Fill defaults from GlobalConfig dataclass fields

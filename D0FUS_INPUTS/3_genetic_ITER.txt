@@ -154,7 +154,7 @@ Marge_T_He     = 0.3
 Marge_T_Nb3Sn  = 1.5
 f_He_pipe      = 0.10              # He cooling pipe fraction [-]
 f_void         = 0.30           # Strand bundle void fraction [-]
-f_In           = 0.15
+f_In_cable           = 0.10
 
 Eps            = -6e-3             # Nb3Sn effective axial strain
 I_cond         = 68e3              # TF conductor current [A]

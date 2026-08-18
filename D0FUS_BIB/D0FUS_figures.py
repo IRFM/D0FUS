@@ -1317,7 +1317,7 @@ def plot_cable_current_density(
     tau_h: float = 0.5,
     f_He_pipe: float = None,
     f_void: float = None,
-    f_In: float = None,
+    f_In_cable: float = None,
     T_hotspot: float = None,
     RRR: float = None,
     cfg=None,
@@ -1346,7 +1346,7 @@ def plot_cable_current_density(
     tau_h         : float  Detection + hold time [s].
     f_He_pipe     : float or None  He pipe fraction [-] (from cfg if None).
     f_void        : float or None  Interstitial void fraction [-] (from cfg if None).
-    f_In          : float or None  Insulation fraction [-] (from cfg if None).
+    f_In_cable          : float or None  Insulation fraction [-] (from cfg if None).
     T_hotspot     : float or None  Max hotspot temperature [K] (from cfg if None).
     RRR           : float or None  Copper residual resistivity ratio (from cfg if None).
     cfg           : config object  D0FUS global configuration (DEFAULT_CONFIG if None).
@@ -1358,7 +1358,7 @@ def plot_cable_current_density(
     # Resolve parameters from cfg with explicit fallbacks
     f_He_pipe     = f_He_pipe     if f_He_pipe is not None else cfg.f_He_pipe
     f_void_user   = f_void        if f_void    is not None else cfg.f_void
-    f_In          = f_In          if f_In      is not None else cfg.f_In
+    f_In_cable          = f_In_cable          if f_In_cable      is not None else cfg.f_In_cable
     T_hotspot     = T_hotspot     if T_hotspot is not None else cfg.T_hotspot
     RRR           = RRR           if RRR       is not None else cfg.RRR
     Marge_T_He    = cfg.Marge_T_He
@@ -1378,7 +1378,7 @@ def plot_cable_current_density(
     coil_params_base = dict(
         E_mag=E_mag, I_cond=I_cond, V_max=V_max,
         N_sub=N_sub, tau_h=tau_h,
-        f_He_pipe=f_He_pipe, f_In=f_In,
+        f_He_pipe=f_He_pipe, f_In_cable=f_In_cable,
         T_hotspot=T_hotspot, RRR=RRR,
         Marge_T_He=Marge_T_He, Marge_T_Nb3Sn=Marge_T_Nb3Sn,
         Marge_T_NbTi=Marge_T_NbTi, Marge_T_REBCO=Marge_T_REBCO,
@@ -1736,9 +1736,9 @@ def plot_CS_thickness_vs_flux(
       J_wost = 85 MA/m², derived from Sarasola 2020 Sec. II-B:
         j_Cu   = 120 A/mm² = 120 MA/m²
         f_void = 0.10                     (Just He pipe)
-        f_In = 0.10                       (Insulation)
+        f_In_cable = 0.10                       (Insulation)
         f_Cu/NonCu = 0.85 ?               (Pit Viper like)
-        → J_wost = j_Cu × f_void × f_In × f_Cu = 85 MA/m²
+        → J_wost = j_Cu × f_void × f_In_cable × f_Cu = 85 MA/m²
 
       H_CS = 17.92 m forced via cfg.H_CS override (baseline 2018 allocation,
         Sec. II-A).  The default formula H = 2(κa + b + 1) gives 14.6 m,
@@ -5490,7 +5490,7 @@ def build_conductor_from_run(run: dict, coil: str = "TF") -> dict:
     f_cu    = run.get(f"f_cu_{coil}", np.nan)
     f_pipe  = run.get(f"f_He_pipe_{coil}", np.nan)
     f_void  = run.get(f"f_void_{coil}", np.nan)
-    f_In    = run.get(f"f_In_{coil}", np.nan)
+    f_In_cable    = run.get(f"f_In_{coil}", np.nan)
     sc_type = run.get("Supra_choice", "Nb3Sn")
 
     # Steel asymmetry parameter: n = δ_S1/δ_S2 (1 = square, 0 = optimal).
@@ -5501,21 +5501,21 @@ def build_conductor_from_run(run: dict, coil: str = "TF") -> dict:
 
     # Guard: fall back to static dict if any fraction is NaN or unphysical
     fallback = _CONDUCTOR_TF if coil == "TF" else _CONDUCTOR_CS
-    fracs = [f_steel, f_sc, f_cu, f_pipe, f_void, f_In]
+    fracs = [f_steel, f_sc, f_cu, f_pipe, f_void, f_In_cable]
     if not all(np.isfinite(fracs)):
         return fallback
     if not all(0.0 <= f <= 1.0 for f in fracs):
         return fallback
 
     # The wost (non-steel) region is split into SIX area fractions that sum to
-    # one:  f_sc + f_cu + f_He_pipe + f_void + f_In + f_gap = 1.  The run dict
-    # only stores the first five; the sixth, f_gap (manufacturing / wrap gaps,
+    # one:  f_sc + f_cu + f_He_pipe + f_void + f_In_cable + f_In_WP = 1.  The run dict
+    # only stores the first five; the sixth, f_In_WP (manufacturing / wrap gaps,
     # passed to calculate_cable_current_density but not forwarded), is recovered
     # here as the residual.  Earlier code summed only the five stored fractions
-    # and required the total to equal 1, so any deck with f_gap > 0 (the default
+    # and required the total to equal 1, so any deck with f_In_WP > 0 (the default
     # 0.15) failed the check and silently reverted to the static Nb3Sn fallback.
-    f_gap = 1.0 - (f_sc + f_cu + f_pipe + f_void + f_In)
-    if not (-0.05 <= f_gap <= 1.0):
+    f_In_WP = 1.0 - (f_sc + f_cu + f_pipe + f_void + f_In_cable)
+    if not (-0.05 <= f_In_WP <= 1.0):
         return fallback
 
     # ── Jacket aspect ratio from δ_S1/δ_S2 geometry ──
@@ -5524,20 +5524,20 @@ def build_conductor_from_run(run: dict, coil: str = "TF") -> dict:
     # ── Level 1: convert wost fractions to total-conductor fractions ──
     # wost fraction of total = (1 - f_steel)
     wost_frac = 1.0 - f_steel
-    f_insulation_total = f_In * wost_frac   # insulation as fraction of total
+    f_insulation_total = f_In_cable * wost_frac   # insulation as fraction of total
     # f_cable_total = wost_frac - f_insulation_total  (derived)
 
     # ── Level 2: renormalise wost fractions to cable-space ──
-    # cable-space = wost minus insulation → fraction of wost = (1 - f_In).
-    # f_gap is empty (non-conducting) area, so it is merged into the He void,
+    # cable-space = wost minus insulation → fraction of wost = (1 - f_In_cable).
+    # f_In_WP is empty (non-conducting) area, so it is merged into the He void,
     # which is rendered as the light-blue cable-space background.  This keeps
     # the four Level-2 fractions summing to exactly one:
     #   f_SC + f_Cu + f_He_pipe + f_void = 1
-    f_cable_wost = 1.0 - f_In
+    f_cable_wost = 1.0 - f_In_cable
     if f_cable_wost < 1e-6:
         return fallback
 
-    f_void_eff      = f_void + max(f_gap, 0.0)
+    f_void_eff      = f_void + max(f_In_WP, 0.0)
     f_SC_cable      = f_sc      / f_cable_wost
     f_Cu_cable      = f_cu      / f_cable_wost
     f_He_pipe_cable = f_pipe    / f_cable_wost

@@ -733,7 +733,7 @@ def _unpack_CS_config(config):
     Returns
     -------
     dict
-        Keys: Gap, I_cond, V_max, f_He_pipe, f_void, f_In,
+        Keys: Gap, I_cond, V_max, f_He_pipe, f_void, f_In_cable,
         T_hotspot, RRR, Marge_T_He, Marge_T_Nb3Sn, Marge_T_NbTi,
         Marge_T_REBCO, Eps, Tet, n_shape_CS, fatigue_CS,
         Operation_mode, f_swing_usable, SF_CS.
@@ -761,8 +761,8 @@ def _unpack_CS_config(config):
         V_max          = config.V_max,
         f_He_pipe      = config.f_He_pipe,
         f_void         = config.f_void,
-        f_In           = config.f_In,
-        f_gap          = getattr(config, 'f_gap', 0.0),
+        f_In_cable           = config.f_In_cable,
+        f_In_WP          = getattr(config, 'f_In_WP', 0.0),
         T_hotspot      = config.T_hotspot,
         RRR            = config.RRR,
         Marge_T_He     = config.Marge_T_He,
@@ -1695,17 +1695,20 @@ def calculate_t_dump(E_mag, I_cond, V_max, N_sub, tau_h):
 # =============================================================================
 
 def size_cable_fractions(J_non_Cu, B_peak, T_op, t_dump,
-                         T_hotspot, f_He_pipe, f_void, f_In, RRR, f_gap=0.0):
+                         T_hotspot, f_He_pipe, f_void, f_In_cable, RRR, f_In_WP=0.0):
     """
     Calculate cable composition based on quench protection
     (adiabatic hot-spot criterion).
 
     The non-steel cross-section ("wost") of a CICC-like conductor is
-    decomposed into three zones at the top level:
+    decomposed into four zones at the top level:
 
-        wost = Insulation + He pipe + Active zone
-             = f_In      + f_He_pipe + f_active
-             with f_active = 1 - f_In - f_He_pipe
+        wost = Cable insul. + WP insul. + He pipe   + Active zone
+             = f_In_cable   + f_In_WP   + f_He_pipe + f_active
+             with f_active = 1 - f_In_cable - f_In_WP - f_He_pipe
+
+    f_In_cable is the turn wrap around each conductor, f_In_WP the
+    winding-pack insulation and clearances. Both are inert and additive.
 
     Inside the active zone, strands (SC + Cu) are packed with an
     interstitial void fraction used for helium cooling in LTS conductors:
@@ -1735,7 +1738,7 @@ def size_cable_fractions(J_non_Cu, B_peak, T_op, t_dump,
     f_void : float
         Interstitial void fraction inside the active strand bundle [-].
         LTS (NbTi, Nb3Sn): ~0.33;  HTS (REBCO): 0.00.
-    f_In : float
+    f_In_cable : float
         Insulation fraction in wost [-].
     RRR : float
         Copper Residual Resistivity Ratio.
@@ -1748,14 +1751,14 @@ def size_cable_fractions(J_non_Cu, B_peak, T_op, t_dump,
         f_He_pipe : float - Helium pipe fraction (wost) [-]
         f_void    : float - Interstitial void fraction (wost) [-]
         f_He      : float - Total helium fraction (pipe + void) (wost) [-]
-        f_In      : float - Insulation fraction (wost) [-]
+        f_In_cable      : float - Insulation fraction (wost) [-]
         J_wost    : float - Current density on non-steel area [A/m²]
 
     Notes
     -----
     "wost" = Without Steel.  All fractions are relative to the non-steel
     cross-section and sum to 1.0:
-        f_In + f_He_pipe + f_gap + f_void_wost + f_sc + f_cu = 1.0
+        f_In_cable + f_He_pipe + f_In_WP + f_void_wost + f_sc + f_cu = 1.0
 
     References
     ----------
@@ -1773,11 +1776,13 @@ def size_cable_fractions(J_non_Cu, B_peak, T_op, t_dump,
     ratio_cu_sc = J_non_Cu / J_cu_max
 
     # ── Hierarchical area decomposition in wost ──
-    # Level 1: insulation + He pipe + winding-pack overhead + active zone.
-    # f_gap (ground/inter-pancake insulation and assembly clearances) occupies
-    # wost volume but carries no current, so like helium it dilutes the
-    # conductor and is excluded from the load-bearing steel downstream.
-    f_active = 1.0 - f_In - f_He_pipe - f_gap
+    # Level 1: cable insulation + WP insulation + He pipe + active zone.
+    f_active = 1.0 - f_In_cable - f_In_WP - f_He_pipe
+    if f_active <= 0.0:
+        raise ValueError(
+            f"Non-physical cable composition: f_In_cable ({f_In_cable}) + "
+            f"f_In_WP ({f_In_WP}) + f_He_pipe ({f_He_pipe}) >= 1. Check the "
+            f"input deck: pre-v2.3 decks fold the WP allowance into f_In.")
 
     # Level 2: inside active zone — interstitial void + strands
     f_strand_in_active = 1.0 - f_void
@@ -1805,8 +1810,8 @@ def size_cable_fractions(J_non_Cu, B_peak, T_op, t_dump,
         "f_He_pipe": f_He_pipe,
         "f_void":    f_void_wost,
         "f_He":      f_He_total,
-        "f_In":      f_In,
-        "f_gap":     f_gap,
+        "f_In_cable":      f_In_cable,
+        "f_In_WP":     f_In_WP,
         "J_wost":    J_wost,
     }
 
@@ -1917,7 +1922,7 @@ def _compute_cable_current_density_core(
     tau_h,
     f_He_pipe,
     f_void,
-    f_In,
+    f_In_cable,
     T_hotspot,
     RRR,
     Marge_T_He,
@@ -1927,7 +1932,7 @@ def _compute_cable_current_density_core(
     Eps,
     Tet,
     J_wost_Manual=None,
-    f_gap=0.0,
+    f_In_WP=0.0,
 ):
     """
     Core computation function for cable current density calculations.
@@ -1956,7 +1961,7 @@ def _compute_cable_current_density_core(
          Detection + holding time before discharge [s]
     f_He : float
         Helium fraction in cable [-]
-    f_In : float
+    f_In_cable : float
         Insulation fraction in cable [-]
     T_hotspot : float
         Maximum allowable hotspot temperature [K]
@@ -1987,7 +1992,7 @@ def _compute_cable_current_density_core(
         - 'f_sc': Superconductor fraction [-]
         - 'f_cu': Copper fraction [-]
         - 'f_He': Helium fraction [-]
-        - 'f_In': Insulation fraction [-]
+        - 'f_In_cable': Insulation fraction [-]
         - 't_dump': Effective discharge time [s]
     
     Notes
@@ -2006,7 +2011,7 @@ def _compute_cable_current_density_core(
     
     # Guard against invalid inputs (NaN propagation prevention)
     if np.isnan(B_peak) or np.isnan(E_mag) or np.isnan(N_sub):
-        f_active = 1.0 - f_In - f_He_pipe - f_gap
+        f_active = 1.0 - f_In_cable - f_He_pipe - f_In_WP
         return {
             'J_non_Cu': 0,
             'J_wost': 0,
@@ -2015,7 +2020,7 @@ def _compute_cable_current_density_core(
             'f_He_pipe': f_He_pipe,
             'f_void': f_void * f_active,
             'f_He': f_He_pipe + f_void * f_active,
-            'f_In': f_In,
+            'f_In_cable': f_In_cable,
             't_dump': np.nan,
         }
     
@@ -2029,7 +2034,7 @@ def _compute_cable_current_density_core(
             'f_He_pipe': np.nan,
             'f_void': np.nan,
             'f_He': np.nan,
-            'f_In': np.nan,
+            'f_In_cable': np.nan,
             't_dump': np.nan,
         }
     elif sc_type == "Nb3Sn":
@@ -2061,7 +2066,7 @@ def _compute_cable_current_density_core(
     
     # Handle case where SC is beyond critical surface
     if J_non_Cu <= 0:
-        f_active = 1.0 - f_In - f_He_pipe - f_gap
+        f_active = 1.0 - f_In_cable - f_He_pipe - f_In_WP
         return {
             'J_non_Cu': 0,
             'J_wost': 0,
@@ -2070,7 +2075,7 @@ def _compute_cable_current_density_core(
             'f_He_pipe': f_He_pipe,
             'f_void': f_void * f_active,
             'f_He': f_He_pipe + f_void * f_active,
-            'f_In': f_In,
+            'f_In_cable': f_In_cable,
             't_dump': np.inf,
         }
     
@@ -2086,9 +2091,9 @@ def _compute_cable_current_density_core(
         T_hotspot=T_hotspot,
         f_He_pipe=f_He_pipe,
         f_void=f_void,
-        f_In=f_In,
+        f_In_cable=f_In_cable,
         RRR=RRR,
-        f_gap=f_gap,
+        f_In_WP=f_In_WP,
     )
     
     return {
@@ -2099,7 +2104,7 @@ def _compute_cable_current_density_core(
         'f_He_pipe': result['f_He_pipe'],
         'f_void': result['f_void'],
         'f_He': result['f_He'],
-        'f_In': result['f_In'],
+        'f_In_cable': result['f_In_cable'],
         't_dump': t_dump,
     }
 
@@ -2122,7 +2127,7 @@ def _cached_cable_current_density(
     tau_h: float,
     f_He_pipe: float,
     f_void: float,
-    f_In: float,
+    f_In_cable: float,
     T_hotspot: float,
     RRR: float,
     Marge_T_He: float,
@@ -2132,7 +2137,7 @@ def _cached_cable_current_density(
     Eps: float,
     Tet: float,
     J_wost_Manual: float,
-    f_gap: float = 0.0,
+    f_In_WP: float = 0.0,
 ):
     """
     LRU-cached wrapper for cable current density calculations.
@@ -2161,7 +2166,7 @@ def _cached_cable_current_density(
         Hydraulic time constant [s]
     f_He : float
         Helium fraction in cable [-]
-    f_In : float
+    f_In_cable : float
         Insulation fraction in cable [-]
     T_hotspot : float
         Maximum allowable hotspot temperature [K]
@@ -2204,8 +2209,8 @@ def _cached_cable_current_density(
     - String and integer parameters are used directly
     """
     key = (sc_type, B_peak_rounded, T_op, E_mag_rounded, I_cond, V_max, N_sub,
-           tau_h, f_He_pipe, f_void, f_In, T_hotspot, RRR, Marge_T_He,
-           Marge_T_Nb3Sn, Marge_T_NbTi, Marge_T_REBCO, Eps, Tet, J_wost_Manual, f_gap)
+           tau_h, f_He_pipe, f_void, f_In_cable, T_hotspot, RRR, Marge_T_He,
+           Marge_T_Nb3Sn, Marge_T_NbTi, Marge_T_REBCO, Eps, Tet, J_wost_Manual, f_In_WP)
     if key in _cable_density_cache:
         _cable_density_stats['hits'] += 1
         return _cable_density_cache[key]
@@ -2221,7 +2226,7 @@ def _cached_cable_current_density(
         tau_h=tau_h,
         f_He_pipe=f_He_pipe,
         f_void=f_void,
-        f_In=f_In,
+        f_In_cable=f_In_cable,
         T_hotspot=T_hotspot,
         RRR=RRR,
         Marge_T_He=Marge_T_He,
@@ -2231,7 +2236,7 @@ def _cached_cable_current_density(
         Eps=Eps,
         Tet=Tet,
         J_wost_Manual=J_wost_Manual if J_wost_Manual > 0 else None,
-        f_gap=f_gap,
+        f_In_WP=f_In_WP,
     )
     _cable_density_cache[key] = result
     return result
@@ -2248,7 +2253,7 @@ def calculate_cable_current_density(
     tau_h,
     f_He_pipe,
     f_void,
-    f_In,
+    f_In_cable,
     T_hotspot,
     RRR,
     Marge_T_He,
@@ -2258,7 +2263,7 @@ def calculate_cable_current_density(
     Eps,
     Tet,
     J_wost_Manual=None,
-    f_gap=0.0,
+    f_In_WP=0.0,
 ):
     """
     Calculate current density on the non-steel part of the conductor.
@@ -2300,7 +2305,7 @@ def calculate_cable_current_density(
         Detection + delay time [s] (default: 2.0 s for LTS)
     f_He : float, optional
         Helium void fraction in cable (default: 0.30)
-    f_In : float, optional
+    f_In_cable : float, optional
         Insulation fraction in non-steel area (default: 0.10)
     T_hotspot : float, optional
         Maximum hot-spot temperature [K] (default: 250 K)
@@ -2331,7 +2336,7 @@ def calculate_cable_current_density(
         - 'f_sc': SC volume fraction (wost) [-]
         - 'f_cu': Cu volume fraction (wost) [-]
         - 'f_He': He volume fraction (wost) [-]
-        - 'f_In': Insulation volume fraction (wost) [-]
+        - 'f_In_cable': Insulation volume fraction (wost) [-]
         - 't_dump': Effective discharge time [s]
         
     Notes
@@ -2359,7 +2364,7 @@ def calculate_cable_current_density(
     
     # Guard against invalid inputs (NaN propagation prevention)
     if np.isnan(B_peak) or np.isnan(E_mag) or np.isnan(N_sub):
-        f_active = 1.0 - f_In - f_He_pipe - f_gap
+        f_active = 1.0 - f_In_cable - f_He_pipe - f_In_WP
         return {
             'J_non_Cu': 0,
             'J_wost': 0,
@@ -2368,7 +2373,7 @@ def calculate_cable_current_density(
             'f_He_pipe': f_He_pipe,
             'f_void': f_void * f_active,
             'f_He': f_He_pipe + f_void * f_active,
-            'f_In': f_In,
+            'f_In_cable': f_In_cable,
             't_dump': np.nan,
         }
     
@@ -2397,7 +2402,7 @@ def calculate_cable_current_density(
         tau_h=tau_h,
         f_He_pipe=f_He_pipe,
         f_void=f_void,
-        f_In=f_In,
+        f_In_cable=f_In_cable,
         T_hotspot=T_hotspot,
         RRR=RRR,
         Marge_T_He=Marge_T_He,
@@ -2407,7 +2412,7 @@ def calculate_cable_current_density(
         Eps=Eps,
         Tet=Tet,
         J_wost_Manual=J_wost_Manual_val,
-        f_gap=f_gap,
+        f_In_WP=f_In_WP,
     )
 
 
@@ -2481,7 +2486,7 @@ J_wost : Current density in winding pack without steel [A/m²]
 f_sc   : Fraction of non-copper material (SC filaments + matrix/substrate + solder)
 f_cu   : Fraction of copper (stabilizer + matrix + structural Cu)
 f_He   : Fraction of helium (void)
-f_In   : Fraction of insulation/gaps (cable level only)
+f_In_cable   : Fraction of insulation/gaps (cable level only)
 
 References
 ----------
@@ -2567,7 +2572,7 @@ if __name__ == "__main__":
             tau_h=1.0,
             f_He_pipe=0.00,
             f_void=0.33,
-            f_In=0.05,
+            f_In_cable=0.05,
             T_hotspot=T_hotspot,
             RRR=RRR,
             Marge_T_He=Marge_T_He,
@@ -2584,7 +2589,7 @@ if __name__ == "__main__":
         "J_ref": J_wost_ref, "f_sc_ref": A_nonCu/A_cable, "f_cu_ref": A_Cu_tot/A_cable,
         "f_He_ref": void, "f_In_ref": 1 - A_nonCu/A_cable - A_Cu_tot/A_cable - void,
         "J_calc": calc['J_wost'], "f_sc_calc": calc['f_sc'], "f_cu_calc": calc['f_cu'],
-        "f_He_calc": calc['f_He'], "f_In_calc": calc['f_In'],
+        "f_He_calc": calc['f_He'], "f_In_calc": calc['f_In_cable'],
     })
     
     # =========================================================================
@@ -2639,7 +2644,7 @@ if __name__ == "__main__":
         tau_h=5.0,
         f_He_pipe=f_He_pipe_ITER,
         f_void=0.33,
-        f_In=0.05,
+        f_In_cable=0.05,
         T_hotspot=T_hotspot,
         RRR=RRR,
         Marge_T_He=Marge_T_He,
@@ -2658,7 +2663,7 @@ if __name__ == "__main__":
         "f_He_ref": f_He_ref_ITER,
         "f_In_ref": 1 - A_nonCu/A_wost - A_Cu_tot/A_wost - f_He_ref_ITER,
         "J_calc": calc['J_wost'], "f_sc_calc": calc['f_sc'], "f_cu_calc": calc['f_cu'],
-        "f_He_calc": calc['f_He'], "f_In_calc": calc['f_In'],
+        "f_He_calc": calc['f_He'], "f_In_calc": calc['f_In_cable'],
     })
     
     # =========================================================================
@@ -2715,7 +2720,7 @@ if __name__ == "__main__":
         tau_h=10,
         f_He_pipe=0.05,
         f_void=0.00,
-        f_In= 0.07,
+        f_In_cable= 0.07,
         T_hotspot=T_hotspot,
         RRR=RRR,
         Marge_T_He=Marge_T_He,
@@ -2731,7 +2736,7 @@ if __name__ == "__main__":
         "J_ref": J_wost_ref, "f_sc_ref": A_nonCu_tot/A_wost, "f_cu_ref": A_Cu_tot/A_wost,
         "f_He_ref": A_He/A_wost, "f_In_ref": 1 - (A_nonCu_tot + A_Cu_tot + A_He)/A_wost,
         "J_calc": calc['J_wost'], "f_sc_calc": calc['f_sc'], "f_cu_calc": calc['f_cu'],
-        "f_He_calc": calc['f_He'], "f_In_calc": calc['f_In'],
+        "f_He_calc": calc['f_He'], "f_In_calc": calc['f_In_cable'],
     })
     
     # =========================================================================
@@ -2741,7 +2746,7 @@ if __name__ == "__main__":
     print("CABLE CURRENT DENSITY BENCHMARK")
     print("="*90)
     print(f"\n{'Machine':<14} {'Type':<6} {'SC':<7} {'B[T]':<6} {'J_wost[MA/m²]':<14} "
-          f"{'f_sc[%]':<9} {'f_cu[%]':<9} {'f_He[%]':<9} {'f_In[%]':<9}")
+          f"{'f_sc[%]':<9} {'f_cu[%]':<9} {'f_He[%]':<9} {'f_In_cable[%]':<9}")
     print("-"*90)
     
     for r in results:
@@ -4738,7 +4743,7 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
 
     config : GlobalConfig
         Global design configuration. Used to access: Gap, I_cond, V_max,
-        f_He_pipe, f_void, f_In, T_hotspot, RRR, Marge_T_He, Marge_T_Nb3Sn,
+        f_He_pipe, f_void, f_In_cable, T_hotspot, RRR, Marge_T_He, Marge_T_Nb3Sn,
         Marge_T_NbTi, Marge_T_REBCO, Eps, Tet, n_shape_CS, fatigue_CS, SF_CS, f_swing_usable.
     """
     
@@ -4747,7 +4752,7 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     # ------------------------------------------------------------------
     _c = _unpack_CS_config(config)
     Gap, I_cond, V_max   = _c['Gap'], _c['I_cond'], _c['V_max']
-    f_He_pipe, f_void, f_In, f_gap = _c['f_He_pipe'], _c['f_void'], _c['f_In'], _c['f_gap']
+    f_He_pipe, f_void, f_In_cable, f_In_WP = _c['f_He_pipe'], _c['f_void'], _c['f_In_cable'], _c['f_In_WP']
     T_hotspot, RRR       = _c['T_hotspot'], _c['RRR']
     Marge_T_He, Marge_T_Nb3Sn = _c['Marge_T_He'], _c['Marge_T_Nb3Sn']
     Marge_T_NbTi, Marge_T_REBCO = _c['Marge_T_NbTi'], _c['Marge_T_REBCO']
@@ -4819,7 +4824,7 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
         result_J = calculate_cable_current_density(
             sc_type=Supra_choice_CS, B_peak=B_CS_est, T_op=T_Helium,
             E_mag=E_mag_CS, I_cond=I_cond, V_max=V_max, N_sub=N_sub_CS,
-            tau_h=tau_h, f_He_pipe=f_He_pipe, f_void=f_void, f_In=f_In, f_gap=f_gap,
+            tau_h=tau_h, f_He_pipe=f_He_pipe, f_void=f_void, f_In_cable=f_In_cable, f_In_WP=f_In_WP,
             T_hotspot=T_hotspot, RRR=RRR, Marge_T_He=Marge_T_He,
             Marge_T_Nb3Sn=Marge_T_Nb3Sn, Marge_T_NbTi=Marge_T_NbTi,
             Marge_T_REBCO=Marge_T_REBCO, Eps=Eps, Tet=Tet,
@@ -5130,7 +5135,7 @@ def f_CS_refined(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_C
 
     config : GlobalConfig
         Global design configuration. Used to access: Gap, I_cond, V_max,
-        f_He_pipe, f_void, f_In, T_hotspot, RRR, Marge_T_He, Marge_T_Nb3Sn,
+        f_He_pipe, f_void, f_In_cable, T_hotspot, RRR, Marge_T_He, Marge_T_Nb3Sn,
         Marge_T_NbTi, Marge_T_REBCO, Eps, Tet, n_shape_CS, fatigue_CS, SF_CS, f_swing_usable.
     """
     
@@ -5139,7 +5144,7 @@ def f_CS_refined(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_C
     # ------------------------------------------------------------------
     _c = _unpack_CS_config(config)
     Gap, I_cond, V_max   = _c['Gap'], _c['I_cond'], _c['V_max']
-    f_He_pipe, f_void, f_In, f_gap = _c['f_He_pipe'], _c['f_void'], _c['f_In'], _c['f_gap']
+    f_He_pipe, f_void, f_In_cable, f_In_WP = _c['f_He_pipe'], _c['f_void'], _c['f_In_cable'], _c['f_In_WP']
     T_hotspot, RRR       = _c['T_hotspot'], _c['RRR']
     Marge_T_He, Marge_T_Nb3Sn = _c['Marge_T_He'], _c['Marge_T_Nb3Sn']
     Marge_T_NbTi, Marge_T_REBCO = _c['Marge_T_NbTi'], _c['Marge_T_REBCO']
@@ -5187,7 +5192,7 @@ def f_CS_refined(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_C
         # STRATEGY C: Use cached cable current density
         result_J = calculate_cable_current_density(
             sc_type=Supra_choice_CS, B_peak=B_CS, T_op=T_Helium, E_mag=E_mag_CS,
-            I_cond=I_cond, V_max=V_max, N_sub=N_sub_CS, tau_h=tau_h, f_He_pipe=f_He_pipe, f_void=f_void, f_In=f_In, f_gap=f_gap,
+            I_cond=I_cond, V_max=V_max, N_sub=N_sub_CS, tau_h=tau_h, f_He_pipe=f_He_pipe, f_void=f_void, f_In_cable=f_In_cable, f_In_WP=f_In_WP,
             T_hotspot=T_hotspot, RRR=RRR, Marge_T_He=Marge_T_He, Marge_T_Nb3Sn=Marge_T_Nb3Sn,
             Marge_T_NbTi=Marge_T_NbTi, Marge_T_REBCO=Marge_T_REBCO, Eps=Eps, Tet=Tet,
             J_wost_Manual=Jc_manual if Supra_choice_CS == 'Manual' else None)
@@ -5400,7 +5405,7 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
 
     config : GlobalConfig
         Global design configuration. Used to access: Gap, I_cond, V_max,
-        f_He_pipe, f_void, f_In, T_hotspot, RRR, Marge_T_He, Marge_T_Nb3Sn,
+        f_He_pipe, f_void, f_In_cable, T_hotspot, RRR, Marge_T_He, Marge_T_Nb3Sn,
         Marge_T_NbTi, Marge_T_REBCO, Eps, Tet, n_shape_CS, fatigue_CS, SF_CS, f_swing_usable.
     """
     
@@ -5409,7 +5414,7 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
     # ------------------------------------------------------------------
     _c = _unpack_CS_config(config)
     Gap, I_cond, V_max   = _c['Gap'], _c['I_cond'], _c['V_max']
-    f_He_pipe, f_void, f_In, f_gap = _c['f_He_pipe'], _c['f_void'], _c['f_In'], _c['f_gap']
+    f_He_pipe, f_void, f_In_cable, f_In_WP = _c['f_He_pipe'], _c['f_void'], _c['f_In_cable'], _c['f_In_WP']
     T_hotspot, RRR       = _c['T_hotspot'], _c['RRR']
     Marge_T_He, Marge_T_Nb3Sn = _c['Marge_T_He'], _c['Marge_T_Nb3Sn']
     Marge_T_NbTi, Marge_T_REBCO = _c['Marge_T_NbTi'], _c['Marge_T_REBCO']
@@ -5459,7 +5464,7 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
         # STRATEGY C: Use cached cable current density
         result_J = calculate_cable_current_density(
             sc_type=Supra_choice_CS, B_peak=B_CS, T_op=T_Helium, E_mag=E_mag_CS,
-            I_cond=I_cond, V_max=V_max, N_sub=N_sub_CS, tau_h=tau_h, f_He_pipe=f_He_pipe, f_void=f_void, f_In=f_In, f_gap=f_gap,
+            I_cond=I_cond, V_max=V_max, N_sub=N_sub_CS, tau_h=tau_h, f_He_pipe=f_He_pipe, f_void=f_void, f_In_cable=f_In_cable, f_In_WP=f_In_WP,
             T_hotspot=T_hotspot, RRR=RRR, Marge_T_He=Marge_T_He, Marge_T_Nb3Sn=Marge_T_Nb3Sn,
             Marge_T_NbTi=Marge_T_NbTi, Marge_T_REBCO=Marge_T_REBCO, Eps=Eps, Tet=Tet,
             J_wost_Manual=Jc_manual if Supra_choice_CS == 'Manual' else None)

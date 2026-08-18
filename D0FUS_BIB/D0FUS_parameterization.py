@@ -340,11 +340,12 @@ class GlobalConfig:
     f_void    : float = None    # Interstitial void fraction in strand bundle [-]
                                 # None = auto: 0.33 (LTS) / 0.00 (REBCO).
                                 # Set explicitly (e.g. 0.30) to override.
-    f_In      : float = 0.05    # Insulation area fraction [-]
-    # Winding-pack overhead fraction in wost, treated exactly like the
-    # helium fraction: ground and inter-pancake insulation plus assembly
-    # clearances that occupy volume but carry neither current nor load.
-    f_gap     : float = 0.15    # WP insulation + clearance fraction in wost [-]
+    # Insulation split over two levels after the MADMACS cross-check: turn
+    # wrap around each conductor, and winding-pack insulation and clearances
+    # (not accounted for before v2.3). Both are inert and additive.
+    # f_In_cable is calibrated on the ITER inboard leg, 0.90 m with backplate.
+    f_In_cable : float = 0.10   # Turn insulation area fraction in wost [-]
+    f_In_WP    : float = 0.15   # WP insulation + clearance fraction in wost [-]
 
     # Temperature margins above T_helium defining T_operating [K]
     # Conservative baseline: Corato et al., "Common operating values for DEMO…" (2016)
@@ -529,6 +530,43 @@ def _config_field_kinds():
                 kinds[_f.name] = 'numeric'
         _CONFIG_FIELD_KINDS = kinds
     return _CONFIG_FIELD_KINDS
+
+
+# Deprecated input-deck keys, mapped onto their current GlobalConfig name.
+# Kept so that decks written against an earlier version keep running, with a
+# visible warning instead of a silent fallback to the field default.
+_DEPRECATED_KEYS = {
+    'f_In':  'f_In_cable',   # renamed in v2.6 to mark the conductor level
+    'f_gap': 'f_In_WP',      # renamed in v2.6: WP-level insulation allowance,
+}                            #                  not a generic manufacturing gap
+
+
+def resolve_deprecated_key(key):
+    """Map a deprecated input-deck key onto its current GlobalConfig name.
+
+    A warning is emitted whenever an alias is hit, so that replaying an old
+    deck against a newer code version can never change the physics silently.
+
+    Parameters
+    ----------
+    key : str
+        Raw key read from an input deck.
+
+    Returns
+    -------
+    str
+        The current GlobalConfig field name, or ``key`` itself when the key
+        is not a known alias.
+    """
+    new_key = _DEPRECATED_KEYS.get(key)
+    if new_key is None:
+        return key
+    import warnings
+    warnings.warn(
+        f"Input-deck key '{key}' is deprecated and was read as '{new_key}'. "
+        f"Please update the deck.",
+        DeprecationWarning, stacklevel=2)
+    return new_key
 
 
 def coerce_input_value(key, raw_value):

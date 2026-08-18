@@ -22,7 +22,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # D0FUS modules
 from D0FUS_BIB.D0FUS_parameterization import (
-    GlobalConfig, DEFAULT_CONFIG, coerce_input_value, material_rho,
+    GlobalConfig, DEFAULT_CONFIG, coerce_input_value, resolve_deprecated_key,
+    material_rho,
     M_blanket_effective, eta_T_effective)
 from D0FUS_BIB.D0FUS_radial_build_functions import *
 from D0FUS_BIB.D0FUS_physical_functions import *
@@ -113,6 +114,11 @@ def load_config_from_file(filepath: str,
             # field written as "False" therefore decodes to the bool False
             # rather than the truthy string "False", and an optional field
             # written as "None" decodes to the Python None.
+            # Resolve deprecated deck keys (f_In -> f_In_cable, f_gap ->
+            # f_In_WP) before typing and before the GlobalConfig membership
+            # check, so an old deck warns instead of silently falling back to
+            # the field default.
+            key = resolve_deprecated_key(key)
             val = coerce_input_value(key, raw_val)
 
             # Only accept keys that exist in GlobalConfig
@@ -384,8 +390,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     Marge_T_He                = config.Marge_T_He
     f_He_pipe                 = config.f_He_pipe
     f_void                    = config.f_void
-    f_In                      = config.f_In
-    f_gap                     = getattr(config, 'f_gap', 0.0)
+    f_In_cable                      = config.f_In_cable
+    f_In_WP                     = getattr(config, 'f_In_WP', 0.0)
     Marge_T_Nb3Sn             = config.Marge_T_Nb3Sn
     Marge_T_NbTi              = config.Marge_T_NbTi
     Marge_T_REBCO             = config.Marge_T_REBCO
@@ -718,7 +724,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     result_J_TF = calculate_cable_current_density(
         sc_type=Supra_choice, B_peak=Bmax_TF, T_op=T_helium, E_mag=E_mag_TF,
         I_cond=I_cond, V_max=V_max, N_sub=N_sub, tau_h=tau_h,
-        f_He_pipe=f_He_pipe, f_void=f_void, f_In=f_In, f_gap=f_gap,
+        f_He_pipe=f_He_pipe, f_void=f_void, f_In_cable=f_In_cable, f_In_WP=f_In_WP,
         T_hotspot=T_hotspot, RRR=RRR, Marge_T_He=Marge_T_He,
         Marge_T_Nb3Sn=Marge_T_Nb3Sn, Marge_T_NbTi=Marge_T_NbTi,
         Marge_T_REBCO=Marge_T_REBCO, Eps=Eps, Tet=Tet,
@@ -731,7 +737,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     f_He_pipe_TF = result_J_TF['f_He_pipe']
     f_void_TF    = result_J_TF['f_void']
     f_He_TF      = result_J_TF['f_He']
-    f_In_TF      = result_J_TF['f_In']
+    f_In_TF      = result_J_TF['f_In_cable']
 
     # ── On-axis magnetic field and alpha power ────────────────────────────────
     B0_solution = f_B0(Bmax_TF, a, b, R0, b_cover=c_BP)
@@ -2144,7 +2150,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             sc_type=Supra_choice_CS, B_peak=B_CS, T_op=T_helium,
             E_mag=E_mag_CS_post,
             I_cond=I_cond, V_max=V_max, N_sub=N_sub_CS, tau_h=tau_h,
-            f_He_pipe=f_He_pipe, f_void=f_void, f_In=f_In, f_gap=f_gap,
+            f_He_pipe=f_He_pipe, f_void=f_void, f_In_cable=f_In_cable, f_In_WP=f_In_WP,
             T_hotspot=T_hotspot, RRR=RRR, Marge_T_He=Marge_T_He,
             Marge_T_Nb3Sn=Marge_T_Nb3Sn, Marge_T_NbTi=Marge_T_NbTi,
             Marge_T_REBCO=Marge_T_REBCO, Eps=Eps, Tet=Tet,
@@ -2154,7 +2160,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         f_He_pipe_CS = result_J_CS['f_He_pipe']
         f_void_CS    = result_J_CS['f_void']
         f_He_CS      = result_J_CS['f_He']
-        f_In_CS      = result_J_CS['f_In']
+        f_In_CS      = result_J_CS['f_In_cable']
     else:
         f_sc_CS = f_cu_CS = f_He_pipe_CS = f_void_CS = f_He_CS = f_In_CS = np.nan
 
@@ -3414,7 +3420,7 @@ def save_run_output(config: GlobalConfig,
         print(f"[O]  ├ f_He_pipe (He cooling pipe)                  : {f_He_pipe_TF*100:.2f} [%]", file=out)
         print(f"[O]  ├ f_void    (interstitial He void)             : {f_void_TF*100:.2f} [%]", file=out)
         print(f"[O]  ├ f_He      (total He = pipe + void)           : {f_He_TF*100:.2f} [%]", file=out)
-        print(f"[O]  └ f_In      (insulation)                       : {f_In_TF*100:.2f} [%]", file=out)
+        print(f"[O]  └ f_In_cable (turn insulation)                 : {f_In_TF*100:.2f} [%]", file=out)
         print(f"[O] Steel fraction CS                               : {Steel_fraction_CS*100:.3f} [%]", file=out)
         print(f"[O] Cable fraction CS  (1 - Steel)                  : {(1-Steel_fraction_CS)*100:.3f} [%]", file=out)
         print(f"[O]  ├ f_sc      (superconductor)                   : {f_sc_CS*100:.2f} [%]", file=out)
@@ -3422,7 +3428,7 @@ def save_run_output(config: GlobalConfig,
         print(f"[O]  ├ f_He_pipe (He cooling pipe)                  : {f_He_pipe_CS*100:.2f} [%]", file=out)
         print(f"[O]  ├ f_void    (interstitial He void)             : {f_void_CS*100:.2f} [%]", file=out)
         print(f"[O]  ├ f_He      (total He = pipe + void)           : {f_He_CS*100:.2f} [%]", file=out)
-        print(f"[O]  └ f_In      (insulation)                       : {f_In_CS*100:.2f} [%]", file=out)
+        print(f"[O]  └ f_In_cable (turn insulation)                 : {f_In_CS*100:.2f} [%]", file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[O] L_cable_TF (total cable, all TF coils)          : {L_cable_TF/1e3:.3f} [km]", file=out)
         print(f"[O] L_cable_CS (total cable, all CS modules)        : {L_cable_CS/1e3:.3f} [km]", file=out)
