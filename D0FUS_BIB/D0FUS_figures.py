@@ -309,6 +309,125 @@ def plot_kappa_blend(
     _save_or_show(fig, save_dir, "kappa_blend")
 
 
+# Boundary triangularity of the reference machines, checked in the primary
+# source. Every entry is a SEPARATRIX value: the 95 % triangularity is
+# smaller by roughly a factor 1.5 and mixing the two is what broke an earlier
+# version of this figure. (name, A = R0/a, delta, dx, dy, ha) with dx, dy, ha
+# the label placement.
+#
+#   ITER      6.2/2.0   0.48   Progress in the ITER Physics Basis, Ch. 1,
+#                              Table 2 p. S3: "Plasma triangularity (95% flux
+#                              surface/separatrix) 0.33/0.48".
+#   SPARC     1.85/0.57 0.54   Creely et al., JPP 86 (2020) 865860502,
+#                              Table 1 "delta_sep 0.54" (delta_95 ~ 0.45).
+#   DIII-D    1.66/0.66 0.80   DIII-D Capabilities and Tools v5, Sec. 2.1
+#                              p. 4: "triangularity up to 0.8".
+#   JET       2.96/1.25 0.50   EFDA EFDC020526, high-triangularity divertor:
+#                              "an average triangularity of 0.5".
+#   ASDEX-U   1.65/0.50 0.33   Eich et al., NF 61 (2021) 086017, Table 4,
+#                              delta_geo 0.16 to 0.33 (upper end taken).
+#   KSTAR     1.8/0.5   0.80   Lee et al., IAEA-CN-77/OV7/1, Table I:
+#                              "Triangularity, delta_x 0.8".
+#   MAST-U    0.7/0.5   0.60   MAST-U overview, IAEA FEC 2025 table:
+#                              "Triangularity (delta) 0.6 | -0.3 -> 0.6".
+#   STEP      1.8       0.50   Meyer et al., Phil. Trans. R. Soc. A 382
+#                              (2024) 20230406, Fig. 1 table "delta/kappa
+#                              0.5/3".
+#
+# Deliberately absent, and why:
+#   ARC       Sorbom et al., FED 100 (2015) 378 publishes NO triangularity;
+#             the word does not appear and Table 1 has no such row. A 0.33
+#             once plotted here was a misreading of the inverse aspect ratio,
+#             the paper writing "a similar shaping (epsilon approx 0.33)".
+#   NSTX-U    No numeric triangularity in the design papers, only "The plasma
+#             triangularity is maintained at a high level" (Gerhardt et al.,
+#             NF 52 (2012) 083020). Its aspect ratio is 1.65 to 1.8, not the
+#             1.5 of NSTX.
+#   EU-DEMO   Only the 95 % value is published, 0.33 (Federici et al., Table 3
+#             "Elongation/triangularity (95%) 1.65/0.33"). No boundary value,
+#             so nothing to plot on a boundary axis.
+_DELTA_MACHINES = [
+    ("MAST-U",  1.40, 0.60,  0.00,  0.030, "center"),
+    ("STEP",    1.80, 0.50,  0.00, -0.055, "center"),
+    ("JET",     2.37, 0.50,  0.00, -0.055, "center"),
+    ("DIII-D",  2.52, 0.80,  0.00,  0.030, "center"),
+    ("ITER",    3.10, 0.48, -0.07, -0.012, "right"),
+    ("SPARC",   3.25, 0.54,  0.07,  0.012, "left"),
+    ("ASDEX-U", 3.30, 0.33,  0.07, -0.012, "left"),
+    ("KSTAR",   3.60, 0.80,  0.00,  0.030, "center"),
+]
+
+
+def plot_delta_trend(
+    A_min: float = 1.15,
+    A_max: float = 5.2,
+    kappa_manual: float = 1.7,
+    ms: float = 0.3,
+    show_machines: bool = True,
+    save_dir: str | None = None,
+) -> None:
+    """
+    Plot the triangularity estimate delta = 0.6 (kappa(A) - 1) against the
+    boundary triangularity of the reference machines.
+
+    The relation is the TREND closure used by D0FUS to derive delta from the
+    elongation. It is composed here with the four kappa(A) options, so the
+    colour code matches plot_kappa_blend, and it is a BOUNDARY relation: the
+    machine anchors of the elongation figure are edge elongations, so the
+    machine anchors here must be separatrix triangularities. Every point is,
+    and machines that publish only a 95 % value are left out rather than
+    converted, since a conversion would import the 1.5 factor of the ITER
+    guideline into what is meant to be a comparison against published data.
+
+    Parameters
+    ----------
+    A_min, A_max  : float  Aspect-ratio scan bounds [-].
+    kappa_manual  : float  Passed through to f_Kappa (unused by the fits).
+    ms            : float  Vertical-stability margin (Wenninger / Blend) [-].
+    show_machines : bool   Overlay the reference machine points.
+    save_dir      : str or None
+
+    References
+    ----------
+    Hartmann, TREND systems-code framework - the delta = 0.6 (kappa - 1)
+        closure.
+    Stambaugh et al., Nucl. Fusion 32, 1642 (1992);
+    Freidberg et al., J. Plasma Phys. 81, 515810607 (2015);
+    Wenninger et al., Nucl. Fusion 55, 063003 (2015).
+    Machine values: see the provenance table above this function.
+    """
+    colours = {"Stambaugh": "#e08a3c", "Freidberg": "#4a8ec2",
+               "Wenninger": "#4fa06a", "Blend": "#16233f"}
+
+    A_arr = np.linspace(A_min, A_max, 600)
+    fig, ax = plt.subplots(figsize=(7.8, 7.8))
+
+    for name in ("Stambaugh", "Freidberg", "Wenninger", "Blend"):
+        kappa = f_Kappa(A_arr, name, κ_manual=kappa_manual, ms=ms)
+        ax.plot(A_arr, 0.6 * (kappa - 1.0), color=colours[name], lw=2.0,
+                zorder=4 if name == "Blend" else 3, label=name)
+
+    if show_machines:
+        for name, A_m, d_m, dx, dy, ha in _DELTA_MACHINES:
+            ax.plot(A_m, d_m, "o", ms=8, color="0.25", zorder=7)
+            va = "bottom" if dy > 0 else ("top" if abs(dy) > 0.03 else "center")
+            ax.annotate(name, (A_m + dx, d_m + dy), fontsize=11, color="0.2",
+                        fontweight="bold", ha=ha, va=va, zorder=8)
+
+    ax.legend(loc="upper right", fontsize=11.5,
+              title=r"$\delta = 0.6\,(\kappa(A) - 1)$",
+              title_fontsize=12, framealpha=0.95)
+    ax.set_xlabel(r"Aspect ratio  $A = R_0/a$", fontsize=13)
+    ax.set_ylabel(r"Boundary triangularity  $\delta$", fontsize=13)
+    ax.set_xlim(A_min, A_max)
+    ax.set_ylim(0.0, 1.0)
+    ax.grid(True, alpha=0.30, lw=0.6)
+    ax.tick_params(labelsize=11)
+
+    plt.tight_layout()
+    _save_or_show(fig, save_dir, "delta_trend")
+
+
 def plot_shaping_profiles(
     kappa_edge: float = 1.85,
     delta_edge: float = 0.50,
@@ -630,7 +749,7 @@ def plot_first_wall_surface(
         ax.set_xlabel(xlabel, fontsize=12)
         ax.set_ylabel("S  [m²]", fontsize=12)
         ax.set_title(title, fontsize=11)
-        ax.legend(fontsize=10)
+        ax.legend(fontsize=14)
         ax.grid(True, alpha=0.3)
 
     plt.suptitle(f"First wall surface area — R₀ = {R0} m, a = {a} m",
@@ -668,7 +787,7 @@ def plot_nT_profiles(
         "L-mode": {
             "nu_n": 0.5, "nu_T": 1.75, "rho_ped": 1.00,
             "n_ped_frac": 0.00, "T_ped_frac": 0.00,
-            "color": "#2166ac", "ls": "--",
+            "color": "#2166ac", "ls": "-",
         },
         "H-mode": {
             "nu_n": 1.0, "nu_T": 1.45, "rho_ped": 0.94,
@@ -678,7 +797,7 @@ def plot_nT_profiles(
         "Advanced": {
             "nu_n": 1.5, "nu_T": 2.00, "rho_ped": 0.96,
             "n_ped_frac": 0.95, "T_ped_frac": 0.55,
-            "color": "#4dac26", "ls": "-.",
+            "color": "#4dac26", "ls": "-",
         },
     }
     rho = np.linspace(0.0, 1.0, rho_n)
@@ -702,19 +821,19 @@ def plot_nT_profiles(
     ):
         ax.axhline(1.0, color="gray", lw=0.9, ls=":", alpha=0.6,
                    label=f"Volume average = {xbar}")
-        ax.set_xlabel(r"$\rho = r/a$", fontsize=12)
-        ax.set_ylabel(sym, fontsize=12)
+        ax.set_xlabel(r"$\rho = r/a$", fontsize=16)
+        ax.set_ylabel(sym, fontsize=16)
+        ax.tick_params(labelsize=13)
         ax.set_xlim(0, 1)
         ax.set_ylim(bottom=0)
-        ax.legend(fontsize=10)
+        ax.legend(fontsize=14)
         ax.grid(True, alpha=0.3)
 
-    axes[0].set_title("Density profile  n̂(ρ)", fontsize=12)
-    axes[1].set_title("Temperature profile  T̂(ρ)", fontsize=12)
-    axes[2].set_title("Pressure profile  p̂(ρ)", fontsize=12)
+    axes[0].set_title("Density profile  n̂(ρ)", fontsize=15)
+    axes[1].set_title("Temperature profile  T̂(ρ)", fontsize=15)
+    axes[2].set_title("Pressure profile  p̂(ρ)", fontsize=15)
 
-    plt.suptitle("Normalised radial profiles — L-mode vs H-mode vs Advanced",
-                 fontsize=12, fontweight="bold")
+    # Suptitle removed for the thesis rendering, the caption carries it
     plt.tight_layout()
     _save_or_show(fig, save_dir, "nTp_profiles")
 
@@ -906,7 +1025,11 @@ def plot_Lz_cooling(
         ("C",  "C  (Z=6)",   "tab:olive"),
     ]
 
-    fig, ax = plt.subplots(figsize=(6, 5))
+    # Square AXES BOX (thesis request): equal rendered width and height of
+    # the axes themselves, not just the canvas; title removed, the caption
+    # carries it
+    fig, ax = plt.subplots(figsize=(7.6, 7.2))
+    ax.set_box_aspect(1)
 
     for imp, label, color in species:
         Lz     = np.array([get_Lz(imp, T) for T in Te_arr])
@@ -920,89 +1043,124 @@ def plot_Lz_cooling(
     ax.axvspan(0.3, 1.0,   alpha=0.07, color="goldenrod")
     ax.axvspan(1.0, 100.0, alpha=0.07, color="tomato")
     
-    ax.text(0.17, 2e-31, "Edge",     fontsize=10, color="steelblue", ha="center")
-    ax.text(0.55, 2e-31, "Pedestal", fontsize=10, color="goldenrod", ha="center")
-    ax.text(10,   2e-31, "Core",     fontsize=10, color="tomato", ha="center")
+    ax.text(0.17, 2e-31, "Edge",     fontsize=13, color="steelblue", ha="center")
+    ax.text(0.55, 2e-31, "Pedestal", fontsize=13, color="goldenrod", ha="center")
+    ax.text(10,   2e-31, "Core",     fontsize=13, color="tomato", ha="center")
 
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlim(0.1, 50)
     ax.set_ylim(1e-34, 10e-31)
-    ax.set_xlabel(r"$T_e$  [keV]", fontsize=12)
-    ax.set_ylabel(r"$L_z(T_e)$  [W·m³]", fontsize=12)
-    ax.set_title("Coronal radiative cooling coefficient\n"
-                 r"(Mavrin 2018 / ADAS)", fontsize=11)
-    ax.legend(fontsize=10, loc="lower right")
+    ax.set_xlabel(r"$T_e$  [keV]", fontsize=15)
+    ax.set_ylabel(r"$L_z(T_e)$  [W·m³]", fontsize=15)
+    ax.tick_params(labelsize=13)
+    ax.legend(fontsize=12, loc="lower right")
     ax.grid(True, which="both", alpha=0.2)
 
     plt.tight_layout()
     _save_or_show(fig, save_dir, "Lz_cooling")
 
 
+# Helium ash fraction against C_alpha, tabulated from full D0FUS runs.
+# Each entry is (C_alpha, f_He [%]) obtained by rerunning the corresponding
+# benchmark deck with C_Alpha substituted and nothing else changed. The scan
+# is reproduced by verif_Calpha/scan_calpha.py. Evaluating the standalone
+# reservoir formula instead would answer a different question: at a fixed
+# hand-picked reference point, without impurity dilution, without pedestal
+# and with a cylindrical volume weight, it returns 4.6 % for C_alpha = 5,
+# whereas the converged ITER deck returns 2.7 % at that value.
+_HE_SCAN_ITER = [(3, 1.601), (4, 2.163), (5, 2.742), (6, 3.341), (7, 3.965),
+                 (7.5, 4.287), (8, 4.618), (9, 5.308)]
+# EU-DEMO 2017 deck, kept for the record but no longer plotted: the range to
+# expect for a DEMO-class device is not known with anything like the
+# confidence of the ITER projection, so showing it would invite more
+# commentary than it is worth. Its deck value is C_alpha = 10, returning
+# 8.8 %, against a European baseline that assumes c_He = 10 %.
+_HE_SCAN_DEMO = [(3, 2.472), (4, 3.318), (5, 4.177), (6, 5.052), (7, 5.944),
+                 (7.5, 6.398), (8, 6.858), (9, 7.795), (10, 8.763),
+                 (11, 9.767), (12, 10.818), (14, 13.124)]
+_HE_ITER_LAST_FEASIBLE = 9      # beyond this the 500 MW ITER point does not close
+
+
 def plot_He_fraction(
-    nbar: float = 1.0,
-    Tbar: float = 8.9,
-    tauE: float = 3.7,
-    C_Alpha_ITER: float = 5.0,
-    C_Alpha_DEMO: float = 7.0,
-    nu_T: float = 1.0,
+    iter_scan: list | None = None,
+    C_Alpha_ITER: float = 7.5,
     save_dir: str | None = None,
 ) -> None:
     """
-    Plot helium ash fraction f_α as a function of the He removal efficiency
-    C_α = τ_α / τ_E for ITER and EU-DEMO reference parameters, comparing
-    academic (no pedestal) and H-mode pedestal profile assumptions.
+    Plot the equilibrium helium ash fraction of the ITER deck against the
+    removal efficiency C_alpha = tau_alpha* / tau_E.
 
-    Two D0FUS default values for C_α are highlighted with vertical dotted
-    lines: C_α = 5 for ITER (consistent with Progress in the ITER Physics
-    Basis projections) and C_α = 7 for EU-DEMO 2017 (PROCESS reference run).
+    Only ITER is shown, on purpose. It is the one machine of the set for
+    which the expected range is known with reasonable confidence, the 4 to
+    6 % projected for the Q = 10 inductive scenario; the corresponding
+    systems-code estimate for a DEMO-class device is far more uncertain and
+    would need more commentary than it is worth here.
+
+    The curve is NOT an evaluation of the closed-form reservoir balance at a
+    reference point: each marker is a complete D0FUS run of the deck, with
+    C_alpha substituted and every other input untouched, so the figure is
+    consistent with the design point of Chapter 2 by construction. This
+    matters, because the standalone formula and the converged run do not
+    agree: the former returns 4.6 % helium at C_alpha = 5 for ITER-like
+    parameters, the latter 2.7 %, the difference coming from the profiles,
+    the impurity dilution and the flux-surface volume weight.
+
+    C_alpha is not a quantity one reads off a reference design. In PROCESS,
+    for instance, the helium fraction is the input and tau_He*/tau_E an
+    output, the only input on the ratio being a lower bound whose default is
+    5.0 (constraint 62). It is therefore calibrated deck by deck so that the
+    predicted ash fraction lands on the projected one: 7.5 for ITER here.
+
+    Past C_alpha ~ 9 the deck no longer closes: the dilution is such that
+    500 MW cannot be held under the density limit and the solver returns no
+    design point. The curve stops there, which is a result in itself.
 
     Parameters
     ----------
-    nbar, Tbar, tauE : float  Reference plasma parameters [10²⁰ m⁻³, keV, s].
-    C_Alpha_ITER     : float  D0FUS default C_α for ITER (vertical line) [-].
-    C_Alpha_DEMO     : float  D0FUS default C_α for EU-DEMO 2017 (vertical line) [-].
-    nu_T             : float  Temperature peaking exponent [-].
-    save_dir         : str or None
+    iter_scan    : list of (C_alpha, f_He [%]) or None
+        Scan results. None uses the tabulated D0FUS runs above.
+    C_Alpha_ITER : float  Value used by the ITER benchmark deck [-].
+    save_dir     : str or None
 
     References
     ----------
-    ITER Physics Basis, Nucl. Fusion 39, §2.4 (1999).
     Shimada et al., Progress in the ITER Physics Basis, Ch. 1,
-        Nucl. Fusion 47, S1 (2007).
-    Kovari et al., Fus. Eng. Des. 89, 3054 (2014) — PROCESS systems code.
-    Reiter, Wolf and Kever, Nucl. Fusion 30, 2141 (1990) — ignition bound on C_α.
+        Nucl. Fusion 47, S1 (2007) - 4 to 6 % projected for Q = 10.
+    Kovari et al., Fus. Eng. Des. 89, 3054 (2014) - PROCESS, where the
+        ratio is an output and 5.0 only a default lower bound.
     """
-    C_arr = np.linspace(2, 15, 150)
+    ITER = _HE_SCAN_ITER if iter_scan is None else iter_scan
 
-    fa_ITER     = [f_He_fraction(1.0,  8.9,  3.7, C, nu_T) * 100 for C in C_arr]
-    fa_ITER_ped = [f_He_fraction(1.0,  8.9,  3.7, C, nu_T,
-                                 rho_ped=0.9, T_ped_frac=0.25) * 100
-                   for C in C_arr]
-    fa_DEMO     = [f_He_fraction(1.2, 12.5,  4.6, C, nu_T) * 100 for C in C_arr]
+    # Square canvas; no annotation touches the curves, everything is carried
+    # by an in-figure legend (thesis request): grey band = range projected
+    # for ITER, dotted line = calibrated D0FUS default, cross = collapse of
+    # the design point (no solution beyond it). The curve itself is plain,
+    # markerless.
+    fig, ax = plt.subplots(figsize=(7.2, 7.2))
 
-    fig, ax = plt.subplots(figsize=(8.0, 5.2))
-    ax.plot(C_arr, fa_ITER,     "b-",  lw=2.0, label="ITER — academic (no pedestal)")
-    ax.plot(C_arr, fa_ITER_ped, "b--", lw=1.6, label="ITER — Refined H-mode pedestal")
-    ax.plot(C_arr, fa_DEMO,     "r-",  lw=2.0, label="EU-DEMO — academic")
-    # Two D0FUS default operating points: ITER and EU-DEMO 2017
-    ax.axvline(C_Alpha_ITER, color="tab:blue", lw=1.6, ls=":",
-               label=f"ITER default $C_\\alpha$ = {C_Alpha_ITER:.0f}")
-    ax.axvline(C_Alpha_DEMO, color="tab:red",  lw=1.6, ls=":",
-               label=f"EU-DEMO 2017 default $C_\\alpha$ = {C_Alpha_DEMO:.0f}")
-    ax.axhspan(4, 6, color="grey", alpha=0.12, label="ITER target 4–6 %")
-    ax.set_xlabel(r"Removal efficiency $C_\alpha = \tau_\alpha / \tau_E$", fontsize=14)
-    ax.set_ylabel(r"Helium ash fraction $f_\alpha$  [%]", fontsize=14)
-    ax.set_title("He ash fraction — academic vs refined H-mode pedestal",
-                 fontsize=13)
-    ax.legend(fontsize=11, loc="upper left")
-    ax.tick_params(axis="both", labelsize=12)
-    ax.set_xlim(2, 15)
-    ax.set_ylim(0, 25)
-    ax.grid(True, alpha=0.3)
+    ax.axhspan(4, 6, color="0.5", alpha=0.14, zorder=0,
+               label="range projected for ITER")
+    ax.plot([q[0] for q in ITER], [q[1] for q in ITER], "-",
+            color="tab:blue", lw=2.2, zorder=4)
+    ax.axvline(C_Alpha_ITER, color="tab:blue", lw=1.5, ls=":", zorder=2,
+               label="calibrated D0FUS default")
+    if _HE_ITER_LAST_FEASIBLE in dict(ITER):
+        ax.plot(_HE_ITER_LAST_FEASIBLE, dict(ITER)[_HE_ITER_LAST_FEASIBLE],
+                "x", color="tab:blue", ms=14, mew=2.6, zorder=7,
+                label="design point collapses")
+
+    ax.set_xlabel(r"Removal efficiency  $C_\alpha = \tau_\alpha^{*} / \tau_E$",
+                  fontsize=15)
+    ax.set_ylabel(r"Helium ash fraction  $f_\alpha$  [%]", fontsize=15)
+    ax.set_xlim(3, 9.6)
+    ax.set_ylim(0, 6.6)
+    ax.grid(True, alpha=0.28, lw=0.6)
+    ax.tick_params(labelsize=13)
+    ax.legend(fontsize=13, loc="upper left", framealpha=0.95)
 
     plt.tight_layout()
-    _save_or_show(fig, save_dir, "He_fraction")
+    _save_or_show(fig, save_dir, "d0fus_He_fraction")
 
 
 # =============================================================================
@@ -1679,7 +1837,7 @@ def plot_CS_thickness_vs_flux(
             ax.set_ylabel(ylabel, fontsize=12)
             ax.set_title(f"{conf} — {ylabel.split('[')[0].strip()}", fontsize=11)
             ax.grid(True, ls="--", alpha=0.6)
-            ax.legend(fontsize=10)
+            ax.legend(fontsize=14)
 
         plt.suptitle(
             f"CS coil sizing — {conf} configuration\n"
@@ -3374,6 +3532,9 @@ _PV3D_EDGE_COL   = "#1a1a1a"
 _PV3D_EDGE_LW    = 2.2
 _PV3D_FLUX_COL   = "#6a4a9e"          # darker violet: flux surfaces and axis
 _PV3D_FLUX_FRACS = (0.3, 0.55, 0.8)   # nested flux-surface radii (frac of LCFS)
+_PV3D_HUMAN_COL  = "#3f3f49"          # near-black grey: human scale figure
+_PV3D_HUMAN_H    = 2.0                # reference human height [m]
+_PV3D_PLINTH_COL = "#b9bec7"          # light grey: pedestal disk underfoot
 
 # Wedge and camera conventions (one-third cut, centred on the viewer)
 _PV3D_GAP_CENTER_DEG = -60.0
@@ -3511,6 +3672,93 @@ def _pv3d_cyl_sector(pv, pl, r_in, r_out, z_lo, z_hi, color):
         _pv3d_add_cap(pv, pl, Rw, Zw, pc, color)
 
 
+def _pv3d_d_centreline(R_out, Z_out, R_in, Z_in, frac=0.030, n=400):
+    """
+    Winding-pack centreline of a D-shaped TF coil in the poloidal plane.
+
+    Midway between the outer and inner Princeton-D contours (which share the
+    same sampling by construction of the constant-thickness offset).  The
+    contour is smoothed periodically to round the slope discontinuity where
+    the straight inboard leg meets the arcs (otherwise the local sweep frame
+    twists at the junction and produces jagged edge artefacts), then
+    resampled uniformly in arc length.
+    """
+    R_c = 0.5 * (np.asarray(R_out) + np.asarray(R_in))
+    Z_c = 0.5 * (np.asarray(Z_out) + np.asarray(Z_in))
+    R_c, Z_c = _smooth_closed(R_c, Z_c, frac=frac)
+    s = np.concatenate([[0.0], np.cumsum(np.hypot(np.diff(R_c),
+                                                  np.diff(Z_c)))])
+    su = np.linspace(0.0, s[-1], n)
+    return np.interp(su, s, R_c), np.interp(su, s, Z_c)
+
+
+def _pv3d_add_human(pv, pl, x, y, z_floor, height=_PV3D_HUMAN_H,
+                    facing=(1.0, 0.0, 0.0), color=_PV3D_HUMAN_COL):
+    """
+    Stylised standing human silhouette, used as an absolute size reference.
+
+    The figure is built from primitive solids (sphere head, cylinder torso,
+    arms and legs) with classical body proportions, scaled so the TOTAL
+    height (feet to top of head) is exactly ``height`` metres (2.0 m by
+    default).  It stands on the plane z = z_floor at (x, y); ``facing`` is
+    the horizontal direction the figure faces (the shoulder line is drawn
+    perpendicular to it).
+
+    Legibility on large machines: the silhouette is drawn in a near-black
+    tone with the technical-drawing black outline on every part, standing
+    on a light pedestal disk, so the 2 m reference remains findable even
+    when the machine is one order of magnitude taller.  The HEIGHT is
+    never rescaled.
+    """
+    h = float(height)
+    f = np.array([facing[0], facing[1], 0.0])
+    f /= np.linalg.norm(f) + 1e-12
+    lat = np.array([-f[1], f[0], 0.0])          # shoulder-line direction
+    base = np.array([float(x), float(y), float(z_floor)])
+
+    def _outline(mesh):
+        try:
+            import warnings as _w
+            with _w.catch_warnings():
+                _w.simplefilter("ignore")
+                pl.add_silhouette(mesh, color=_PV3D_EDGE_COL, line_width=1.6)
+        except Exception:
+            pass
+
+    def _solid(mesh, col):
+        pl.add_mesh(mesh, color=col, smooth_shading=True,
+                    specular=0.15, diffuse=0.85, ambient=0.45)
+        _outline(mesh)
+
+    def _limb(p_lo, p_hi, radius):
+        p_lo = base + p_lo; p_hi = base + p_hi
+        centre = 0.5 * (p_lo + p_hi)
+        d = p_hi - p_lo
+        _solid(pv.Cylinder(center=centre, direction=d, radius=radius,
+                           height=float(np.linalg.norm(d)), capping=True),
+               color)
+
+    up = np.array([0.0, 0.0, 1.0])
+    # Pedestal disk: top face flush with z_floor (the feet stand on it).
+    t_pl = 0.012 * h
+    _solid(pv.Cylinder(center=base - 0.5 * t_pl * up,
+                       direction=(0.0, 0.0, 1.0), radius=0.30 * h,
+                       height=t_pl, capping=True), _PV3D_PLINTH_COL)
+    # Head: sphere, top tangent to z = z_floor + h (total height exact).
+    r_head = 0.065 * h
+    _solid(pv.Sphere(radius=r_head, center=base + (h - r_head) * up), color)
+    # Torso: shoulders at 0.84 h, hips at 0.50 h.
+    _limb(0.50 * h * up, 0.84 * h * up, 0.085 * h)
+    # Legs: hip to ground, slightly apart.
+    for s in (-1.0, 1.0):
+        _limb(s * 0.050 * h * lat, s * 0.050 * h * lat + 0.52 * h * up,
+              0.042 * h)
+    # Arms: shoulder to mid-thigh, along the body.
+    for s in (-1.0, 1.0):
+        _limb(s * 0.130 * h * lat + 0.80 * h * up,
+              s * 0.140 * h * lat + 0.44 * h * up, 0.030 * h)
+
+
 def _pv3d_camera(distance, azim_deg=_PV3D_CAM_AZIM_DEG,
                  elev_deg=_PV3D_CAM_ELEV_DEG, focus=(0.0, 0.0, 0.0)):
     """Camera position from spherical angles about the machine centre."""
@@ -3540,7 +3788,8 @@ def _pv3d_autotrim(png_path, pad=14):
 def _pv3d_legend_strip(entries, ncol, path):
     """Render a standalone horizontal legend strip (matplotlib patches)."""
     from matplotlib.patches import Patch
-    fig = plt.figure(figsize=(8.4, 1.2))
+    n_rows = int(np.ceil(len(entries) / max(int(ncol), 1)))
+    fig = plt.figure(figsize=(8.4, max(1.2, 0.42 * n_rows + 0.35)))
     ax = fig.add_axes([0, 0, 1, 1]); ax.axis("off")
     handles = [Patch(facecolor=c, edgecolor="black", linewidth=1.4,
                      label=lab) for lab, c in entries]
@@ -3562,7 +3811,8 @@ def _pv3d_stack_legend(legend_path, machine_path, out_png, gap=14):
     canvas.save(out_png, dpi=(200, 200))
 
 
-def plot_tokamak_3D(run: dict, save_dir: str | None = None) -> None:
+def plot_tokamak_3D(run: dict, save_dir: str | None = None,
+                    human: bool = True) -> None:
     """
     3D machine view: plasma, CS, TF cage and illustrative PF set (PyVista).
 
@@ -3571,6 +3821,9 @@ def plot_tokamak_3D(run: dict, save_dir: str | None = None) -> None:
     build.  All plasma / TF / CS dimensions are taken from the converged
     D0FUS run; the PF ring coils are ILLUSTRATIVE (D0FUS does not size the
     poloidal-field set) and are auto-placed along the TF outer contour.
+
+    A stylised 2 m human silhouette is drawn standing at floor level next to
+    the machine (``human=True``, default) as an absolute scale reference.
 
     Requires PyVista (optional dependency).  If PyVista is not installed the
     figure is skipped with an informative message; the caller is unaffected.
@@ -3613,21 +3866,9 @@ def plot_tokamak_3D(run: dict, save_dir: str | None = None) -> None:
     (R_bore, R_TF_out, H_TF, _A_cross, _L_turn,
      R_out, Z_out, R_in, Z_in) = f_TF_cross_section(a, b, R0, c_TF, Delta_TF)
 
-    # Winding-pack centreline: midway between outer and inner contours
-    # (both arrays share the same sampling by construction of the offset).
-    # The contour is smoothed periodically to round the slope discontinuity
-    # where the straight inboard leg meets the arcs; otherwise the local
-    # sweep frame twists at the junction and produces jagged edge artefacts.
-    R_c = 0.5 * (np.asarray(R_out) + np.asarray(R_in))
-    Z_c = 0.5 * (np.asarray(Z_out) + np.asarray(Z_in))
-    R_c, Z_c = _smooth_closed(R_c, Z_c, frac=0.030)
-    # Resample uniformly in arc length: solve_ivp sampling is highly
-    # non-uniform, which degrades the sweep-frame quality after smoothing.
-    _s = np.concatenate([[0.0], np.cumsum(np.hypot(np.diff(R_c),
-                                                   np.diff(Z_c)))])
-    _su = np.linspace(0.0, _s[-1], 400)
-    R_c = np.interp(_su, _s, R_c)
-    Z_c = np.interp(_su, _s, Z_c)
+    # Winding-pack centreline: midway between outer and inner contours,
+    # smoothed and resampled uniformly in arc length (see helper).
+    R_c, Z_c = _pv3d_d_centreline(R_out, Z_out, R_in, Z_in)
 
     # Toroidal width from the wedged-vault contact condition at the inboard
     # leg centreline (Choice_Buck_Wedg = Wedging convention): adjacent coils
@@ -3738,6 +3979,8 @@ def plot_tokamak_3D(run: dict, save_dir: str | None = None) -> None:
     pf_sides      = (0.38, 0.44, 0.48, 0.48, 0.44, 0.38)
     ang_contour = np.arctan2(Z_out, R_out - R_mid)
     pf_extent = 0.0
+    pf_R_max  = 0.0
+    pf_z_min  = 0.0
     for psi_deg, s_fac in zip(pf_angles_deg, pf_sides):
         s = s_fac * a                             # square section side [m]
         psi = np.deg2rad(psi_deg)
@@ -3752,10 +3995,31 @@ def plot_tokamak_3D(run: dict, save_dir: str | None = None) -> None:
                        np.full_like(t, Zc_pf), 0.5 * s, 0.5 * s,
                        (0.0, 0.0, 1.0), _PV3D_PF_COL, closed=False)
         pf_extent = max(pf_extent, np.hypot(Rc_pf, abs(Zc_pf)) + s)
+        pf_R_max  = max(pf_R_max, Rc_pf + 0.5 * s)
+        pf_z_min  = min(pf_z_min, Zc_pf - 0.5 * s)
+
+    # ── Human scale figure (2 m) ─────────────────────────────────────
+    # Standing at floor level (lowest drawn element) just outside the
+    # machine, at the azimuth of the removed wedge so it faces the viewer.
+    if human:
+        z_floor = min(-0.5 * H_TF, pf_z_min)
+        # Beside the machine (just past the first cut plane, on the side
+        # facing the camera) and outside every drawn element, so the figure
+        # is neither occluded by the PF arcs nor clipped by the camera.
+        R_human = max(R_TF_out, pf_R_max) + 0.7 + 0.04 * R_TF_out
+        ph = np.deg2rad(_PV3D_GAP_CENTER_DEG + _PV3D_GAP_HALF_DEG + 6.0)
+        az_c = np.deg2rad(_PV3D_CAM_AZIM_DEG)    # face the camera (frontal)
+        _pv3d_add_human(pv, pl, R_human * np.cos(ph), R_human * np.sin(ph),
+                        z_floor, facing=(np.cos(az_c), np.sin(az_c), 0.0))
 
     # ── Camera and render ────────────────────────────────────────────
     reach = 1.05 * max(R_TF_out, 0.5 * H_TF, pf_extent)
     pl.camera_position = _pv3d_camera(3.35 * reach)
+    if human:
+        # Refit the camera along the fixed viewing direction so every actor
+        # (machine and human figure) is inside the frustum, then tighten.
+        pl.reset_camera(render=False)
+        pl.camera.zoom(1.28)
 
     cs_label = ("Central solenoid" if n_mod == 1
                 else f"Central solenoid ({n_mod} modules)")
@@ -3763,6 +4027,9 @@ def plot_tokamak_3D(run: dict, save_dir: str | None = None) -> None:
               (cs_label, _PV3D_CS_COL),
               (f"TF coils ({N_TF})", _PV3D_TF_COL),
               ("PF coils (illustrative)", _PV3D_PF_COL)]
+    if human:
+        legend.append((f"Human figure ({_PV3D_HUMAN_H:.0f} m)",
+                       _PV3D_HUMAN_COL))
 
     import tempfile
     if save_dir is not None:
@@ -3831,13 +4098,21 @@ def plot_all(
     N = 31
 
     def _p(i, label):
-        print(f"  [{i:2d}/{N}] {label}")
+        # index kept as a free-form string: the shaping block uses 1b, 1c
+        # for the two figures added after the catalogue was numbered
+        print(f"  [{str(i):>3}/{N}] {label}")
 
     print("D0FUS_figures — generating full catalogue...")
 
     # ── Plasma shaping ────────────────────────────────────────────────
     _p(1, "κ scaling curves")
     plot_kappa_scaling(save_dir=save_dir)
+
+    _p("1b", "κ(A) blended model vs machines")
+    plot_kappa_blend(save_dir=save_dir)
+
+    _p("1c", "δ = 0.6 (κ − 1) vs machines")
+    plot_delta_trend(save_dir=save_dir)
 
     _p(2, "Shaping profiles κ(ρ), δ(ρ) — validation")
     plot_shaping_profiles(save_dir=save_dir)
@@ -4677,11 +4952,15 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
         # plot_TF_benchmark_table, with Gap absorbing the change so that the CS
         # outer radius stays on its published value (ITER 2.096 m per Libeyre,
         # EAST 0.71 m per Wu): both CS lines are therefore unchanged.
-        # ARC: flux 19.2 -> 27.2 Wb, the value Eq. Psi_CS_acad returns for
-        # Sorbom's own build (0.45 to 0.70 m) at his published 12.9 T, since the
-        # 32 Wb he announces is not consistent with those same two numbers under
-        # uniform current density; steel 316LN at 700 MPa = 2/3 x 1050, which
-        # also matches the 660 MPa service stress he quotes; optimal conductor
+        # ARC: the published 32 Wb is used, "across its full operating range"
+        # (Sorbom et al. 2015), like every other column, rather than the 27.2 Wb
+        # that Eq. Psi_CS_acad returns for Sorbom's own build (0.45 to 0.70 m)
+        # at his published 12.9 T. The two published numbers are mutually
+        # inconsistent under uniform current density, the envelope alone
+        # ceiling at 29.2 Wb; on the published flux the peak field comes out at
+        # 12.8 T against 12.9 published, whereas the reconstruction returned
+        # 10.5 T. Steel 316LN at 700 MPa = 2/3 x 1050, which also matches the
+        # 660 MPa service stress Sorbom quotes; optimal conductor
         # cross-section, without which no solution exists at that flux.
         # SPARC: build set so that the CS outer radius lands on the 0.695 m
         # published by Sanabria (module 1: 0.445 / 0.695 m, i.e. 0.250 m thick).
@@ -4711,12 +4990,17 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
         "EAST":    {"Ψplateau":  10,  "a_cs": 0.45, "b_cs": 0.15, "c_cs": 0.347,
                     "R0_cs": 1.85, "B_TF":  5.8,  "B_cs":  4.5, "σ_CS": 547e6,
                     "config": "Wedging", "SupraChoice": "NbTi",  "T_CS": 4.5,
-                    "kappa": 1.9,  "J_wost": 45e6, "Gap": 0.193, "H_CS": 2.75},
-        "ARC":     {"Ψplateau": 27.2, "a_cs": 1.10, "b_cs": 0.86, "c_cs": 0.64,
+                    # EAST: J rebuilt from the published cable and winding, a
+                    # 20.35 mm CICC with a 1.5 mm jacket carrying 14.5 kA at a
+                    # 23 mm pitch (Wu 2008, Guo 2016), i.e. 36 and not 45 MA/m2.
+                    # The same reconstruction on its TF conductor returns the
+                    # value the TF benchmark already uses, which validates it.
+                    "kappa": 1.9,  "J_wost": 36e6, "Gap": 0.193, "H_CS": 2.75},
+        "ARC":     {"Ψplateau": 32.0, "a_cs": 1.10, "b_cs": 0.86, "c_cs": 0.64,
                     "R0_cs": 3.30, "B_TF": 23,   "B_cs": 12.9, "σ_CS": 700e6,
                     "config": "Plug",    "SupraChoice": "REBCO",  "T_CS": 20,
-                    "kappa": 1.84,  "J_wost": 120e6, "n_shape_CS": 0.0},
-        "SPARC":   {"Ψplateau": 25.2, "a_cs": 0.57, "b_cs": 0.26, "c_cs": 0.325,
+                    "kappa": 1.84,  "J_wost": 216e6, "n_shape_CS": 0.0},
+        "SPARC":   {"Ψplateau": 42.0, "a_cs": 0.57, "b_cs": 0.26, "c_cs": 0.325,
                     "R0_cs": 1.85, "B_TF": 20,   "B_cs": 25,   "σ_CS": 1000e6,
                     "config": "Bucking", "SupraChoice": "REBCO",  "T_CS": 20,
                     # J_wost convention. D0FUS consumes the current density over the

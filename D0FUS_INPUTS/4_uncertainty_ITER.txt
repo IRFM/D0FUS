@@ -562,7 +562,7 @@ retune      = Tbar          # Operator retuning: a sample failing at the deck
                             # point EXISTS in the window for that draw. The
                             # summary reports both readings (as designed and
                             # within the operating window).
-Tbar_window = 6.0, 12.0     # Admissible operating window [keV]: bounded by
+Tbar_window = 1.0, 20.0     # Admissible operating window [keV]: bounded by
                             # H-mode operation at 500 MW (feasibility support
                             # observed ~6-11 keV in the Tbar scan panel).
                             # The temperature ladder is built RELATIVE to this

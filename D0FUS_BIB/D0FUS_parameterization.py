@@ -135,7 +135,10 @@ class GlobalConfig:
     # q₉₅ formula selector:
     #   'Sauter'    — uses LCFS values (κ_edge, δ_edge). Sauter, FED 112 (2016) Eq. 30.
     #   'ITER_1989' — uses ψ_N = 0.95 values (κ₉₅, δ₉₅). Uckan (1989), also Johner (2011).
-    Option_q95         : str = 'Sauter'         # q₉₅ formula: 'Sauter' (default) or 'ITER_1989'
+    # Default changed from 'Sauter' to 'ITER_1989' (Aug 2026): checked against
+    # published equilibrium values on ITER and SPARC, ITER-89 reproduces both
+    # within 7 % where Sauter overshoots by 15 to 20 % (chap. 2 of the thesis).
+    Option_q95         : str = 'ITER_1989'     # q₉₅ formula: 'ITER_1989' (default) or 'Sauter'
     Option_Kappa       : str = 'Blend'          # Elongation model: 'Blend' (default), 'Wenninger', 'Stambaugh', 'Freidberg', 'Manual'
     κ_manual           : float = 1.9            # Elongation (Manual mode only) [-]
     Triangularity      : str = 'positive'       # Triangularity sign: 'positive' (delta = +0.6*(kappa-1), TREND)

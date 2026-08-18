@@ -345,7 +345,12 @@ def plot_popcon(out, save_path=None, show=True):
     N, T = np.meshgrid(out['nbar_line_grid'], out['Tbar_grid'])
     dsn = out['design']
 
-    fig, ax = plt.subplots(figsize=(10.5, 7.5))
+    # Square AXES BOX, thesis request: the axes themselves are forced to
+    # equal rendered width and height (set_box_aspect), not just the
+    # canvas, so the map prints as a true square whatever the colorbar
+    # and labels take. Legends and labels enlarged as well.
+    fig, ax = plt.subplots(figsize=(9.6, 9.0))
+    ax.set_box_aspect(1)
 
     # Ignition / Q map background.
     Q = out['Q'].copy()
@@ -366,19 +371,19 @@ def plot_popcon(out, save_path=None, show=True):
     cs = ax.contour(N, T, out['P_fus'], colors='royalblue',
                     levels=[100, 200, 500, 1000, 2000, 3000, 5000],
                     linewidths=1.1)
-    ax.clabel(cs, fmt='%g MW', fontsize=8)
+    ax.clabel(cs, fmt='%g MW', fontsize=12)
     ax.plot([], [], color='royalblue', lw=1.1, label='P_fus')
 
     Paux = np.where(out['P_aux'] > 0, out['P_aux'], np.nan)
     cs = ax.contour(N, T, Paux, colors='forestgreen',
                     levels=[10, 25, 50, 100, 200], linewidths=1.0,
                     linestyles='--')
-    ax.clabel(cs, fmt='%g MW', fontsize=8)
+    ax.clabel(cs, fmt='%g MW', fontsize=12)
     ax.plot([], [], color='forestgreen', lw=1.0, ls='--', label='P_aux')
 
     cs = ax.contour(N, T, out['Q'], colors='k', levels=[1, 2, 5, 10, 20],
                     linewidths=1.0, linestyles=':')
-    ax.clabel(cs, fmt='Q=%g', fontsize=8)
+    ax.clabel(cs, fmt='Q=%g', fontsize=12)
 
     ax.contour(N, T, out['f_LH'], colors='crimson', levels=[1.0],
                linewidths=2.0)
@@ -398,13 +403,14 @@ def plot_popcon(out, save_path=None, show=True):
             markersize=16, color='red', markeredgecolor='k',
             label='Design point', linestyle='None')
 
-    ax.set_xlabel(r'Line-averaged density $\bar{n}_{line}$ [$10^{20}$ m$^{-3}$]')
-    ax.set_ylabel(r'Volume-averaged temperature $\bar{T}$ [keV]')
+    ax.set_xlabel(r'Line-averaged density $\bar{n}_{line}$ [$10^{20}$ m$^{-3}$]', fontsize=15)
+    ax.set_ylabel(r'Volume-averaged temperature $\bar{T}$ [keV]', fontsize=15)
     ax.set_title(
         f"POPCON — R0={dsn['R0']:.2f} m, a={dsn['a']:.2f} m, "
         f"B0={dsn['B0']:.2f} T, Ip={dsn['Ip']:.1f} MA, "
         f"{dsn['scaling_law']}, H={dsn['H']:.2f}")
-    ax.legend(loc='upper left', fontsize=8, framealpha=0.9)
+    ax.legend(loc='upper left', fontsize=13, framealpha=0.9)
+    ax.tick_params(labelsize=13)
     fig.tight_layout()
 
     if save_path:
