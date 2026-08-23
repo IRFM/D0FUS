@@ -42,8 +42,9 @@ dc_replace = replace
 #
 # Calibration references:
 #   'L'        : purely parabolic (no pedestal).
-#   'H'        : ITER CORSICA H-mode study (Doyle et al. 2007, PIPB Ch.2)
-#   'Advanced' : EU-DEMO 2017 PROCESS reference run
+#   'H'        : CORSICA simulations of the 15 MA ITER baseline (Kim 2018)
+#   'Advanced' : improved-confinement scenarios (peaked profiles)
+#   'EU-DEMO'  : EU-DEMO 2017 PROCESS reference profile set
 # ---------------------------------------------------------------------------
 _PROFILE_PRESETS = {
     'L':        {'nu_n': 0.50, 'nu_T': 1.00, 'rho_ped': 1.00,
@@ -436,7 +437,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # in τ_E and the scaling law inversion (it never crosses the separatrix).
     # Radiation emitted at ρ > rho_rad_core is edge radiation that reduces
     # P_sep but does NOT affect confinement.
-    # Value set in GlobalConfig (default 0.7, well inside pedestal top).
+    # Value set in GlobalConfig (default 0.6; canonical presets 0.6 and 1.0).
     rho_rad_core = config.rho_rad_core
     coreradiationfraction = config.coreradiationfraction
 
@@ -609,6 +610,10 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     else:
         raise ValueError(f"Unknown Triangularity: '{_tri}'. "
                          "Valid options: 'positive', 'negative'.")
+    # Optional manual override of the edge triangularity (signed). None keeps
+    # the TREND correlation delta = ±0.6*(kappa-1) selected above.
+    if getattr(config, 'Delta_manual', None) is not None:
+        δ         = float(config.Delta_manual)
     δ_95          = f_Delta_95(δ)
 
     # Precompute Miller volume derivative V'(ρ) for refined geometry mode.
@@ -926,10 +931,12 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         # P_rad_core  → subtracted from P_heat in τ_E and scaling law (Ip)
         # P_rad_total → subtracted from P_heat to get P_sep (divertor load)
         #
-        # coreradiationfraction (default 1.0) scales the core radiation term
-        # in P_loss only.  Values < 1 account for partial re-absorption,
-        # non-coronal transport effects, and scaling-law convention ambiguity.
-        # PROCESS uses 0.6 (Kovari et al., FED 89, 2014).
+        # coreradiationfraction (default 1.0, identical to PROCESS) scales
+        # the core radiation term in P_loss only.  Values < 1 account for
+        # partial re-absorption, non-coronal transport effects, and
+        # scaling-law convention ambiguity.  Beware: the PROCESS 0.6 often
+        # quoted is their core-region RADIUS (radius_plasma_core_norm),
+        # analogue of rho_rad_core, not this fraction.
         # P_sep is always computed with the FULL P_rad_total (no scaling).
         _P_rad_core_raw = P_Brem_loc + P_syn_loc + P_line_core_loc
         P_rad_core_loc  = coreradiationfraction * _P_rad_core_raw
@@ -1900,10 +1907,11 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         I_EC_solution  = cd_bd['I_EC']
         I_NBI_solution = cd_bd['I_NBI']
 
-    # Divertor power: P_α + P_CD − P_rad_total
-    # P_rad_total (not P_rad_core) is subtracted because edge/SOL radiation
-    # also reduces the power reaching the divertor target plates.
-    # Note: this is P_div, not the true P_sep (which uses P_rad_core).
+    # Separatrix power: P_sep = P_α + P_CD − P_rad_total (thesis Eq. P_sep).
+    # The whole of the radiated power is subtracted: wherever inside the
+    # LCFS the photons are emitted, they land on the first wall directly
+    # and do not cross the separatrix as conducted or convected heat.
+    # The divertor input restores the small ohmic term: P_div = P_sep + P_Ω.
     # The variable name P_sep_solution is kept for backward compatibility
     # with the genetic algorithm, scan module and figures module.
     P_sep_solution      = f_P_sep(P_fus, P_CD_solution, P_rad_total_solution)
@@ -2172,12 +2180,16 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # GA / scan / figures machinery inherits the choice transparently.
     # The native Greenwald density Ip/(pi a^2) remains available as nG_raw.
     _f_n_sep_line = f_n_sep * (nbar_solution / nbar_line_solution)  # n_sep/n̄_line
+    # Giacomin near-separatrix anchoring: n(rho=0.9)/n̄_line from the profile
+    _f_n_edge_line = (f_n_edge_ratio(nu_n, rho_ped, n_ped_frac)
+                      * (nbar_solution / nbar_line_solution))
     _P_tot_heat   = P_Alpha + P_Aux_solution + P_Ohm_solution       # [MW]
     n_DL_line, n_DL_native, n_DL_convention = f_density_limit(
         density_limit_model, Ip_solution, a,
         P_sol=P_sep_solution, P_tot=_P_tot_heat,
         R0=R0, kappa=κ, B0=B0_solution, q_edge=q95_solution,
         Z_eff=Zeff, f_n_sep_line=_f_n_sep_line,
+        f_n_edge_line=_f_n_edge_line,
         A_ion=config.Atomic_mass,
         alpha_GR=config.alpha_giacomin, f0=config.f0_zanca)
     if density_limit_model != 'greenwald':
@@ -2562,7 +2574,7 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
     _cost_bd = {}
     if getattr(config, "cost_model", "None") != "None":
         try:
-            _P_th_c = config.P_fus * M_blanket_effective(config.Blanket_choice) + _P_CD
+            _P_th_c = config.P_fus * (0.8 * M_blanket_effective(config.Blanket_choice) + 0.2) + _P_CD   # neutron-only multiplication
             _P_e_c  = max(_P_elec, 1.0)
             _T_op_c = results[132]; _CF_c = results[135]
             _t_bl_c = results[130]; _t_div_c = results[131]; _V_rb_BB_c = results[138]
@@ -3553,7 +3565,7 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] Q      (Energy gain factor)                     : {Q:.3f}",                   file=out)
         print(f"[O] P_elec (Net electrical power)                   : {P_elec:.3f} [MW]",         file=out)
         print(f"[O] P_wallplug (Wall-plug heating/CD power)         : {P_wallplug:.3f} [MW]",     file=out)
-        _P_gross = config.eta_T * config.M_blanket * config.P_fus
+        _P_gross = config.eta_T * config.P_fus * (0.8 * config.M_blanket + 0.2)
         print(f"[O] Q_eng  (Engineering gain = P_elec / P_wallplug) : {P_elec / P_wallplug:.3f}", file=out)
         print(f"[O] Cost   ((V_BB+V_TF+V_CS) / P_fus)               : {cost:.3f} [m³/MW]",    file=out)
         print("-------------------------------------------------------------------------", file=out)
@@ -3598,12 +3610,15 @@ def save_run_output(config: GlobalConfig,
             _Pfus_disp = config.P_fus
             _Ptot_disp = f_P_alpha(_Pfus_disp) + (_Pfus_disp / Q if Q > 0 else 0.0)
             _fnsl_disp = config.f_n_sep * (nbar / nbar_line)
+            _fnel_disp = (f_n_edge_ratio(nu_n, rho_ped, n_ped_frac)
+                          * (nbar / nbar_line))
             n_DL_line_d, n_DL_native_d, n_DL_conv_d = f_density_limit(
                 config.density_limit_model, Ip, config.a,
                 P_sol=P_sep, P_tot=_Ptot_disp,
                 R0=config.R0, kappa=κ, B0=B0, q_edge=q95,
                 Z_eff=_compute_Zeff_effective(config, f_alpha),
-                f_n_sep_line=_fnsl_disp, A_ion=config.Atomic_mass,
+                f_n_sep_line=_fnsl_disp, f_n_edge_line=_fnel_disp,
+                A_ion=config.Atomic_mass,
                 alpha_GR=config.alpha_giacomin, f0=config.f0_zanca)
             print(f"[O] n_DL  ({config.density_limit_model} limit, native: {n_DL_conv_d}) : {n_DL_native_d:.3f} [10²⁰ m⁻³]", file=out)
             print(f"[O] n_DL  (line-averaged equivalent cap)            : {n_DL_line_d:.3f} [10²⁰ m⁻³]", file=out)
@@ -3626,7 +3641,7 @@ def save_run_output(config: GlobalConfig,
             _q95_note = "scaling only; profile q(rho_95) may differ (refined mode)"
         print(f"[O] q95  (Safety factor at 95% flux surface)        : {q95:.3f}    [{_q95_note}]", file=out)
         print("-------------------------------------------------------------------------", file=out)
-        print(f"[O] P_div    (P_α+P_CD−P_rad_tot, divertor power)   : {P_sep:.3f} [MW]",    file=out)
+        print(f"[O] P_sep    (P_α+P_CD−P_rad_tot, separatrix power) : {P_sep:.3f} [MW]",    file=out)
         print(f"[O] P_Thresh (L-H power threshold)                  : {P_Thresh:.3f} [MW]", file=out)
         print(f"[O] P_rad_tot / S_wall  (FW radiative load)         : {P_wall_rad:.3f} [MW/m²]", file=out)
         print(f"[O] P_div / S_wall  (mean SOL exhaust flux)         : {P_wall_div:.3f} [MW/m²]", file=out)
@@ -3701,7 +3716,7 @@ def save_run_output(config: GlobalConfig,
             print("-------------------------------------------------------------------------", file=out)
             try:
                 # Derived quantities from D0FUS convergence
-                P_th = config.P_fus * M_blanket_effective(config.Blanket_choice) + P_CD   # total thermal [MW]
+                P_th = config.P_fus * (0.8 * M_blanket_effective(config.Blanket_choice) + 0.2) + P_CD   # total thermal [MW], neutron-only multiplication
                 P_e  = max(P_elec, 1.0)                          # net electric [MWe]
                 S_FW = Surface                                   # first-wall surface [m^2]
 

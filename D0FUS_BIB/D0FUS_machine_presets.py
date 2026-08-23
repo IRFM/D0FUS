@@ -683,7 +683,7 @@ PRESETS = {
     ],
     "pf_label": "PF coils PF1-PF6 (published table)",
     "sources": [
-        "Lampasi et al., Energies 15 (2022) 1702 (Table 2: CS sub-windings "
+        "Castaldo et al., Energies 15 (2022) 1702 (Table 2: CS sub-windings "
         "R 0.490/0.596/0.694 m, module dZ 0.788 m, centres +/-0.433/1.299/"
         "2.166 m; PF1-PF6 R/Z and sections verbatim)",
         "dtt-project.it and IAEA FEC papers (R0 2.19, a 0.70, kappa95 "

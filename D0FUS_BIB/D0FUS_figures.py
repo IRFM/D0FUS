@@ -2844,7 +2844,7 @@ def plot_TF_side_view(
 
     References
     ----------
-    File, Stewart & Mills, IEEE TNS 18 (1971) — Princeton-D concept.
+    File, Mills & Sheffield, IEEE TNS 18 (1971) — Princeton-D concept.
     Gralnick & Tenney, J. Appl. Phys. 47 (1976) — Analytical solution.
     """
     # ── Extract geometry from run dict ──────────────────────────────
@@ -4465,11 +4465,10 @@ def plot_TF_benchmark_table(cfg=None, save_dir=None) -> None:
         Shirai et al., NF 57, 102002 (2017).
         Tsuchiya et al., IEEE TAS 18(2), 208 (2008).
         Muzzi et al., IEEE TAS 21(3), 1063 (2011).
-        Di Pietro et al., FED 89, 2128 (2014).
     EAST:
-        Weng et al., FED 81, 1589 (2007).
+        Chen et al., FED 83, 45 (2008).
         Wan et al., IAEA FEC 2006, FT/P7-11.
-        Wu, Y. et al., FED 65, 331 (2003).
+        Wu et al., 20th IEEE/NPSS SOFE (2003).
     ARC:
         Sorbom et al., FED 100, 378 (2015).
     SPARC:
@@ -4749,7 +4748,7 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
     References per machine (consolidated)
     -------------------------------------
     ITER:
-        Schultz et al., IEEE TAS 17(2), 1808 (2007) — total CS+PF swing
+        Schultz et al., 21st IEEE/NPSS SOFE (2005) — total CS+PF swing
             of 277 Wb at full bipolar; peak field 13 T; stored energy 6.4 GJ.
         Polevoi et al., Nucl. Fusion 55, 063019 (2015) — total inductive
             consumption ≈ 240 Wb (PI + ramp-up + plateau).
@@ -4765,17 +4764,15 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
         Sarasola et al., IEEE TAS 30(4), 4200705 (2020) — methodology +
             premag target 250 Wb (= 500 Wb full bipolar) for the 2018
             baseline; Φ_CS ≈ 320 Wb earlier in the same year.
-        Tomasek et al., Fusion Eng. Des. 178, 113114 (2022) — DEMO magnet
-            system status, 250 Wb premag for 2018 baseline.
     JT-60SA:
         Yoshida et al., J. Plasma Fusion Res. SERIES 9, 214 (2010) —
             mechanical CS design, R_c = 0.824 m, dR = 0.34 m, H = 6.34 m.
         Tsuchiya et al., IEEE TAS 18(2), 208 (2008) — Nb3Sn conduit
             qualification, σ_y(316LN, 4 K) ≈ 820 MPa.
     EAST:
-        Wu et al., Fusion Eng. Des. 65, 331 (2003) — initial design.
-        Weng et al., Fusion Eng. Des. 81, 1589 (2007) — magnet system.
-        Wan et al., Engineering 7, 1597 (2021) — operational status,
+        Wu et al., 20th IEEE/NPSS SOFE (2003) — PF/CS system design.
+        Chen et al., Fusion Eng. Des. 83, 45 (2008) — TF magnet system.
+        Li & Wan, Engineering 7, 1523 (2021) — operational status,
             CS modules at 4.5 T peak field.
     ARC:
         Sorbom et al., Fusion Eng. Des. 100, 378 (2015) — Table 1, Table 3,
@@ -4844,7 +4841,7 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
     #   Conductor: J_wost = 45 MA/m² (JAEA conduit 51.3 mm, I = 45 kA,
     #     A_cable = 979 mm²).
     #   Flux: Ψ_CS = 233 Wb (CS hardware capacity, full bipolar).
-    #     Cross-checks: Schultz et al. (2007), IEEE TAS 17(2), 1808
+    #     Cross-checks: Schultz et al. (2005), 21st IEEE/NPSS SOFE
     #     cites a CS+PF total swing of 277 Wb; the CS share alone is
     #     consistent with 233 Wb after subtracting the PF equilibrium
     #     contribution (≈ 73 Wb, Duchateau et al., FED 89, 2606, 2014).
@@ -4861,8 +4858,7 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
     #     ≈ 2/3 × 900).
     #   Conductor: J_wost = 60 MA/m² (coheof/(1-oh_steel)).
     #   Flux: Ψ_CS = 500 Wb (CS hardware capacity, full bipolar).
-    #     Source: Sarasola et al. (2020), IEEE TAS 30(4), 4200705 and
-    #     Tomasek et al. (2022), FED 178, 113114, both citing a
+    #     Source: Sarasola et al. (2020), IEEE TAS 30(4), 4200705, citing a
     #     premagnetization target of 250 Wb (= 500 Wb full bipolar) for
     #     the EU-DEMO baseline. The earlier 2017 PROCESS run cited
     #     above gives a CS swing of 382 Wb (BOP +182 Wb to EOF -200 Wb,
@@ -4883,22 +4879,19 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
     #   Quench: Kizu et al. (2012), IEEE TAS 22(3), 4204004 — quench
     #     detection design for the CS conductor.
     #   Flux: Ψ_CS = 40 Wb (CS hardware capacity, full bipolar).
-    #     Source: Di Pietro et al. (2014), FED 89, 2128 (CS module
-    #     design and operating scenario).
+    #     Source: JT-60SA magnet design documentation; see Yoshida
+    #     et al. (2010) above.
     #
     # EAST:
     #   Geometry: Wu et al. (2003), IEEE 0-7803-7908-X — six CS coils,
     #     ID = 1.1 m → R_CS_in = 0.55 m, dR = 0.16 m → R_CS_out = 0.71 m,
     #     H_CS = 2.75 m. Gap = 0.29 m (CS far from TF inboard leg).
-    #     Confirmed in Chen et al. (2016), Fusion Sci. Tech. 70, 533
-    #     (3D field analysis) and Chen et al. (2006), IEEE TAS 16(2),
-    #     780 (fabrication).
+    #     Confirmed in Chen et al. (2016), Sci. Rep. 6, 32440
+    #     (3D field analysis) and Chen et al. (2008), Fusion Eng. Des.
+    #     83, 45 (TF fabrication).
     #   Operation: B_max = 4.5 T peak field on the CS modules.
     #   Stress: σ = 547 MPa (316L, same convention as JT-60SA).
     #   Flux: Ψ_CS = 10 Wb (CS hardware capacity, full bipolar).
-    #     Yi et al. (2014), Fusion Sci. Tech. 65, 244 also reports
-    #     compatible values from the EAST experimental scenario
-    #     studies.
     #
     # SPARC:
     #   Geometry: Creely et al. (2020), J. Plasma Phys. 86(5), 865860502,

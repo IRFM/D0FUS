@@ -143,6 +143,7 @@ class GlobalConfig:
     κ_manual           : float = 1.9            # Elongation (Manual mode only) [-]
     Triangularity      : str = 'positive'       # Triangularity sign: 'positive' (delta = +0.6*(kappa-1), TREND)
     #                                             or 'negative' (delta = -0.6*(kappa-1), negative-triangularity)
+    Delta_manual       : float = None           # Imposed edge triangularity (signed, e.g. -0.5) [-]; None keeps the ±0.6*(kappa-1) TREND correlation
 
     # ── 2a. Safety factor and current density profiles ────────────────────────
     # Two strictly distinct philosophies for q(ρ) and j(ρ):
@@ -214,7 +215,7 @@ class GlobalConfig:
                                  #          D-T+He plasma with Z_eff ~ 1 + 2 f_He (~1.1).
                                  # float -> manual override (legacy behaviour, e.g. Zeff = 2.0).
     r_synch     : float = 0.5   # Synchrotron radiation wall reflectivity [-]
-    C_Alpha     : float = 7.0   # Helium ash dilution tuning parameter [-] (default taken from PROCESS)
+    C_Alpha     : float = 7.5   # Helium ash confinement ratio τ_He*/τ_E [-], calibrated deck by deck (default 7.5 = ITER calibration; PROCESS provides only a lower bound, 5)
     # Impurity line radiation (0D bulk-plasma estimate).
     # Comma-separated species ('W', 'Ar', 'Ne', 'C', 'N', 'Kr') with matching
     # concentrations n_imp/n_e. Empty string = disabled (pure D-T).
@@ -265,7 +266,7 @@ class GlobalConfig:
     E_BD      : float = 0.25     # Breakdown calibration parameter [V.s/m]
                                  # Product of E_phi [V/m] and t_BD [s].
                                  # Calibrated on ITER: Ψ_PI ~ 10 Wb => E_BD ~ 0.26.
-                                 # Ref: Lloyd et al., PPCF 33(11), 1991.
+                                 # Ref: Lloyd et al., Nucl. Fusion 31 (1991) 2031.
                                  
     # ── 6. Structural materials ──────────────────────────────────────────────
     Chosen_Steel         : str   = '316L'   # Structural steel grade '316L' , 'N50H', 'Manual'
@@ -348,7 +349,7 @@ class GlobalConfig:
     # Temperature margins above T_helium defining T_operating [K]
     # Conservative baseline: Corato et al., "Common operating values for DEMO…" (2016)
     Marge_T_Nb3Sn : float = 1.5    # Nb₃Sn temperature margin [K]
-    Marge_T_NbTi  : float = 1.5    # NbTi temperature margin [K]
+    Marge_T_NbTi  : float = 1.7    # NbTi temperature margin [K]
     Marge_T_REBCO : float = 5.0    # REBCO temperature margin [K]
 
     # Strand / tape operating parameters
@@ -839,8 +840,8 @@ COIL_MATERIAL_DENSITIES = {
 #       ntrs.nasa.gov/api/citations/19680018893).
 #  - FLiBe: 2LiF-BeF2 molten-salt breeder, rho ~ 2020 kg/m3 from the
 #       correlation rho(kg/m3) = 2413 - 0.488*T[K] at T ~ 800 K (527C)
-#       (Romatoski & Forsberg review; Lee et al., J. Chem. Eng. Data 68
-#       (2023), doi:10.1021/acs.jced.2c00212, PMC9743087).
+#       (Romatoski & Forsberg review; Vidrio et al., J. Chem. Eng. Data 67
+#       (2022), doi:10.1021/acs.jced.2c00212).
 #  - V4Cr4Ti: V-4Cr-4Ti vanadium structural alloy, rho = 6060 kg/m3, computed
 #       via rule-of-mixtures from elemental densities (V 6110, Cr 7190,
 #       Ti 4506 kg/m3) at the nominal 92/4/4 wt% composition (Smith et al.,

@@ -279,11 +279,14 @@ def compute_popcon(config, grid_spec, verbose=1):
             # Model-selectable density limit (power-dependent ones use P_sep).
             try:
                 _fnsl = config.f_n_sep * (nbar_vol / nbl)
+                _fnel = (f_n_edge_ratio(nu_n, rho_ped, n_ped_frac)
+                         * (nbar_vol / nbl))
                 n_DL_line, _, _ = f_density_limit(
                     config.density_limit_model, Ip, a,
                     P_sol=max(P_sep, 1e-3), P_tot=P_heat,
                     R0=R0, kappa=kappa, B0=B0, q_edge=float(res[_IDX['q95']]),
                     Z_eff=Zeff_eff, f_n_sep_line=_fnsl,
+                    f_n_edge_line=_fnel,
                     A_ion=M, alpha_GR=config.alpha_giacomin,
                     f0=config.f0_zanca)
             except ValueError:

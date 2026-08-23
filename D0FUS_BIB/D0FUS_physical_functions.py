@@ -340,7 +340,9 @@ def f_Kappa(A, Option_Kappa, κ_manual, ms):
 
     References
     ----------
-    Stambaugh et al., Nucl. Fusion 32, 1642 (1992).
+    Stambaugh et al., Fusion Sci. Technol. 59, 279 (2011)
+        (fit expression and the 0.95 operating fraction).
+    Stambaugh et al., Nucl. Fusion 32, 1642 (1992) (underlying equilibria).
     Freidberg et al., J. Plasma Phys. 81, 515810607 (2015).
     Lee et al.,       J. Plasma Phys. 81, 515810608 (2015).
     Wenninger et al., Nucl. Fusion 55, 063003 (2015).
@@ -349,6 +351,11 @@ def f_Kappa(A, Option_Kappa, κ_manual, ms):
     if Option_Kappa == 'Stambaugh':
         κ = 0.95 * (2.4 + 65 * np.exp(-A / 0.376))
     elif Option_Kappa == 'Freidberg':
+        # Fit (performed for D0FUS) of Lee et al., J. Plasma Phys. 81 (2015),
+        # Part 2, Fig. 3(a): REFERENCE CASE beta_p = 1, wall radius b/a = 1.1,
+        # feedback parameter gamma*tau_w = 1.5. Reproduces the published curve
+        # to better than 2% over eps = 0.1-0.8 (checked point by point).
+        # The 0.95 operating fraction follows the Stambaugh convention.
         κ = 0.95 * (1.81153991 * A**0.009042 + 1.5205 * A**(-1.63))
     elif Option_Kappa == 'Wenninger':
         κ = 1.12 * ((18.84 - 0.87*A
@@ -361,6 +368,7 @@ def f_Kappa(A, Option_Kappa, κ_manual, ms):
         # otherwise re-decrease toward spherical). C∞ smooth and monotone, and
         # inherits a realistic ITER value (≈ 1.89) from Wenninger on the right.
         A_t, dA = 2.235, 0.35
+        # kappa_F: same Lee Part 2 reference-case fit as the 'Freidberg' branch.
         κ_F = 0.95 * (1.81153991 * A**0.009042 + 1.5205 * A**(-1.63))
         κ_W = 1.12 * ((18.84 - 0.87*A
                        - np.sqrt(4.84*A**2 - 28.77*A + 52.52 + 14.74*ms)) / 7.37)
@@ -946,17 +954,20 @@ Vprime_data argument:
 
 Profile model
 -------------
-Parabola-with-pedestal (Lackner 1990, used in ITER Physics Basis 1999):
+Core parabola times tanh pedestal envelope (Lackner 1990 core form; the
+envelope is a symmetric counterpart of the Groebner mtanh fit, with no
+scrape-off-layer ramp, as in the thesis):
 
-  X(ρ) = X_ped + (X₀ − X_ped) · (1 − (ρ/ρ_ped)²)^ν     ρ ≤ ρ_ped
-  X(ρ) = X_ped · (1 − ρ)/(1 − ρ_ped)                   ρ > ρ_ped  (X_sep = 0)
+  X(ρ) = X_core(ρ) · h(ρ),   X_core = X₀ (1 − (ρ/ρ_ped)²)^ν on [0, ρ_ped]
+  h(ρ) = ½ (1 + tanh((ρ_mid − ρ)/w)),  ρ_mid = (1+ρ_ped)/2, w = (1−ρ_ped)/4
 
 Special case ρ_ped = 1, f_ped = 0 → purely parabolic: X(ρ) = X̄(1+ν)(1−ρ²)^ν.
 
 ITER reference values (used in __main__ tests)
 -----------------------------------------------
   R₀ = 6.2 m,  a = 2.0 m,  κ = 1.85,  δ = 0.50,  Ip = 15 MA
-  P_fus = 500 MW,  T̄ = 8.9 keV,  n̄ ≈ 1.01 × 10²⁰ m⁻³
+  P_fus = 500 MW,  T̄ = 7.75 keV,  n̄_vol ≈ 0.99 × 10²⁰ m⁻³
+  (n̄_line ≈ 1.01 × 10²⁰ m⁻³, line/volume ratio 1.03 for the H preset)
 
 References
 ----------
@@ -1698,8 +1709,24 @@ def f_n_limit_zanca(P_tot, Ip, a, Z_eff, Z_i=1.0, f0=0.5):
             * (P_tot / Ip)**(4.0/9.0) * nGW**(8.0/9.0))
 
 
+def f_n_edge_ratio(nu_n, rho_ped=1.0, n_ped_frac=0.0, rho_edge=0.9):
+    """
+    Near-separatrix to volume-average density ratio n(rho_edge)/nbar [-].
+
+    The Giacomin et al. (2022) density limit bounds the NEAR-SEPARATRIX
+    density, measured around rho ~ 0.9 in the reference paper (edge Thomson
+    at MARFE onset), not the separatrix density itself. This helper
+    evaluates n(rho_edge)/nbar from the parameterised density profile
+    (cylindrical normalisation) for use as the edge-to-average conversion
+    of f_density_limit.
+    """
+    return float(f_nprof(1.0, nu_n, np.array([rho_edge]),
+                         rho_ped, n_ped_frac)[0])
+
+
 def f_density_limit(model, Ip, a, P_sol=None, P_tot=None, R0=None, kappa=None,
                     B0=None, q_edge=None, Z_eff=None, f_n_sep_line=0.20,
+                    f_n_edge_line=None,
                     A_ion=2.0, alpha_GR=3.3, f0=0.5, Z_i=1.0):
     """
     Model-selectable density limit dispatcher.
@@ -1715,9 +1742,10 @@ def f_density_limit(model, Ip, a, P_sol=None, P_tot=None, R0=None, kappa=None,
                   (Greenwald, PPCF 44, R27 (2002)).
     'giacomin'  : edge limit of Giacomin et al. PRL 128 (2022) 185003,
                   Eq. (12); converted to a line-averaged cap through the
-                  edge anchoring n_sep = f_n_sep_line · n̄_line:
-                      n̄_line_max = n_lim_edge / f_n_sep_line.
-                  Requires P_sol, R0, kappa, B0, q_edge.
+                  NEAR-SEPARATRIX anchoring n(0.9) = f_n_edge_line · n̄_line:
+                      n̄_line_max = n_lim_edge / f_n_edge_line,
+                  f_n_sep_line being the legacy fallback when no profile
+                  ratio is supplied. Requires P_sol, R0, kappa, B0, q_edge.
     'zanca'     : line-averaged limit of Zanca et al. NF 59 (2019) 126011,
                   Eq. (20). Requires P_tot and Z_eff.
 
@@ -1733,8 +1761,12 @@ def f_density_limit(model, Ip, a, P_sol=None, P_tot=None, R0=None, kappa=None,
         Geometry, on-axis field and edge safety factor (giacomin).
     Z_eff : float       Effective charge (zanca).
     f_n_sep_line : float
-        Separatrix-to-line-average density ratio n_sep/n̄_line [-] used to
-        convert the edge limit into a line-averaged cap (giacomin only).
+        Separatrix-to-line-average density ratio n_sep/n̄_line [-], legacy
+        fallback conversion for 'giacomin' when f_n_edge_line is None.
+    f_n_edge_line : float or None
+        Near-separatrix-to-line-average density ratio n(rho~0.9)/n̄_line [-]
+        from the density profile (see f_n_edge_ratio), the physical
+        conversion for the 'giacomin' limit.
     A_ion, alpha_GR, f0, Z_i : float
         Model coefficients (see the individual functions).
 
@@ -1750,12 +1782,12 @@ def f_density_limit(model, Ip, a, P_sol=None, P_tot=None, R0=None, kappa=None,
 
     Caution
     -------
-    The edge-to-line conversion for 'giacomin' uses the OPERATING-POINT
-    separatrix anchoring n_sep = f_n_sep_line · n̄_line. Near the density
-    limit the edge density profile flattens and n_sep/n̄ rises (typically
-    towards 0.4-0.5), so the converted line-averaged cap returned here is
-    an OPTIMISTIC upper bound. For a conservative assessment, pass a
-    density-limit-relevant f_n_sep_line rather than the nominal one.
+    The Giacomin limit is validated on the near-separatrix density around
+    rho ~ 0.9, where a pedestal profile sits close to its pedestal-top
+    value: the profile ratio f_n_edge_line is therefore several times the
+    separatrix anchoring f_n_sep_line, and using the latter overestimates
+    the equivalent line-averaged cap by the same factor. The legacy
+    f_n_sep_line fallback is kept for backward compatibility only.
     """
     if model == 'greenwald':
         nl = f_nG(Ip, a)
@@ -1766,7 +1798,8 @@ def f_density_limit(model, Ip, a, P_sol=None, P_tot=None, R0=None, kappa=None,
                              "P_sol, R0, kappa, B0 and q_edge.")
         nl_edge = f_n_limit_giacomin(P_sol, R0, a, kappa, B0, q_edge,
                                      A_ion=A_ion, alpha_GR=alpha_GR)
-        return nl_edge / f_n_sep_line, nl_edge, 'edge (near-separatrix)'
+        conv = f_n_edge_line if f_n_edge_line is not None else f_n_sep_line
+        return nl_edge / conv, nl_edge, 'edge (near-separatrix)'
     elif model == 'zanca':
         if P_tot is None or Z_eff is None:
             raise ValueError("f_density_limit('zanca') requires P_tot and Z_eff.")
@@ -2118,7 +2151,9 @@ def f_beta_N(beta, a, B0, Ip_MA):
     Parameters
     ----------
     beta : float
-        Total-field beta, dimensionless.
+        Toroidal beta (Troyon convention, built on the vacuum toroidal
+        field), dimensionless. The production solver passes beta_T; a
+        total-field variant is reported as a diagnostic only.
     a : float
         Plasma minor radius [m].
     B0 : float
@@ -2176,7 +2211,7 @@ def f_beta_fast_alpha(P_alpha_MW, Te_keV, ne_20, B0, V_m3, Z_eff=1.65,
 
     The Spitzer electron-drag time (NRL Plasma Formulary):
 
-        tau_se [s] = 6.32e14 * A_alpha / Z_alpha^2
+        tau_se [s] = 6.27e14 * A_alpha / Z_alpha^2
                      * T_e[eV]^{3/2} / (n_e[m^-3] * ln Lambda)
 
     Parameters
@@ -2227,10 +2262,10 @@ def f_beta_fast_alpha(P_alpha_MW, Te_keV, ne_20, B0, V_m3, Z_eff=1.65,
     # tau_se = (3/(4 sqrt(2 pi))) * (4 pi eps_0)^2 * m_alpha * (kT_e)^1.5
     #          / (Z_alpha^2 * e^4 * n_e * sqrt(m_e) * ln Lambda)
     # In practical units (derived from SI, verified numerically):
-    #   tau_se = 6.32e14 * A_alpha/Z_alpha^2 * Te[eV]^1.5 / (ne[m^-3] * lnL)
+    #   tau_se = 6.27e14 * A_alpha/Z_alpha^2 * Te[eV]^1.5 / (ne[m^-3] * lnL)
     ne_m3 = ne_20 * 1e20
     Te_eV = Te_keV * 1e3
-    tau_se = (6.32e14 * A_alpha / Z_alpha**2
+    tau_se = (6.27e14 * A_alpha / Z_alpha**2
               * Te_eV**1.5 / (ne_m3 * ln_Lambda))
 
     # ── Critical energy (electron/ion drag crossover) ──
@@ -2441,7 +2476,7 @@ def f_P_elec(P_fus, P_CD, eta_T, M_blanket=1.0, eta_WP=1.0):
     """
     Net electrical output power — simplified thermodynamic model.
 
-        P_elec = η_th × M_blanket × P_fus − P_CD / η_WP
+        P_elec = η_th × [(0.8 M_blanket + 0.2) × P_fus + P_CD] − P_CD / η_WP
 
     The recirculating power subtracted is the **wall-plug** power consumed by
     the heating and current-drive systems, not the plasma-absorbed power P_CD.
@@ -2483,16 +2518,15 @@ def f_P_elec(P_fus, P_CD, eta_T, M_blanket=1.0, eta_WP=1.0):
     Notes
     -----
     Full power balance:
-        P_gross  = η_th × M_blanket × P_fus     [gross electrical output, MW]
+        P_th     = M_blanket × P_n + P_α + P_CD  [thermal power, MW; P_n = 0.8 P_fus]
+        P_gross  = η_th × P_th                   [gross electrical output, MW]
         P_recirc = P_CD / η_WP                   [wall-plug CD/heating power, MW]
         P_elec   = P_gross − P_recirc
 
     Recirculating power fraction:
         f_recirc = P_recirc / P_gross
-                 = P_CD / (η_WP × η_th × M_blanket × P_fus)
-                 = 1 / (η_WP × Q × η_th × M_blanket)
     At DEMO Q=10, η_th=0.40, η_WP=0.40, M_blanket=1.15:
-        f_recirc ≈ 54 %  — motivates steady-state scenarios and HTS to reduce P_CD.
+        f_recirc ≈ 51 %  — motivates steady-state scenarios and HTS to reduce P_CD.
 
     References
     ----------
@@ -2503,7 +2537,10 @@ def f_P_elec(P_fus, P_CD, eta_T, M_blanket=1.0, eta_WP=1.0):
     """
     if eta_WP <= 0.0:
         raise ValueError(f"f_P_elec: eta_WP must be > 0 (got {eta_WP}).")
-    return eta_T * M_blanket * P_fus - P_CD / eta_WP
+    # Neutron-only multiplication: M_blanket applies to P_n = 0.8 * P_fus
+    # (D-T: 14.06 / 17.59 MeV). The alpha power and the plasma-absorbed
+    # auxiliary power are collected unmultiplied by the coolant circuits.
+    return eta_T * ((0.8 * M_blanket + 0.2) * P_fus + P_CD) - P_CD / eta_WP
 
 
 #%% Radiation losses
@@ -2819,7 +2856,7 @@ def f_P_line_radiation_profile(impurity, f_imp, nbar, Tbar, nu_n, nu_T, V,
     rho_core    : float or None
         Boundary between core and edge radiation regions.  When None
         (default), only the total is returned for backward compatibility.
-        Typical value: 0.7 (inside pedestal top for ITER/DEMO-class shaping).
+        Canonical presets: 0.6 (PROCESS-aligned) and 1.0 (conservative default).
 
     Returns
     -------
@@ -3000,9 +3037,10 @@ def f_L_INT(impurity, T_start_eV, T_stop_eV, n_pts=300):
     """
     Lengyel weighted cooling integral L_INT = ∫ Lz(T) √T dT  [W m³ eV^1.5].
 
-    Evaluated by trapezoidal quadrature of the SOL-range coronal cooling
-    rate (get_Lz_SOL) on a log-spaced temperature grid between the target
-    and upstream temperatures.
+    Evaluated by trapezoidal quadrature of the SOL-range non-coronal
+    cooling rate (get_Lz_SOL, OpenADAS at n_e·τ = 5e16 m⁻³·s) on a
+    log-spaced temperature grid between the target and upstream
+    temperatures.
 
     Parameters
     ----------
@@ -3369,10 +3407,11 @@ if __name__ == "__main__":
 
 if __name__ == "__main__":
     # ── ITER chain (4/12) - radiation budget ─────────────────────────────
-    # Deck composition: W (2e-5) + Ne (7e-3) with the Zeff = 1.65
+    # Bench composition: W (2e-5) + Ne (7e-3) with the Zeff = 1.65
     # override, wall reflectivity r_synch = 0.6, profile-integrated
     # radiation with the core/edge split at rho_rad_core = 0.75 and
-    # coreradiationfraction = 1 (deck defaults).
+    # coreradiationfraction = 1 (bench-frozen values; the production
+    # ITER deck uses rho_rad_core = 0.85).
     # Convention: the bremsstrahlung term uses the FUEL effective charge
     # Z_eff,fuel = 1 + 2 f_alpha - f_imp_dil (D, T, He only); the
     # impurity contribution (line + recombination + impurity
@@ -4079,10 +4118,11 @@ def f_etaCD_effective(config, a, R0, B0, nbar, Tbar, nu_n, nu_T, Z_eff,
        runs, parameter scans, and publications.
 
        The technology-specific branches (``'LHCD'``, ``'ECCD'``, ``'NBCD'``,
-       ``'Multi'``) rely on physics models (Ehst-Karney, Cordey-Mikkelsen)
-       that are implemented but **not yet validated** against experimental
-       data or cross-checked with other systems codes (PROCESS, PLASMOD).
-       Their quantitative output should be considered indicative only.
+       ``'Multi'``) follow the METIS efficiency models (Giruzzi ECCD,
+       Stix–Cordey NBCD, LH n_∥ model) and match METIS to within 1.5 % on
+       three machine cases (ITER 1 MeV D, ARC 150 keV D, EU-DEMO 1 MeV D;
+       thesis, current-drive appendix). ``'Academic'`` remains the
+       recommended default for scans and quick studies.
 
     For ``'Multi'``, the effective γ is:
 
@@ -4339,7 +4379,7 @@ def f_PLH(eta_RF, f_RP, P_CD):
 
     Parameters
     ----------
-    eta_RF : float  Klystron wall-plug efficiency (typically 0.5–0.7).
+    eta_RF : float  Klystron wall-plug efficiency (typically 0.5–0.6).
     f_RP   : float  Fraction of klystron power absorbed by the plasma.
     P_CD   : float  CD power deposited in the plasma [MW].
 
@@ -4429,20 +4469,23 @@ def f_P_sep(P_fus, P_CD, P_rad=0.0):
 
     The physical meaning of P_out depends on *which* P_rad is passed:
 
-    P_rad = P_rad_core (radiated inside ρ < ρ_core)
-        → P_out = true separatrix power = power conducted + convected
-          across the LCFS.  This is the quantity to compare against the
-          L–H threshold (Martin 2008, Delabie 2017) and to use in the
-          energy confinement time definition  τ_E = W_th / P_loss.
+    P_rad = P_rad_total (all radiation emitted in the confined plasma)
+        → P_out = separatrix power P_sep. The whole of the radiated power
+          is subtracted: wherever inside the LCFS the photons are
+          emitted, they land on the first wall directly and do not cross
+          the separatrix as conducted or convected heat (thesis
+          convention). This is the quantity to compare against the L–H
+          threshold (Martin 2008, Delabie 2017) and the P_sol of the
+          divertor metrics; P_div = P_sep + P_Ohm merely restores the
+          small ohmic term.
 
-    P_rad = P_rad_total (core + edge radiation)
-        → P_out = divertor power P_div = power actually reaching the
-          divertor target plates.  Edge radiation (from seeded impurities
-          in the SOL) reduces the divertor load without affecting τ_E.
-          This is the correct input for Eich λ_q and heat flux estimates.
+    P_rad = coreradiationfraction × P_rad_core
+        → P_out = loss power P_loss of the confinement power balance,
+          used in the energy confinement time definition
+          τ_E = W_th / P_loss and in the scaling-law inversion.
 
     In the D0FUS run module, this function is called with P_rad_total to
-    compute P_div for downstream divertor metrics.  The L–H threshold
+    compute P_sep for downstream divertor metrics.  The L–H threshold
     comparison is done separately against P_Thresh.
 
     Parameters
@@ -5940,8 +5983,8 @@ References
     DOI: 10.1063/5.0012664
     
 [2] E. Belli, J. Candy,
-    "Kinetic calculation of neoclassical transport including self-consistent 
-    electron and impurity dynamics",
+    "Full linearized Fokker-Planck collisions in neoclassical transport
+    simulations",
     Plasma Physics and Controlled Fusion 54(1), 015015 (2012).
     DOI: 10.1088/0741-3335/54/1/015015
     (NEO code reference)
@@ -7050,10 +7093,11 @@ if __name__ == "__main__":
 #                     giving the target temperature, the detachment state and the
 #                     SOL power-loss fraction required for target survival.
 #
-# The seeding-impurity concentration closure (Lengyel / extended-Lengyel,
-# Kallenbach 2016; Body, Kallenbach & Eich 2025, arXiv:2504.05486) is out of
-# scope for a lean 0D code (needs OpenADAS atomic data); it is the natural
-# future upgrade of f_heat_two_point.
+# The seeding-impurity concentration closure (Lengyel integral) IS
+# implemented (f_lengyel_concentration), fed with non-coronal cooling curves
+# generated from OpenADAS at n_e·τ = 5e16 m⁻³·s (thesis, two-point appendix).
+# The extended-Lengyel corrections (Kallenbach 2016; Body, Kallenbach & Eich
+# 2025, arXiv:2504.05486) remain a future upgrade.
 
 # Average DT fuel-ion mass, m_f = 2.5 u, Stangeby (2018) convention.
 M_F_DT = 2.5 * 1.67e-27   # [kg]
@@ -7468,8 +7512,9 @@ def f_qstar(a, B0, R0, Ip, κ):
     Compute the cylindrical (kink) safety factor q*.
 
     q* is the Kruskal–Shafranov stability parameter: the safety factor of the
-    equivalent periodic cylinder carrying the same current.  Operational limits:
-    q* > 2 (hard disruption boundary); q* > 3 recommended for margin.
+    equivalent periodic cylinder carrying the same current.  Kink thresholds
+    (thesis convention): q* ≈ 2.0–2.5, against 3.0–3.5 when the limit is
+    expressed on q95 (standard ITER and EU-DEMO practice).
 
     Parameters
     ----------
@@ -7729,8 +7774,9 @@ if __name__ == "__main__":
         (0.0562, 0, 0.19, 0.78, 0.58, 1.97, 0.15, 0.41, 0.93, -0.69)
     assert f_Get_parameter_scaling_law('ITPA20') == \
         (0.053, 0.36, 0.2, 0.8, 0.35, 1.71, 0.22, 0.24, 0.98, -0.669)
-    # IPB98 at the ITER Q=10 point with the PUBLISHED loss-power
-    # convention (P = 87 MW, radiation NOT subtracted; kappa_x = 1.70,
+    # IPB98 at the ITER Q=10 point evaluated at P = 87 MW (total heating
+    # power, no radiation subtracted in this published-value check;
+    # kappa_x = 1.70,
     # n19 = 10.1): tolerance 8 % covers the kappa-convention and P_loss
     # definition spread between sources. The production (PROCESS-like)
     # convention, which subtracts the core radiation, is exercised by
@@ -7765,10 +7811,9 @@ def f_tauE(pbar, V, P_Alpha, P_Aux, P_Ohm, P_rad):
        consistent.  Edge/SOL radiation is never subtracted here — it is
        already outside the confined region.
 
-       The IPB98(y,2) scaling was originally fitted using
-       P = P_heat = P_α + P_aux + P_Ohm (radiation NOT subtracted),
-       because radiation is a loss mechanism that the scaling captures
-       implicitly (Doyle et al. 2007, PIPB Ch. 2, §5.3).
+       Subtracting the core radiated power is a convention as much as a
+       physical statement: it is the convention used to derive the
+       empirical τ_E scalings (thesis, power-balance section).
        
        However, PROCESS (Kovari 2014) and most modern 0D codes subtract
        P_rad_core, arguing that core radiation escapes the confined region
@@ -8025,9 +8070,9 @@ def f_He_fraction(n_bar, T_bar, tauE, C_Alpha, nu_T,
     tauE : float
         Energy confinement time [s]
     C_Alpha : float
-        Alpha-particle removal efficiency parameter (dimensionless).
-        Defines the effective ash confinement time τ_α* = C_α τ_E,
-        lumping transport and wall recycling; typical C_α ≈ 5 for ITER.
+        Helium ash confinement ratio τ_α*/τ_E (dimensionless), lumping
+        transport and wall recycling. Calibrated deck by deck; the ITER
+        deck calibration C_α = 7.5 returns f_α = 4.3 %.
     nu_T : float
         Temperature profile peaking exponent (core power-law)
     rho_ped : float, optional
@@ -8042,7 +8087,8 @@ def f_He_fraction(n_bar, T_bar, tauE, C_Alpha, nu_T,
     -------
     f_alpha : float
         Equilibrium helium fraction n_α / n_e (dimensionless).
-        ITER operational target: 0.05–0.10.
+        ITER Q = 10 projections: 0.04–0.06 (Shimada 2007); concentrations
+        of 5–10 % considered tolerable (Reiter burn criterion).
 
     f_imp : float, keyword-only in spirit (default 0.0)
         Impurity charge fraction sum_j Z_j n_j / n_e diluting the fuel.

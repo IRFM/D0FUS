@@ -1980,7 +1980,7 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
         _C_invest_val = np.nan
         if config.cost_model != 'None' and np.isfinite(cost):
             try:
-                P_th_scan    = config.P_fus * M_blanket_effective(config.Blanket_choice) + P_CD
+                P_th_scan    = config.P_fus * (0.8 * M_blanket_effective(config.Blanket_choice) + 0.2) + P_CD   # neutron-only multiplication
                 T_op_limit_s = res[132]
                 CF_s         = res[135]
                 t_bl_yr_s    = res[130]

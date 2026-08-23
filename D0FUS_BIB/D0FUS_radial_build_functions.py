@@ -65,8 +65,9 @@ def gamma_func(alpha_val, n_val):
     alpha_val : float
         Superconductor packing fraction [-] (0 < alpha < 1).
     n_val : float
-        Conductor shape / turn-count factor [-].
-        n = 1: square jacket;  n → ∞: limit of many thin conductors.
+        Jacket asymmetry ratio δ_S1 = n · δ_S2, bounded to [0, 1].
+        n = 1: square jacket;  n = 0: no steel in the load direction
+        (optimal shaping limit).
 
     Returns
     -------
@@ -964,7 +965,7 @@ if __name__ == "__main__":
     assert _rip <= 0.005 + 1e-12, _rip
     print(f"OK  n_TF ITER: {_n} (réel 18, segmentation ports), ripple = {_rip*100:.2f} %")
 
-def J_non_Cu_Nb3Sn(B, T, Eps=-0.003):
+def J_non_Cu_Nb3Sn(B, T, Eps=-0.006):
     """
     Critical current density for Nb3Sn on non-Cu cross-section.
     
@@ -978,7 +979,8 @@ def J_non_Cu_Nb3Sn(B, T, Eps=-0.003):
     T : float or array
         Temperature [K]
     Eps : float
-        Applied strain [-] (default: -0.003, typical operating strain)
+        Applied strain [-] (default: -0.006, MADMACS convention,
+        aligned with GlobalConfig)
         
     Returns
     -------
@@ -1047,7 +1049,7 @@ def J_non_Cu_NbTi(B, T):
     
     # ITER/EU-DEMO parameters [Ref. 1]
     Tc0, Bc20 = 9.03, 14.61       # [K], [T]
-    C0 = 168512                    # [A/mm²] on NbTi area
+    C0 = 168512                    # [A·T/mm²] on NbTi area
     alpha, beta, gamma = 1.0, 1.54, 2.1
     
     t = np.clip(T / Tc0, 0, 1 - 1e-10)
@@ -1819,7 +1821,7 @@ def size_cable_fractions(J_non_Cu, B_peak, T_op, t_dump,
     
 if __name__ == "__main__":
     # Stored-energy anchors (asserted; the detailed table follows below).
-    # ITER CS: 6.4 GJ at 13 T [Schultz et al., IEEE TAS 16 (2006);
+    # ITER CS: 6.4 GJ at 13 T [Schultz et al., 21st SOFE (2005);
     # iter.org/machine/magnets] with the documented winding envelope
     # (r_in = 1.32 m, r_out = 2.07 m, H = 12 m): D0FUS gives 6.33 GJ.
     _E_CS = calculate_E_mag_CS(13., 1.32, 2.07, 12.)
@@ -2296,13 +2298,15 @@ def calculate_cable_current_density(
         Automatically rounded to 100 kJ for caching
     I_cond : float
         Operating current per conductor [A]
-    V_max : float, optional
-        Maximum voltage to ground during dump [V] (default: 10 kV)
+    V_max : float
+        Maximum terminal voltage during dump, V_max = I × R_dump [V]
+        (NOT the voltage to ground; GlobalConfig production value 10 kV)
     N_sub : int or float, optional
         Number of protection subdivisions (default: 6)
         Automatically converted to integer
-    tau_h : float, optional
-        Detection + delay time [s] (default: 2.0 s for LTS)
+    tau_h : float
+        Detection + delay time [s] (GlobalConfig production values:
+        3.0 s for LTS, 10.0 s for HTS)
     f_He : float, optional
         Helium void fraction in cable (default: 0.30)
     f_In_cable : float, optional
@@ -2311,16 +2315,20 @@ def calculate_cable_current_density(
         Maximum hot-spot temperature [K] (default: 250 K)
     RRR : float, optional
         Copper residual resistivity ratio (default: 100)
-    Marge_T_He : float, optional
-        Helium temperature margin [K] (default: 0.0)
+    Marge_T_He : float
+        Helium temperature margin [K] (GlobalConfig production value 0.3,
+        from 10-bar supercritical He operation)
     Marge_T_Nb3Sn : float, optional
         Nb3Sn-specific temperature margin [K] (default: 1.5)
-    Marge_T_NbTi : float, optional
-        NbTi-specific temperature margin [K] (default: 1.0)
-    Marge_T_REBCO : float, optional
-        REBCO-specific temperature margin [K] (default: 2.0)
-    Eps : float, optional
-        Strain for Nb3Sn (default: -0.003)
+    Marge_T_NbTi : float
+        NbTi-specific temperature margin [K] (GlobalConfig production
+        value 1.5)
+    Marge_T_REBCO : float
+        REBCO-specific temperature margin [K] (GlobalConfig production
+        value 5.0)
+    Eps : float
+        Effective axial strain for Nb3Sn (GlobalConfig production value
+        -0.006, MADMACS convention)
     Tet : float, optional
         Field angle for REBCO [rad] (default: 0)
     J_wost_Manual : float, optional
@@ -4431,7 +4439,6 @@ def f_Psi_PF(Ip, R0, a, kappa, beta_p, li):
     References
     ----------
     Shafranov V.D., Reviews of Plasma Physics, vol. 2 (1966).
-    Albanese R. et al., Fusion Eng. Des. 122, 365 (2017).
     Maviglia F., private communication, EUROfusion (April 2026).
     """
     a_eff = a * math.sqrt(kappa)
@@ -6085,7 +6092,7 @@ def f_V_CS(a: float, b: float, c: float, d: float,
     Volume of the full CS solenoid (annular right cylinder, all modules).
 
     Formula consistent with f_volume():
-        H_CS = 2 × (κ·a + b + c)
+        H_CS = 2 × (κ·a + b + 1)
         V_CS_geom = π × H_CS × (R_CS_ext² − R_CS_int²)
 
     Parameters
@@ -6387,7 +6394,7 @@ if __name__ == "__main__":
     # reproduce the frozen 2026-06 coil quantities (anti-drift guard;
     # intentional model changes must update these anchors). Context: the
     # ITER actual builds are TF inboard ≈ 1.0 m and CS Δr = 0.75 m at
-    # B_CS = 13 T [Mitchell IEEE TAS 18 (2008); Schultz IEEE TAS 16 (2006)];
+    # B_CS = 13 T [Mitchell IEEE TAS 18 (2008); Schultz 21st SOFE (2005)];
     # D0FUS sizes its CS at the lower self-consistent B_CS below.
     # ─────────────────────────────────────────────────────────────────────
     # NB executed in a fresh subprocess: the demo blocks above leave

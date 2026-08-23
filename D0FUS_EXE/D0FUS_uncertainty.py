@@ -22,8 +22,8 @@ Building blocks:
     returning the QoIs, the feasibility flag and the constraint margins.
   - triangular / normal / uniform LHS sampler.
   - parse_uq_file() / detect_mode(): the input-file front end.
-  - run_uq_from_file(): forward propagation over the model envelope (serial here;
-    joblib/loky parallelism is the next step).
+  - run_uq_from_file(): forward propagation over the model envelope
+    (Monte-Carlo evaluated in parallel with joblib/loky).
 
 Feasibility mirrors D0FUS_scan / D0FUS_genetic (Greenwald, Troyon, kink and
 radial-build closure) so "feasible" means exactly what the optimiser means.
@@ -131,7 +131,7 @@ def _compute_cost(cfg, P_CD, P_elec, Gamma_n, Surface, c, d, kappa,
     Util_factor / Dwell_factor / dt_rep inputs.
     """
     try:
-        P_th = cfg.P_fus * M_blanket_effective(cfg.Blanket_choice) + P_CD
+        P_th = cfg.P_fus * (0.8 * M_blanket_effective(cfg.Blanket_choice) + 0.2) + P_CD   # neutron-only multiplication
         _, _, Delta_TF = Number_TF_coils(cfg.R0, cfg.a, cfg.b, cfg.ripple_adm, cfg.L_min)
         H_TF = 2.0 * (kappa * cfg.a + cfg.b + c)
         (V_blanket, V_TF_Pappus, V_CS_geom, V_FI) = f_volume(
@@ -993,13 +993,13 @@ def summarize_results(results):
 def _write_summary(path, input_file, results, controls, scans=None):
     """Write a concise human-readable summary of the uncertainty study."""
     n, n_conv, n_feas, binding, failures = summarize_results(results)
-    # The headline verdict is taken over the CONVERGED samples: a draw with no
-    # operating point is a different (and separately reported) outcome from a
-    # converged design that violates an operational limit.
+    # The headline verdict is read over ALL samples, the no-solution draws
+    # counted as failures (thesis convention, Chapter 4). The converged-only
+    # share is still reported alongside for diagnosis.
     p_feas_conv = 100.0 * n_feas / max(n_conv, 1)
     p_feas_all  = 100.0 * n_feas / max(n, 1)
-    verdict = ('LARGELY FEASIBLE' if p_feas_conv >= 85 else
-               'MARGINAL' if p_feas_conv >= 60 else 'AT RISK')
+    verdict = ('LARGELY FEASIBLE' if p_feas_all >= 85 else
+               'MARGINAL' if p_feas_all >= 60 else 'AT RISK')
     conv = [r for k in results for r in results[k] if r.get('converged')]
 
     def pct(key):
@@ -1015,7 +1015,8 @@ def _write_summary(path, input_file, results, controls, scans=None):
          f"{n - n_conv} without a solution ({fail_txt})",
          f"Feasible   : {p_feas_conv:.0f}% of converged samples "
          f"({p_feas_all:.0f}% of all samples)",
-         f"Verdict    : {verdict}  (thresholds on the converged share)"]
+         f"Verdict    : {verdict}  (thresholds on the all-samples share; "
+         "no-solution draws counted as failures)"]
     # Two-reading breakdown when operator retuning was active: the frozen
     # design-point verdict versus the operating-window verdict.
     if any('feasible_as_designed' in r for k in results for r in results[k]):

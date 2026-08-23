@@ -159,7 +159,7 @@ except ModuleNotFoundError:
 # module's direct dependencies inside the D0FUS source tree). DEAP is already
 # provided by the centralised D0FUS_import wildcard above, so it is not
 # re-imported here. M_blanket_effective is required by the merged thermal-power
-# balance (P_th = P_fus * M_blanket + P_CD).
+# balance (P_th = P_fus * (0.8*M_blanket + 0.2) + P_CD, neutron-only multiplication).
 from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG, coerce_input_value, resolve_deprecated_key, M_blanket_effective
 from D0FUS_BIB.D0FUS_physical_functions import f_volume
 from D0FUS_BIB.D0FUS_radial_build_functions import Number_TF_coils, f_TF_cross_section
@@ -956,7 +956,7 @@ def evaluate_individual(individual, verbose=False):
                           f"Surface={Surface:.4g} kappa={κ:.4g}")
                 return (PENALTY_VALUE,)
 
-            P_th         = config.P_fus * M_blanket_effective(config.Blanket_choice) + P_CD
+            P_th         = config.P_fus * (0.8 * M_blanket_effective(config.Blanket_choice) + 0.2) + P_CD   # neutron-only multiplication
             T_op_limit_g = _safe_real(output[_IDX['T_op_limit']])
             CF_g         = _safe_real(output[_IDX['CF']])
             t_bl_yr_g    = _safe_real(output[_IDX['t_life_bl_yr']])
@@ -2978,7 +2978,7 @@ def run_genetic_optimization(input_file,
         t_bl_yr_b      = final_output[_IDX['t_life_bl_yr']]
         t_div_yr_b     = final_output[_IDX['t_life_div_yr']]
         V_rb_BB_b      = final_output[_IDX['V_rb_BB']]
-        P_th_best      = config.P_fus * M_blanket_effective(config.Blanket_choice) + P_CD_best
+        P_th_best      = config.P_fus * (0.8 * M_blanket_effective(config.Blanket_choice) + 0.2) + P_CD_best   # neutron-only multiplication
         _, _, Delta_TF_b = Number_TF_coils(config.R0, config.a, config.b, config.ripple_adm, config.L_min)
         _H_TF_b = 2.0 * (κ_best * config.a + config.b + c_TF)
         (V_blanket_b, V_TF_Pappus_b, V_CS_geom_b, V_FI_b) = f_volume(
