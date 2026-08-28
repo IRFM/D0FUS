@@ -1433,17 +1433,31 @@ def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
     pop = toolbox.population(n=pop_size)
     hof = tools.HallOfFame(10)
     
-    # Statistics
+    # Statistics.
+    # Fitness values fall into three regimes: feasible designs carry the
+    # objective value, infeasible ones are mapped into the band
+    # [floor, PENALTY_VALUE) by compute_feasibility_fitness, and structurally
+    # invalid ones return PENALTY_VALUE. Population statistics must describe
+    # feasible designs only, so the cut is the band floor, not
+    # PENALTY_VALUE / 2. The floor is deck-overridable, so it is resolved here
+    # exactly as in evaluate_individual.
+    _floor_stats = _opt_float(static_inputs.get('infeasible_floor'))
+    if _floor_stats is None:
+        _floor_stats = DEFAULT_INFEASIBLE_FLOOR
+
+    def _feasible(values):
+        return [v[0] for v in values if v[0] < _floor_stats]
+
     def safe_mean(values):
-        valid = [v[0] for v in values if v[0] < PENALTY_VALUE / 2]
+        valid = _feasible(values)
         return np.mean(valid) if valid else float('nan')
     
     def safe_std(values):
-        valid = [v[0] for v in values if v[0] < PENALTY_VALUE / 2]
+        valid = _feasible(values)
         return np.std(valid) if len(valid) > 1 else float('nan')
     
     def count_valid(values):
-        return sum(1 for v in values if v[0] < PENALTY_VALUE / 2)
+        return len(_feasible(values))
     
     stats = tools.Statistics(lambda ind: ind.fitness.values)
     stats.register("min", lambda x: min(v[0] for v in x))
@@ -1498,7 +1512,9 @@ def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
         _append_to_cloud(ind, 0)
 
     # ── Diagnostic: abort early if entire initial population is invalid ───
-    n_init_valid = sum(1 for f in fitnesses if f[0] < PENALTY_VALUE / 2)
+    # Same feasibility cut as the population statistics above: a design sitting
+    # in the infeasible band is not a valid starting point.
+    n_init_valid = sum(1 for f in fitnesses if f[0] < _floor_stats)
     if n_init_valid == 0:
         print(f"\n  *** WARNING: 0 / {pop_size} initial designs are valid! ***")
         print(f"  The parameter ranges likely produce unphysical configurations")
