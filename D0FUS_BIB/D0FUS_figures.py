@@ -1071,16 +1071,16 @@ def plot_Lz_cooling(
 # 4.29 % at C_alpha = 7.5; the same 4.29 % is now obtained at C_alpha = 5.7,
 # which is the new ITER deck calibration (Shimada 2007 projection).
 _HE_SCAN_ITER = [(3, 2.132), (4, 2.896), (5, 3.697), (5.7, 4.285),
-                 (6, 4.546), (6.5, 4.992)]
+                 (6, 4.546), (6.5, 4.992), (6.6, 5.084)]
 # EU-DEMO 2017 deck, kept for the record but no longer plotted: the range to
 # expect for a DEMO-class device is not known with anything like the
 # confidence of the ITER projection, so showing it would invite more
 # commentary than it is worth. With the v2.8 balance its deck value
-# C_alpha = 7.6 returns ~10 %, the European baseline assumption (the
-# pre-v2.8 deck used C_alpha = 10 for 8.8 %).
+# C_alpha = 6.8 returns 8.8 %, against a European baseline that assumes
+# 10 % (the pre-v2.8 deck used C_alpha = 10 for the same 8.8 %).
 _HE_SCAN_DEMO = [(3, 3.670), (4, 4.947), (5, 6.263), (6, 7.627), (7, 9.053),
                  (8, 10.564), (9, 12.200), (10, 14.038)]
-_HE_ITER_LAST_FEASIBLE = 6.5    # beyond this the 500 MW ITER point does not close
+_HE_ITER_LAST_FEASIBLE = 6.6    # beyond this the 500 MW ITER point does not close
 
 
 def plot_He_fraction(
@@ -1104,16 +1104,16 @@ def plot_He_fraction(
     consistent with the design point of Chapter 2 by construction. This
     matters, because the standalone formula and the converged run do not
     agree: the former returns 4.6 % helium at C_alpha = 5 for ITER-like
-    parameters, the latter 2.7 %, the difference coming from the profiles,
-    the impurity dilution and the flux-surface volume weight.
+    parameters, the latter 3.7 %, the difference coming from the impurity
+    dilution, the pedestal profiles and the flux-surface volume weight.
 
     C_alpha is not a quantity one reads off a reference design. In PROCESS,
     for instance, the helium fraction is the input and tau_He*/tau_E an
     output, the only input on the ratio being a lower bound whose default is
     5.0 (constraint 62). It is therefore calibrated deck by deck so that the
-    predicted ash fraction lands on the projected one: 7.5 for ITER here.
+    predicted ash fraction lands on the projected one: 5.7 for ITER here.
 
-    Past C_alpha ~ 9 the deck no longer closes: the dilution is such that
+    Past C_alpha ~ 6.6 the deck no longer closes: the dilution is such that
     500 MW cannot be held under the density limit and the solver returns no
     design point. The curve stops there, which is a result in itself.
 
@@ -1154,7 +1154,7 @@ def plot_He_fraction(
     ax.set_xlabel(r"Removal efficiency  $C_\alpha = \tau_\alpha^{*} / \tau_E$",
                   fontsize=15)
     ax.set_ylabel(r"Helium ash fraction  $f_\alpha$  [%]", fontsize=15)
-    ax.set_xlim(3, 9.6)
+    ax.set_xlim(3, 7.2)
     ax.set_ylim(0, 6.6)
     ax.grid(True, alpha=0.28, lw=0.6)
     ax.tick_params(labelsize=13)

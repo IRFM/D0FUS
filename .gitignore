@@ -54,3 +54,6 @@ Pypi_Wheel_tuto.txt
 publish_d0fus.sh
 *.log
 D0FUS_figures_catalog/
+# Local inputs and figures (not tracked)
+D0FUS_INPUTS/ITER/
+SFPlant_cross_sections/
