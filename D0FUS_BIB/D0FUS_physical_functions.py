@@ -166,7 +166,12 @@ if __name__ == "__main__":
         rho_ped=0.95, n_ped_frac=0.99, T_ped_frac=0.55,
         # Composition and radiation (deck section 4)
         Zeff=1.65, imp={'W': 2e-5, 'Ne': 7e-3}, r_synch=0.6,
-        rho_rad_core=0.75, C_Alpha=5.0,
+        # C_Alpha: value at which the v2.8 ash balance (density-weighted
+        # reactivity, Miller volume weight) returns the frozen f_alpha of
+        # the 2026-06 deck. That deck was converged with the pre-v2.8
+        # balance at C_Alpha = 5.0; the two are related by the profile
+        # factor <sigma.v n_hat^2> / <sigma.v> and the volume weight.
+        rho_rad_core=0.75, C_Alpha=3.8119,
         # Current-drive deposition (deck section 11)
         A_beam=2, E_beam_keV=1000.0, rho_NBI=0.30, rho_EC=0.40,
         angle_NBI_deg=20.0,
@@ -184,7 +189,7 @@ if __name__ == "__main__":
         eta_LH=0.310283, eta_EC=0.0463759, eta_NBI=0.292349, I_CD=1.62962,
         Q=9.98184, P_sep=87.8792, P_LH_th=73.522,
         B_pol=0.715156, lambda_q_mm=1.12391, Gamma_n=0.58196,
-        tau_alpha=15.7193,
+        tau_alpha=11.9840,   # = C_Alpha * tauE with the v2.8 chain C_Alpha
     )
 
 #%% Geometry formulas
@@ -8003,9 +8008,17 @@ if __name__ == "__main__":
 # ── Helium ash accumulation model ─────────────────────────────────────────────
 
 def _sigmav_vol(T_bar, nu_T, rho_ped=1.0, T_ped_frac=0.0, N=200,
-                Vprime_data=None, tau_i_e=1.0):
+                Vprime_data=None, tau_i_e=1.0,
+                nu_n=None, n_ped_frac=0.0):
     """
-    Volume-averaged DT reactivity ⟨σv⟩_vol = ∫₀¹ ⟨σv⟩[T(ρ)] · w(ρ) dρ.
+    Density-weighted, volume-averaged DT reactivity
+
+        I_fus = ∫₀¹ ⟨σv⟩[T_i(ρ)] · n̂²(ρ) · w(ρ) dρ
+
+    where n̂(ρ) = n(ρ)/n̄ is the normalised density profile and w(ρ) the
+    volume weight.  This is the same normalised reactivity integral as in
+    `f_nbar`, so that the alpha source seen by the helium-ash balance is
+    the one that produces P_fus.
 
     Shared helper for f_He_fraction and f_tau_alpha, avoiding redundant
     profile and reactivity evaluations when both are called on the same
@@ -8021,10 +8034,20 @@ def _sigmav_vol(T_bar, nu_T, rho_ped=1.0, T_ped_frac=0.0, N=200,
     Vprime_data : tuple or None
         (rho_grid, Vprime, V_total) from precompute_Vprime().
         None → cylindrical weight 2ρ (Academic mode).
+    tau_i_e    : float  T_i / T_e ratio; the reactivity is evaluated on
+        T_i = tau_i_e · T_e.
+    nu_n       : float or None
+        Density peaking exponent.  None → the density weight n̂² is
+        dropped (legacy behaviour, kept for reference only: it
+        under-counts the alpha source by the factor
+        ⟨σv n̂²⟩ / ⟨σv⟩, 1.2 for a flat ITER-like density and 1.6 for a
+        peaked DEMO-like one).
+    n_ped_frac : float  n_ped / n̄ (used only when nu_n is not None).
 
     Returns
     -------
-    float  Volume-averaged reactivity [m³ s⁻¹].
+    float  Normalised reactivity integral I_fus [m³ s⁻¹].  With nu_n = None
+           it reduces to the plain volume average ⟨σv⟩_vol.
     """
     if Vprime_data is not None:
         # refined mode: Miller weight V'(ρ)/V
@@ -8032,18 +8055,27 @@ def _sigmav_vol(T_bar, nu_T, rho_ped=1.0, T_ped_frac=0.0, N=200,
         T   = f_Tprof(T_bar, nu_T, rho_grid, rho_ped, T_ped_frac,
                        Vprime_data)
         sv  = f_sigmav(tau_i_e * T)   # reactivity on T_i = tau_i_e * T_e
-        return float(np.trapezoid(sv * Vprime, rho_grid)) / V_total
+        if nu_n is not None:
+            n_hat = f_nprof(1.0, nu_n, rho_grid, rho_ped, n_ped_frac,
+                            Vprime_data)
+            sv = sv * n_hat**2
+        integrand = np.nan_to_num(sv * Vprime, nan=0.0, posinf=0.0)
+        return float(np.trapezoid(integrand, rho_grid)) / V_total
     else:
         # Academic mode: cylindrical weight 2ρ dρ
         rho = np.linspace(0.0, 1.0, N)
         T   = f_Tprof(T_bar, nu_T, rho, rho_ped, T_ped_frac)
         sv  = f_sigmav(tau_i_e * T)   # reactivity on T_i = tau_i_e * T_e
-        return float(np.trapezoid(sv * 2.0 * rho, rho))
+        if nu_n is not None:
+            n_hat = f_nprof(1.0, nu_n, rho, rho_ped, n_ped_frac)
+            sv = sv * n_hat**2
+        integrand = np.nan_to_num(sv * 2.0 * rho, nan=0.0, posinf=0.0)
+        return float(np.trapezoid(integrand, rho))
 
 
 def f_He_fraction(n_bar, T_bar, tauE, C_Alpha, nu_T,
                   rho_ped=1.0, T_ped_frac=0.0, Vprime_data=None, tau_i_e=1.0,
-                  f_imp=0.0):
+                  f_imp=0.0, nu_n=None, n_ped_frac=0.0):
     """
     Estimate the equilibrium helium ash fraction f_α = n_α / n_e.
 
@@ -8072,7 +8104,7 @@ def f_He_fraction(n_bar, T_bar, tauE, C_Alpha, nu_T,
     C_Alpha : float
         Helium ash confinement ratio τ_α*/τ_E (dimensionless), lumping
         transport and wall recycling. Calibrated deck by deck; the ITER
-        deck calibration C_α = 7.5 returns f_α = 4.3 %.
+        deck calibration C_α = 5.7 returns f_α = 4.3 % (see Notes).
     nu_T : float
         Temperature profile peaking exponent (core power-law)
     rho_ped : float, optional
@@ -8082,6 +8114,13 @@ def f_He_fraction(n_bar, T_bar, tauE, C_Alpha, nu_T,
     Vprime_data : tuple or None
         (rho_grid, Vprime, V_total) from precompute_Vprime().
         None → cylindrical weight (Academic mode).
+    nu_n : float or None
+        Density peaking exponent.  Must match the value passed to f_nbar
+        so that the alpha source of the ash balance is the one producing
+        P_fus.  None keeps the legacy volume average ⟨σv⟩_vol without the
+        n̂² weight (not recommended, see Notes).
+    n_ped_frac : float
+        n_ped / n̄ (used only when nu_n is not None).
 
     Returns
     -------
@@ -8098,27 +8137,44 @@ def f_He_fraction(n_bar, T_bar, tauE, C_Alpha, nu_T,
     Notes
     -----
     Steady-state reservoir balance (Sarazin et al. 2020, Appendix B),
-    generalised here to impurity dilution. With
-        C = n_bar <sigma.v>_vol * C_alpha * tau_E
+    generalised here to impurity dilution and to peaked profiles. With
+        C = n_bar * I_fus * C_alpha * tau_E,
+        I_fus = int sigma.v[T(rho)] n_hat(rho)^2 w(rho) drho
     the balance (C/4)(1 - f_imp - 2 f_alpha)^2 = f_alpha has the
     physical root
         f_alpha = s * (C_s + 1 - sqrt(2 C_s + 1)) / (2 C_s),
         with s = 1 - f_imp and C_s = C * s,
     reducing to (C + 1 - sqrt(2C + 1))/(2C) for f_imp = 0.
-    The correction lowers f_alpha by about 13 % at ITER-like impurity
-    content (f_imp ~ 0.07); the closed form is verified against a
-    direct root solve in test_verifications.py.
-    <sigma.v>_vol is the volume-averaged D-T reactivity using the
-    volume weight consistent with the geometry mode (cylindrical
-    2 rho drho in Academic mode, Miller V'(rho)/V in Refined mode).
+    The impurity correction lowers f_alpha by about 13 % at ITER-like
+    impurity content (f_imp ~ 0.07).
+    I_fus is the normalised reactivity integral of f_nbar, evaluated
+    with the volume weight of the geometry mode (cylindrical 2 rho drho
+    in Academic mode, Miller V'(rho)/V in Refined mode).  Writing the
+    source as n_bar^2 I_fus V / 4 makes the alpha production of the ash
+    balance identical to P_fus / E_fus, which is the only consistent
+    choice once P_fus is an input.
+
+    History.  Up to v2.7.2 the source was written n_bar^2 <sigma.v>_vol,
+    i.e. without the n_hat^2 weight.  Because sigma.v and n_hat^2 are both
+    peaked, this under-counted the alpha source by the factor
+    <sigma.v n_hat^2> / <sigma.v> (1.23 for the flat ITER density,
+    1.59 for the SF Plant V2 point), so that a deck C_alpha = 7 behaved
+    as an effective tau*_He/tau_E of 4.4.  The v2.8 correction restores
+    C_alpha as the true tau*_He/tau_E; the ITER deck calibration moved
+    from C_alpha = 7.5 to 5.7 to keep f_alpha = 4.3 % (Shimada 2007).
+    Cross-checked against METIS on the SF Plant V2 point (Sept 2026):
+    at equal tau*_He/tau_E the two codes give the same f_He and P_fus.
 
     References
     ----------
     Y. Sarazin et al., Nucl. Fusion 60 (2020) 016010, Appendix B.
     """
-    # Volume-averaged reactivity via shared helper (uses T_i = tau_i_e * T_e)
+    # Density-weighted reactivity integral I_fus (same as in f_nbar),
+    # evaluated on T_i = tau_i_e * T_e.  nu_n = None falls back to the
+    # legacy <sigma.v>_vol (see Notes).
     sigmav_vol = _sigmav_vol(T_bar, nu_T, rho_ped, T_ped_frac,
-                             Vprime_data=Vprime_data, tau_i_e=tau_i_e)
+                             Vprime_data=Vprime_data, tau_i_e=tau_i_e,
+                             nu_n=nu_n, n_ped_frac=n_ped_frac)
     C = n_bar * 1e20 * sigmav_vol * C_Alpha * tauE
     # Impurity-diluted closed form: solves (C/4)(1 - f_imp - 2 f)^2 = f;
     # reduces to the historical expression for f_imp = 0.
@@ -8142,7 +8198,7 @@ def f_tau_alpha(n_bar, T_bar, tauE, C_Alpha, nu_T,
     balance solved in `f_He_fraction`.  Conversely, substituting f_α
     back into the particle balance yields the same identity:
 
-        τ*_α  =  4 f_α / [ n_e (1 − 2f_α)² ⟨σv⟩_vol ]  =  C_α · τ_E
+        τ*_α  =  4 f_α / [ n_e (1 − 2f_α)² I_fus ]  =  C_α · τ_E
 
     so the two routes are algebraically equivalent.
 
@@ -9183,12 +9239,13 @@ if __name__ == "__main__":
     # ITER-1989 guideline formula at the PUBLISHED 95 % shaping and 15 MA
     # reproduces the ITER design value q95 = 3.0.
     # Helium ash: f_alpha solves the Sarazin steady-state balance with
-    # the deck removal efficiency C_alpha = 5 (tau*_alpha = C_alpha
-    # tau_E) at the chain tau_E. The value must close on the f_alpha
-    # forward reference injected in chain 2, which is the convergence
-    # criterion of the production solver. The production solver evaluates
-    # the ash balance with the cylindrical volume weight even in refined
-    # geometry (see D0FUS_run.py); the chain mirrors that call exactly.
+    # the removal efficiency C_alpha (tau*_alpha = C_alpha tau_E) at the
+    # chain tau_E. The value must close on the f_alpha forward reference
+    # injected in chain 2, which is the convergence criterion of the
+    # production solver. Since v2.8 the production solver evaluates the
+    # ash balance with the density-weighted reactivity integral of
+    # f_nbar and the Miller volume weight (see D0FUS_run.py); the chain
+    # mirrors that call exactly, hence the ITER['C_Alpha'] value.
     _q95 = f_q95(ITER['B0'], ITER['Ip'], ITER['R0'], ITER['a'],
                  ITER['kappa'], ITER['delta'], ITER['kappa95'],
                  ITER['delta95'], Option_q95='Sauter')
@@ -9199,7 +9256,9 @@ if __name__ == "__main__":
     _fa = f_He_fraction(ITER['nbar'], ITER['Tbar'], ITER['tauE'],
                         ITER['C_Alpha'], ITER['nu_T'],
                         rho_ped=ITER['rho_ped'],
-                        T_ped_frac=ITER['T_ped_frac'], tau_i_e=1.0)
+                        T_ped_frac=ITER['T_ped_frac'], tau_i_e=1.0,
+                        nu_n=ITER['nu_n'], n_ped_frac=ITER['n_ped_frac'],
+                        Vprime_data=ITER_Vpd)
     _ta = f_tau_alpha(ITER['nbar'], ITER['Tbar'], ITER['tauE'],
                       ITER['C_Alpha'], ITER['nu_T'],
                       rho_ped=ITER['rho_ped'],
@@ -9213,7 +9272,7 @@ if __name__ == "__main__":
         ("Gamma_n, Miller wall [MW/m2]", _Gam, FROZEN['Gamma_n'], 2e-3,
          "deck frozen"),
         ("Gamma_n [MW/m2]", _Gam, 0.57, 0.05, "Shimada 2007"),
-        ("f_He closure (C_alpha = 5) [-]", _fa, FROZEN['f_alpha'], 1e-3,
+        ("f_He closure (chain C_alpha) [-]", _fa, FROZEN['f_alpha'], 1e-3,
          "solver fixed point"),
         ("f_He, IPB exhaust assumption [%]", _fa * 100, "4.4", None,
          "IPB 1999"),
@@ -9261,9 +9320,8 @@ if __name__ == "__main__":
 
     import D0FUS_BIB.D0FUS_figures as figs
     # plot_He_fraction takes separate ITER/DEMO removal efficiencies
-    # (C_Alpha_ITER=5.0, C_Alpha_DEMO=7.0 by default); defaults match the
-    # chain above (C_alpha = 5).
-    figs.plot_He_fraction(C_Alpha_ITER=ITER['C_Alpha'])
+    # (C_Alpha_ITER = 5.7 by default, the v2.8 ITER deck calibration).
+    figs.plot_He_fraction(C_Alpha_ITER=5.7)
 
 #%%
 

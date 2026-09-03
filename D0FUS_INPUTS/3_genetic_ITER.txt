@@ -107,7 +107,7 @@ Greenwald_limit = 1.0
 Zeff        = 1.65                 # ITER target Zeff
 Atomic_mass = 2.5                  # D-T
 r_synch     = 0.6                  # Be/W first-wall reflectivity
-C_Alpha     = 7.5                  # tau_He*/tau_E: recovers the Shimada 2007 He projection
+C_Alpha     = 5.7                  # tau_He*/tau_E: recovers the Shimada 2007 He projection (4.3 %) with the v2.8 ash balance (was 7.5 before v2.8)
                                 # with the impurity-diluted ash balance (was 6.0).
                                 # Aligned on the 1_run_ITER base deck.
 rho_rad_core = 0.85                # ITER-calibrated core/edge split (presets: 0.6 PROCESS-aligned,

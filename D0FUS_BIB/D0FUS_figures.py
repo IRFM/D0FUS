@@ -1063,28 +1063,29 @@ def plot_Lz_cooling(
 
 # Helium ash fraction against C_alpha, tabulated from full D0FUS runs.
 # Each entry is (C_alpha, f_He [%]) obtained by rerunning the corresponding
-# benchmark deck with C_Alpha substituted and nothing else changed. The scan
-# is reproduced by verif_Calpha/scan_calpha.py. Evaluating the standalone
-# reservoir formula instead would answer a different question: at a fixed
-# hand-picked reference point, without impurity dilution, without pedestal
-# and with a cylindrical volume weight, it returns 4.6 % for C_alpha = 5,
-# whereas the converged ITER deck returns 2.7 % at that value.
-_HE_SCAN_ITER = [(3, 1.601), (4, 2.163), (5, 2.742), (6, 3.341), (7, 3.965),
-                 (7.5, 4.287), (8, 4.618), (9, 5.308)]
+# benchmark deck with C_Alpha substituted and nothing else changed (script
+# scan_calpha.py in the analysis notes; 8 s per point). Tabulated with the
+# v2.8 ash balance, i.e. the alpha source of the reservoir equation is the
+# density-weighted reactivity integral of f_nbar (P_fus / E_fus exactly).
+# Before v2.8 the source dropped the n_hat^2 weight and the table read
+# 4.29 % at C_alpha = 7.5; the same 4.29 % is now obtained at C_alpha = 5.7,
+# which is the new ITER deck calibration (Shimada 2007 projection).
+_HE_SCAN_ITER = [(3, 2.132), (4, 2.896), (5, 3.697), (5.7, 4.285),
+                 (6, 4.546), (6.5, 4.992)]
 # EU-DEMO 2017 deck, kept for the record but no longer plotted: the range to
 # expect for a DEMO-class device is not known with anything like the
 # confidence of the ITER projection, so showing it would invite more
-# commentary than it is worth. Its deck value is C_alpha = 10, returning
-# 8.8 %, against a European baseline that assumes c_He = 10 %.
-_HE_SCAN_DEMO = [(3, 2.472), (4, 3.318), (5, 4.177), (6, 5.052), (7, 5.944),
-                 (7.5, 6.398), (8, 6.858), (9, 7.795), (10, 8.763),
-                 (11, 9.767), (12, 10.818), (14, 13.124)]
-_HE_ITER_LAST_FEASIBLE = 9      # beyond this the 500 MW ITER point does not close
+# commentary than it is worth. With the v2.8 balance its deck value
+# C_alpha = 7.6 returns ~10 %, the European baseline assumption (the
+# pre-v2.8 deck used C_alpha = 10 for 8.8 %).
+_HE_SCAN_DEMO = [(3, 3.670), (4, 4.947), (5, 6.263), (6, 7.627), (7, 9.053),
+                 (8, 10.564), (9, 12.200), (10, 14.038)]
+_HE_ITER_LAST_FEASIBLE = 6.5    # beyond this the 500 MW ITER point does not close
 
 
 def plot_He_fraction(
     iter_scan: list | None = None,
-    C_Alpha_ITER: float = 7.5,
+    C_Alpha_ITER: float = 5.7,
     save_dir: str | None = None,
 ) -> None:
     """

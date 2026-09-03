@@ -222,7 +222,7 @@ r_synch     = 0.6               # Synchrotron wall reflectivity [-]
                                 # ITER first wall (Be-coated) has moderate reflectivity
                                 # Default EU-DEMO value; acceptable for ITER.
 
-C_Alpha     = 7.5                  # tau_He*/tau_E: recovers the Shimada 2007 He projection with the impurity-diluted ash balance (was 6.0)
+C_Alpha     = 5.7                  # tau_He*/tau_E: recovers the Shimada 2007 He projection (4.3 %) with the v2.8 ash balance (was 7.5 before v2.8)
 rho_rad_core = 0.85                # ITER-calibrated core/edge split (presets: 0.6 PROCESS-aligned, 1.0 conservative)
                                 # τ_He* / τ_E ≈ 5 (standard assumption)
 

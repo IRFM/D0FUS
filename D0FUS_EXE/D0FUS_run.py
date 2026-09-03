@@ -1145,11 +1145,17 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                   f"I_Ohm={I_Ohm_loc:.2f}, P_Ohm={P_Ohm_loc:.3f}, "
                   f"Q={Q_loc:.2f}")
 
-        # Helium ash fraction from confinement time
+        # Helium ash fraction from confinement time.  The density profile
+        # (nu_n, n_ped_frac) and the volume weight (Vprime_data) are the
+        # ones used by f_nbar above, so that the alpha source of the ash
+        # balance is exactly P_fus / E_fus (v2.8 correction: the former
+        # call dropped the n_hat^2 weight and the Miller weight, which
+        # under-counted the source by 1.2 to 1.6).
         new_fa_loc = f_He_fraction(
             nbar_loc, Tbar, tau_E_loc, C_Alpha, nu_T,
             rho_ped=rho_ped, T_ped_frac=T_ped_frac, tau_i_e=tau_i_e,
-            f_imp=f_imp_dilution)
+            f_imp=f_imp_dilution, nu_n=nu_n, n_ped_frac=n_ped_frac,
+            Vprime_data=Vprime_data)
 
         if _dbg:
             print(f"    new_f_alpha={new_fa_loc:.6f} (input={f_alpha:.6f})")

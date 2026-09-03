@@ -215,7 +215,7 @@ class GlobalConfig:
                                  #          D-T+He plasma with Z_eff ~ 1 + 2 f_He (~1.1).
                                  # float -> manual override (legacy behaviour, e.g. Zeff = 2.0).
     r_synch     : float = 0.5   # Synchrotron radiation wall reflectivity [-]
-    C_Alpha     : float = 7.5   # Helium ash confinement ratio τ_He*/τ_E [-], calibrated deck by deck (default 7.5 = ITER calibration; PROCESS provides only a lower bound, 5)
+    C_Alpha     : float = 5.7   # Helium ash confinement ratio τ_He*/τ_E [-], calibrated deck by deck (default 5.7 = ITER calibration with the v2.8 ash balance, 4.3 % He; PROCESS provides only a lower bound, 5)
     # Impurity line radiation (0D bulk-plasma estimate).
     # Comma-separated species ('W', 'Ar', 'Ne', 'C', 'N', 'Kr') with matching
     # concentrations n_imp/n_e. Empty string = disabled (pure D-T).
