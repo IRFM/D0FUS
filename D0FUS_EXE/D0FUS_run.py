@@ -894,7 +894,11 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                           rho_ped=rho_ped, n_ped_frac=n_ped_frac,
                           T_ped_frac=T_ped_frac,
                           Vprime_data=Vprime_data, tau_i_e=tau_i_e)
-        nbar_line_loc = f_nbar_line(nbar_loc, nu_n, rho_ped, n_ped_frac)
+        # Vprime_data is required: nbar_loc is a volume average on the refined
+        # Miller Jacobian, so the profile rebuilt inside f_nbar_line must use
+        # the same volume element (see the f_nbar_line docstring).
+        nbar_line_loc = f_nbar_line(nbar_loc, nu_n, rho_ped, n_ped_frac,
+                                    Vprime_data=Vprime_data)
 
         # Radiative power losses [MW]
         # Fuel bremsstrahlung: uses Z_eff,fuel (D+T+He only) to avoid

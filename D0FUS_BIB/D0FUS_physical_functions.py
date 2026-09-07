@@ -1206,7 +1206,8 @@ if __name__ == "__main__":
     import D0FUS_BIB.D0FUS_figures as figs
     figs.plot_nT_profiles()
 
-def f_nbar_line(nbar_vol, nu_n, rho_ped=1.0, n_ped_frac=0.0, N=2000):
+def f_nbar_line(nbar_vol, nu_n, rho_ped=1.0, n_ped_frac=0.0, N=2000,
+                Vprime_data=None):
     """
     Convert volume-averaged electron density to line-averaged density.
 
@@ -1252,6 +1253,14 @@ def f_nbar_line(nbar_vol, nu_n, rho_ped=1.0, n_ped_frac=0.0, N=2000):
     rho_ped    : float  Normalised pedestal radius (default 1.0).
     n_ped_frac : float  n_ped / n̄.
     N          : int    Integration points (default 2000).
+    Vprime_data: tuple or None  Flux-surface Jacobian used to normalise the
+        profile to nbar_vol.  MUST be the same Vprime_data as the run that
+        produced nbar_vol.  None (default) falls back to the cylindrical
+        volume element 2 rho drho, which is correct in Academic geometry
+        only.  Passing None while nbar_vol is a refined-Miller volume
+        average rebuilds a profile of the wrong amplitude and peaking: on
+        the SF Plant V2 point this returned 1.968e20 instead of 2.102e20,
+        a 6.8 % error propagating to f_GW, the L-H threshold and Ip.
 
     Returns
     -------
@@ -1273,10 +1282,12 @@ def f_nbar_line(nbar_vol, nu_n, rho_ped=1.0, n_ped_frac=0.0, N=2000):
     """
     rho_arr = np.linspace(0.0, 1.0, N)
     return float(np.trapezoid(f_nprof(nbar_vol, nu_n, rho_arr,
-                                      rho_ped, n_ped_frac), rho_arr))
+                                      rho_ped, n_ped_frac,
+                                      Vprime_data), rho_arr))
 
 
-def f_nbar_vol_from_line(nbar_line, nu_n, rho_ped=1.0, n_ped_frac=0.0, N=2000):
+def f_nbar_vol_from_line(nbar_line, nu_n, rho_ped=1.0, n_ped_frac=0.0, N=2000,
+                         Vprime_data=None):
     """
     Convert line-averaged electron density to volume-averaged density.
 
@@ -1288,12 +1299,13 @@ def f_nbar_vol_from_line(nbar_line, nu_n, rho_ped=1.0, n_ped_frac=0.0, N=2000):
     nu_n       : float  Density peaking exponent.
     rho_ped, n_ped_frac : float  Pedestal parameters.
     N          : int    Integration points.
+    Vprime_data: tuple or None  Flux-surface Jacobian, see f_nbar_line().
 
     Returns
     -------
     nbar_vol : float  Volume-averaged density [same unit as nbar_line].
     """
-    ratio = f_nbar_line(1.0, nu_n, rho_ped, n_ped_frac, N)
+    ratio = f_nbar_line(1.0, nu_n, rho_ped, n_ped_frac, N, Vprime_data)
     return nbar_line / ratio
 
 if __name__ == "__main__":

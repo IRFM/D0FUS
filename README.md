@@ -234,7 +234,7 @@ Full derivations, validity domains and references: thesis, Chapter 1 and Appendi
 
 ## Version and citation
 
-The tag **v2.7.0** is the reference version of the thesis: the manuscript documents this exact state of the code, and the benchmarks of its Chapter 2 (module level, coil-by-coil against six machines, EU-DEMO 2017 and ITER device level) were produced with it. To cite D0FUS, use `CITATION.cff` (GitHub's *Cite this repository* button) or cite the thesis:
+To cite D0FUS, use `CITATION.cff` (GitHub's *Cite this repository* button) or cite the thesis:
 
 > T. Auclair, *Apport des supraconducteurs à haute température critique au dimensionnement de machines de fusion nucléaire par confinement magnétique*, PhD thesis, Aix-Marseille Université / CEA-IRFM, 2026.
 
