@@ -223,7 +223,8 @@ def compute_popcon(config, grid_spec, verbose=1):
 
         for jn, nbl in enumerate(nbar_line_grid):
             nbar_vol = f_nbar_vol_from_line(nbl, nu_n, rho_ped=rho_ped,
-                                            n_ped_frac=n_ped_frac)
+                                            n_ped_frac=n_ped_frac,
+                                            Vprime_data=Vprime_data)
             P_fus = P_REF * (nbar_vol / n_ref_vol)**2
             P_alpha = f_P_alpha(P_fus)
 
