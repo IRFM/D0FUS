@@ -3116,7 +3116,11 @@ def plot_assembly_side_view(run, save_dir=None, n_cs_modules=None):
 
     col_line = "black"
     col_dim = "#333333"
-    h_cs = (kappa * a + b + 1.0)
+    # CS half-height from the run dict (resolved once by f_H_CS).
+    _H_CS_fig = run.get("H_CS")
+    if _H_CS_fig is None or not np.isfinite(_H_CS_fig) or _H_CS_fig <= 0:
+        _H_CS_fig = np.nan
+    h_cs = 0.5 * _H_CS_fig
 
     # -- Figure -------------------------------------------------------------
     fig, ax = plt.subplots(figsize=(12.5, 8.2))
@@ -3137,7 +3141,8 @@ def plot_assembly_side_view(run, save_dir=None, n_cs_modules=None):
     Rp, Zp = _cl(R_lcfs, Z_lcfs)
     ax.fill(Rp, Zp, fc=col_plasma, alpha=ALPHA, ec="none", zorder=zbase + N + 1)
 
-    # CS: blue winding pack, segmented into N_sub_CS modules with white gaps.
+    # CS: blue winding pack, segmented into N_sub_CS modules.
+    # The 2 % inter-module gap is COSMETIC; the physics stack fills H_CS.
     if n_cs_modules == 1:
         ax.add_patch(plt.Rectangle((R_CS_int, -h_cs), c_CS, 2 * h_cs,
                                    fc=col_cs, alpha=ALPHA, ec="none", zorder=4))
@@ -3390,7 +3395,10 @@ def plot_CS_cross_section(
     R_CS_int = bd["R_CS_int"]          # Inner radius of winding pack [m]
     R_CS_ext = bd["R_CS_ext"]          # Outer radius of winding pack [m]
     c_CS     = bd["c_CS"]              # Winding-pack radial thickness [m]
-    H_CS     = 2.0 * (kappa_edge * a + bd["b"] + 1.0)
+    # CS height from the run dict (resolved once by f_H_CS).
+    H_CS     = run.get("H_CS")
+    if H_CS is None or not np.isfinite(H_CS) or H_CS <= 0:
+        H_CS = np.nan
     h_cs     = H_CS / 2.0
 
     # ── Black-and-white colour scheme (matches TF side view) ────────
@@ -3959,10 +3967,14 @@ def plot_tokamak_3D(run: dict, save_dir: str | None = None,
     # Central solenoid: annulus R_CS_int -> R_CS_ext from the flux-swing
     # sizing.  Height convention shared with plot_CS_cross_section,
     # clamped inside the TF bore interior.  The CS is drawn segmented into
-    # N_sub_CS axial modules (quench-protection subdivision computed by
-    # D0FUS; 1 = monobloc), with the same 2 % inter-module gap convention
-    # as plot_assembly_side_view.
-    H_CS  = min(2.0 * (kappa_edge * a + b + 1.0), H_TF - 2.0 * c_TF - 0.1)
+    # N_sub_CS axial modules (an input: module count and number of independent
+    # dump units in the quench model; 1 = monobloc). The 2 % inter-module gap
+    # is COSMETIC, as in plot_assembly_side_view.
+    # CS height from the run dict (resolved once by f_H_CS). No clamp against
+    # the TF envelope: f_H_CS already references it to the TF bore.
+    H_CS  = run.get("H_CS")
+    if H_CS is None or not np.isfinite(H_CS) or H_CS <= 0:
+        H_CS = H_TF - 2.0 * c_TF
     n_mod = max(1, int(run.get("N_sub_CS", 1)))
     g_mod = 0.02 * H_CS if n_mod > 1 else 0.0
     mod_h = (H_CS - (n_mod - 1) * g_mod) / n_mod

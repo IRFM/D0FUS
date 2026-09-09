@@ -2127,6 +2127,25 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # requirement proportionally: both the inductive (Ψ_ind ∝ Ip) and resistive
     # (Ψ_res = Ce μ0 R0 Ip) terms scale with the inductively-ramped current fraction.
     ΨRampUp *= (1.0 - getattr(config, 'f_heat_ramp', 0.0))
+    # ── TF Princeton-D cross-section geometry ─────────────────────────────────
+    # Solved here rather than after the CS block because the CS height is
+    # referenced to the TF winding-pack inside height (see f_H_CS). The ODE is
+    # solved once per run and every consumer reuses this result.
+    (R_bore_TF, _R_TF_out, _H_TF_D, _A_cross_TF, L_turn_TF,
+     _R_out, _Z_out, _R_in, _Z_in) = f_TF_cross_section(a, b, R0, c, Delta_TF)
+    Z_TF_bore_half = float(np.max(_Z_in)) if np.all(np.isfinite(_Z_in)) else np.nan
+
+    # ── CS height: single source of truth ────────────────────────────────────
+    # An explicit config.H_CS wins, otherwise f_H_CS gives the TF bore inside
+    # height. The resolved value is written back into the config so that every
+    # consumer (the CS solvers via _CS_geometry_init, the volume, the cable
+    # inventory, the report and the figures) sees the same height.
+    if config.H_CS is None or not (config.H_CS > 0):
+        H_CS = f_H_CS(Z_TF_bore_half)
+        config = dc_replace(config, H_CS=H_CS)
+    else:
+        H_CS = float(config.H_CS)
+
     # ==============================================================================
     #    CENTRAL SOLENOID (CS) DESIGN
     #    Determines the CS radial thickness 'd' to satisfy the Volt-second budget.
@@ -2204,10 +2223,6 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         alpha_GR=config.alpha_giacomin, f0=config.f0_zanca)
     if density_limit_model != 'greenwald':
         nG_solution = n_DL_line * Greenwald_limit
-    # ── TF Princeton-D cross-section geometry ─────────────────────────────────
-    (R_bore_TF, _R_TF_out, _H_TF_D, _A_cross_TF, L_turn_TF,
-     _R_out, _Z_out, _R_in, _Z_in) = f_TF_cross_section(a, b, R0, c, Delta_TF)
-
     # Component volumes — only V_FI used; Princeton-D H_TF for the FI cylinder
     (_, _, _, V_FI) = f_volume(a, b, c, d, R0, κ, Delta_TF, _H_TF_D)
 
@@ -2215,7 +2230,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # f_V_TF(a,b,R0,c,N_TF,Delta_TF) = A_cross * 2π * R_bore / N_TF but it would
     # call f_TF_cross_section a second time (ODE solve). Use pre-computed values.
     V_TF_one  = _A_cross_TF * 2.0 * np.pi * R_bore_TF / float(N_TF)
-    V_CS_geom = f_V_CS(a, b, c, d, R0, κ, Gap, Choice_Buck_Wedg)
+    V_CS_geom = f_V_CS(a, b, c, d, R0, κ, Gap, Choice_Buck_Wedg, H_CS=H_CS)
 
     # ── Radial build layer volumes ────────────────────────────────────────────
     # All boundaries are real 3D contours; volumes via exact _moment_area integrals.
@@ -2273,7 +2288,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
      _Nturns_TF, _Nturns_CS) = f_cable_length(
         int(N_TF), L_turn_TF, Bmax_TF, _R_TF_in,
         I_cond,
-        N_sub_CS, L_turn_CS, B_CS, H_TF)   # H_TF = 2(κa+b+1) = H_CS_NI
+        N_sub_CS, L_turn_CS, B_CS, H_CS)   # CS Ampere law uses the resolved H_CS
 
     # ── Material masses ───────────────────────────────────────────────────────
     (M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF,
@@ -2578,6 +2593,21 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         except (TypeError, ValueError):
             return fallback
 
+    # ── TF Princeton-D contour and CS height (single resolution) ─────────────
+    # Same rule as run(). Solved once and reused by the cost block below.
+    try:
+        (_, _, _H_TF_cb, _, _, _, _, _, _Z_in_cb) = f_TF_cross_section(
+            config.a, config.b, config.R0, c_TF, Delta_TF)
+        _Z_bore_half_cb = (float(np.max(_Z_in_cb))
+                           if np.all(np.isfinite(_Z_in_cb)) else np.nan)
+    except Exception:
+        _H_TF_cb, _Z_bore_half_cb = np.nan, np.nan
+    if config.H_CS is not None and config.H_CS > 0:
+        _H_CS_rd = float(config.H_CS)
+    else:
+        _H_CS_rd = f_H_CS(_Z_bore_half_cb)
+    _H_CS_mod_rd = f_H_CS_module(_H_CS_rd, config.N_sub_CS)
+
     # ── Techno-economic breakdown (Sheffield), recomputed here so the cost
     # figure matches the run() report. Mirrors the run() cost block exactly;
     # empty dict when cost_model is off or any required input is unavailable.
@@ -2588,7 +2618,6 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
             _P_e_c  = max(_P_elec, 1.0)
             _T_op_c = results[132]; _CF_c = results[135]
             _t_bl_c = results[130]; _t_div_c = results[131]; _V_rb_BB_c = results[138]
-            _, _, _H_TF_cb, *_ = f_TF_cross_section(config.a, config.b, config.R0, c_TF, Delta_TF)
             (_, _, _, _V_FI_c) = f_volume(config.a, config.b, c_TF, c_CS, config.R0,
                                           kappa_edge, Delta_TF, _H_TF_cb)
             _cr = f_costs_Sheffield(
@@ -2665,6 +2694,10 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         "c_WP":        _f(c_WP_TF,   0.36),
         "c_nose":      _f(c_Nose_TF, 0.20),
         "c_CS":        _f(c_CS,      0.70),
+        # CS vertical build [m] — resolved by f_H_CS, consumed by the report
+        # and by the figures.
+        "H_CS":            _H_CS_rd,
+        "H_CS_module":     _H_CS_mod_rd,
         "N_TF":            N_TF,
         "N_sub_CS":        config.N_sub_CS,   # CS axial segmentation (1 = monobloc)
         "Delta_TF":        Delta_TF,   # Extra outboard radial clearance from port-access constraint [m]
@@ -2871,6 +2904,17 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
         for i, nm in enumerate(names_rest):
             if i < len(rest):
                 named[nm] = rest[i]
+        # Coil-scale (overall) current densities, derived from Ampere's law
+        # and the converged build. J_TF / J_CS_1 returned by the solvers are
+        # J_wost, i.e. referenced to the non-steel cross-section only; J_coil
+        # is referenced to the full coil cross-section (steel jacket, nose and
+        # backplate included). See f_J_coil_TF / f_J_coil_CS.
+        named["J_wost_TF"] = J_TF
+        named["J_wost_CS"] = J_CS_1
+        named["J_coil_TF"] = f_J_coil_TF(config.Bmax_TF,
+                                         config.R0 - config.a - config.b,
+                                         c_TF)
+        named["J_coil_CS"] = f_J_coil_CS(B_CS, c_CS)
     except Exception:
         pass
 
@@ -3063,7 +3107,8 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
     lines.append("")
 
     emit("10. OUTPUTS - TF coil (winding pack, composition, structure)", [
-        ("TF current density J_TF", "J_TF", "A/m^2"),
+        ("TF current density J_wost_TF (no steel)", "J_wost_TF", "A/m^2"),
+        ("TF current density J_coil_TF (full TF leg)", "J_coil_TF", "A/m^2"),
         ("TF radial thickness c_TF", "c_TF", "m"),
         ("TF winding-pack thickness c_WP", "c_WP", "m"),
         ("TF nose thickness c_nose", "c_nose", "m"),
@@ -3073,7 +3118,6 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
         ("TF axial stress sz_TF", "sz_TF", "Pa"),
         ("TF hoop stress st_TF", "st_TF", "Pa"),
         ("TF radial stress sr_TF", "sr_TF", "Pa"),
-        ("TF von Mises stress sf_TF", "sf_TF", "Pa"),
         ("TF SC fraction f_sc_TF", "f_sc_TF", "-"),
         ("TF Cu fraction f_cu_TF", "f_cu_TF", "-"),
         ("TF He-pipe fraction f_He_pipe_TF", "f_He_pipe_TF", "-"),
@@ -3097,17 +3141,19 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
     ])
 
     emit("11. OUTPUTS - CS coil (winding pack, composition, structure)", [
-        ("CS current density J_CS_1", "J_CS_1", "A/m^2"),
+        ("CS current density J_wost_CS (no steel)", "J_wost_CS", "A/m^2"),
+        ("CS current density J_coil_CS (steel incl.)", "J_coil_CS", "A/m^2"),
         ("CS field (alt.) B_CS2", "B_CS2", "T"),
         ("CS current density (alt.) J_CS2", "J_CS2", "A/m^2"),
         ("CS radial thickness c_CS", "c_CS", "m"),
+        ("CS total height H_CS", "H_CS", "m"),
+        ("CS module height H_CS_module", "H_CS_module", "m"),
         ("CS module count N_sub_CS", "N_sub_CS", "-"),
         ("CS shape exponent n_shape_CS", "n_shape_CS", "-"),
         ("CS steel fraction Steel_fraction_CS", "Steel_fraction_CS", "-"),
         ("CS axial stress sz_CS", "sz_CS", "Pa"),
         ("CS hoop stress st_CS", "st_CS", "Pa"),
         ("CS radial stress sr_CS", "sr_CS", "Pa"),
-        ("CS von Mises stress sf_CS", "sf_CS", "Pa"),
         ("CS SC fraction f_sc_CS", "f_sc_CS", "-"),
         ("CS Cu fraction f_cu_CS", "f_cu_CS", "-"),
         ("CS He-pipe fraction f_He_pipe_CS", "f_He_pipe_CS", "-"),
@@ -3317,7 +3363,15 @@ def save_run_output(config: GlobalConfig,
     Nturns_TF_coil = NI_TF_coil / config.I_cond if config.I_cond > 0 else np.nan
 
     # CS geometry from converged radial build
-    _H_CS = _H_TF                       # Same vertical extent as TF
+    # CS height: same resolution as run(), reusing the display cross-section
+    # above so no extra ODE solve.
+    if config.H_CS is not None and config.H_CS > 0:
+        _H_CS, _H_CS_src = float(config.H_CS), 'forced'
+    else:
+        _Z_bore_half = (float(np.max(_Z_in_disp))
+                        if np.all(np.isfinite(_Z_in_disp)) else np.nan)
+        _H_CS, _H_CS_src = f_H_CS(_Z_bore_half), 'TF bore'
+    _H_CS_mod = f_H_CS_module(_H_CS, config.N_sub_CS)
     if np.isfinite(B_CS) and np.isfinite(r_d) and np.isfinite(r_c) and r_c > r_d:
         E_mag_CS_disp = calculate_E_mag_CS(B_CS, r_d, r_c, _H_CS)
         # Ampere's law on axial path through bore: NI_total = B_max × H / μ₀
@@ -3331,6 +3385,15 @@ def save_run_output(config: GlobalConfig,
         NI_CS_total   = np.nan
         NI_CS_mod     = np.nan
         Nturns_CS_mod = np.nan
+
+    # ── Coil-scale (overall) current densities (display only) ─────────────
+    # J_wost, returned by the radial build solvers, is referenced to the
+    # non-steel cross-section of the conductor. J_coil is referenced to the
+    # full coil cross-section, steel jacket and structural case included.
+    # Both follow from Ampere's law and the converged build alone; see
+    # f_J_coil_TF / f_J_coil_CS in D0FUS_radial_build_functions.
+    J_coil_TF = f_J_coil_TF(config.Bmax_TF, _r_in_TF, c)
+    J_coil_CS = f_J_coil_CS(B_CS, d)
 
     # Re-parse multi-impurity config for per-species display
     _Z_CORONAL = {'Be': 4, 'C': 6, 'N': 7, 'Ne': 10, 'Ar': 18, 'Kr': 34, 'Xe': 44, 'W': 46}
@@ -3410,6 +3473,8 @@ def save_run_output(config: GlobalConfig,
         if config.Choice_Buck_Wedg == 'Wedging':
             print(f"[O] Gap (TF inner bore -> CS outer face)            : {config.Gap:.3f} [m]", file=out)
         print(f"[O] d  (CS winding-pack radial thickness)           : {d:.3f} [m]",     file=out)
+        print(f"{'[O] H_CS   (CS total height, ' + _H_CS_src + ')':<52}: {_H_CS:.3f} [m]", file=out)
+        print(f"[O] H_CS/mod (CS module height)                     : {_H_CS_mod:.3f} [m]", file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[O] Kappa    (Plasma elongation)                    : {κ:.3f}",     file=out)
         print(f"[O] Kappa_95 (Elongation at 95% flux surface)       : {κ_95:.3f}", file=out)
@@ -3426,8 +3491,11 @@ def save_run_output(config: GlobalConfig,
         print(f"[I] Bmax_TF (Peak field on TF conductor)            : {config.Bmax_TF:.3f} [T]",   file=out)
         print(f"[O] B0   (On-axis magnetic field)                   : {B0:.3f} [T]",             file=out)
         print(f"[O] BCS  (CS peak magnetic field)                   : {B_CS:.3f} [T]",           file=out)
-        print(f"[O] J_E-TF (TF engineering current density)         : {J_TF/1e6:.3f} [MA/m²]",  file=out)
-        print(f"[O] J_E-CS (CS engineering current density)         : {J_CS/1e6:.3f} [MA/m²]",  file=out)
+        print(f"[O] Engineering current density, by reference section", file=out)
+        print(f"[O]  ├ J_wost-TF (TF cable, steel jacket excluded)  : {J_TF/1e6:.3f} [MA/m²]", file=out)
+        print(f"[O]  ├ J_coil-TF (TF leg: WP + nose + backplate)    : {J_coil_TF/1e6:.3f} [MA/m²]", file=out)
+        print(f"[O]  ├ J_wost-CS (CS cable, steel jacket excluded)  : {J_CS/1e6:.3f} [MA/m²]", file=out)
+        print(f"[O]  └ J_coil-CS (CS pack, steel jacket included)   : {J_coil_CS/1e6:.3f} [MA/m²]", file=out)
         print(f"[O] E_mag_TF (TF stored magnetic energy)            : {E_mag_TF_disp/1e9:.3f} [GJ]", file=out)
         print(f"[O] E_mag_CS (CS stored magnetic energy)            : {E_mag_CS_disp/1e9:.3f} [GJ]", file=out)
         print(f"[I] I_cond (Operating current per conductor)        : {config.I_cond/1e3:.1f} [kA]", file=out)

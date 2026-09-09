@@ -2483,6 +2483,232 @@ def get_cache_stats():
         'hit_rate': _cable_density_stats['hits'] / total if total > 0 else 0
     }
 
+#%% CS height
+
+def f_H_CS(Z_TF_bore_half):
+    """
+    Total height of the central solenoid [m]: the TF winding-pack inside height.
+
+    Same reference as PROCESS (z_cs_half = z_tf_inside_half) and as Duchateau
+    et al., Fusion Eng. Des. 89 (2014) 2606, Sec. 5.2, which builds H_CS from
+    the TF inner line. No derating factor: on the EU-DEMO 2017 deck the rule
+    returns 17.08 m against the 17.92 m of CS space allocated in Baseline 2018
+    [Sarasola et al., IEEE TAS 30(4) 4200705 (2020)], i.e. -4.7 %.
+
+    H_CS does not enter the CS radial sizing, the flux capacity
+    Psi_CS = (2 pi / 3) B_CS (R_e^2 + R_e R_i + R_i^2) being the
+    infinite-solenoid expression. It sets the stored energy, the axial stress
+    and every extensive quantity: ampere-turns, turns, conductor length,
+    volume, mass, cost. Single source of truth, no consumer may re-derive it.
+
+    Parameters
+    ----------
+    Z_TF_bore_half : float
+        Inside half-height of the TF winding pack [m], i.e. max(Z_in) of the
+        inner contour returned by f_TF_cross_section.
+
+    Returns
+    -------
+    float
+        CS total height [m], NaN if the input is not usable.
+    """
+    if Z_TF_bore_half is None or not np.isfinite(Z_TF_bore_half):
+        return np.nan
+    if Z_TF_bore_half <= 0.0:
+        return np.nan
+    return 2.0 * float(Z_TF_bore_half)
+
+
+def f_H_CS_module(H_CS, N_sub_CS):
+    """
+    Height of one CS module [m]: H_CS / N_sub_CS.
+
+    Inter-module gaps are ignored, being about 4 % of the module height on ITER
+    [DDD11-3, ITER_D_2NHKHH v3.0, Table 4-2]. The gaps drawn in the figures are
+    cosmetic.
+
+    Parameters
+    ----------
+    H_CS : float      CS total height [m].
+    N_sub_CS : int    Number of CS modules [-].
+
+    Returns
+    -------
+    float
+        Module height [m], NaN if the inputs are not usable.
+    """
+    if H_CS is None or not np.isfinite(H_CS) or H_CS <= 0.0:
+        return np.nan
+    return float(H_CS) / max(int(N_sub_CS), 1)
+
+
+#%% Coil-scale (overall) current densities
+
+# =============================================================================
+# CURRENT DENSITY SCALES
+# =============================================================================
+#
+# The current density of a superconducting magnet can be quoted on several
+# reference cross-sections. From the smallest to the largest:
+#
+#   J_SC       intrinsic critical current density of the superconducting
+#              material alone (filaments for LTS, REBCO layer for HTS).
+#   J_non_Cu   critical current density on the non-copper cross-section,
+#              adding the strand matrix (Nb3Sn) or the substrate and buffer
+#              layers (REBCO). This is what the scaling laws return, and what
+#              manufacturers tabulate against B and T. In D0FUS it is the
+#              'J_non_Cu' entry of calculate_cable_current_density().
+#   J_strand   strand (or tape) current density, adding the copper stabiliser
+#              carried inside the strand.
+#   J_wost     engineering current density "without steel", on the full CICC
+#              cross-section minus the steel jacket. It includes the strands,
+#              the interstrand helium void, the dedicated helium channel and
+#              the electrical insulation. This is the 'J_wost' entry of
+#              calculate_cable_current_density() and the quantity the radial
+#              build solvers are driven by.
+#   J_coil     overall coil current density, on the full coil cross-section
+#              including the steel jacket, the structural case and any extra
+#              insulation. This is the quantity that appears in the magnet
+#              current-carrying capability of the whole inboard leg.
+#
+# The two functions below return J_coil for the TF and CS systems. Both follow
+# from Ampere's law and the converged radial build alone: no assumption on the
+# internal composition of the conductor is required, so they hold for every
+# TF/CS model implemented in D0FUS (academic, refined, CIRCE).
+
+def f_J_coil_TF(B_max_TF, R_TF_out, c_TF):
+    """
+    Overall current density of the TF inboard leg (J_coil scale).
+
+    The reference cross-section is the FULL inboard leg of the TF system,
+    winding pack + steel nose + backplate, in contrast with J_wost which is
+    referenced to the non-steel part of the conductor only.
+
+    Wedged (or bucked) TF coils fill the whole toroidal sector at any radius,
+    so the inboard cross-section summed over the N_TF coils is the annulus
+    between R_TF_out - c_TF and R_TF_out. Ampere's law on the toroidal path at
+    the high-field face gives the total ampere-turns, hence
+
+        N I_tot = 2 pi R_TF_out B_max_TF / mu0
+        A_tot   = pi (R_TF_out^2 - (R_TF_out - c_TF)^2)
+        J_coil  = N I_tot / A_tot
+                = 2 R_TF_out B_max_TF / [mu0 (R_TF_out^2 - (R_TF_out - c_TF)^2)]
+
+    Consistency. For the refined model the winding-pack solver defines
+    alpha = 2 B_max R_ext / (mu0 J_wost (R_ext^2 - R_sep^2)), i.e. alpha is
+    exactly the ratio of the WP-smeared current density to J_wost. Evaluating
+    the expression above with c_TF = c_WP therefore returns alpha * J_wost
+    identically. For the academic model the WP is sized from
+    S_cond = N I_tot / J_wost, so the same expression with c_TF = c_WP returns
+    J_wost identically. Both identities were verified numerically to machine
+    precision.
+
+    Parameters
+    ----------
+    B_max_TF : float
+        Peak toroidal field at the inboard conductor face [T].
+    R_TF_out : float
+        Radius of the plasma-facing TF face, R0 - a - b [m].
+    c_TF : float
+        Total inboard radial thickness of the coil [m]. Pass the converged
+        c (WP + nose + backplate) for J_coil, or c_WP alone for the
+        winding-pack-scale density.
+
+    Returns
+    -------
+    float
+        Overall current density [A/m^2], NaN if the geometry is degenerate.
+    """
+    if (B_max_TF is None or R_TF_out is None or c_TF is None):
+        return np.nan
+    B_max_TF = float(B_max_TF)
+    R_TF_out = float(R_TF_out)
+    c_TF     = float(c_TF)
+    if not (np.isfinite(B_max_TF) and np.isfinite(R_TF_out) and np.isfinite(c_TF)):
+        return np.nan
+    R_in = R_TF_out - c_TF
+    if R_TF_out <= 0.0 or c_TF <= 0.0 or R_in < 0.0:
+        return np.nan
+    A_tot = np.pi * (R_TF_out**2 - R_in**2)
+    if A_tot <= 0.0:
+        return np.nan
+    return (2.0 * np.pi * R_TF_out * B_max_TF / μ0) / A_tot
+
+
+def f_J_coil_CS(B_CS, d_CS):
+    """
+    Overall current density of the CS winding pack (J_coil scale).
+
+    The CS is modelled as a thick solenoid of radial thickness d_CS and
+    height H_CS. Ampere's law on an axial path through the bore gives
+    N I_tot = B_CS H_CS / mu0, and the reference cross-section is
+    A = H_CS d_CS, so H_CS cancels:
+
+        J_coil = B_CS / (mu0 d_CS)
+
+    The CS models carry no separate structural case, so this cross-section
+    already includes the steel jacket: it is the J_coil scale of the CS.
+
+    Consistency. f_CS_refined and f_CS_CIRCE define
+    alpha = B_CS / (mu0 J_wost d), so the expression above returns
+    alpha * J_wost identically, i.e. the same smeared current density
+    J_smear that enters the mechanical model (curl B = mu0 J_smear).
+
+    Parameters
+    ----------
+    B_CS : float
+        Peak field at the CS bore [T], full bipolar swing convention.
+    d_CS : float
+        CS winding-pack radial thickness [m].
+
+    Returns
+    -------
+    float
+        Overall current density [A/m^2], NaN if the geometry is degenerate.
+    """
+    if B_CS is None or d_CS is None:
+        return np.nan
+    B_CS = float(B_CS)
+    d_CS = float(d_CS)
+    if not (np.isfinite(B_CS) and np.isfinite(d_CS)) or d_CS <= 0.0:
+        return np.nan
+    return B_CS / (μ0 * d_CS)
+
+#%% Coil-scale current density test
+
+if __name__ == "__main__":
+    # The J_coil expressions must reproduce, at the winding-pack scale, the
+    # alpha definitions the mechanical solvers are built on. Two identities
+    # are asserted, both exact by construction:
+    #   TF : f_J_coil_TF(B, R_ext, c_WP) == alpha * J_wost with
+    #        alpha = 2 B R_ext / (mu0 J_wost (R_ext^2 - R_sep^2))   [Winding_Pack_refined]
+    #   CS : f_J_coil_CS(B_CS, d)        == alpha * J_wost with
+    #        alpha = B_CS / (mu0 J_wost d)                          [f_CS_refined]
+    _rng = np.random.default_rng(0)
+    _err_TF, _err_CS = 0.0, 0.0
+    for _ in range(500):
+        _R_ext = _rng.uniform(1.0, 6.0)
+        _c_WP  = _rng.uniform(0.02, 0.6) * _R_ext
+        _B     = _rng.uniform(4.0, 25.0)
+        _J_w   = _rng.uniform(20e6, 300e6)
+        _R_sep = _R_ext - _c_WP
+        _alpha = 2 * _B * _R_ext / (μ0 * _J_w * (_R_ext**2 - _R_sep**2))
+        _err_TF = max(_err_TF,
+                      abs(f_J_coil_TF(_B, _R_ext, _c_WP) / (_alpha * _J_w) - 1.0))
+        _d     = _rng.uniform(0.05, 1.5)
+        _B_CS  = _rng.uniform(4.0, 25.0)
+        _alpha = _B_CS / (μ0 * _J_w * _d)
+        _err_CS = max(_err_CS,
+                      abs(f_J_coil_CS(_B_CS, _d) / (_alpha * _J_w) - 1.0))
+    assert _err_TF < 1e-12, _err_TF
+    assert _err_CS < 1e-12, _err_CS
+    # Degenerate geometries must return NaN rather than raising.
+    assert np.isnan(f_J_coil_TF(10.0, 3.0, np.nan))
+    assert np.isnan(f_J_coil_TF(10.0, 3.0, 0.0))
+    assert np.isnan(f_J_coil_CS(10.0, 0.0))
+    assert np.isnan(f_J_coil_CS(np.nan, 0.5))
+    print(f"OK  J_coil scales: TF err = {_err_TF:.1e}, CS err = {_err_CS:.1e}")
+
 #%% Without Steel current density test
 
 """
@@ -5838,6 +6064,23 @@ def f_TF_cross_section(a: float, b: float, R0: float,
     L_turn   : float   Outer-contour arc length (one full turn) [m].
     R_out, Z_out : ndarray  Outer Princeton-D contour.
     R_in,  Z_in  : ndarray  Inner (offset) contour.
+
+    Notes
+    -----
+    The constant-tension shape is built on the conductor centreline and offset
+    by +-c/2, as in PROCESS (mid-plane winding-pack radii); L_turn is the
+    centreline length, the conductor path. Building the shape on the outer
+    envelope instead, as before v2.9, maximises k = 0.5 ln(r2/r1) and gives a
+    coil 8 % (EU-DEMO 2017) to 13 % (SF Plant V2) taller, with L_turn taken on
+    the outer face, a further 7 % of conductor.
+
+    Accuracy. The ODE matches a quadrature of the analytic curve
+    R(alpha) = r2 exp(k(sin alpha - 1)) to below 1 mm, and A_cross equals
+    L_turn * c to 0.05 %. Against the built ITER coil (~14 m) the two
+    conventions bracket: centreline 13.1 m, outer envelope 14.5 m. Neither is
+    exact because ITER's D is not constant-tension; the centreline is kept as
+    the one with a physical basis. A coil still coming out too tall points at
+    the inboard build of the deck, not at the shape.
     """
     R_bore   = R0 - a - b - c
     R_TF_out = R0 + a + b + Delta_TF + c
@@ -5852,8 +6095,17 @@ def f_TF_cross_section(a: float, b: float, R0: float,
         return (R_bore, R_TF_out, np.nan, np.nan, np.nan,
                 _nan_pts, _nan_pts, _nan_pts, _nan_pts)
 
-    R_out, Z_out = _princeton_D_contour(R_bore, R_TF_out)
-    R_in,  Z_in  = _offset_contour(R_out, Z_out, c)
+    # Shape on the conductor centreline, faces at +-c/2 (see Notes).
+    r1_cl = R_bore + 0.5 * c
+    r2_cl = R_TF_out - 0.5 * c
+    if not (r2_cl > r1_cl > 0.0):
+        _nan_pts = np.full(2, np.nan)
+        return (R_bore, R_TF_out, np.nan, np.nan, np.nan,
+                _nan_pts, _nan_pts, _nan_pts, _nan_pts)
+
+    R_cl,  Z_cl  = _princeton_D_contour(r1_cl, r2_cl)
+    R_out, Z_out = _offset_contour(R_cl, Z_cl, -0.5 * c)
+    R_in,  Z_in  = _offset_contour(R_cl, Z_cl,  0.5 * c)
 
     H_TF = 2.0 * float(Z_out.max())
 
@@ -5861,7 +6113,8 @@ def f_TF_cross_section(a: float, b: float, R0: float,
         return abs(0.5 * np.sum(R * np.roll(Z, -1) - np.roll(R, -1) * Z))
 
     A_cross = _area(R_out, Z_out) - _area(R_in, Z_in)
-    L_turn  = float(np.sum(np.hypot(np.diff(R_out), np.diff(Z_out))))
+    # Turn length on the centreline: this is the conductor path.
+    L_turn  = float(np.sum(np.hypot(np.diff(R_cl), np.diff(Z_cl))))
 
     return R_bore, R_TF_out, H_TF, A_cross, L_turn, R_out, Z_out, R_in, Z_in
 
@@ -6087,12 +6340,11 @@ def f_radial_build_layers(
 
 def f_V_CS(a: float, b: float, c: float, d: float,
            R0: float, κ: float,
-           Gap: float, Choice_Buck_Wedg: str) -> float:
+           Gap: float, Choice_Buck_Wedg: str,
+           H_CS: float = None) -> float:
     """
     Volume of the full CS solenoid (annular right cylinder, all modules).
 
-    Formula consistent with f_volume():
-        H_CS = 2 × (κ·a + b + 1)
         V_CS_geom = π × H_CS × (R_CS_ext² − R_CS_int²)
 
     Parameters
@@ -6104,6 +6356,11 @@ def f_V_CS(a: float, b: float, c: float, d: float,
     κ    : float  Plasma elongation [-].
     Gap  : float  Radial TF bore → CS gap (Wedging only) [m].
     Choice_Buck_Wedg : str  'Wedging', 'Bucking', or 'Plug'.
+    H_CS : float, optional
+        CS total height [m], as resolved by f_H_CS. MUST be passed by any
+        caller that also uses H_CS elsewhere, otherwise the volume and the
+        ampere-turns describe two different coils. When omitted the legacy
+        expression 2 (κ a + b + 1) is used, for backward compatibility only.
 
     Returns
     -------
@@ -6112,7 +6369,8 @@ def f_V_CS(a: float, b: float, c: float, d: float,
     _gap_eff = Gap if Choice_Buck_Wedg == 'Wedging' else 0.0
     R_CS_ext = R0 - a - b - c - _gap_eff
     R_CS_int = R_CS_ext - d
-    H_CS     = 2.0 * (κ * a + b + 1)
+    if H_CS is None or not np.isfinite(H_CS) or H_CS <= 0.0:
+        H_CS = f_H_CS(κ, a, b, model='legacy')
     return np.pi * H_CS * (R_CS_ext ** 2 - R_CS_int ** 2)
 
 
@@ -6277,7 +6535,9 @@ def f_cable_length(
     N_sub_CS   : int    Number of CS modules.
     L_turn_CS  : float  Mean CS turn perimeter = π × (R_ext + R_int) [m].
     B_CS       : float  CS peak field [T].
-    H_CS_NI    : float  CS height for NI computation = 2(κa + b + 1) [m].
+    H_CS_NI    : float  CS total height used for the solenoid Ampere law [m].
+                        Pass the H_CS resolved by f_H_CS, the same value that
+                        feeds the stored energy, the volume and the stresses.
 
     Returns
     -------

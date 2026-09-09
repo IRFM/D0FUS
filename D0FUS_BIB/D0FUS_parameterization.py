@@ -317,7 +317,10 @@ class GlobalConfig:
     Gap      : float = 0.10      # CS–TF mechanical clearance [m]
     n_shape_CS   : float = 1.0   # CS conductor shape factor (1 = square, 0 = optimal) [-]
     N_sub_CS : int   = 6         # Number of CS sub-modules [-]
-    H_CS : float = None          # CS total height [m]. None = 2(κa + b + 1) (default formula)
+    H_CS : float = None          # CS total height [m]. None = TF winding-pack
+                                 # inside height (f_H_CS). Set a number to force
+                                 # it, e.g. a published allocation (EU-DEMO
+                                 # Baseline 2018: 17.92 m).
     f_swing_usable : float = 0.75   # Fraction of the CS bipolar swing usable for the
                                     # inductive flux budget [-]. The CS hardware swings
                                     # over the full bipolar range (-I_max → +I_max) and
