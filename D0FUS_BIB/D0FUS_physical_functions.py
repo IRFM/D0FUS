@@ -9374,3 +9374,49 @@ if __name__ == "__main__":
         print("--  ITER deck not found: full-device regression skipped")
 
     _bench_summary()
+
+# =============================================================================
+# Plant electrical balance and pulsed-operation utilities
+# =============================================================================
+def f_coil_power_supply(E_mag_J, t_ramp_up_s):
+    """Coil power-supply demand [MWe] from stored magnetic energy [J]."""
+    if E_mag_J is None or t_ramp_up_s is None or t_ramp_up_s <= 0:
+        return 0.0
+    return float(E_mag_J) / float(t_ramp_up_s) * 1.0e-6
+
+def f_feeder_current(I_TF_A, I_CS_A, N_TF=1, N_CS=1):
+    """Total TF+CS feeder current [MA], including circuit multiplicities."""
+    return (float(I_TF_A) * float(N_TF) + float(I_CS_A) * float(N_CS)) / 1.0e6
+
+def f_cryo_cooling_power(P_fus_MW, P_fus_ref_MW=2037.0, P_ref_kWth=103.0):
+    return float(P_ref_kWth) * float(P_fus_MW) / float(P_fus_ref_MW)
+
+def f_cryo_electric_power(P_fus_MW, P_fus_ref_MW=2037.0, P_ref_MWe=29.0):
+    return float(P_ref_MWe) * float(P_fus_MW) / float(P_fus_ref_MW)
+
+def f_house_load(P_fus_MW, P_fus_ref_MW=2037.0, P_ref_MWe=46.5):
+    return float(P_ref_MWe) * float(P_fus_MW) / float(P_fus_ref_MW)
+
+def f_bop_power(P_th_MWth, f_BoP=0.03):
+    return float(f_BoP) * float(P_th_MWth)
+
+def f_pulsed_thermal_quantities(P_th_MWth, t_plateau_s, dwell_factor, eta_store=0.90):
+    """Return (t_dwell [s], E_store_th [MWhth], P_th_smoothed [MWth])."""
+    if dwell_factor is None or float(dwell_factor) >= 1.0:
+        return 0.0, 0.0, float(P_th_MWth)
+    if dwell_factor <= 0 or t_plateau_s <= 0 or eta_store <= 0:
+        raise ValueError("dwell_factor, t_plateau_s and eta_store must be positive")
+    t_dwell = float(t_plateau_s) * (1.0 / float(dwell_factor) - 1.0)
+    E_store = float(P_th_MWth) * float(t_plateau_s) / (1.0 + float(eta_store) * float(t_plateau_s) / t_dwell)
+    P_smoothed = float(P_th_MWth) / (1.0 + (1.0 / float(eta_store)) * t_dwell / float(t_plateau_s))
+    return t_dwell, E_store / 3600.0, P_smoothed
+
+def f_recirculated_power(P_aux_MW, eta_WP, P_coil_CS_MWe, P_cryo_electric_MWe, P_BoP_MWe, P_house_load_MWe):
+    P_var = float(P_aux_MW) / float(eta_WP) + float(P_coil_CS_MWe) + float(P_cryo_electric_MWe) + float(P_BoP_MWe)
+    return P_var, float(P_house_load_MWe), P_var + float(P_house_load_MWe)
+
+def f_recirculated_energy(P_recirc_var_MWe, P_recirc_fix_MWe, CF):
+    return 8760.0 * (float(P_recirc_var_MWe) * float(CF) + float(P_recirc_fix_MWe))
+
+def f_tritium_consumption(P_fus_MW, CF):
+    return 56.0 * float(P_fus_MW) / 1000.0 * float(CF)

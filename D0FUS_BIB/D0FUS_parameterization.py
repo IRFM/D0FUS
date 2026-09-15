@@ -308,10 +308,8 @@ class GlobalConfig:
     n_shape_TF           : float = 1.0      # TF conductor shape factor (1 = square, 0 = optimal) [-]
     c_BP                 : float = 0.07     # Backplate thickness [m]
     TF_grading           : bool  = False    # TF WP conductor grading: α(R) varies to saturate Tresca [-]
-    f_TF_steel_mass      : float = 2.0      # Multiplicative factor on total TF steel mass to account
-                                            # for geometry approximations, gravitational supports, and
-                                            # inter-coil structures [-]. Default = 2.0 (benchmarked
-                                            # against ITER TF coil set total steel mass).
+    f_TF_steel_mass      : float = 1.0      # Multiplicative factor on total TF steel mass to account
+                                            # for geometry approximations
 
     # ── 8. Central Solenoid ──────────────────────────────────────────────────
     Gap      : float = 0.10      # CS–TF mechanical clearance [m]
@@ -452,6 +450,14 @@ class GlobalConfig:
     # Designs exceeding C_invest_max are penalised. Set to 1e6 to disable.
     C_invest_max        : float = 25e3   # Capital cost ceiling [M EUR]
 
+
+    # ── Plant electrical balance and pulsed thermal storage ─────────────────
+    eta_store                 : float = 0.90
+    P_fus_DEMO_ref            : float = 2037.0
+    P_cryo_cool_DEMO_ref      : float = 103.0
+    P_cryo_electric_DEMO_ref  : float = 29.0
+    P_house_load_DEMO_ref     : float = 46.5
+    f_BoP                     : float = 0.03
     # ── 17. Radial build sublayer widths ─────────────────────────────────────
     # b = total plasma→TF radial gap (drives all existing machinery).
     # Per-concept layer widths (SOL, FW, breeder, structure, shields, VV, gaps)

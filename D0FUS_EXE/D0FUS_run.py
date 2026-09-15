@@ -1960,7 +1960,31 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     P_1rst_wall_div   = P_sep_solution / Surface_solution if Surface_solution > 0 else 0.0
     P_wallplug_solution = P_CD_solution / eta_WP   # Wall-plug power consumed by heating/CD [MW]
     P_elec_solution   = f_P_elec(P_fus, P_CD_solution, eta_T, M_blanket, eta_WP)
-
+    # ── Plant electrical balance and pulsed-operation post-processing ────────
+    # Preserve the established instantaneous thermal-power definition.
+    P_th_solution = P_fus * (0.8 * M_blanket + 0.2) + P_CD_solution
+    t_dwell_solution, E_store_th_solution, P_th_smoothed_solution = f_pulsed_thermal_quantities(
+        P_th_solution, config.Temps_Plateau_input, config.Dwell_factor, config.eta_store)
+    P_e_gross_solution = eta_T * P_th_smoothed_solution
+    # CS power supply is zero for steady-state operation.
+    if config.Dwell_factor < 1.0:
+        P_coil_CS_solution = f_coil_power_supply(
+            E_mag_CS_post, t_dwell_solution)
+    else:
+        P_coil_CS_solution = 0.0
+    I_feeders_solution = f_feeder_current(
+        config.I_cond, config.I_cond, N_TF=N_TF, N_CS=config.N_sub_CS)
+    P_cryo_cool_solution = f_cryo_cooling_power(
+        P_fus, config.P_fus_DEMO_ref, config.P_cryo_cool_DEMO_ref)
+    P_cryo_electric_solution = f_cryo_electric_power(
+        P_fus, config.P_fus_DEMO_ref, config.P_cryo_electric_DEMO_ref)
+    P_house_load_solution = f_house_load(
+        P_fus, config.P_fus_DEMO_ref, config.P_house_load_DEMO_ref)
+    P_BoP_solution = f_bop_power(P_th_solution, config.f_BoP)
+    P_recirc_var_solution, P_recirc_fix_solution, P_recirculated_solution = f_recirculated_power(
+        P_Aux_solution, eta_WP, P_coil_CS_solution, P_cryo_electric_solution,
+        P_BoP_solution, P_house_load_solution)
+    P_elec_solution = P_e_gross_solution - P_recirculated_solution
     # ── Loop voltage ──────────────────────────────────────────────────────────
     # V_loop is now computed inside Magnetic_flux (returned as 5th element)
     # to avoid redundant neoclassical conductance integration.
@@ -2107,7 +2131,13 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 _nan,                                          # V_rb_divertor
                 _nan, _nan, _nan,                              # M_rb_FW, M_rb_BB, M_rb_shield
                 _nan, _nan, _nan,                              # M_rb_VV, M_rb_divertor, M_rb_total
-                divertor_solution)                             # two-point divertor model (kept)
+                divertor_solution,                             # two-point divertor model (kept)
+
+                # Plant electrical-balance outputs unavailable because the
+                # magnet build failed before these quantities could be solved.
+                _nan, _nan, _nan, _nan, _nan,
+                _nan, _nan, _nan, _nan, _nan,
+                _nan, _nan, _nan, _nan, _nan)
 
     # ==============================================================================
     #    MAGNETIC FLUX REQUIREMENTS (Inductive Scenario)
@@ -2319,7 +2349,14 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
      Av_solution, CF_solution) = f_availability_schedule(
         t_life_bl_fpy, t_life_div_fpy,
         config.dt_rep_bl, config.dt_rep_div,
-        config.Util_factor, config.Dwell_factor)
+        config.Util_factor, 1.0)
+
+    # Annual recirculated electricity and tritium consumption.
+    # CF = availability × utilization; pulse dwell is already included
+    # in P_th_smoothed and therefore in P_e_gross.
+    E_recirculated_solution = f_recirculated_energy(
+        P_recirc_var_solution, P_recirc_fix_solution, CF_solution)
+    C_tritium_solution = f_tritium_consumption(P_fus, CF_solution)
 
     return (B0_solution,  B_CS,  B_pol_solution,
             tauE_solution,  W_th_solution,
@@ -2377,7 +2414,24 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             # ── Radial build component masses (indices 143–148) ──────────────
             M_rb_FW,      M_rb_BB,       M_rb_shield,             # 143, 144, 145
             M_rb_VV,      M_rb_divertor, M_rb_total,
-            divertor_solution)              # 146, 147, 148
+            divertor_solution,                         # 149
+
+            # ── Plant electrical balance / pulsed-operation outputs (150–164)
+            P_th_solution,
+            P_th_smoothed_solution,
+            E_store_th_solution,
+            P_e_gross_solution,
+            P_coil_CS_solution,
+            I_feeders_solution,
+            P_cryo_cool_solution,
+            P_cryo_electric_solution,
+            P_house_load_solution,
+            P_BoP_solution,
+            P_recirc_var_solution,
+            P_recirc_fix_solution,
+            P_recirculated_solution,
+            E_recirculated_solution,
+            C_tritium_solution)
 
 
 #%% Output writer
@@ -2401,6 +2455,16 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
     -------
     dict  Ready to pass to plot_run().
     """
+    _plant = {}
+    try:
+        (_plant["P_th"], _plant["P_th_smoothed"], _plant["E_store_th"],
+         _plant["P_e_gross"], _plant["P_coil_CS"], _plant["I_feeders"],
+         _plant["P_cryo_cool"], _plant["P_cryo_electric"], _plant["P_house_load"],
+         _plant["P_BoP"], _plant["P_recirc_var"], _plant["P_recirc_fix"],
+         _plant["P_recirculated"], _plant["E_recirculated"], _plant["C_tritium"]) = results[-15:]
+    except Exception:
+        _plant = {}
+
     # ── Unpack the results tuple (same ordering as run() return statement) ────
     (B0, _B_CS_r, _B_pol_r,
      _tauE, _W_th,
@@ -2426,7 +2490,7 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
     # Refined divertor exhaust (two-point model) is appended as the very last
     # element of the results tuple, after Mat's coil/volume/mass block (which
     # occupies _rest[33:83]). Empty dict on failure or for older callers.
-    _divertor = _rest[83] if len(_rest) >= 84 else {}
+    _divertor = _rest[82] if len(_rest) >= 83 else {}
 
     # ── Cable-level fractions (explicit positions in the new tuple layout) ─────
     # Expected *_rest layout (55 values):
@@ -2684,6 +2748,7 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         "P_fus":       config.P_fus,
         "P_aux":       config.P_aux_input,
         "Q":           _f(Q, float('nan')),
+        **_plant,
         # Impurity seeding
         "f_W":         _imp_out["W"],
         "f_Ne":        _imp_out["Ne"],
@@ -3200,7 +3265,25 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
     row("Capacity factor CF", CF, "-")
     lines.append("")
 
-    H("14. OUTPUTS - Techno-economics (Sheffield 2016)")
+    H("14. OUTPUTS - Plant electrical balance & pulsed operation")
+    row("Instantaneous thermal power P_th", rd.get("P_th"), "MWth")
+    row("Smoothed thermal power P_th_smoothed", rd.get("P_th_smoothed"), "MWth")
+    row("Stored thermal energy E_store_th", rd.get("E_store_th"), "MWhth")
+    row("Gross electrical power P_e_gross", rd.get("P_e_gross"), "MWe")
+    row("CS coil power supply P_coil_CS", rd.get("P_coil_CS"), "MWe")
+    row("Total TF + CS feeder current I_feeders", rd.get("I_feeders"), "MA")
+    row("Cryogenic cooling-equivalent P_cryo_cool", rd.get("P_cryo_cool"), "kWth")
+    row("Cryogenic electrical consumption P_cryo_electric", rd.get("P_cryo_electric"), "MWe")
+    row("Fixed house load P_house_load", rd.get("P_house_load"), "MWe")
+    row("Balance-of-plant power P_BoP", rd.get("P_BoP"), "MWe")
+    row("Variable recirculating power P_recirc_var", rd.get("P_recirc_var"), "MWe")
+    row("Fixed recirculating power P_recirc_fix", rd.get("P_recirc_fix"), "MWe")
+    row("Total recirculated power P_recirculated", rd.get("P_recirculated"), "MWe")
+    row("Annual recirculated electricity E_recirculated", rd.get("E_recirculated"), "MWh/year")
+    row("Annual tritium consumption C_tritium", rd.get("C_tritium"), "kg/year")
+    lines.append("")
+
+    H("15. OUTPUTS - Techno-economics (Sheffield 2016)")
     row("Geometric cost proxy (V_build / P_fus)", get("cost"), "m^3/MW")
     _cb = rd.get("cost_breakdown") or {}
     if _cb:
@@ -3318,7 +3401,24 @@ def save_run_output(config: GlobalConfig,
      V_rb_divertor,
      M_rb_FW, M_rb_BB, M_rb_shield,
      M_rb_VV, M_rb_divertor, M_rb_total,
-     divertor_out) = results
+     divertor_out,
+     *plant_results) = results
+
+    # ── Plant electrical-balance outputs (return indices 150–164) ───────────
+    # The original 150 result positions remain unchanged; the new quantities
+    # are appended after them.
+    if len(plant_results) == 15:
+        (P_th, P_th_smoothed, E_store_th,
+         P_e_gross, P_coil_CS, I_feeders,
+         P_cryo_cool, P_cryo_electric, P_house_load,
+         P_BoP, P_recirc_var, P_recirc_fix,
+         P_recirculated, E_recirculated, C_tritium) = plant_results
+    else:
+        (P_th, P_th_smoothed, E_store_th,
+         P_e_gross, P_coil_CS, I_feeders,
+         P_cryo_cool, P_cryo_electric, P_house_load,
+         P_BoP, P_recirc_var, P_recirc_fix,
+         P_recirculated, E_recirculated, C_tritium) = (np.nan,) * 15
 
     # ── Recompute N_TF for display (not stored in results tuple) ──────────
     try:
@@ -3643,7 +3743,20 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] Q      (Energy gain factor)                     : {Q:.3f}",                   file=out)
         print(f"[O] P_elec (Net electrical power)                   : {P_elec:.3f} [MW]",         file=out)
         print(f"[O] P_wallplug (Wall-plug heating/CD power)         : {P_wallplug:.3f} [MW]",     file=out)
-        _P_gross = config.eta_T * config.P_fus * (0.8 * config.M_blanket + 0.2)
+        print(f"[O] P_e_gross (Gross electrical power)              : {P_e_gross:.3f} [MWe]", file=out)
+        print(f"[O] P_th_smoothed (Smoothed thermal power)          : {P_th_smoothed:.3f} [MWth]", file=out)
+        print(f"[O] E_store_th (Stored thermal energy)              : {E_store_th:.3f} [MWhth]", file=out)
+        print(f"[O] P_coil_CS (CS power supply)                     : {P_coil_CS:.3f} [MWe]", file=out)
+        print(f"[O] I_feeders (Total TF + CS feeder current)        : {I_feeders:.3f} [MA]", file=out)
+        print(f"[O] P_cryo_cool (Cooling-equivalent @ 4.5 K)        : {P_cryo_cool:.3f} [kWth]", file=out)
+        print(f"[O] P_cryo_electric                                 : {P_cryo_electric:.3f} [MWe]", file=out)
+        print(f"[O] P_house_load                                    : {P_house_load:.3f} [MWe]", file=out)
+        print(f"[O] P_BoP                                           : {P_BoP:.3f} [MWe]", file=out)
+        print(f"[O] P_recirc_var                                    : {P_recirc_var:.3f} [MWe]", file=out)
+        print(f"[O] P_recirc_fix                                    : {P_recirc_fix:.3f} [MWe]", file=out)
+        print(f"[O] P_recirculated                                  : {P_recirculated:.3f} [MWe]", file=out)
+        print(f"[O] E_recirculated                                  : {E_recirculated:.3f} [MWh/year]", file=out)
+        print(f"[O] C_tritium                                       : {C_tritium:.3f} [kg/year]", file=out)
         print(f"[O] Q_eng  (Engineering gain = P_elec / P_wallplug) : {P_elec / P_wallplug:.3f}", file=out)
         print(f"[O] Cost   ((V_BB+V_TF+V_CS) / P_fus)               : {cost:.3f} [m³/MW]",    file=out)
         print("-------------------------------------------------------------------------", file=out)
