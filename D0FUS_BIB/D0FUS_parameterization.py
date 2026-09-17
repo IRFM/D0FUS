@@ -42,6 +42,16 @@ C_LIGHT = 2.99792458e8       # Speed of light [m/s]          (CODATA 2018)
 E_ALPHA = 3.5168e6  * E_ELEM   # Alpha particle energy [J]
 E_N     = 14.0671e6 * E_ELEM   # Neutron energy [J]
 
+# D-D primary branches (no secondary T or 3He burn).
+# Q-values from CODATA 2018 nuclear masses: Q(DDn) = 3.2689 MeV,
+# Q(DDp) = 4.0327 MeV. Products share Q by momentum conservation
+# (non-relativistic), as in PROCESS constants.py. NRL Plasma Formulary
+# quotes 0.82 / 2.45 MeV and 1.01 / 3.02 MeV.
+E_HE3_DD = 0.8195e6 * E_ELEM   # 3He from D(d,n)3He [J]
+E_N_DD   = 2.4494e6 * E_ELEM   # Neutron from D(d,n)3He [J]
+E_T_DD   = 1.0098e6 * E_ELEM   # Triton from D(d,p)T [J]
+E_P_DD   = 3.0229e6 * E_ELEM   # Proton from D(d,p)T [J]
+
 #%% D0FUS Global Configuration
 """
 Centralised repository of all user-adjustable design parameters,
@@ -109,6 +119,14 @@ class GlobalConfig:
     f_GW_target : float = 0.85   # Target Greenwald fraction (Tbar_mode='greenwald') [-]
     Tbar_min    : float = 4.0    # Lower Tbar bracket for the f_GW solve [keV]
     Tbar_max    : float = 30.0   # Upper Tbar bracket for the f_GW solve [keV]
+    P_fus_mode : str = 'manual'
+    # Fusion power prescription mode:
+    #   'manual'    : P_fus above is used directly.
+    #   'greenwald' : P_fus is SOLVED (brentq on log10 P_fus) so that the
+    #                 converged point sits at f_GW_target at the deck Tbar.
+    #                 The deck P_fus is the initial guess, and the bracket is
+    #                 expanded by decades. Exclusive with Tbar_mode='greenwald'.
+    #                 Natural choice for D-D devices, where P_fus is an output.
     tau_i_e : float = 1.0          # Ion-to-electron temperature ratio T_i/T_e [-]
                                    # 1.0 -> single-temperature plasma (T_i = T_e).
                                    # Prescribed: T_i(rho) = tau_i_e * T_e(rho),
@@ -204,7 +222,10 @@ class GlobalConfig:
     ms              : float = 0.3  # Vertical stability margin parameter [-]
 
     # ── 4. Plasma composition ────────────────────────────────────────────────
-    Atomic_mass : float = 2.5   # Volume-averaged ionic mass [AMU]  (D-T: 2.5)
+    Fuel        : str   = 'DT'  # Fuel mix: 'DT' (50/50 D-T) or 'DD' (pure D,
+                                # Bosch-Hale D(d,n)3He + D(d,p)T, no secondary burn,
+                                # ash = 3He from the neutron branch)
+    Atomic_mass : float = 2.5   # Volume-averaged ionic mass [AMU]  (D-T: 2.5, D-D: 2.0)
     Zeff        : float = None   # Effective plasma charge [-].
                                  # None  -> computed self-consistently from the impurity
                                  #          inventory (impurity_species + f_imp_core) and the

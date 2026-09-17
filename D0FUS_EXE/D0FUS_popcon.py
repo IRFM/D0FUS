@@ -216,7 +216,13 @@ def compute_popcon(config, grid_spec, verbose=1):
         n_ref_vol = f_nbar(P_REF, nu_n, nu_T, f_alpha, Tbar, R0, a, kappa,
                            rho_ped=rho_ped, n_ped_frac=n_ped_frac,
                            T_ped_frac=T_ped_frac, Vprime_data=Vprime_data,
-                           f_imp=f_imp_dilution, tau_i_e=tau_ie)
+                           f_imp=f_imp_dilution, tau_i_e=tau_ie,
+                           fuel=config.Fuel)
+        # Charged-product fraction at this temperature (D-D: branch-weighted).
+        f_charged, _ = f_fuel_power_split(
+            config.Fuel, Tbar, nu_T, nu_n, rho_ped=rho_ped,
+            n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
+            Vprime_data=Vprime_data, tau_i_e=tau_ie)
         # Ohmic power at the frozen inductive current.
         Zeff_eff = RUN._compute_Zeff_effective(config, f_alpha)
         P_Ohm = f_P_Ohm(I_Ohm, Tbar, R0, a, kappa, Z_eff=Zeff_eff)
@@ -226,7 +232,7 @@ def compute_popcon(config, grid_spec, verbose=1):
                                             n_ped_frac=n_ped_frac,
                                             Vprime_data=Vprime_data)
             P_fus = P_REF * (nbar_vol / n_ref_vol)**2
-            P_alpha = f_P_alpha(P_fus)
+            P_alpha = f_P_alpha(P_fus, f_charged)
 
             pbar = f_pbar(nu_n, nu_T, nbar_vol, Tbar,
                           rho_ped=rho_ped, n_ped_frac=n_ped_frac,

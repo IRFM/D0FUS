@@ -1933,6 +1933,7 @@ def plot_resistivity_models(
 #   rho_ped          : float   Normalised pedestal radius (1.0 = no pedestal)
 #   n_ped_frac       : float   n_ped / nbar [-]
 #   T_ped_frac       : float   T_ped / Tbar [-]
+#   tau_i_e          : float   T_i / T_e ratio [-] (pressure closure, default 1)
 #   q95              : float   Safety factor at ρ₉₅ [-]
 #   Z_eff            : float   Effective ion charge [-]
 # Impurities (optional — absent or None → species not plotted)
@@ -1992,6 +1993,7 @@ def _radiation_emissivity(
     n_ped_frac: float,
     T_ped_frac: float,
     impurities: dict,
+    Vprime_data: tuple | None = None,
 ) -> dict:
     """
     Compute local volumetric radiation emissivity profiles.
@@ -2010,13 +2012,18 @@ def _radiation_emissivity(
     n_ped_frac       : float    n_ped / nbar.
     T_ped_frac       : float    T_ped / Tbar.
     impurities       : dict     {species: f_imp}, e.g. {'W': 5e-5, 'Ne': 3e-3}.
+    Vprime_data      : tuple or None
+        Flux-surface volume data of the run (precompute_Vprime). The profiles
+        are normalised with the same volume weight as run(): Miller V'/V in
+        refined mode, cylindrical 2 rho when None (Academic mode).
 
     Returns
     -------
     dict with keys 'rho', 'P_brem', 'P_sync', and one key per impurity species.
     """
-    n_hat = f_nprof(1.0,  nu_n, rho, rho_ped, n_ped_frac)  # normalised density shape
-    T_arr = f_Tprof(Tbar, nu_T, rho, rho_ped, T_ped_frac)  # [keV]
+    # Same volume-average normalisation as the physics chain (run())
+    n_hat = f_nprof(1.0,  nu_n, rho, rho_ped, n_ped_frac, Vprime_data)  # normalised density shape
+    T_arr = f_Tprof(Tbar, nu_T, rho, rho_ped, T_ped_frac, Vprime_data)  # [keV]
 
     n_e        = nbar * 1e20 * n_hat               # [m⁻³]
     T_eV       = np.clip(T_arr * 1e3, 10.0, None)  # [eV], floored for Lz interpolation
@@ -2068,15 +2075,23 @@ def plot_run_nTp(
     run      : dict   D0FUS run output (see section header for key list).
     n_rho    : int    Number of radial grid points.
     save_dir : str or None
+
+    Notes
+    -----
+    The profiles are normalised with the volume weight of run() (Miller V'/V
+    in refined mode, cylindrical 2 rho in Academic mode), so that n_e(0),
+    T_e(0) and p(ρ) are those used by the physics chain. The pressure follows
+    f_pbar: p = (1 + τ_ie) n_e T_e (n_i ≈ n_e, T_i = τ_ie T_e).
     """
     nbar, Tbar, nu_n, nu_T, rho_ped, n_ped_frac, T_ped_frac = _resolve_kinetics(run)
-    Z_eff = float(run.get("Z_eff", 1.7))
+    tau_i_e = float(run.get("tau_i_e", 1.0))
+    Vprime_data = run.get("Vprime_data", None)
     rho   = np.linspace(0.0, 1.0, n_rho)
 
-    n_prof = f_nprof(nbar, nu_n, rho, rho_ped, n_ped_frac)   # [10²⁰ m⁻³]
-    T_prof = f_Tprof(Tbar, nu_T, rho, rho_ped, T_ped_frac)   # [keV]
-    # Total pressure [kPa]: p = n_e (1 + 1/Z_eff) T_e
-    p_prof = (n_prof * 1e20) * (1.0 + 1.0 / Z_eff) * (T_prof * 1e3) * E_ELEM / 1e3
+    n_prof = f_nprof(nbar, nu_n, rho, rho_ped, n_ped_frac, Vprime_data)   # [10²⁰ m⁻³]
+    T_prof = f_Tprof(Tbar, nu_T, rho, rho_ped, T_ped_frac, Vprime_data)   # [keV]
+    # Total pressure [kPa], same closure as f_pbar: p = (1 + tau_i_e) n_e T_e
+    p_prof = (n_prof * 1e20) * (1.0 + tau_i_e) * (T_prof * 1e3) * E_ELEM / 1e3
 
     fig, axes = plt.subplots(1, 3, figsize=(16, 5))
 
@@ -2464,6 +2479,7 @@ def plot_radiation_profile(
         rho, nbar, Tbar, nu_n, nu_T,
         rho_ped, n_ped_frac, T_ped_frac,
         impurities,
+        Vprime_data=run.get("Vprime_data", None),
     )
 
     line_colors = {"W": "tab:red",    "Ne": "tab:cyan",   "Ar": "tab:purple"}

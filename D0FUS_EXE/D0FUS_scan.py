@@ -27,7 +27,7 @@ from D0FUS_BIB.D0FUS_radial_build_functions import *
 from D0FUS_BIB.D0FUS_physical_functions import *
 from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
 from D0FUS_BIB.D0FUS_cost_data import *
-from D0FUS_EXE.D0FUS_run import run, load_config_from_file, _PROFILE_PRESETS, _compute_Zeff_effective
+from D0FUS_EXE.D0FUS_run import run, load_config_from_file, _PROFILE_PRESETS, _compute_Zeff_effective, thermal_multiplier
 from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG, coerce_input_value, resolve_deprecated_key
 
 # Backwards-compatible alias for dataclasses.replace (from D0FUS_import).
@@ -1980,7 +1980,7 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
         _C_invest_val = np.nan
         if config.cost_model != 'None' and np.isfinite(cost):
             try:
-                P_th_scan    = config.P_fus * (0.8 * M_blanket_effective(config.Blanket_choice) + 0.2) + P_CD   # neutron-only multiplication
+                P_th_scan    = config.P_fus * thermal_multiplier(config) + P_CD   # neutron-only multiplication
                 T_op_limit_s = res[132]
                 CF_s         = res[135]
                 t_bl_yr_s    = res[130]

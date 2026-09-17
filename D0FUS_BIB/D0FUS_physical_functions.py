@@ -1313,13 +1313,28 @@ if __name__ == "__main__":
     import D0FUS_BIB.D0FUS_figures as figs
     figs.plot_density_line_vol(nbar_vol=1.01)
 
-def f_sigmav(T):
+# Bosch & Hale (1992) Table VII reactivity-fit coefficients:
+# (B_G [keV^1/2], m_r c^2 [keV], C1 ... C7), valid 0.2-100 keV.
+# D-D coefficients identical to PROCESS (fusion_reactions.py, DD1 = 3He
+# branch, DD2 = T branch).
+_BH_REACTIVITY = {
+    'DT' : (34.3827, 1124656.0, 1.17302e-9, 1.51361e-2, 7.51886e-2,
+            4.60643e-3, 1.35000e-2, -1.06750e-4, 1.36600e-5),   # T(d,n)4He
+    'DDn': (31.3970, 937814.0, 5.43360e-12, 5.85778e-3, 7.68222e-3,
+            0.0, -2.96400e-6, 0.0, 0.0),                        # D(d,n)3He
+    'DDp': (31.3970, 937814.0, 5.65718e-12, 3.41267e-3, 1.99167e-3,
+            0.0, 1.05060e-5, 0.0, 0.0),                         # D(d,p)T
+}
+
+
+def f_sigmav(T, reaction='DT'):
     """
-    DT fusion reactivity ⟨σv⟩ as a function of ion temperature  [m³ s⁻¹].
+    Fusion reactivity ⟨σv⟩ as a function of ion temperature  [m³ s⁻¹].
 
     Parameterisation of Bosch & Hale (1992) for the T(d,n)⁴He reaction
-    (equivalent: D+T → α + n).  Valid range: 0.2–100 keV; maximum relative
-    deviation from tabulated data < 0.35 %.
+    ('DT'), and for the two D-D branches D(d,n)³He ('DDn') and D(d,p)T
+    ('DDp').  Valid range: 0.2–100 keV; maximum relative deviation from
+    tabulated data < 0.35 % (D-T).
 
     The Padé-exponential form is:
         θ  = T / [1 − T(c₂ + T(c₄ + Tc₆)) / (1 + T(c₃ + T(c₅ + Tc₇)))]
@@ -1328,26 +1343,24 @@ def f_sigmav(T):
 
     Parameters
     ----------
-    T : float or ndarray  Ion temperature [keV].
+    T        : float or ndarray  Ion temperature [keV].
+    reaction : str  'DT' (default), 'DDn' or 'DDp'.
 
     Returns
     -------
-    sigmav : float or ndarray  ⟨σv⟩_DT  [m³ s⁻¹].
+    sigmav : float or ndarray  ⟨σv⟩ of the selected reaction  [m³ s⁻¹].
 
     References
     ----------
-    Bosch & Hale, Nucl. Fusion 32, 611 (1992) — Table VII, DT branch.
+    Bosch & Hale, Nucl. Fusion 32, 611 (1992) — Table VII.
     """
-    # Bosch & Hale fit coefficients for DT (Table VII)
-    Bg  = 34.3827           # Gamow constant  [keV^(1/2)]
-    mc2 = 1124656.0         # Reduced mass energy  [keV]
-    c1  =  1.17302e-9
-    c2  =  1.51361e-2
-    c3  =  7.51886e-2
-    c4  =  4.60643e-3
-    c5  =  1.35000e-2
-    c6  = -1.06750e-4
-    c7  =  1.36600e-5
+    # Gamow constant B_G [keV^(1/2)], reduced mass energy m_r c^2 [keV],
+    # and fit coefficients C1-C7 (Table VII)
+    try:
+        Bg, mc2, c1, c2, c3, c4, c5, c6, c7 = _BH_REACTIVITY[reaction]
+    except KeyError:
+        raise ValueError(f"f_sigmav: unknown reaction '{reaction}'. "
+                         f"Valid options: {sorted(_BH_REACTIVITY)}.")
 
     T = np.asarray(T, dtype=float)
     scalar = T.ndim == 0
@@ -1380,22 +1393,177 @@ if __name__ == "__main__":
                      (55.0, 75.0), 1, "Wesson 2004"))
     _bench("Published anchors - D-T reactivity (Bosch-Hale)", _sv_rows)
 
+    # ── Published anchors - D-D reactivity (Bosch & Hale 1992) ──────────
+    # Table VII fits against the Maxwellian average of the independent
+    # Table IV cross-section fits (numerical quadrature, Sept 2026):
+    # agreement within 1.9 % over 1-100 keV for both branches (0.8 % for
+    # the D-T control). The p branch dominates below 3.45 keV (larger S(0)),
+    # the n branch above. Sum at 10 keV: 1.18e-18 cm3/s (NRL Formulary
+    # quotes 1.2e-18).
+    _sv_rows = [(f"<sigma v>_{_r} at {_T:g} keV [m3/s]", f_sigmav(_T, _r),
+                 _sv, 0.02, "B&H 1992 Tab. IV quadrature")
+                for _r, _T, _sv in (('DDn', 1.0, 9.8344e-29),
+                                    ('DDn', 10.0, 6.0777e-25),
+                                    ('DDn', 50.0, 1.1376e-23),
+                                    ('DDp', 1.0, 1.0015e-28),
+                                    ('DDp', 10.0, 5.8502e-25),
+                                    ('DDp', 50.0, 9.9695e-24))]
+    _sv_rows.append(("<sigma v>_DD total at 10 keV [m3/s]",
+                     f_sigmav(10.0, 'DDn') + f_sigmav(10.0, 'DDp'),
+                     1.2e-24, 0.05, "NRL Formulary 2019"))
+    _bench("Published anchors - D-D reactivity (Bosch-Hale)", _sv_rows)
+
+
+def _sigmav_vol(T_bar, nu_T, rho_ped=1.0, T_ped_frac=0.0, N=200,
+                Vprime_data=None, tau_i_e=1.0,
+                nu_n=None, n_ped_frac=0.0, reaction='DT'):
+    """
+    Density-weighted, volume-averaged reactivity of `reaction` (see f_sigmav)
+
+        I_fus = ∫₀¹ ⟨σv⟩[T_i(ρ)] · n̂²(ρ) · w(ρ) dρ
+
+    where n̂(ρ) = n(ρ)/n̄ is the normalised density profile and w(ρ) the
+    volume weight.  This is the same normalised reactivity integral as in
+    `f_nbar`, so that the alpha source seen by the helium-ash balance is
+    the one that produces P_fus.
+
+    Shared helper for f_He_fraction and f_tau_alpha, avoiding redundant
+    profile and reactivity evaluations when both are called on the same
+    design point.
+
+    Parameters
+    ----------
+    T_bar      : float  Volume-averaged electron temperature [keV].
+    nu_T       : float  Temperature peaking exponent.
+    rho_ped    : float  Normalised pedestal radius (1.0 → parabolic).
+    T_ped_frac : float  T_ped / T̄.
+    N          : int    Radial integration points (default 200).
+    Vprime_data : tuple or None
+        (rho_grid, Vprime, V_total) from precompute_Vprime().
+        None → cylindrical weight 2ρ (Academic mode).
+    tau_i_e    : float  T_i / T_e ratio; the reactivity is evaluated on
+        T_i = tau_i_e · T_e.
+    nu_n       : float or None
+        Density peaking exponent.  None → the density weight n̂² is
+        dropped (legacy behaviour, kept for reference only: it
+        under-counts the alpha source by the factor
+        ⟨σv n̂²⟩ / ⟨σv⟩, 1.2 for a flat ITER-like density and 1.6 for a
+        peaked DEMO-like one).
+    n_ped_frac : float  n_ped / n̄ (used only when nu_n is not None).
+
+    Returns
+    -------
+    float  Normalised reactivity integral I_fus [m³ s⁻¹].  With nu_n = None
+           it reduces to the plain volume average ⟨σv⟩_vol.
+    """
+    if Vprime_data is not None:
+        # refined mode: Miller weight V'(ρ)/V
+        rho_grid, Vprime, V_total = Vprime_data[:3]  # safe: 5-tuple (rho, V', V, dA, Lp)
+        T   = f_Tprof(T_bar, nu_T, rho_grid, rho_ped, T_ped_frac,
+                       Vprime_data)
+        sv  = f_sigmav(tau_i_e * T, reaction)   # reactivity on T_i = tau_i_e * T_e
+        if nu_n is not None:
+            n_hat = f_nprof(1.0, nu_n, rho_grid, rho_ped, n_ped_frac,
+                            Vprime_data)
+            sv = sv * n_hat**2
+        integrand = np.nan_to_num(sv * Vprime, nan=0.0, posinf=0.0)
+        return float(np.trapezoid(integrand, rho_grid)) / V_total
+    else:
+        # Academic mode: cylindrical weight 2ρ dρ
+        rho = np.linspace(0.0, 1.0, N)
+        T   = f_Tprof(T_bar, nu_T, rho, rho_ped, T_ped_frac)
+        sv  = f_sigmav(tau_i_e * T, reaction)   # reactivity on T_i = tau_i_e * T_e
+        if nu_n is not None:
+            n_hat = f_nprof(1.0, nu_n, rho, rho_ped, n_ped_frac)
+            sv = sv * n_hat**2
+        integrand = np.nan_to_num(sv * 2.0 * rho, nan=0.0, posinf=0.0)
+        return float(np.trapezoid(integrand, rho))
+
+
+# =============================================================================
+# Fuel mixes
+# =============================================================================
+# Each fuel lists its primary reaction channels as
+#   (reaction key, charged-product energy [J], neutron energy [J]).
+# 'pair' is the rate prefactor, rate = pair * n_fuel^2 * <sigma v>:
+#   1/4 for a 50/50 D-T mix (n_D n_T), 1/2 for pure D (identical particles).
+# 'ash' is the channel whose Z = 2 product is tracked as ash (4He for D-T,
+# 3He for D-D). The Z = 1 triton and proton of D(d,p)T are not tracked,
+# and secondary D-T and D-3He burn is neglected.
+FUELS = {
+    'DT': {'pair': 0.25, 'ash': 'DT',
+           'channels': (('DT', E_ALPHA, E_N),)},
+    'DD': {'pair': 0.5, 'ash': 'DDn',
+           'channels': (('DDn', E_HE3_DD, E_N_DD),
+                        ('DDp', E_T_DD + E_P_DD, 0.0))},
+}
+
+
+def _fuel_spec(fuel):
+    """Return the FUELS entry of `fuel`, with an explicit error otherwise."""
+    try:
+        return FUELS[fuel]
+    except KeyError:
+        raise ValueError(f"Unknown Fuel: '{fuel}'. "
+                         f"Valid options: {sorted(FUELS)}.")
+
+
+def f_fuel_power_split(fuel, Tbar, nu_T, nu_n, rho_ped=1.0, n_ped_frac=0.0,
+                       T_ped_frac=0.0, Vprime_data=None, tau_i_e=1.0):
+    """
+    Charged-product and neutron fractions of the fusion power.
+
+    D-T has a single channel, so the split is E_α/(E_α+E_n) ≈ 0.2 and does
+    not depend on the plasma. For D-D the two branches have different
+    energies and reactivities, so the split is weighted by the
+    profile-integrated reactivity of each branch (same integral as f_nbar):
+
+        f_ch = Σ_c I_c E_ch,c / Σ_c I_c (E_ch,c + E_n,c)
+
+    f_ch ≈ 0.66 at 10 keV and 0.64 at 50 keV for D-D.
+
+    Parameters
+    ----------
+    fuel : str  'DT' or 'DD'.
+    Tbar, nu_T, nu_n, rho_ped, n_ped_frac, T_ped_frac, Vprime_data, tau_i_e :
+        Profile description, as in f_nbar.
+
+    Returns
+    -------
+    (f_charged, f_neutron) : tuple of float, summing to 1.
+    """
+    channels = _fuel_spec(fuel)['channels']
+    if len(channels) == 1:
+        _, E_ch, E_n = channels[0]
+        return E_ch / (E_ch + E_n), E_n / (E_ch + E_n)
+    P_ch = P_n = 0.0
+    for reaction, E_ch, E_n in channels:
+        I_c = _sigmav_vol(Tbar, nu_T, rho_ped, T_ped_frac,
+                          Vprime_data=Vprime_data, tau_i_e=tau_i_e,
+                          nu_n=nu_n, n_ped_frac=n_ped_frac, reaction=reaction)
+        P_ch += I_c * E_ch
+        P_n  += I_c * E_n
+    return P_ch / (P_ch + P_n), P_n / (P_ch + P_n)
+
 # =============================================================================
 # Required electron density for a target fusion power
 # =============================================================================
 
 def f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, kappa,
            rho_ped=1.0, n_ped_frac=0.0, T_ped_frac=0.0,
-           Vprime_data=None, f_imp=0.0, tau_i_e=1.0):
+           Vprime_data=None, f_imp=0.0, tau_i_e=1.0, fuel='DT'):
     """
     Required volume-averaged electron density to achieve a target fusion power.
 
-    The fusion power density is:
+    The fusion power density is, for D-T (pair factor k = 1/4):
         p_fus(ρ) = (E_α + E_n)/4 · n_fuel²(ρ) · ⟨σv⟩(T(ρ))
+    and, for pure D (k = 1/2, both branches summed):
+        p_fus(ρ) = n_D²(ρ)/2 · Σ_c ⟨σv⟩_c(T(ρ)) Q_c
 
     Integrating over the plasma volume and imposing P_fus = ∫ p_fus dV gives:
 
-        n̄ = 2 √[P_fus / (I_fus · (E_α + E_n) · V)]
+        n̄_fuel = √[P_fus / (k · Σ_c I_c Q_c · V)]
+               = 2 √[P_fus / (I_fus · (E_α + E_n) · V)]   (D-T)
 
     where I_fus = ∫ ⟨σv⟩(T(ρ)) · n̂²(ρ) · w(ρ) dρ  is the normalised
     reactivity integral and w(ρ) is the volume weight (see below).
@@ -1435,6 +1603,8 @@ def f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, kappa,
         with Z_eff ≈ 1.5 and low-Z puffing, f_imp ~ 0.02–0.10.
         Note: f_imp and f_alpha are independent corrections; the combined
         dilution factor is (1 − 2·f_alpha − f_imp).
+    fuel       : str, optional
+        'DT' (default) or 'DD'. For 'DD', f_alpha is the ³He fraction.
 
     Returns
     -------
@@ -1447,50 +1617,35 @@ def f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, kappa,
     Freidberg, Plasma Physics and Fusion Energy (2007) — dilution factor.
     """
     P_watt = P_fus * 1e6   # [W]
+    spec   = _fuel_spec(fuel)
 
+    # Energy-weighted normalised reactivity integral Σ_c I_c Q_c [J m³ s⁻¹].
+    # I_c is evaluated on T_i = tau_i_e * T_e with the n̂² weight and the
+    # volume weight of the geometry mode (Miller V'/V in refined mode,
+    # cylindrical 2ρ dρ in Academic mode), see _sigmav_vol.
+    EI_fus = 0.0
+    for reaction, E_ch, E_n in spec['channels']:
+        EI_fus += _sigmav_vol(Tbar, nu_T, rho_ped, T_ped_frac,
+                              Vprime_data=Vprime_data, tau_i_e=tau_i_e,
+                              nu_n=nu_n, n_ped_frac=n_ped_frac,
+                              reaction=reaction) * (E_ch + E_n)
     if Vprime_data is not None:
-        # refined mode: Miller V'(ρ) integration
-        rho_grid, Vprime, V_total = Vprime_data[:3]  # safe: 5-tuple (rho, V', V, dA, Lp)
-        T_arr   = f_Tprof(Tbar, nu_T, rho_grid, rho_ped, T_ped_frac,
-                          Vprime_data)
-        n_hat   = f_nprof(1.0,  nu_n, rho_grid, rho_ped, n_ped_frac,
-                          Vprime_data)
-        # DT reactivity is governed by the ion temperature: T_i = tau_i_e * T_e.
-        # T_arr is the electron profile; scale it to the ion profile here.
-        sv_arr  = f_sigmav(tau_i_e * T_arr)
-        # Guard against NaN/inf at ρ→1 where T→0 and ⟨σv⟩→0 rapidly
-        integrand = np.nan_to_num(sv_arr * n_hat**2 * Vprime,
-                                   nan=0.0, posinf=0.0)
-        # Normalised reactivity integral I_fus  [m³ s⁻¹]
-        I_fus = np.trapezoid(integrand, rho_grid) / V_total
-        V     = V_total
+        V = Vprime_data[2]                          # Miller volume
     else:
-        # Academic mode: cylindrical weight 2ρ dρ.
-        # Vectorised trapezoid replaces the former scalar quad() call,
-        # giving a ~10–50x speedup in the hot solver loop with negligible
-        # loss of accuracy (<0.1 % for smooth DT profiles on 200 points).
-        _rho_acad = np.linspace(0.0, 1.0, 200)
-        _T_acad   = f_Tprof(Tbar, nu_T, _rho_acad, rho_ped, T_ped_frac)
-        _n_acad   = f_nprof(1.0,  nu_n, _rho_acad, rho_ped, n_ped_frac)
-        # Reactivity uses the ion temperature T_i = tau_i_e * T_e.
-        _sv_acad  = f_sigmav(tau_i_e * _T_acad)
-        _intgd    = np.nan_to_num(_sv_acad * _n_acad**2 * 2.0 * _rho_acad,
-                                   nan=0.0, posinf=0.0)
-        I_fus     = float(np.trapezoid(_intgd, _rho_acad))
-        V         = 2.0 * np.pi**2 * R0 * kappa * a**2   # Wesson volume
+        V = 2.0 * np.pi**2 * R0 * kappa * a**2      # Wesson volume
 
     # Fuel ion density from fusion power balance
-    # Guard: I_fus ≤ 0 if T is too low for appreciable DT reactivity, or
+    # Guard: EI_fus ≤ 0 if T is too low for appreciable reactivity, or
     # if the profile integration fails numerically → sqrt would give inf or nan.
-    if I_fus <= 0.0:
+    if EI_fus <= 0.0:
         raise ValueError(
             f"f_nbar: non-positive normalised reactivity integral "
-            f"I_fus = {I_fus:.3e} m³ s⁻¹.  "
-            f"Verify that Tbar = {Tbar:.2f} keV is above the DT ignition "
-            "threshold and that the profile exponents produce a non-zero "
+            f"(sum I_c Q_c = {EI_fus:.3e} J m³ s⁻¹, Fuel = {fuel}).  "
+            f"Verify that Tbar = {Tbar:.2f} keV gives appreciable "
+            "reactivity and that the profile exponents produce a non-zero "
             "peak temperature (check nu_T, rho_ped, T_ped_frac)."
         )
-    n_fuel = 2.0 * np.sqrt(P_watt / (I_fus * (E_ALPHA + E_N) * V))   # [m⁻³]
+    n_fuel = np.sqrt(P_watt / (spec['pair'] * EI_fus * V))   # [m⁻³]
 
     # Electron density correcting for helium-ash and impurity dilution
     # n_fuel = n_e (1 - 2 f_alpha - f_imp)  →  n_e = n_fuel / dilution_factor
@@ -2362,9 +2517,9 @@ if __name__ == "__main__":
 
 #%% Power definitions
 
-def f_P_alpha(P_fus):
+def f_P_alpha(P_fus, f_charged=None):
     """
-    Alpha-particle heating power from DT fusion.
+    Charged-product heating power (alpha power for D-T).
 
     In a DT reaction, the total energy release Q_DT = 17.58 MeV is partitioned
     between the alpha particle (E_α = 3.52 MeV, charged, confined) and the
@@ -2378,17 +2533,22 @@ def f_P_alpha(P_fus):
     ----------
     P_fus : float
         Total fusion power [MW].
+    f_charged : float or None
+        Charged-product fraction from f_fuel_power_split. None → D-T.
 
     Returns
     -------
     float
-        Alpha-particle heating power [MW].  P_α / P_fus ≈ 0.2 for DT.
+        Charged-product heating power [MW].  P_α / P_fus ≈ 0.2 for DT,
+        ≈ 0.66 for DD (³He, T and p, assumed fully confined).
 
     References
     ----------
     Wesson, Tokamaks, 4th ed. (2011), §1.8.
     """
-    return P_fus * E_ALPHA / (E_ALPHA + E_N)
+    if f_charged is None:
+        return P_fus * E_ALPHA / (E_ALPHA + E_N)
+    return P_fus * f_charged
 
 
 def f_P_Ohm(I_Ohm, Tbar, R0, a, kappa, Z_eff=1.0,
@@ -2489,11 +2649,13 @@ def f_P_Ohm(I_Ohm, Tbar, R0, a, kappa, Z_eff=1.0,
     return R_eff * (I_Ohm * 1e6)**2 * 1e-6        # [W] → [MW]
 
 
-def f_P_elec(P_fus, P_CD, eta_T, M_blanket=1.0, eta_WP=1.0):
+def f_P_elec(P_fus, P_CD, eta_T, M_blanket=1.0, eta_WP=1.0, f_neutron=0.8):
     """
     Net electrical output power — simplified thermodynamic model.
 
-        P_elec = η_th × [(0.8 M_blanket + 0.2) × P_fus + P_CD] − P_CD / η_WP
+        P_elec = η_th × [(f_n M_blanket + 1 − f_n) × P_fus + P_CD] − P_CD / η_WP
+
+    with f_n the neutron power fraction (0.8 for D-T, ≈ 0.34 for D-D).
 
     The recirculating power subtracted is the **wall-plug** power consumed by
     the heating and current-drive systems, not the plasma-absorbed power P_CD.
@@ -2526,6 +2688,8 @@ def f_P_elec(P_fus, P_CD, eta_T, M_blanket=1.0, eta_WP=1.0):
           EC  gyrotron  : 0.40–0.55  (lower: gyrotron efficiency ~50 %)
           NBI injector  : 0.25–0.40  (neutraliser losses are large)
           ICR amplifier : 0.70–0.85  (solid-state, best coupling)
+    f_neutron : float, optional
+        Neutron fraction of P_fus from f_fuel_power_split (default 0.8, D-T).
 
     Returns
     -------
@@ -2554,10 +2718,11 @@ def f_P_elec(P_fus, P_CD, eta_T, M_blanket=1.0, eta_WP=1.0):
     """
     if eta_WP <= 0.0:
         raise ValueError(f"f_P_elec: eta_WP must be > 0 (got {eta_WP}).")
-    # Neutron-only multiplication: M_blanket applies to P_n = 0.8 * P_fus
-    # (D-T: 14.06 / 17.59 MeV). The alpha power and the plasma-absorbed
-    # auxiliary power are collected unmultiplied by the coolant circuits.
-    return eta_T * ((0.8 * M_blanket + 0.2) * P_fus + P_CD) - P_CD / eta_WP
+    # Neutron-only multiplication: M_blanket applies to P_n = f_n * P_fus
+    # (D-T: 14.06 / 17.59 MeV). The charged-product power and the
+    # plasma-absorbed auxiliary power are collected unmultiplied.
+    return (eta_T * ((f_neutron * M_blanket + 1.0 - f_neutron) * P_fus + P_CD)
+            - P_CD / eta_WP)
 
 
 #%% Radiation losses
@@ -3931,17 +4096,22 @@ def _orbit_trapping_screening(pitch, eps_loc):
     return min(1.0, max(0.0, 1.0 + np.tanh(10.0 * (pitch - mu_trap))))
 
 
-def _sum_nZ2_over_A_DT(f_alpha, Z_eff):
+def _sum_nZ2_over_A(f_alpha, Z_eff, fuel='DT'):
     """
-    Ion composition factor for DT plasma with helium ash.
+    Ion composition factor sum(n_i Z_i^2 / A_i) / n_e with helium ash.
 
-    Computes sum(n_i Z_i^2 / A_i) / n_e assuming 50-50 D-T fuel.
+    'DT': 50-50 D-T fuel and 4He ash (Z^2/A = 1).
+    'DD': pure D fuel and 3He ash (Z^2/A = 4/3).
     Impurity contribution inferred from Z_eff (carbon-like Z~6, A~12).
     """
     Z_imp, A_imp = 6.0, 12.0
     n_imp_frac = max(0.0, (Z_eff - 1.0 - 2.0 * f_alpha)
                      / (Z_imp * (Z_imp - 1.0)))
     f_fuel = max(1.0 - 2.0 * f_alpha - Z_imp * n_imp_frac, 0.01)
+    _fuel_spec(fuel)
+    if fuel == 'DD':
+        return (f_fuel / 2.0 + f_alpha * 4.0 / 3.0
+                + n_imp_frac * Z_imp**2 / A_imp)
     f_D = f_fuel / 2.0
     f_T = f_fuel / 2.0
     return (f_D / 2.0 + f_T / 3.0 + f_alpha
@@ -3952,7 +4122,7 @@ def f_etaCD_NBI_physics(A_beam, E_beam_keV, a, R0, Tbar, nbar, Z_eff,
                         nu_T, nu_n, rho_NBI,
                         f_alpha=0.04, angle_NBI_deg=20.0,
                         rho_ped=1.0, n_ped_frac=0.0, T_ped_frac=0.0,
-                        Vprime_data=None):
+                        Vprime_data=None, fuel='DT'):
     """
     NBCD figure of merit -- physics-based model without calibration constant.
 
@@ -3975,6 +4145,7 @@ def f_etaCD_NBI_physics(A_beam, E_beam_keV, a, R0, Tbar, nbar, Z_eff,
     angle_NBI_deg : float  Injection angle from tangential [deg] (default 20).
     rho_ped, n_ped_frac, T_ped_frac : float  Pedestal parameters.
     Vprime_data   : array or None  Volume derivative data.
+    fuel          : str    Background fuel, 'DT' (default) or 'DD'.
 
     Returns
     -------
@@ -3996,7 +4167,7 @@ def f_etaCD_NBI_physics(A_beam, E_beam_keV, a, R0, Tbar, nbar, Z_eff,
     lnL = _ln_Lambda_CD(Te_keV, ne_20)
 
     # Ion composition and critical energies
-    sum_nZ2A  = _sum_nZ2_over_A_DT(f_alpha, Z_eff)
+    sum_nZ2A  = _sum_nZ2_over_A(f_alpha, Z_eff, fuel)
     E_c_slow  = _stix_critical_energy(Te_keV, A_beam, sum_nZ2A)
     E_c_gamma = _stix_critical_energy_gamma(Te_keV, A_beam, Z_eff)
 
@@ -4196,7 +4367,7 @@ def f_etaCD_effective(config, a, R0, B0, nbar, Tbar, nu_n, nu_T, Z_eff,
             f_alpha=getattr(config, '_f_alpha', 0.04),
             angle_NBI_deg=config.angle_NBI_deg,
             rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-            T_ped_frac=T_ped_frac)
+            T_ped_frac=T_ped_frac, fuel=config.Fuel)
 
 
     elif CD_source == 'Multi':
@@ -4214,7 +4385,7 @@ def f_etaCD_effective(config, a, R0, B0, nbar, Tbar, nu_n, nu_T, Z_eff,
                         f_alpha=getattr(config, '_f_alpha', 0.04),
                         angle_NBI_deg=config.angle_NBI_deg,
                         rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-                        T_ped_frac=T_ped_frac)
+                        T_ped_frac=T_ped_frac, fuel=config.Fuel)
 
         # Power-weighted average: ICRH contributes heating but zero current drive
         f_LH  = config.f_heat_LH
@@ -4476,7 +4647,7 @@ if __name__ == "__main__":
 
 #%% L-H transition threshold
 
-def f_P_sep(P_fus, P_CD, P_rad=0.0):
+def f_P_sep(P_fus, P_CD, P_rad=0.0, f_charged=None):
     """
     Net power exiting the confined plasma, with radiation subtracted.
 
@@ -4514,6 +4685,8 @@ def f_P_sep(P_fus, P_CD, P_rad=0.0):
     P_rad : float, optional
         Radiated power [MW] (default 0 → upper-bound estimate).
         Pass P_rad_core for true P_sep; pass P_rad_total for P_div.
+    f_charged : float or None, optional
+        Charged-product fraction (f_fuel_power_split). None → D-T.
 
     Returns
     -------
@@ -4526,7 +4699,7 @@ def f_P_sep(P_fus, P_CD, P_rad=0.0):
     Kallenbach et al., PPCF 55 (2013) 124041.
     Lux et al., PPCF 58 (2016) 075001 — core/edge radiation split.
     """
-    return f_P_alpha(P_fus) + P_CD - P_rad
+    return f_P_alpha(P_fus, f_charged) + P_CD - P_rad
 
 
 def f_P_wall(P_rad, S_wall):
@@ -7471,7 +7644,7 @@ def f_Ip(tauE, R0, a, κ, δ, nbar, B0, Atomic_mass,
 
 # ── Neutron wall loading ──────────────────────────────────────────────────────
 
-def f_Gamma_n(a, P_fus, R0, κ, S_wall=None):
+def f_Gamma_n(a, P_fus, R0, κ, S_wall=None, f_neutron=None):
     """
     Estimate the average neutron wall loading Γ_n at the first wall.
 
@@ -7502,6 +7675,10 @@ def f_Gamma_n(a, P_fus, R0, κ, S_wall=None):
     S_wall : float or None, optional
         Pre-computed first-wall surface area [m²].
         If None, the academic elliptical approximation is applied.
+    f_neutron : float or None, optional
+        Neutron fraction of P_fus (f_fuel_power_split). None → D-T.
+        For D-D the neutrons carry 2.45 MeV, so Γ_n is a power flux only
+        and does not map onto 14 MeV damage rates.
 
     Returns
     -------
@@ -7513,7 +7690,9 @@ def f_Gamma_n(a, P_fus, R0, κ, S_wall=None):
     Neutron power fraction: f_n = E_n / (E_α + E_n) ≈ 0.80 for D–T.
     ITER design target: Γ_n ≈ 0.57 MW m⁻² at P_fus = 500 MW.
     """
-    P_neutron = (E_N / (E_ALPHA + E_N)) * P_fus
+    if f_neutron is None:
+        f_neutron = E_N / (E_ALPHA + E_N)
+    P_neutron = f_neutron * P_fus
 
     if S_wall is None:
         # Academic: elliptical torus first-wall area (Ramanujan perimeter)
@@ -8019,75 +8198,9 @@ if __name__ == "__main__":
 
 # ── Helium ash accumulation model ─────────────────────────────────────────────
 
-def _sigmav_vol(T_bar, nu_T, rho_ped=1.0, T_ped_frac=0.0, N=200,
-                Vprime_data=None, tau_i_e=1.0,
-                nu_n=None, n_ped_frac=0.0):
-    """
-    Density-weighted, volume-averaged DT reactivity
-
-        I_fus = ∫₀¹ ⟨σv⟩[T_i(ρ)] · n̂²(ρ) · w(ρ) dρ
-
-    where n̂(ρ) = n(ρ)/n̄ is the normalised density profile and w(ρ) the
-    volume weight.  This is the same normalised reactivity integral as in
-    `f_nbar`, so that the alpha source seen by the helium-ash balance is
-    the one that produces P_fus.
-
-    Shared helper for f_He_fraction and f_tau_alpha, avoiding redundant
-    profile and reactivity evaluations when both are called on the same
-    design point.
-
-    Parameters
-    ----------
-    T_bar      : float  Volume-averaged electron temperature [keV].
-    nu_T       : float  Temperature peaking exponent.
-    rho_ped    : float  Normalised pedestal radius (1.0 → parabolic).
-    T_ped_frac : float  T_ped / T̄.
-    N          : int    Radial integration points (default 200).
-    Vprime_data : tuple or None
-        (rho_grid, Vprime, V_total) from precompute_Vprime().
-        None → cylindrical weight 2ρ (Academic mode).
-    tau_i_e    : float  T_i / T_e ratio; the reactivity is evaluated on
-        T_i = tau_i_e · T_e.
-    nu_n       : float or None
-        Density peaking exponent.  None → the density weight n̂² is
-        dropped (legacy behaviour, kept for reference only: it
-        under-counts the alpha source by the factor
-        ⟨σv n̂²⟩ / ⟨σv⟩, 1.2 for a flat ITER-like density and 1.6 for a
-        peaked DEMO-like one).
-    n_ped_frac : float  n_ped / n̄ (used only when nu_n is not None).
-
-    Returns
-    -------
-    float  Normalised reactivity integral I_fus [m³ s⁻¹].  With nu_n = None
-           it reduces to the plain volume average ⟨σv⟩_vol.
-    """
-    if Vprime_data is not None:
-        # refined mode: Miller weight V'(ρ)/V
-        rho_grid, Vprime, V_total = Vprime_data[:3]  # safe: 5-tuple (rho, V', V, dA, Lp)
-        T   = f_Tprof(T_bar, nu_T, rho_grid, rho_ped, T_ped_frac,
-                       Vprime_data)
-        sv  = f_sigmav(tau_i_e * T)   # reactivity on T_i = tau_i_e * T_e
-        if nu_n is not None:
-            n_hat = f_nprof(1.0, nu_n, rho_grid, rho_ped, n_ped_frac,
-                            Vprime_data)
-            sv = sv * n_hat**2
-        integrand = np.nan_to_num(sv * Vprime, nan=0.0, posinf=0.0)
-        return float(np.trapezoid(integrand, rho_grid)) / V_total
-    else:
-        # Academic mode: cylindrical weight 2ρ dρ
-        rho = np.linspace(0.0, 1.0, N)
-        T   = f_Tprof(T_bar, nu_T, rho, rho_ped, T_ped_frac)
-        sv  = f_sigmav(tau_i_e * T)   # reactivity on T_i = tau_i_e * T_e
-        if nu_n is not None:
-            n_hat = f_nprof(1.0, nu_n, rho, rho_ped, n_ped_frac)
-            sv = sv * n_hat**2
-        integrand = np.nan_to_num(sv * 2.0 * rho, nan=0.0, posinf=0.0)
-        return float(np.trapezoid(integrand, rho))
-
-
 def f_He_fraction(n_bar, T_bar, tauE, C_Alpha, nu_T,
                   rho_ped=1.0, T_ped_frac=0.0, Vprime_data=None, tau_i_e=1.0,
-                  f_imp=0.0, nu_n=None, n_ped_frac=0.0):
+                  f_imp=0.0, nu_n=None, n_ped_frac=0.0, fuel='DT'):
     """
     Estimate the equilibrium helium ash fraction f_α = n_α / n_e.
 
@@ -8145,6 +8258,10 @@ def f_He_fraction(n_bar, T_bar, tauE, C_Alpha, nu_T,
         Impurity charge fraction sum_j Z_j n_j / n_e diluting the fuel.
         Must match the value passed to f_nbar for consistency; the
         default 0.0 recovers the historical closed form exactly.
+    fuel : str, optional
+        'DT' (default) or 'DD'. For 'DD' the ash is ³He from D(d,n)³He,
+        with source n_D²/2 · I_DDn. Writing C with the factor 4k
+        (k = 1/4 for D-T, 1/2 for D-D) keeps the D-T closed form below.
 
     Notes
     -----
@@ -8154,7 +8271,8 @@ def f_He_fraction(n_bar, T_bar, tauE, C_Alpha, nu_T,
         I_fus = int sigma.v[T(rho)] n_hat(rho)^2 w(rho) drho
     the balance (C/4)(1 - f_imp - 2 f_alpha)^2 = f_alpha has the
     physical root
-        f_alpha = s * (C_s + 1 - sqrt(2 C_s + 1)) / (2 C_s),
+        f_alpha = s * (C_s + 1 - sqrt(2 C_s + 1)) / (2 C_s)
+                = s * C_s / (2 (1 + C_s + sqrt(1 + 2 C_s))),
         with s = 1 - f_imp and C_s = C * s,
     reducing to (C + 1 - sqrt(2C + 1))/(2C) for f_imp = 0.
     The impurity correction lowers f_alpha by about 13 % at ITER-like
@@ -8184,15 +8302,22 @@ def f_He_fraction(n_bar, T_bar, tauE, C_Alpha, nu_T,
     # Density-weighted reactivity integral I_fus (same as in f_nbar),
     # evaluated on T_i = tau_i_e * T_e.  nu_n = None falls back to the
     # legacy <sigma.v>_vol (see Notes).
+    spec = _fuel_spec(fuel)
     sigmav_vol = _sigmav_vol(T_bar, nu_T, rho_ped, T_ped_frac,
                              Vprime_data=Vprime_data, tau_i_e=tau_i_e,
-                             nu_n=nu_n, n_ped_frac=n_ped_frac)
-    C = n_bar * 1e20 * sigmav_vol * C_Alpha * tauE
+                             nu_n=nu_n, n_ped_frac=n_ped_frac,
+                             reaction=spec['ash'])
+    # Ash source k n_fuel^2 I_ash: the factor 4k (1 for D-T, 2 for D-D)
+    # maps the balance k C (s - 2f)^2 = f onto the D-T form (C/4)(...).
+    C = n_bar * 1e20 * sigmav_vol * C_Alpha * tauE * (4.0 * spec['pair'])
     # Impurity-diluted closed form: solves (C/4)(1 - f_imp - 2 f)^2 = f;
-    # reduces to the historical expression for f_imp = 0.
+    # reduces to the historical expression for f_imp = 0. Written in the
+    # conjugate form s*Cs / (2 (1 + Cs + sqrt(1 + 2 Cs))), algebraically
+    # identical to s (Cs + 1 - sqrt(2 Cs + 1)) / (2 Cs) but free of the
+    # cancellation at small Cs (D-D devices: Cs ~ 1e-8 to 1e-5).
     s = 1.0 - f_imp
     Cs = C * s
-    return s * (Cs + 1.0 - np.sqrt(2.0 * Cs + 1.0)) / (2.0 * Cs)
+    return s * Cs / (2.0 * (1.0 + Cs + np.sqrt(1.0 + 2.0 * Cs)))
 
 
 def f_tau_alpha(n_bar, T_bar, tauE, C_Alpha, nu_T,
@@ -8312,13 +8437,14 @@ def f_volume(a, b, c, d, R0, κ, Delta_TF, H_TF):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def f_blanket_lifetime_fpy(P_fus: float, A_FW: float,
-                           dpa_lim: float, C_dpa: float) -> float:
+                           dpa_lim: float, C_dpa: float,
+                           f_neutron: float = 0.8) -> float:
     """
     Blanket structural lifetime based on neutron displacement damage.
 
-    t_bl = dpa_lim * A_FW / (0.8 * C_dpa * P_fus)
+    t_bl = dpa_lim * A_FW / (f_n * C_dpa * P_fus)
 
-    Derivation: neutron wall loading q_n = 0.8*P_fus/A_FW [MW/m²];
+    Derivation: neutron wall loading q_n = f_n*P_fus/A_FW [MW/m²];
     dpa rate = C_dpa * q_n [dpa/fpy]; lifetime = dpa_lim / dpa_rate.
 
     Ref: Gilbert et al. (2013), EUROfusion (2015).
@@ -8328,13 +8454,15 @@ def f_blanket_lifetime_fpy(P_fus: float, A_FW: float,
     P_fus   : float  Fusion power [MW].
     A_FW    : float  First-wall area [m²].
     dpa_lim : float  Allowable structural damage [dpa].
-    C_dpa   : float  dpa conversion coefficient [dpa fpy⁻¹ / (MW m⁻²)].
+    C_dpa   : float  dpa conversion coefficient [dpa fpy⁻¹ / (MW m⁻²)],
+                     calibrated on 14 MeV neutrons (indicative only for D-D).
+    f_neutron : float  Neutron fraction of P_fus (default 0.8, D-T).
 
     Returns
     -------
     float  Blanket lifetime [fpy].
     """
-    return dpa_lim * A_FW / (0.8 * C_dpa * P_fus)
+    return dpa_lim * A_FW / (f_neutron * C_dpa * P_fus)
 
 
 def f_divertor_lifetime_fpy(P_sep: float, A_div: float,

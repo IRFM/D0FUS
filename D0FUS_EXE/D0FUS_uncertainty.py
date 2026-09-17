@@ -51,7 +51,6 @@ except ModuleNotFoundError:
 from D0FUS_EXE import D0FUS_run as RUN
 from D0FUS_BIB.D0FUS_physical_functions import f_volume
 from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
-from D0FUS_BIB.D0FUS_parameterization import M_blanket_effective
 from D0FUS_BIB.D0FUS_radial_build_functions import Number_TF_coils
 
 # Backwards-compatible alias for dataclasses.replace, used throughout the module.
@@ -131,7 +130,7 @@ def _compute_cost(cfg, P_CD, P_elec, Gamma_n, Surface, c, d, kappa,
     Util_factor / Dwell_factor / dt_rep inputs.
     """
     try:
-        P_th = cfg.P_fus * (0.8 * M_blanket_effective(cfg.Blanket_choice) + 0.2) + P_CD   # neutron-only multiplication
+        P_th = cfg.P_fus * RUN.thermal_multiplier(cfg) + P_CD   # neutron-only multiplication
         _, _, Delta_TF = Number_TF_coils(cfg.R0, cfg.a, cfg.b, cfg.ripple_adm, cfg.L_min)
         H_TF = 2.0 * (kappa * cfg.a + cfg.b + c)
         (V_blanket, V_TF_Pappus, V_CS_geom, V_FI) = f_volume(

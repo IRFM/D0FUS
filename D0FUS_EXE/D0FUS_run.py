@@ -212,6 +212,44 @@ def _compute_Zeff_effective(config, f_alpha):
     return 1.0 + 2.0 * float(f_alpha) - Z1 + Z2
 
 
+def _profile_params(config):
+    """
+    Profile parameters (nu_n, nu_T, rho_ped, n_ped_frac, T_ped_frac) of the
+    deck, from the Manual inputs or the _PROFILE_PRESETS table.
+    """
+    if config.Plasma_profiles == 'Manual':
+        return (config.nu_n_manual, config.nu_T_manual, config.rho_ped,
+                config.n_ped_frac, config.T_ped_frac)
+    p = _PROFILE_PRESETS[config.Plasma_profiles]
+    return p['nu_n'], p['nu_T'], p['rho_ped'], p['n_ped_frac'], p['T_ped_frac']
+
+
+def fuel_power_split(config):
+    """
+    (f_charged, f_neutron) of config.Fuel at the deck Tbar and profiles.
+
+    Post-processing helper (reports, cost blocks). It uses the Academic
+    volume weight, whereas run() uses the Miller weight in refined mode.
+    For D-T the split is exact either way. For D-D only the branch
+    weighting changes: 0.1 to 0.2 % on f_neutron for an H-mode profile
+    at 2-10 keV (KSTAR-like shape).
+    """
+    nu_n, nu_T, rho_ped, n_ped_frac, T_ped_frac = _profile_params(config)
+    return f_fuel_power_split(config.Fuel, config.Tbar, nu_T, nu_n,
+                              rho_ped=rho_ped, n_ped_frac=n_ped_frac,
+                              T_ped_frac=T_ped_frac, Vprime_data=None,
+                              tau_i_e=config.tau_i_e)
+
+
+def thermal_multiplier(config):
+    """
+    P_th / P_fus: neutron power multiplied by the blanket factor,
+    charged-product power collected as is.
+    """
+    f_n = fuel_power_split(config)[1]
+    return f_n * M_blanket_effective(config.Blanket_choice) + 1.0 - f_n
+
+
 def resolve_Tbar(config: GlobalConfig, verbose: int = 0) -> GlobalConfig:
     """
     Resolve the volume-averaged temperature according to config.Tbar_mode.
@@ -275,6 +313,95 @@ def resolve_Tbar(config: GlobalConfig, verbose: int = 0) -> GlobalConfig:
     return dc_replace(config, Tbar=float(T_star), Tbar_mode='manual')
 
 
+def resolve_P_fus(config: GlobalConfig, verbose: int = 0) -> GlobalConfig:
+    """
+    Resolve the fusion power according to config.P_fus_mode.
+
+    'manual'    : returns the configuration unchanged.
+    'greenwald' : solves P_fus at the deck Tbar so that the converged design
+        sits at the requested Greenwald fraction,
+            g(P) = nbar_line(P) / (Ip(P) / pi a^2) - f_GW_target = 0.
+        The unknown is x = log10(P_fus), since D-D devices sit at kW level
+        and D-T devices at 10-1000 MW. The deck P_fus is the initial
+        guess. The bracket is widened by one decade per step, up to six
+        decades on each side. Only rising crossings (f_GW increasing with
+        P_fus) are accepted: at very low P_fus the ohmic branch gives a
+        spurious falling crossing. Each iteration is one full run() at
+        P_fus_mode='manual'.
+
+    Returns the configuration with the solved P_fus and P_fus_mode='manual'.
+    """
+    mode = str(getattr(config, 'P_fus_mode', 'manual')).lower()
+    if mode == 'manual':
+        return config
+    if mode != 'greenwald':
+        raise ValueError(f"Unknown P_fus_mode: '{config.P_fus_mode}'. "
+                         "Valid options: 'manual', 'greenwald'.")
+    if str(getattr(config, 'Tbar_mode', 'manual')).lower() == 'greenwald':
+        raise ValueError("P_fus_mode and Tbar_mode cannot both be "
+                         "'greenwald': f_GW_target closes only one unknown.")
+    if not config.P_fus > 0:
+        raise ValueError("resolve_P_fus: the deck P_fus is the initial guess "
+                         f"and must be > 0 (got {config.P_fus}).")
+    target = float(config.f_GW_target)
+
+    def g(x):
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', RuntimeWarning)
+            try:
+                res = run(dc_replace(config, P_fus=float(10.0 ** x),
+                                     P_fus_mode='manual'), verbose=0)
+            except (ValueError, RuntimeError, ZeroDivisionError):
+                return np.nan
+        nbl, Ip = float(res[13]), float(res[8])
+        if not (np.isfinite(nbl) and np.isfinite(Ip) and Ip > 0):
+            return np.nan
+        return nbl / f_nG(Ip, config.a) - target
+
+    # Bracket search, one decade per step on each side of the guess.
+    # f_GW grows with P_fus on the physical branch, so the side of the
+    # root is searched first and only rising crossings are accepted.
+    _g = {}
+    def g_cached(x):
+        if x not in _g:
+            _g[x] = g(x)
+        return _g[x]
+    x0 = float(np.log10(config.P_fus))
+    up_first = not (g_cached(x0) > 0)
+    bracket = None
+    for k in range(1, 7):
+        pairs = ((x0 + k - 1, x0 + k), (x0 - k, x0 - k + 1))
+        for x1, x2 in (pairs if up_first else pairs[::-1]):
+            g1, g2 = g_cached(x1), g_cached(x2)
+            if np.isfinite(g1) and np.isfinite(g2) and g1 <= 0 <= g2:
+                bracket = (x1, x2)
+                break
+        if bracket is not None:
+            break
+    if bracket is None:
+        raise ValueError(
+            f"resolve_P_fus: no P_fus in [{10**(x0-6):.3g}, {10**(x0+6):.3g}]"
+            f" MW reaches f_GW = {target} at Tbar = {config.Tbar} keV. "
+            "Adjust f_GW_target, Tbar or H.")
+    x_star = brentq(g, *bracket, xtol=1e-5, rtol=1e-8)
+    P_star = float(10.0 ** x_star)
+    if verbose:
+        print(f"resolve_P_fus: f_GW = {target} reached at "
+              f"P_fus = {P_star:.4g} MW (Fuel = {config.Fuel})")
+    return dc_replace(config, P_fus=P_star, P_fus_mode='manual')
+
+
+def resolve_operating_point(config: GlobalConfig,
+                            verbose: int = 0) -> GlobalConfig:
+    """
+    Apply the Greenwald closure selected by the deck: Tbar_mode='greenwald'
+    solves Tbar, P_fus_mode='greenwald' solves P_fus. Returns a fully
+    prescribed configuration (both modes 'manual').
+    """
+    config = resolve_P_fus(config, verbose=verbose)
+    return resolve_Tbar(config, verbose=verbose)
+
+
 def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     """
     Compute a single D0FUS design point.
@@ -320,12 +447,13 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # ── Resolve configuration ─────────────────────────────────────────────────
     if config is None:
         config = DEFAULT_CONFIG
-    # Resolve Tbar when the deck prescribes a Greenwald fraction instead of a
-    # temperature (Tbar_mode = 'greenwald'). resolve_Tbar returns a config
-    # with Tbar_mode='manual', so the recursive run() calls inside the solve
+    # Resolve Tbar or P_fus when the deck prescribes a Greenwald fraction
+    # (Tbar_mode or P_fus_mode = 'greenwald'). The resolved config carries
+    # both modes at 'manual', so the recursive run() calls inside the solve
     # do not re-enter this branch.
-    if str(getattr(config, 'Tbar_mode', 'manual')).lower() == 'greenwald':
-        config = resolve_Tbar(config, verbose=verbose)
+    if ('greenwald' in (str(getattr(config, 'Tbar_mode', 'manual')).lower(),
+                        str(getattr(config, 'P_fus_mode', 'manual')).lower())):
+        config = resolve_operating_point(config, verbose=verbose)
         
     # Unpack every field into local names so the downstream physics code
     # is unchanged (no 'config.X' references scattered throughout).
@@ -361,6 +489,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     Greenwald_limit           = config.Greenwald_limit
     density_limit_model       = config.density_limit_model
     ms                        = config.ms
+    Fuel                      = config.Fuel
     Atomic_mass               = config.Atomic_mass
     Zeff_override             = config.Zeff   # None -> compute Z_eff from inventory + ash;
                                               # float -> impose (legacy). See
@@ -543,6 +672,22 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             f"Unknown Plasma_profiles: '{Plasma_profiles}'. "
             "Valid options: 'L', 'H', 'Advanced', 'EU-DEMO', 'Manual'."
         )
+
+    # Validate the fuel early. Atomic_mass stays an input (scaling laws,
+    # L-H threshold, SOL sound speed). Flag a value inconsistent with Fuel.
+    if Fuel not in FUELS:
+        raise ValueError(f"Unknown Fuel: '{Fuel}'. "
+                         f"Valid options: {sorted(FUELS)}.")
+    if Fuel == 'DD' and Operation_mode == 'Steady-State':
+        # The SS solver parameterises P_aux = P_fus / Q with Q = O(10-100),
+        # which is ill-posed at D-D fusion power (Q ~ 1e-6).
+        raise ValueError("Fuel = 'DD' requires Operation_mode = 'Pulsed' "
+                         "(heating powers prescribed, P_aux = P_fus / Q "
+                         "is ill-posed at D-D fusion power).")
+    _A_fuel = {'DT': 2.5, 'DD': 2.0}[Fuel]
+    if abs(Atomic_mass - _A_fuel) > 1e-9 and verbose >= 1:
+        print(f"[warn] Atomic_mass = {Atomic_mass} with Fuel = '{Fuel}' "
+              f"(pure fuel mass: {_A_fuel}).")
 
     # Validate the bootstrap model early: fail fast at load time,
     # before any physics evaluation, with the valid options listed.
@@ -746,7 +891,12 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
 
     # ── On-axis magnetic field and alpha power ────────────────────────────────
     B0_solution = f_B0(Bmax_TF, a, b, R0, b_cover=c_BP)
-    P_Alpha     = f_P_alpha(P_fus)
+    # Charged-product and neutron fractions of P_fus (constant for D-T,
+    # branch-weighted on the deck profiles for D-D).
+    f_charged, f_neutron = f_fuel_power_split(
+        Fuel, Tbar, nu_T, nu_n, rho_ped=rho_ped, n_ped_frac=n_ped_frac,
+        T_ped_frac=T_ped_frac, Vprime_data=Vprime_data, tau_i_e=tau_i_e)
+    P_Alpha     = f_P_alpha(P_fus, f_charged)
 
     # =========================================================================
     #    SELF-CONSISTENT SOLVER  (f_alpha, Q)
@@ -889,7 +1039,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                           rho_ped=rho_ped, n_ped_frac=n_ped_frac,
                           T_ped_frac=T_ped_frac,
                           Vprime_data=Vprime_data, f_imp=f_imp_dilution,
-                          tau_i_e=tau_i_e)
+                          tau_i_e=tau_i_e, fuel=Fuel)
         pbar_loc = f_pbar(nu_n, nu_T, nbar_loc, Tbar,
                           rho_ped=rho_ped, n_ped_frac=n_ped_frac,
                           T_ped_frac=T_ped_frac,
@@ -1041,7 +1191,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                     f_alpha=f_alpha,
                     angle_NBI_deg=config.angle_NBI_deg,
                     rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-                    T_ped_frac=T_ped_frac)
+                    T_ped_frac=T_ped_frac, fuel=Fuel)
                 I_CD_loc = (f_I_CD(R0, nbar_loc, eta_LH_loc,  P_LH)
                           + f_I_CD(R0, nbar_loc, eta_EC_loc,  P_ECRH)
                           + f_I_CD(R0, nbar_loc, eta_NBI_loc, P_NBI))
@@ -1159,7 +1309,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             nbar_loc, Tbar, tau_E_loc, C_Alpha, nu_T,
             rho_ped=rho_ped, T_ped_frac=T_ped_frac, tau_i_e=tau_i_e,
             f_imp=f_imp_dilution, nu_n=nu_n, n_ped_frac=n_ped_frac,
-            Vprime_data=Vprime_data)
+            Vprime_data=Vprime_data, fuel=Fuel)
 
         if _dbg:
             print(f"    new_f_alpha={new_fa_loc:.6f} (input={f_alpha:.6f})")
@@ -1255,7 +1405,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             Q_out  : float
                 Derived energy gain factor.
             """
-            fa = max(1e-4, min(fa, _fa_max))
+            fa = max(0.0, min(fa, _fa_max))
 
             # Inner P_Ohm loop: warm-started from previous converged value.
             # Fall back to 0 if the warmstart was corrupted by a NaN from an
@@ -1329,6 +1479,17 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 _sr_str = f"{_sr:+.3e}" if np.isfinite(_sr) else "NaN"
                 print(f"  [bracket scan] fa={_sfa:.5f}  r={_sr_str}")
 
+            # Ash fraction below the first scan point (D-D devices, or D-T at
+            # very low fusion power): the root lies in [0, 1e-4], where
+            # r(0) = new_fa(0) > 0 by construction.
+            if _sfa == _scan_pts[0] and np.isfinite(_sr) and _sr < 0:
+                _r0 = _safe_residual(0.0)
+                if np.isfinite(_r0) and _r0 > 0:
+                    fa_lo, r_lo = 0.0, _r0
+                    fa_hi, r_hi = _sfa, _sr
+                    bracket_found = True
+                    break
+
             # Check for sign change with previous finite point
             if np.isfinite(_sr) and _prev_r is not None and np.isfinite(_prev_r):
                 if _sr * _prev_r < 0:
@@ -1370,9 +1531,12 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 print(f"  [Brent {_eval_count[0]:3d}] fa={fa:.6f}  r={r:+.3e}")
             return r
 
+        # Absolute tolerance 1e-6 for reactor-level ash. For a bracket
+        # starting at 0 the root is ~r(0), so the tolerance follows it.
+        _fa_xtol = 1e-6 if fa_lo > 0 else min(1e-6, 1e-3 * r_lo)
         try:
             fa_sol = brentq(_counted_residual, fa_lo, fa_hi,
-                            xtol=1e-6, rtol=1e-8, maxiter=50)
+                            xtol=_fa_xtol, rtol=1e-8, maxiter=50)
         except (ValueError, RuntimeError) as _brentq_err:
             # brentq failed (bracket lost, NaN in residual, or convergence failure)
             if verbose >= 1:
@@ -1820,8 +1984,11 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     betaN_solution  = f_beta_N(betaT_solution, a, B0_solution, Ip_solution)
 
     # Fast-alpha pressure contribution (Stix slowing-down model)
+    # For D-D the fast charged products (3He, T, p) are treated as alphas.
+    # Their pressure is negligible at D-D power levels.
     beta_fast_alpha, tau_sd_alpha, W_fast_alpha = f_beta_fast_alpha(
-        P_Alpha, Tbar, nbar_solution, B0_solution, Volume_solution, Z_eff=Zeff)
+        P_Alpha, Tbar, nbar_solution, B0_solution, Volume_solution, Z_eff=Zeff,
+        A_DT=Atomic_mass)
     # Toroidal beta INCLUDING the fast-alpha pressure — the MHD-relevant beta
     # for the Troyon limit (kink / ballooning / NTM modes respond to the TOTAL
     # pressure, thermal + fast).  betaN_total is the quantity compared against
@@ -1848,7 +2015,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         f_alpha=f_alpha_solution,
         angle_NBI_deg=config.angle_NBI_deg,
         rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-        T_ped_frac=T_ped_frac)
+        T_ped_frac=T_ped_frac, fuel=Fuel)
 
     if Operation_mode == 'Steady-State':
         # Steady-State: γ_eff is needed to invert I_CD → P_CD.
@@ -1924,8 +2091,10 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # The divertor input restores the small ohmic term: P_div = P_sep + P_Ω.
     # The variable name P_sep_solution is kept for backward compatibility
     # with the genetic algorithm, scan module and figures module.
-    P_sep_solution      = f_P_sep(P_fus, P_CD_solution, P_rad_total_solution)
-    Gamma_n_solution    = f_Gamma_n(a, P_fus, R0, κ, S_wall=Surface_solution)
+    P_sep_solution      = f_P_sep(P_fus, P_CD_solution, P_rad_total_solution,
+                                  f_charged=f_charged)
+    Gamma_n_solution    = f_Gamma_n(a, P_fus, R0, κ, S_wall=Surface_solution,
+                                    f_neutron=f_neutron)
     heat_refined_solution = f_heat_refined(R0, P_sep_solution)
     heat_par_solution   = f_heat_par(R0, B0_solution, P_sep_solution)
     heat_pol_solution   = f_heat_pol(R0, B0_solution, P_sep_solution, a, q95_solution)
@@ -1947,7 +2116,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         n_sep_solution, theta_deg,
         B0=B0_solution,
         f_cooling=f_cooling_div, f_mom=f_mom_div,
-        q_dep_limit=q_dep_limit, flux_expansion=flux_expansion)
+        q_dep_limit=q_dep_limit, flux_expansion=flux_expansion,
+        m_f=Atomic_mass * 1.67e-27)   # fuel-ion mass, same u as M_F_DT
     divertor_solution['n_sep']            = n_sep_solution
     divertor_solution['f_cooling']        = f_cooling_div     # operating point
     divertor_solution['f_mom']            = f_mom_div         # operating point
@@ -1959,7 +2129,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # Exhaust power density: P_div / S (useful divertor figure of merit)
     P_1rst_wall_div   = P_sep_solution / Surface_solution if Surface_solution > 0 else 0.0
     P_wallplug_solution = P_CD_solution / eta_WP   # Wall-plug power consumed by heating/CD [MW]
-    P_elec_solution   = f_P_elec(P_fus, P_CD_solution, eta_T, M_blanket, eta_WP)
+    P_elec_solution   = f_P_elec(P_fus, P_CD_solution, eta_T, M_blanket, eta_WP,
+                                 f_neutron=f_neutron)
 
     # ── Loop voltage ──────────────────────────────────────────────────────────
     # V_loop is now computed inside Magnetic_flux (returned as 5th element)
@@ -2308,7 +2479,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     A_div          = config.f_div_area_fraction * Surface_solution
     A_blanket      = Surface_solution * (1.0 - config.f_div_area_fraction)
     t_life_bl_fpy  = f_blanket_lifetime_fpy(P_fus, A_blanket,
-                                             config.dpa_lim, config.C_dpa)
+                                             config.dpa_lim, config.C_dpa,
+                                             f_neutron=f_neutron)
     t_life_div_fpy = f_divertor_lifetime_fpy(P_sep_solution, A_div,
                                               config.epsilon_div, config.f_peak)
     t_life_bl_yr   = f_lifetime_to_years(t_life_bl_fpy,
@@ -2546,12 +2718,14 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
             and np.isfinite(float(kappa_edge))
             and np.isfinite(float(delta_edge))):
         try:
+            # Same grid as run(), so figures normalise profiles identically
             Vprime_data = precompute_Vprime(
                 config.R0, config.a,
                 float(kappa_edge), float(delta_edge),
                 geometry_model='refined',
                 kappa_95=float(kappa_95),
                 delta_95=float(delta_95),
+                N_rho=500, N_theta=200,
             )
         except Exception:
             Vprime_data = None   # Non-critical — figures fall back gracefully
@@ -2614,7 +2788,7 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
     _cost_bd = {}
     if getattr(config, "cost_model", "None") != "None":
         try:
-            _P_th_c = config.P_fus * (0.8 * M_blanket_effective(config.Blanket_choice) + 0.2) + _P_CD   # neutron-only multiplication
+            _P_th_c = config.P_fus * thermal_multiplier(config) + _P_CD   # neutron-only multiplication
             _P_e_c  = max(_P_elec, 1.0)
             _T_op_c = results[132]; _CF_c = results[135]
             _t_bl_c = results[130]; _t_div_c = results[131]; _V_rb_BB_c = results[138]
@@ -2671,6 +2845,7 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         # Volume-averaged kinetics
         "nbar":        _f(nbar, 1.0),
         "Tbar":        config.Tbar,
+        "tau_i_e":     config.tau_i_e,   # T_i/T_e, pressure closure of the figures
         "nu_n":        nu_n,
         "nu_T":        nu_T,
         "rho_ped":     rho_ped,
@@ -3426,9 +3601,11 @@ def save_run_output(config: GlobalConfig,
         nu_n = 0; nu_T = 0; rho_ped = 1.0; n_ped_frac = 0; T_ped_frac = 0
     Vprime_data = None
     if config.Plasma_geometry == 'refined' and np.isfinite(κ) and np.isfinite(δ):
+        # Same grid as run(), so report integrals match the physics chain
         Vprime_data = precompute_Vprime(config.R0, config.a, κ, δ,
                                          geometry_model='refined',
-                                         kappa_95=κ_95, delta_95=δ_95)
+                                         kappa_95=κ_95, delta_95=δ_95,
+                                         N_rho=500, N_theta=200)
     rho_rad_core = config.rho_rad_core
 
     # ── Write results report (console + file) ─────────────────────────────────
@@ -3613,7 +3790,8 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] Psi_CS      (CS flux requirement)               : {ΨCS_Total:.3f} [Wb]", file=out)
         print(f"[O] V_loop      (Steady-state loop voltage)         : {Vloop*1e3:.1f} [mV]", file=out)
         print("-------------------------------------------------------------------------", file=out)
-        print(f"[I] P_fus  (Fusion power)                           : {config.P_fus:.3f} [MW]",  file=out)
+        print(f"[I] Fuel   (Fuel mix)                               : {config.Fuel}",  file=out)
+        print(f"[I] P_fus  (Fusion power)                           : {config.P_fus:.6g} [MW]",  file=out)
         print(f"[O] P_CD   (Current drive power)                    : {P_CD:.3f} [MW]",           file=out)
         print(f"[O]  \u251c gamma_LH  (LHCD efficiency)                  : {eta_LH:.4f} [MA/MW\u00b7m\u00b2]",  file=out)
         print(f"[O]  \u251c gamma_EC  (ECCD efficiency)                  : {eta_EC:.4f} [MA/MW\u00b7m\u00b2]",  file=out)
@@ -3686,7 +3864,8 @@ def save_run_output(config: GlobalConfig,
             # (same call as in run(); P_tot = P_alpha + P_aux + P_Ohm with
             # P_aux + P_Ohm = P_fus / Q by the D0FUS definition of Q).
             _Pfus_disp = config.P_fus
-            _Ptot_disp = f_P_alpha(_Pfus_disp) + (_Pfus_disp / Q if Q > 0 else 0.0)
+            _Ptot_disp = (f_P_alpha(_Pfus_disp, fuel_power_split(config)[0])
+                          + (_Pfus_disp / Q if Q > 0 else 0.0))
             _fnsl_disp = config.f_n_sep * (nbar / nbar_line)
             _fnel_disp = (f_n_edge_ratio(nu_n, rho_ped, n_ped_frac)
                           * (nbar / nbar_line))
@@ -3794,7 +3973,7 @@ def save_run_output(config: GlobalConfig,
             print("-------------------------------------------------------------------------", file=out)
             try:
                 # Derived quantities from D0FUS convergence
-                P_th = config.P_fus * (0.8 * M_blanket_effective(config.Blanket_choice) + 0.2) + P_CD   # total thermal [MW], neutron-only multiplication
+                P_th = config.P_fus * thermal_multiplier(config) + P_CD   # total thermal [MW], neutron-only multiplication
                 P_e  = max(P_elec, 1.0)                          # net electric [MWe]
                 S_FW = Surface                                   # first-wall surface [m^2]
 
@@ -4084,10 +4263,10 @@ def main(input_file: str = None, save_figures: bool = False,
         print("=" * 73 + "\n")
 
     try:
-        # Resolve the f_GW-prescribed temperature here (not only inside
+        # Resolve the f_GW-prescribed Tbar or P_fus here (not only inside
         # run) so that save_run_output receives the resolved configuration
-        # and reports the solved Tbar instead of the deck placeholder.
-        config     = resolve_Tbar(config, verbose=max(verbose, 1))
+        # and reports the solved value instead of the deck placeholder.
+        config     = resolve_operating_point(config, verbose=max(verbose, 1))
         results    = run(config, verbose=verbose)
         output_dir = os.path.join(os.path.dirname(__file__), '..', 'D0FUS_OUTPUTS')
         os.makedirs(output_dir, exist_ok=True)

@@ -57,3 +57,5 @@ D0FUS_figures_catalog/
 # Local inputs and figures (not tracked)
 D0FUS_INPUTS/ITER/
 SFPlant_cross_sections/
+
+D0FUS_INPUTS/SPARC/
