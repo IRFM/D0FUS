@@ -6427,7 +6427,7 @@ def f_coil_masses(
     V_steel_TF: float, V_sc_TF: float, V_cu_TF: float, V_In_TF: float,
     V_steel_CS: float, V_sc_CS: float, V_cu_CS: float, V_In_CS: float,
     Chosen_Steel: str, Supra_choice: str,
-    f_TF_steel_mass: float = 2.0,
+    f_TF_steel_mass: float = 1.0,
 ) -> tuple:
     """
     Compute the mass of each material component for the TF and CS coil systems.

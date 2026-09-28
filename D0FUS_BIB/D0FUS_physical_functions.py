@@ -27,6 +27,122 @@ else:
     from D0FUS_BIB.D0FUS_import import *
     from D0FUS_BIB.D0FUS_parameterization import *
 
+# =============================================================================
+# Plant electrical balance and pulsed-operation utilities (M. Fletcher)
+# =============================================================================
+# Simplified recirculating-power model, scaled on EU-DEMO reference values
+# (GlobalConfig.*_DEMO_ref, f_BoP):
+#   cryogenic loads  proportional to the magnet cold mass (TF + CS),
+#   house load       proportional to P_fus,
+#   BoP load         fraction of P_th.
+# ~100 kW equivalent refrigeration at 4.5 K for EU-DEMO: Corato et al.,
+# Fus. Eng. Des. 174 (2022) 112971. Other reference values: to be sourced.
+
+def f_coil_power_supply(E_mag_J, t_ramp_up_s):
+    """
+    Coil power-supply demand to recharge a coil in a given time.
+
+        P = E_mag / t   [MWe]
+
+    E_mag_J     : float  Stored magnetic energy [J].
+    t_ramp_up_s : float  Recharge time [s] (the dwell for the CS).
+    Returns 0 if either input is missing or t <= 0.
+    """
+    if E_mag_J is None or t_ramp_up_s is None or t_ramp_up_s <= 0:
+        return 0.0
+    return float(E_mag_J) / float(t_ramp_up_s) * 1.0e-6
+
+
+def f_feeder_current(I_TF_A, I_CS_A, N_TF=1, N_CS=1):
+    """Total TF + CS feeder current [MA]: I_TF N_TF + I_CS N_CS."""
+    return (float(I_TF_A) * float(N_TF) + float(I_CS_A) * float(N_CS)) / 1.0e6
+
+
+def f_cryo_cooling_power(M_cold_kg, M_cold_ref_kg=6.24e6, P_ref_kW=103.0):
+    """
+    Equivalent refrigeration load at 4.5 K [kW], linear in the magnet
+    cold mass (static heat loads through supports, radiation and feeders
+    scale with the size of the cold structure).
+
+    M_cold_kg     : float  TF + CS cold mass [kg].
+    M_cold_ref_kg : float  Reference cold mass (EU-DEMO) [kg].
+    P_ref_kW      : float  Reference refrigeration load (EU-DEMO) [kW].
+    """
+    return float(P_ref_kW) * float(M_cold_kg) / float(M_cold_ref_kg)
+
+
+def f_cryo_electric_power(M_cold_kg, M_cold_ref_kg=6.24e6, P_ref_MWe=29.0):
+    """Cryoplant electrical consumption [MWe], linear in the magnet cold mass."""
+    return float(P_ref_MWe) * float(M_cold_kg) / float(M_cold_ref_kg)
+
+
+def f_house_load(P_fus_MW, P_fus_ref_MW=2037.0, P_ref_MWe=46.5):
+    """Fixed house load [MWe], linear in P_fus."""
+    return float(P_ref_MWe) * float(P_fus_MW) / float(P_fus_ref_MW)
+
+
+def f_bop_power(P_th_MWth, f_BoP=0.03):
+    """Balance-of-plant (pumping) electrical load [MWe] = f_BoP * P_th."""
+    return float(f_BoP) * float(P_th_MWth)
+
+
+def f_pulsed_thermal_quantities(P_th_MWth, t_plateau_s, dwell_factor,
+                                eta_store=0.90):
+    """
+    Thermal storage that delivers a constant power over a full pulse cycle.
+
+    Cycle: flat-top t_p, dwell t_d = t_p (1/D - 1), with D the dwell factor.
+    The flat-top surplus (P_th - P_s) t_p is stored and returned with
+    efficiency eta_store during the dwell, eta (P_th - P_s) t_p = P_s t_d:
+
+        P_s     = P_th / (1 + t_d / (eta t_p))
+        E_store = (P_th - P_s) t_p = P_th t_p / (1 + eta t_p / t_d)
+
+    Returns (t_dwell [s], E_store_th [MWh_th], P_th_smoothed [MW_th]).
+    Without dwell (D >= 1): (0, 0, P_th).
+    """
+    if dwell_factor is None or float(dwell_factor) >= 1.0:
+        return 0.0, 0.0, float(P_th_MWth)
+    if dwell_factor <= 0 or t_plateau_s <= 0 or eta_store <= 0:
+        raise ValueError("dwell_factor, t_plateau_s and eta_store must be positive")
+    t_dwell = float(t_plateau_s) * (1.0 / float(dwell_factor) - 1.0)
+    E_store = (float(P_th_MWth) * float(t_plateau_s)
+               / (1.0 + float(eta_store) * float(t_plateau_s) / t_dwell))
+    P_smoothed = (float(P_th_MWth)
+                  / (1.0 + (1.0 / float(eta_store)) * t_dwell / float(t_plateau_s)))
+    return t_dwell, E_store / 3600.0, P_smoothed
+
+
+def f_recirculated_power(P_aux_MW, eta_WP, P_coil_CS_MWe, P_cryo_electric_MWe,
+                         P_BoP_MWe, P_house_load_MWe):
+    """
+    Recirculated electrical power [MWe].
+
+        P_var = P_aux / eta_WP + P_coil_CS + P_cryo + P_BoP
+        P_fix = P_house_load
+
+    Returns (P_var, P_fix, P_var + P_fix).
+    """
+    P_var = (float(P_aux_MW) / float(eta_WP) + float(P_coil_CS_MWe)
+             + float(P_cryo_electric_MWe) + float(P_BoP_MWe))
+    return P_var, float(P_house_load_MWe), P_var + float(P_house_load_MWe)
+
+
+def f_recirculated_energy(P_recirc_var_MWe, P_recirc_fix_MWe, CF):
+    """Annual recirculated electricity [MWh/yr] = 8760 (P_var CF + P_fix)."""
+    return 8760.0 * (float(P_recirc_var_MWe) * float(CF) + float(P_recirc_fix_MWe))
+
+
+def f_tritium_consumption(P_fus_MW, CF):
+    """
+    Annual D-T tritium burn [kg/yr] = 56 kg per GW_fus full-power year x CF.
+
+    1 GW.yr / 17.59 MeV = 1.12e28 reactions, x 3.016 u = 56.1 kg.
+    CF must be the burn-time fraction (Av x Util x Dwell).
+    """
+    return 56.0 * float(P_fus_MW) / 1000.0 * float(CF)
+
+
 if __name__ == "__main__":
     # ════════════════════════════════════════════════════════════════════
     # Executable verification suite
