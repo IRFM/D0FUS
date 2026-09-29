@@ -2922,6 +2922,7 @@ def run_genetic_optimization(input_file,
         print(f"    Budget ceiling:             {_budget*1e-3:.1f} B EUR  [{_tag}]")
     print("\n Best design metrics:")
     print(f"    R0      (major radius)        : {config.R0:9.3f}  [m]")
+    print(f"    a       (minor radius)        : {config.a:9.3f}  [m]")
     print(f"    B0      (on-axis field)       : {B0:9.3f}  [T]")
     print(f"    Ip      (plasma current)      : {Ip:9.2f}  [MA]")
     print(f"    Q       (fusion gain)         : {Q:9.2f}")
