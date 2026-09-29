@@ -250,6 +250,47 @@ def thermal_multiplier(config):
     return f_n * M_blanket_effective(config.Blanket_choice) + 1.0 - f_n
 
 
+def core_plasma_values(config, results):
+    """
+    On-axis plasma values (rho = 0) of a converged design.
+
+    T_e0 and n_e0 follow f_Tprof / f_nprof with the run() normalisation
+    (Miller V' in refined geometry, cylindrical otherwise). T_i0 = tau_i_e
+    T_e0. n_i0 is the fuel-ion density from quasi-neutrality with the He
+    ash and the impurity inventory: n_i0 = n_e0 (1 - 2 f_He - sum_j <Z_j> c_j).
+
+    Parameters
+    ----------
+    config  : GlobalConfig  Resolved configuration (Tbar, P_fus prescribed).
+    results : tuple         Return value of run(config).
+
+    Returns
+    -------
+    dict  Te0, Ti0 [keV], ne0, ni0 [1e20 m^-3]. NaN on failed designs.
+    """
+    nu_n, nu_T, rho_ped, n_ped_frac, T_ped_frac = _profile_params(config)
+    nbar, f_He = float(results[12]), float(results[40])
+    kappa_edge, kappa_95, delta_edge, delta_95 = (float(x) for x in results[62:66])
+    if not (np.isfinite(nbar) and np.isfinite(f_He)):
+        return dict(Te0=np.nan, Ti0=np.nan, ne0=np.nan, ni0=np.nan)
+    Vprime_data = None
+    if (config.Plasma_geometry == 'refined'
+            and np.isfinite(kappa_edge) and np.isfinite(delta_edge)):
+        # Same grid as run(), so the profile normalisation is identical
+        Vprime_data = precompute_Vprime(
+            config.R0, config.a, kappa_edge, delta_edge,
+            geometry_model='refined', kappa_95=kappa_95, delta_95=delta_95,
+            N_rho=500, N_theta=200)
+    Te0 = float(f_Tprof(config.Tbar, nu_T, 0.0, rho_ped=rho_ped,
+                        T_ped_frac=T_ped_frac, Vprime_data=Vprime_data))
+    ne0 = float(f_nprof(nbar, nu_n, 0.0, rho_ped=rho_ped,
+                        n_ped_frac=n_ped_frac, Vprime_data=Vprime_data))
+    species, conc = _parse_impurity_inventory(config)
+    Z1 = sum(get_Z_mean(sp, config.Tbar) * c for sp, c in zip(species, conc))
+    return dict(Te0=Te0, Ti0=config.tau_i_e * Te0,
+                ne0=ne0, ni0=ne0 * (1.0 - 2.0 * f_He - Z1))
+
+
 def resolve_Tbar(config: GlobalConfig, verbose: int = 0) -> GlobalConfig:
     """
     Resolve the volume-averaged temperature according to config.Tbar_mode.
