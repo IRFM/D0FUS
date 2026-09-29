@@ -25,9 +25,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from D0FUS_BIB.D0FUS_parameterization import *
 from D0FUS_BIB.D0FUS_radial_build_functions import *
 from D0FUS_BIB.D0FUS_physical_functions import *
-from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
 from D0FUS_BIB.D0FUS_cost_data import *
-from D0FUS_EXE.D0FUS_run import run, load_config_from_file, _PROFILE_PRESETS, _compute_Zeff_effective, thermal_multiplier
+from D0FUS_EXE.D0FUS_run import (run, load_config_from_file, _PROFILE_PRESETS, _compute_Zeff_effective,
+                                 evaluate_costs, evaluate_feasibility)
 from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG, coerce_input_value, resolve_deprecated_key
 
 # Backwards-compatible alias for dataclasses.replace (from D0FUS_import).
@@ -1963,57 +1963,17 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
          beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha,
          *_coil_extra) = res
 
-        # ── Plasma stability limits ──────────────────────────────────
-        betaN_limit_value = config.betaN_limit
-        q_limit_value     = config.q_limit
-
-        n_condition    = nbar_line / nG      if nG > 0       else np.nan
-        # Troyon limit uses the toroidal beta_N including the fast-alpha
-        # pressure (betaN_total), per the MHD stability convention.
-        beta_condition = betaN_total / betaN_limit_value
-        _q_kink        = q95 if config.kink_parameter == 'q95' else qstar
-        q_condition    = q_limit_value / _q_kink
-        max_limit      = max(n_condition, beta_condition, q_condition)
-
-        # ── Sheffield cost model (post-convergence) ──────────────────
-        _COE_val = np.nan
-        _C_invest_val = np.nan
-        if config.cost_model != 'None' and np.isfinite(cost):
-            try:
-                P_th_scan    = config.P_fus * thermal_multiplier(config) + P_CD   # neutron-only multiplication
-                T_op_limit_s = res[132]
-                CF_s         = res[135]
-                t_bl_yr_s    = res[130]
-                t_div_yr_s   = res[131]
-                V_rb_BB_s    = res[138]
-                _, _, Delta_TF_s = Number_TF_coils(config.R0, config.a, config.b, config.ripple_adm, config.L_min)
-                _H_TF_s = 2.0 * (κ * config.a + config.b + c)
-                (V_blanket_s, V_TF_Pappus_s, V_CS_geom_s, V_FI_s) = f_volume(
-                    config.a, config.b, c, d, config.R0, κ, Delta_TF_s, _H_TF_s)
-                _cres = f_costs_Sheffield(
-                    discount_rate=config.discount_rate,
-                    contingency=config.contingency,
-                    T_life=config.T_life,
-                    T_build=config.T_build,
-                    P_t=P_th_scan,
-                    P_e=max(P_elec, 1.0),
-                    P_aux=P_CD,
-                    Gamma_n=Gamma_n,
-                    T_op_limit=T_op_limit_s,
-                    CF=CF_s,
-                    t_life_bl_yr=t_bl_yr_s,
-                    t_life_div_yr=t_div_yr_s,
-                    V_FI=V_FI_s,
-                    V_pc=V_TF_Pappus_s + V_CS_geom_s,
-                    V_sg=V_blanket_s,
-                    V_bl=V_rb_BB_s,
-                    S_tt=0.1 * Surface,
-                    Supra_cost_factor=config.Supra_cost_factor,
-                )
-                _COE_val      = _cres[3]
-                _C_invest_val = _cres[2] * 1e-3  # M EUR → B EUR
-            except Exception:
-                pass
+        # ── Feasibility and cost: shared RUN evaluators ──────────────
+        # Same rule and same Sheffield geometry as the RUN report, so a scan
+        # cell and a RUN of the same inputs give identical verdicts and costs.
+        _fz = evaluate_feasibility(config, res)
+        n_condition    = _fz['ratios']['density']
+        beta_condition = _fz['ratios']['beta']
+        q_condition    = _fz['ratios']['q']
+        max_limit      = _fz['max_ratio']
+        _cres = evaluate_costs(config, res)
+        _COE_val      = _cres.get('COE', np.nan)
+        _C_invest_val = _cres.get('C_invest', np.nan) * 1e-3 if _cres else np.nan  # M EUR -> B EUR
 
         # ── Unpack radial build component volumes (offsets 37–43) ────────────
         V_rb_SOL_s        = _coil_extra[37]
@@ -2163,7 +2123,7 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
                                 else np.nan)
 
         # Radial build validity
-        if not np.isnan(r_d) and max_limit < 1 and r_d > 0:
+        if _fz['feasible']:
             outputs['radial_build'][y, x] = config.R0
         else:
             outputs['radial_build'][y, x] = np.nan

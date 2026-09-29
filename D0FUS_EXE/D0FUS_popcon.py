@@ -153,6 +153,7 @@ def compute_popcon(config, grid_spec, verbose=1):
     kappa   = float(res[_IDX['kappa']])
     delta   = float(res[_IDX['delta']])
     nG_raw  = f_nG(Ip, config.a)
+    q95_ref = float(res[_IDX['q95']])
 
     nu_n       = float(rd['nu_n'])
     nu_T       = float(rd['nu_T'])
@@ -223,9 +224,7 @@ def compute_popcon(config, grid_spec, verbose=1):
             config.Fuel, Tbar, nu_T, nu_n, rho_ped=rho_ped,
             n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
             Vprime_data=Vprime_data, tau_i_e=tau_ie)
-        # Ohmic power at the frozen inductive current.
         Zeff_eff = RUN._compute_Zeff_effective(config, f_alpha)
-        P_Ohm = f_P_Ohm(I_Ohm, Tbar, R0, a, kappa, Z_eff=Zeff_eff)
 
         for jn, nbl in enumerate(nbar_line_grid):
             nbar_vol = f_nbar_vol_from_line(nbl, nu_n, rho_ped=rho_ped,
@@ -237,19 +236,30 @@ def compute_popcon(config, grid_spec, verbose=1):
             pbar = f_pbar(nu_n, nu_T, nbar_vol, Tbar,
                           rho_ped=rho_ped, n_ped_frac=n_ped_frac,
                           T_ped_frac=T_ped_frac, Vprime_data=Vprime_data,
-                          tau_i_e=tau_ie)
+                          tau_i_e=tau_ie,
+                          n_ion_frac=RUN._ion_density_fraction(config, f_alpha))
             W_MJ = f_W_th(pbar, V) / 1e6
 
-            # Core/total radiation, mirroring the RUN driver calls.
+            # Ohmic power at the frozen inductive current, with the RUN
+            # profile-integrated neoclassical resistance (f_P_Ohm_integrated).
+            P_Ohm = f_P_Ohm_integrated(
+                I_Ohm, a, kappa, R0, Tbar, nbar_vol, Zeff_eff, q95_ref,
+                nu_T, nu_n, eta_model=config.eta_model,
+                rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
+                Vprime_data=Vprime_data)
+
+            # Core/total radiation, same calls (and Miller Jacobian) as RUN.
             Zeff_fuel = 1.0 + 2.0 * f_alpha - f_imp_dilution
             P_Brem = f_P_bremsstrahlung(nbar_vol, Tbar, Zeff_fuel, V,
                                         nu_n, nu_T, rho_ped=rho_ped,
                                         n_ped_frac=n_ped_frac,
-                                        T_ped_frac=T_ped_frac)
+                                        T_ped_frac=T_ped_frac,
+                                        Vprime_data=Vprime_data)
             P_syn = f_P_synchrotron(Tbar, R0, a, B0, nbar_vol, kappa,
                                     nu_n, nu_T, config.r_synch,
                                     rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-                                    T_ped_frac=T_ped_frac)
+                                    T_ped_frac=T_ped_frac,
+                                    Vprime_data=Vprime_data)
             P_line_core, P_line_tot = 0.0, 0.0
             for sp, fc in zip(imp_species, imp_conc):
                 _Pc, _Pt = f_P_line_radiation_profile(
@@ -272,7 +282,8 @@ def compute_popcon(config, grid_spec, verbose=1):
                      - P_alpha - P_Ohm)
 
             P_heat = P_alpha + max(P_aux, 0.0) + P_Ohm
-            P_sep = P_heat - P_rad_tot
+            # RUN convention (f_P_sep): P_sep = P_alpha + P_aux - P_rad_tot
+            P_sep = P_alpha + max(P_aux, 0.0) - P_rad_tot
             Q = P_fus / (P_aux + P_Ohm) if P_aux > 0 else np.inf
 
             # L-H threshold per the deck selector.
@@ -286,7 +297,8 @@ def compute_popcon(config, grid_spec, verbose=1):
             # Model-selectable density limit (power-dependent ones use P_sep).
             try:
                 _fnsl = config.f_n_sep * (nbar_vol / nbl)
-                _fnel = (f_n_edge_ratio(nu_n, rho_ped, n_ped_frac)
+                _fnel = (f_n_edge_ratio(nu_n, rho_ped, n_ped_frac,
+                                         Vprime_data=Vprime_data)
                          * (nbar_vol / nbl))
                 n_DL_line, _, _ = f_density_limit(
                     config.density_limit_model, Ip, a,
@@ -299,10 +311,15 @@ def compute_popcon(config, grid_spec, verbose=1):
             except ValueError:
                 n_DL_line = np.nan
 
-            # Normalised beta.
+            # Normalised beta, RUN Troyon convention: toroidal beta plus the
+            # fast-alpha pressure (betaN_total, compared to betaN_limit).
             betaT = f_beta_T(pbar, B0)
-            betaP = f_beta_P(a, kappa, pbar, Ip)
-            betaN = f_beta_N(f_beta(betaT, betaP), a, B0, Ip)
+            beta_fast, _, _ = f_beta_fast_alpha(
+                P_alpha, Tbar, nbar_vol, B0, V, nu_n, nu_T,
+                rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
+                Vprime_data=Vprime_data, tau_i_e=tau_ie,
+                A_DT=config.Atomic_mass, fuel=config.Fuel)
+            betaN = f_beta_N(betaT + beta_fast, a, B0, Ip)
 
             out['P_fus'][it, jn]      = P_fus
             out['P_alpha'][it, jn]    = P_alpha

@@ -158,15 +158,13 @@ except ModuleNotFoundError:
 # Project-specific D0FUS imports (kept here because they describe this
 # module's direct dependencies inside the D0FUS source tree). DEAP is already
 # provided by the centralised D0FUS_import wildcard above, so it is not
-# re-imported here. thermal_multiplier gives the merged thermal-power balance
-# (P_th = P_fus * (f_n*M_blanket + 1 - f_n) + P_CD, neutron-only multiplication).
+# re-imported here. Cost and radial-build closure come from the shared RUN
+# evaluators (evaluate_costs, radial_build_check), identical in every mode.
 from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG, coerce_input_value, resolve_deprecated_key
-from D0FUS_BIB.D0FUS_physical_functions import f_volume
-from D0FUS_BIB.D0FUS_radial_build_functions import Number_TF_coils, f_TF_cross_section
-from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
 from D0FUS_BIB.D0FUS_cost_data import *
-from D0FUS_EXE.D0FUS_run import (run, save_run_output, thermal_multiplier,
-                                  resolve_operating_point, core_plasma_values)
+from D0FUS_EXE.D0FUS_run import (run, save_run_output, resolve_operating_point,
+                                  core_plasma_values, evaluate_costs,
+                                  radial_build_check as check_radial_build)
 
 # Backwards-compatible alias: some legacy parts of the file may still use
 # the `dc_replace` name (and the docstring references it).
@@ -681,46 +679,6 @@ def compute_stability_penalty(nbar_line, nG, betaT, betaN, q_kink,
     return is_stable, total_penalty, violations
 
 
-def check_radial_build(cost, r_d, c_TF, d_CS, q_kink, betaT, nbar_line):
-    """
-    Check radial build validity for a candidate design.
-
-    Parameters
-    ----------
-    cost      : float  Machine cost proxy [m³].
-    r_d       : float  Innermost radial build radius R0 - a - b - c - d [m].
-    c_TF      : float  TF inboard radial thickness [m].
-    d_CS      : float  CS radial thickness [m].
-    q_kink    : float  Kink safety factor (q* or q95, see kink_parameter).
-    betaT     : float  Toroidal beta (fraction).
-    nbar_line : float  Line-averaged density [10²⁰ m⁻³].
-
-    Returns
-    -------
-    (bool, str or None)
-        (True, None) if the design is geometrically valid,
-        (False, reason) otherwise.
-    """
-    # All key scalars must be finite and non-negative
-    for name, val in [('cost', cost), ('r_d', r_d), ('c_TF', c_TF),
-                      ('d_CS', d_CS), ('q_kink', q_kink), ('betaT', betaT),
-                      ('nbar_line', nbar_line)]:
-        if val is None:
-            return False, f"{name} is None"
-        if isinstance(val, (int, float)):
-            if np.isnan(val) or np.isinf(val):
-                return False, f"{name} is NaN/Inf"
-            if val < 0:
-                return False, f"{name} = {val:.4g} < 0"
-
-    # TF and CS thicknesses must be physically meaningful (> 1 mm)
-    if c_TF < 1e-3:
-        return False, f"c_TF = {c_TF:.4g} m (too thin)"
-    if d_CS < 1e-3:
-        return False, f"d_CS = {d_CS:.4g} m (too thin / no CS)"
-
-    return True, None
-
 #%% Fitness Evaluation
 
 def _safe_real(value):
@@ -943,55 +901,15 @@ def evaluate_individual(individual, verbose=False):
             raw_fitness = _safe_real(config.R0)
 
         elif objective in ('COE', 'C_invest', 'P_elec'):
-            # Sheffield (2016) cost model — needs derived quantities
-            P_CD    = _safe_real(output[_IDX['P_CD']])
-            P_elec  = _safe_real(output[_IDX['P_elec']])
-            Gamma_n = _safe_real(output[_IDX['Gamma_n']])
-            Surface = _safe_real(output[_IDX['Surface']])
-            κ       = _safe_real(output[_IDX['kappa']])
-
-            if any(np.isnan(v) for v in [P_CD, P_elec, Gamma_n, Surface, κ]):
+            # Sheffield (2016) cost, shared RUN evaluator (exact RUN volumes)
+            P_elec = _safe_real(output[_IDX['P_elec']])
+            _cres = evaluate_costs(config, output)
+            if not _cres:
                 if verbose:
-                    print(f"  [PENALTY] NaN in cost inputs: P_CD={P_CD:.4g} "
-                          f"P_elec={P_elec:.4g} Gamma_n={Gamma_n:.4g} "
-                          f"Surface={Surface:.4g} kappa={κ:.4g}")
+                    print("  [PENALTY] non-finite cost inputs")
                 return (PENALTY_VALUE,)
-
-            P_th         = config.P_fus * thermal_multiplier(config) + P_CD   # neutron-only multiplication
-            T_op_limit_g = _safe_real(output[_IDX['T_op_limit']])
-            CF_g         = _safe_real(output[_IDX['CF']])
-            t_bl_yr_g    = _safe_real(output[_IDX['t_life_bl_yr']])
-            t_div_yr_g   = _safe_real(output[_IDX['t_life_div_yr']])
-            V_rb_BB_g    = _safe_real(output[_IDX['V_rb_BB']])
-            # Analytical H_TF approximation avoids the ODE solve inside
-            # f_TF_cross_section, which is called for every GA individual
-            _, _, Delta_TF_g = Number_TF_coils(config.R0, config.a, config.b, config.ripple_adm, config.L_min)
-            _H_TF_g = 2.0 * (κ * config.a + config.b + c_TF)
-            (V_blanket, V_TF_Pappus, V_CS_geom, V_FI) = f_volume(
-                config.a, config.b, c_TF, d_CS, config.R0, κ, Delta_TF_g, _H_TF_g)
-
-            _cres = f_costs_Sheffield(
-                discount_rate=config.discount_rate,
-                contingency=config.contingency,
-                T_life=config.T_life,
-                T_build=config.T_build,
-                P_t=P_th,
-                P_e=max(P_elec, 1.0),
-                P_aux=P_CD,
-                Gamma_n=Gamma_n,
-                T_op_limit=T_op_limit_g,
-                CF=CF_g,
-                t_life_bl_yr=t_bl_yr_g,
-                t_life_div_yr=t_div_yr_g,
-                V_FI=V_FI,
-                V_pc=V_TF_Pappus + V_CS_geom,
-                V_sg=V_blanket,
-                V_bl=V_rb_BB_g,
-                S_tt=0.1 * Surface,
-                Supra_cost_factor=config.Supra_cost_factor,
-            )
-            _COE   = _safe_real(_cres[3])   # COE [EUR/MWh]
-            _C_inv = _safe_real(_cres[2])    # C_invest [M EUR]
+            _COE   = _safe_real(_cres['COE'])        # COE [EUR/MWh]
+            _C_inv = _safe_real(_cres['C_invest'])   # C_invest [M EUR]
 
             if objective == 'COE':
                 raw_fitness = _COE
@@ -2990,35 +2908,10 @@ def run_genetic_optimization(input_file,
     # Compute Sheffield COE for the best design (regardless of objective)
     _COE_best = np.nan
     _C_invest_best = np.nan
-    try:
-        P_CD_best      = final_output[_IDX['P_CD']]
-        Gamma_n_best   = final_output[_IDX['Gamma_n']]
-        Surface_best   = final_output[_IDX['Surface']]
-        κ_best         = final_output[_IDX['kappa']]
-        T_op_limit_b   = final_output[_IDX['T_op_limit']]
-        CF_b           = final_output[_IDX['CF']]
-        t_bl_yr_b      = final_output[_IDX['t_life_bl_yr']]
-        t_div_yr_b     = final_output[_IDX['t_life_div_yr']]
-        V_rb_BB_b      = final_output[_IDX['V_rb_BB']]
-        P_th_best      = config.P_fus * thermal_multiplier(config) + P_CD_best   # neutron-only multiplication
-        _, _, Delta_TF_b = Number_TF_coils(config.R0, config.a, config.b, config.ripple_adm, config.L_min)
-        _H_TF_b = 2.0 * (κ_best * config.a + config.b + c_TF)
-        (V_blanket_b, V_TF_Pappus_b, V_CS_geom_b, V_FI_b) = f_volume(
-            config.a, config.b, c_TF, d_CS, config.R0, κ_best, Delta_TF_b, _H_TF_b)
-        _cres_best = f_costs_Sheffield(
-            discount_rate=config.discount_rate, contingency=config.contingency,
-            T_life=config.T_life, T_build=config.T_build,
-            P_t=P_th_best, P_e=max(P_elec, 1.0), P_aux=P_CD_best,
-            Gamma_n=Gamma_n_best,
-            T_op_limit=T_op_limit_b, CF=CF_b,
-            t_life_bl_yr=t_bl_yr_b, t_life_div_yr=t_div_yr_b,
-            V_FI=V_FI_b, V_pc=V_TF_Pappus_b+V_CS_geom_b, V_sg=V_blanket_b, V_bl=V_rb_BB_b,
-            S_tt=0.1*Surface_best,
-            Supra_cost_factor=config.Supra_cost_factor)
-        _COE_best     = _cres_best[3]
-        _C_invest_best = _cres_best[2] * 1e-3  # M EUR -> B EUR
-    except Exception:
-        pass
+    _cres_best = evaluate_costs(config, final_output)
+    if _cres_best:
+        _COE_best      = _cres_best['COE']
+        _C_invest_best = _cres_best['C_invest'] * 1e-3  # M EUR -> B EUR
 
     objective = static_inputs.get('fitness_objective', 'COE')
     print(f"\n Fitness objective: {objective}")

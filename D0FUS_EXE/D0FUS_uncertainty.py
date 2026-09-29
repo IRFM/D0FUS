@@ -49,9 +49,6 @@ except ModuleNotFoundError:
 
 # --- Project-specific D0FUS dependencies -------------------------------------
 from D0FUS_EXE import D0FUS_run as RUN
-from D0FUS_BIB.D0FUS_physical_functions import f_volume
-from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
-from D0FUS_BIB.D0FUS_radial_build_functions import Number_TF_coils
 
 # Backwards-compatible alias for dataclasses.replace, used throughout the module.
 dc_replace = replace
@@ -119,47 +116,6 @@ def design_value(base, name):
 # =============================================================================
 # Single-configuration evaluation (the engine brick)
 # =============================================================================
-def _compute_cost(cfg, P_CD, P_elec, Gamma_n, Surface, c, d, kappa,
-                  T_op_limit, CF, t_life_bl_yr, t_life_div_yr, V_rb_BB):
-    """Sheffield (2016) COE [EUR/MWh] and capital cost [B EUR], as in D0FUS_scan.
-
-    Aligned on the merged exact-volume cost path: f_volume now takes the
-    Princeton-D (Delta_TF, H_TF) signature, and f_costs_Sheffield consumes the
-    availability schedule (T_op_limit, CF) and component lifetimes
-    (t_life_bl_yr, t_life_div_yr) produced by run(), in place of the former
-    Util_factor / Dwell_factor / dt_rep inputs.
-    """
-    try:
-        P_th = cfg.P_fus * RUN.thermal_multiplier(cfg) + P_CD   # neutron-only multiplication
-        _, _, Delta_TF = Number_TF_coils(cfg.R0, cfg.a, cfg.b, cfg.ripple_adm, cfg.L_min)
-        H_TF = 2.0 * (kappa * cfg.a + cfg.b + c)
-        (V_blanket, V_TF_Pappus, V_CS_geom, V_FI) = f_volume(
-            cfg.a, cfg.b, c, d, cfg.R0, kappa, Delta_TF, H_TF)
-        cres = f_costs_Sheffield(
-            discount_rate=cfg.discount_rate, contingency=cfg.contingency,
-            T_life=cfg.T_life, T_build=cfg.T_build,
-            P_t=P_th, P_e=max(P_elec, 1.0), P_aux=P_CD, Gamma_n=Gamma_n,
-            T_op_limit=T_op_limit, CF=CF,
-            t_life_bl_yr=t_life_bl_yr, t_life_div_yr=t_life_div_yr,
-            V_FI=V_FI, V_pc=V_TF_Pappus + V_CS_geom, V_sg=V_blanket,
-            V_bl=V_rb_BB, S_tt=0.1 * Surface, Supra_cost_factor=cfg.Supra_cost_factor)
-        return float(cres[3]), float(cres[2]) * 1e-3
-    except Exception:
-        return np.nan, np.nan
-
-
-def _radial_build_ok(cost, r_d, c_TF, d_CS, q_kink, betaT, nbar_line):
-    """Faithful mirror of D0FUS_genetic.check_radial_build (geometric closure)."""
-    for val in (cost, r_d, c_TF, d_CS, q_kink, betaT, nbar_line):
-        if val is None or isinstance(val, (complex, np.complexfloating)):
-            return False
-        if not np.isfinite(val) or val < 0:
-            return False
-    if c_TF < 1e-3 or d_CS < 1e-3:   # TF / CS winding pack too thin to be valid
-        return False
-    return True
-
-
 def evaluate(cfg):
     """Run one configuration in memory and return QoIs plus feasibility.
 
@@ -201,13 +157,6 @@ def evaluate(cfg):
      f_sc_CS, f_cu_CS, f_He_pipe_CS, f_void_CS, f_He_CS, f_In_CS,
      beta_fast_alpha, betaN_total, tau_sd_alpha, W_fast_alpha, *_rest) = res
 
-    # Trailing tuple fields appended by the dev-Mat integration (the coil /
-    # volume / mass block, then the divertor dict as the very last element).
-    # Extract the cost inputs by absolute index, identical to D0FUS_scan.
-    _g = lambda i: (res[i] if len(res) > i else np.nan)
-    _t_bl_yr, _t_div_yr        = _g(130), _g(131)
-    _T_op_limit, _CF, _V_rb_BB = _g(132), _g(135), _g(138)
-    _diag = _rest[-1] if _rest else {}
 
     plasma_ok  = bool(np.isfinite(Q) and np.isfinite(Ip) and Ip > 0)
     closure_ok = bool(np.isfinite(cost))
@@ -219,30 +168,24 @@ def evaluate(cfg):
     c_TF = r_sep - r_c if np.isfinite(r_c) and np.isfinite(r_sep) else np.nan
     d_CS = r_c - r_d   if np.isfinite(r_c) and np.isfinite(r_d)   else np.nan
     f_bs = (Ib / Ip * 100.0) if Ip > 0 else np.nan
-    gw   = (nbar_line / nG) if nG > 0 else np.nan
-    COE, C_invest = _compute_cost(cfg, P_CD, P_elec, Gamma_n, Surface, c, d, kappa,
-                                  _T_op_limit, _CF, _t_bl_yr, _t_div_yr, _V_rb_BB)
 
-    q_kink = q95 if cfg.kink_parameter == 'q95' else qstar
-
-    build_ok  = _radial_build_ok(cost, r_d, c_TF, d_CS, q_kink, betaT, nbar_line)
-    gw_ok     = bool(np.isfinite(gw)    and gw    <= cfg.Greenwald_limit)
-    troyon_ok = bool(np.isfinite(betaN_total) and betaN_total <= cfg.betaN_limit)
-    kink_ok   = bool(np.isfinite(q_kink) and q_kink >= cfg.q_limit)
-    stable_ok = bool(gw_ok and troyon_ok and kink_ok)
-    feasible  = bool(build_ok and stable_ok)
-
-    gw_margin     = (1.0 - gw / cfg.Greenwald_limit) if np.isfinite(gw)    else np.nan
-    troyon_margin = (1.0 - betaN_total / cfg.betaN_limit)  if np.isfinite(betaN_total) else np.nan
-    kink_margin   = (q_kink / cfg.q_limit - 1.0)     if np.isfinite(q_kink) else np.nan
-
-    binding = None
-    if not feasible:
-        cand = {'build':     -1.0 if not build_ok else np.inf,
-                'greenwald':  gw_margin     if not gw_ok     else np.inf,
-                'troyon':     troyon_margin if not troyon_ok else np.inf,
-                'kink':       kink_margin   if not kink_ok   else np.inf}
-        binding = min(cand, key=lambda k: cand[k] if np.isfinite(cand[k]) else np.inf)
+    # Cost and feasibility: shared RUN evaluators, identical in every mode.
+    # nG already carries Greenwald_limit (and the density_limit_model), so the
+    # density ratio is compared to 1, not to Greenwald_limit a second time.
+    _cres = RUN.evaluate_costs(cfg, res)
+    COE = _cres.get('COE', np.nan)
+    C_invest = _cres['C_invest'] * 1e-3 if _cres else np.nan   # M EUR -> B EUR
+    _fz = RUN.evaluate_feasibility(cfg, res)
+    q_kink    = _fz['q_kink']
+    build_ok  = _fz['build_ok']
+    stable_ok = bool(all(np.isfinite(v) and v <= 1.0 for v in _fz['ratios'].values()))
+    feasible  = _fz['feasible']
+    gw_margin     = 1.0 - _fz['ratios']['density']
+    troyon_margin = 1.0 - _fz['ratios']['beta']
+    kink_margin   = 1.0 / _fz['ratios']['q'] - 1.0
+    Ip_margin     = (1.0 - _fz['ratios']['Ip']) if 'Ip' in _fz['ratios'] else np.nan
+    binding = {'density': 'greenwald', 'beta': 'troyon', 'q': 'kink',
+               'Ip': 'Ip', 'radial_build': 'build'}.get(_fz['binding'], _fz['binding'])
 
     return {
         'converged': True, 'feasible': feasible,
@@ -251,6 +194,7 @@ def evaluate(cfg):
         'f_bs': f_bs, 'beta_N': betaN, 'q95': q95, 'B0': B0, 'B_CS': B_CS,
         'P_sep': P_sep, 'd_TF': c_TF, 'd_CS': d_CS,
         'gw_margin': gw_margin, 'troyon_margin': troyon_margin, 'kink_margin': kink_margin,
+        'Ip_margin': Ip_margin,
     }
 
 
