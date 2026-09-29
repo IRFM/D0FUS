@@ -212,6 +212,21 @@ def _compute_Zeff_effective(config, f_alpha):
     return 1.0 + 2.0 * float(f_alpha) - Z1 + Z2
 
 
+def _ion_density_fraction(config, f_alpha):
+    """
+    Total ion density over electron density, n_i,tot / n_e, from
+    quasi-neutrality with the He ash and the impurity inventory:
+
+        n_i,tot / n_e = 1 - f_He - sum_j (<Z_j> - 1) c_j
+
+    (fuel n_e (1 - 2 f_He - sum_j <Z_j> c_j) + He f_He + impurities sum_j c_j),
+    with the same coronal <Z_j>(Tbar) as the fuel dilution and Z_eff.
+    """
+    species, conc = _parse_impurity_inventory(config)
+    Z1 = sum(get_Z_mean(s, config.Tbar) * c for s, c in zip(species, conc))
+    return 1.0 - float(f_alpha) - Z1 + float(sum(conc))
+
+
 def _profile_params(config):
     """
     Profile parameters (nu_n, nu_T, rho_ped, n_ped_frac, T_ped_frac) of the
@@ -289,6 +304,141 @@ def core_plasma_values(config, results):
     Z1 = sum(get_Z_mean(sp, config.Tbar) * c for sp, c in zip(species, conc))
     return dict(Te0=Te0, Ti0=config.tau_i_e * Te0,
                 ne0=ne0, ni0=ne0 * (1.0 - 2.0 * f_He - Z1))
+
+
+#%% Shared post-convergence evaluation (single source for every execution mode)
+# ---------------------------------------------------------------------------
+# RUN, SCAN, GENETIC and UNCERTAINTY all derive the Sheffield cost and the
+# feasibility verdict from these two functions, so that one design point gives
+# the same C_invest, COE and feasibility whatever the mode that evaluated it.
+
+# Absolute indices in the run() results tuple used below.
+_RI = dict(Surface=7, Ip=8, nbar_line=13, nG=14, betaT=17, qstar=19, q95=20,
+           P_CD=21, P_elec=25, cost=27, Gamma_n=39, c=44, d=51, r_d=61,
+           kappa=62, betaN_total=96, V_TF_one=99, V_CS_geom=100,
+           V_blanket=127, t_life_bl_yr=130, t_life_div_yr=131,
+           T_op_limit=132, CF=135, V_rb_BB=138, P_th=150)
+
+
+def evaluate_costs(config, results):
+    """
+    Sheffield (2016) cost breakdown of a converged design, on the RUN geometry.
+
+    Volumes are the exact ones computed by run(): TF on the conductor
+    centreline (V_TF_one x N_TF), CS with the resolved height (V_CS_geom),
+    blanket from the Miller / Princeton-D contours (V_blanket, V_rb_BB), and
+    the fusion-island cylinder of height H_TF from the Princeton-D solve.
+    P_th is read from the results tuple, so it carries the P_fus resolved by
+    run() (P_fus_mode = 'greenwald') rather than the deck placeholder.
+
+    Returns
+    -------
+    dict  All f_costs_Sheffield outputs (C_invest [M EUR], COE [EUR/MWh],
+          component costs) plus the geometric inputs. Empty dict when
+          cost_model = 'None' or when an input is non-finite.
+    """
+    if getattr(config, 'cost_model', 'None') == 'None':
+        return {}
+    g = {k: float(np.real(results[i])) for k, i in _RI.items()}
+    need = ('Surface', 'P_CD', 'P_elec', 'Gamma_n', 'c', 'd', 'kappa',
+            'V_TF_one', 'V_CS_geom', 'V_blanket', 't_life_bl_yr',
+            't_life_div_yr', 'T_op_limit', 'CF', 'V_rb_BB', 'P_th')
+    if not all(np.isfinite(g[k]) for k in need):
+        return {}
+    try:
+        N_TF, _, Delta_TF = Number_TF_coils(config.R0, config.a, config.b,
+                                            config.ripple_adm, config.L_min)
+        N_TF, Delta_TF = int(N_TF), float(Delta_TF)
+        H_TF = float(f_TF_cross_section(config.a, config.b, config.R0,
+                                        g['c'], Delta_TF)[2])
+        V_FI = float(f_volume(config.a, config.b, g['c'], g['d'], config.R0,
+                              g['kappa'], Delta_TF, H_TF)[3])
+    except Exception:
+        return {}
+    inputs = dict(P_t=g['P_th'], P_e=max(g['P_elec'], 1.0), P_aux=g['P_CD'],
+                  Gamma_n=g['Gamma_n'], T_op_limit=g['T_op_limit'], CF=g['CF'],
+                  t_life_bl_yr=g['t_life_bl_yr'], t_life_div_yr=g['t_life_div_yr'],
+                  V_FI=V_FI, V_pc=g['V_TF_one'] * N_TF + g['V_CS_geom'],
+                  V_sg=g['V_blanket'], V_bl=g['V_rb_BB'], S_tt=0.1 * g['Surface'])
+    out = f_costs_Sheffield(
+        discount_rate=config.discount_rate, contingency=config.contingency,
+        T_life=config.T_life, T_build=config.T_build,
+        Supra_cost_factor=config.Supra_cost_factor, **inputs)
+    keys = ('T_op_limit', 'CF', 'C_invest', 'COE', 'C_ind', 'C_Op_waste',
+            'C_Op_OM', 'C_Op_F', 'C_syst_other', 'C_syst_BOP', 'C_syst_heat',
+            'C_syst_aux', 'C_reac_tt', 'C_reac_bl', 'C_reac_sg', 'C_reac_pc')
+    res = {k: float(v) for k, v in zip(keys, out)}
+    res.update(inputs, N_TF=N_TF, Delta_TF=Delta_TF, H_TF=H_TF)
+    return res
+
+
+def radial_build_check(cost, r_d, c_TF, d_CS, q_kink, betaT, nbar_line):
+    """
+    Geometric closure of a design: every key scalar finite and non-negative,
+    TF and CS thicker than 1 mm. Returns (ok, reason); reason is None if ok.
+    """
+    for name, val in (('cost', cost), ('r_d', r_d), ('c_TF', c_TF),
+                      ('d_CS', d_CS), ('q_kink', q_kink), ('betaT', betaT),
+                      ('nbar_line', nbar_line)):
+        try:
+            v = float(val)
+        except (TypeError, ValueError):
+            return False, f"{name} is not a real number"
+        if not np.isfinite(v):
+            return False, f"{name} is NaN/Inf"
+        if v < 0:
+            return False, f"{name} = {v:.4g} < 0"
+    if c_TF < 1e-3:
+        return False, f"c_TF = {c_TF:.4g} m (too thin)"
+    if d_CS < 1e-3:
+        return False, f"d_CS = {d_CS:.4g} m (too thin / no CS)"
+    return True, None
+
+
+def evaluate_feasibility(config, results):
+    """
+    Feasibility verdict of a converged design (single definition for all modes).
+
+    Constraints, each expressed as a ratio that must stay <= 1:
+      density : nbar_line / nG      (nG already carries Greenwald_limit and the
+                                     selected density_limit_model)
+      beta    : betaN_total / betaN_limit   (Troyon, fast alphas included)
+      q       : q_limit / q_kink    (q_kink = q95 or q* per kink_parameter)
+      Ip      : Ip / Ip_limit       (only when Ip_limit is set)
+    Radial build: every key scalar finite and non-negative, c_TF and d_CS
+    thicker than 1 mm (the GENETIC check_radial_build rule).
+
+    Returns
+    -------
+    dict  ratios, 'max_ratio', 'build_ok', 'feasible' and 'binding' (name of
+          the most violated constraint, None when feasible).
+    """
+    g = {k: float(np.real(results[i])) for k, i in _RI.items()}
+    q_kink = g['q95'] if config.kink_parameter == 'q95' else g['qstar']
+    ratios = {
+        'density': g['nbar_line'] / g['nG'] if g['nG'] > 0 else np.nan,
+        'beta': g['betaN_total'] / config.betaN_limit,
+        'q': config.q_limit / q_kink if q_kink > 0 else np.nan,
+    }
+    Ip_lim = config.Ip_limit
+    if Ip_lim is not None and np.isfinite(Ip_lim) and Ip_lim > 0:
+        ratios['Ip'] = g['Ip'] / Ip_lim
+    build_ok, build_reason = radial_build_check(
+        g['cost'], g['r_d'], g['c'], g['d'], q_kink, g['betaT'], g['nbar_line'])
+    finite = all(np.isfinite(v) for v in ratios.values())
+    max_ratio = max(ratios.values()) if finite else np.nan
+    feasible = bool(build_ok and finite and max_ratio <= 1.0)
+    if feasible:
+        binding = None
+    elif not build_ok:
+        binding = 'radial_build'
+    elif not finite:
+        binding = 'non_finite'
+    else:
+        binding = max(ratios, key=ratios.get)
+    return dict(ratios=ratios, max_ratio=max_ratio, build_ok=build_ok,
+                build_reason=build_reason, feasible=feasible, binding=binding,
+                q_kink=q_kink)
 
 
 def resolve_Tbar(config: GlobalConfig, verbose: int = 0) -> GlobalConfig:
@@ -525,8 +675,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     alpha_J                   = config.alpha_J
     Option_Kappa              = config.Option_Kappa
     κ_manual                  = config.κ_manual
-    betaN_limit               = config.betaN_limit   # Used in D0FUS_scan.py check_radial_build
-    q_limit                   = config.q_limit        # Used in D0FUS_scan.py check_radial_build
+    betaN_limit               = config.betaN_limit   # Feasibility: evaluate_feasibility()
+    q_limit                   = config.q_limit        # Feasibility: evaluate_feasibility()
     Greenwald_limit           = config.Greenwald_limit
     density_limit_model       = config.density_limit_model
     ms                        = config.ms
@@ -990,7 +1140,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     def _solve_q_profile(Ip_loc, I_CD_loc, q95_loc, B0_loc, nbar_loc,
                          rho_CD_loc, delta_CD_loc,
                          n_rho=60, max_iter=10, tol=5e-3, damping=0.5,
-                         q_init=None, Zeff_loc=None):
+                         q_init=None, Zeff_loc=None, n_ion_frac_loc=1.0):
         """
         Mode-aware front end for q,j profile evaluation.
 
@@ -1026,7 +1176,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 rho_CD=rho_CD_loc, delta_CD=delta_CD_loc,
                 q_init=q_init,
                 n_rho=n_rho, max_iter=max_iter, tol=tol, damping=damping,
-                tau_i_e=tau_i_e)
+                tau_i_e=tau_i_e, n_ion_frac=n_ion_frac_loc)
         else:
             raise ValueError(
                 f"Unknown q_profile_mode: '{q_profile_mode}'. "
@@ -1075,6 +1225,9 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         # Expose f_alpha to the CD dispatcher (used by f_etaCD_NBI_physics)
         config._f_alpha = f_alpha
 
+        # Total ion density over n_e (quasi-neutrality with He ash and impurities)
+        n_ion_frac_loc = 1.0 - f_alpha - f_imp_dilution + sum(imp_conc_list)
+
         # Volume-averaged density and pressure
         nbar_loc = f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, κ,
                           rho_ped=rho_ped, n_ped_frac=n_ped_frac,
@@ -1084,7 +1237,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         pbar_loc = f_pbar(nu_n, nu_T, nbar_loc, Tbar,
                           rho_ped=rho_ped, n_ped_frac=n_ped_frac,
                           T_ped_frac=T_ped_frac,
-                          Vprime_data=Vprime_data, tau_i_e=tau_i_e)
+                          Vprime_data=Vprime_data, tau_i_e=tau_i_e,
+                          n_ion_frac=n_ion_frac_loc)
         # Vprime_data is required: nbar_loc is a volume average on the refined
         # Miller Jacobian, so the profile rebuilt inside f_nbar_line must use
         # the same volume element (see the f_nbar_line docstring).
@@ -1109,11 +1263,10 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                                         Vprime_data=Vprime_data)
         # Synchrotron: Albajar (2001) + Fidone (2001) wall-reflection.
         # Pedestal parameters are passed so that T₀ and ne₀ are the ACTUAL
-        # on-axis values (from pedestal normalization).  The K factor uses
-        # the USER's αn/αT because the core profile (ρ < 0.7, where >91%
-        # of synchrotron is emitted) is parabolic in (1-(ρ/ρ_ped)²)^αT
-        # to better than 3%.  This matches PROCESS convention (Kovari §10:
-        # passes temp_plasma_electron_on_axis_kev with user alphan/alphat).
+        # on-axis values (from pedestal normalization). The K-factor shape
+        # exponents are fitted to the actual core profile when a pedestal is
+        # present (the user nu_T differs from the Albajar alpha_T by up to
+        # 10 % rms in T/T0), see _albajar_profile_exponents.
         P_syn_loc  = f_P_synchrotron(Tbar, R0, a, B0_solution, nbar_loc,
                                      κ, nu_n, nu_T, r_synch,
                                      rho_ped=rho_ped,
@@ -1189,12 +1342,13 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 T_ped_frac=T_ped_frac,
                 Vprime_data=Vprime_data, kappa_95=κ_95,
                 q_profile=_q_profile_cache[0],
-                trapped_fraction_model=trapped_fraction_model, tau_i_e=tau_i_e)
+                trapped_fraction_model=trapped_fraction_model, tau_i_e=tau_i_e,
+                n_ion_frac=n_ion_frac_loc)
         elif Bootstrap_choice == 'Segal':
             Ib_loc = f_Segal_Ib(
                 nu_n, nu_T, a / R0, κ, nbar_loc, Tbar, R0, Ip_loc,
                 rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-                T_ped_frac=T_ped_frac)
+                T_ped_frac=T_ped_frac, Vprime_data=Vprime_data)
         else:
             raise ValueError(
                 f"Unknown Bootstrap_choice: '{Bootstrap_choice}'. "
@@ -1208,7 +1362,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 config, a, R0, B0_solution, nbar_loc, Tbar, nu_n, nu_T,
                 Zeff,
                 rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-                T_ped_frac=T_ped_frac)
+                T_ped_frac=T_ped_frac,
+                    Vprime_data=Vprime_data)
             I_Ohm_loc = 0.0
             I_CD_loc  = f_ICD(Ip_loc, Ib_loc, I_Ohm_loc)
             P_CD_loc  = f_PCD(R0, nbar_loc, I_CD_loc, eta_CD_loc)
@@ -1224,7 +1379,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                     rho_EC,
                     theta_EC_pol_deg=config.theta_EC_pol_deg,
                     rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-                    T_ped_frac=T_ped_frac)
+                    T_ped_frac=T_ped_frac,
+                    Vprime_data=Vprime_data)
                 eta_NBI_loc = f_etaCD_NBI_physics(
                     A_beam, E_beam_keV,
                     a, R0, Tbar, nbar_loc, Zeff, nu_T, nu_n,
@@ -1232,7 +1388,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                     f_alpha=f_alpha,
                     angle_NBI_deg=config.angle_NBI_deg,
                     rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-                    T_ped_frac=T_ped_frac, fuel=Fuel)
+                    T_ped_frac=T_ped_frac, fuel=Fuel,
+                    Vprime_data=Vprime_data)
                 I_CD_loc = (f_I_CD(R0, nbar_loc, eta_LH_loc,  P_LH)
                           + f_I_CD(R0, nbar_loc, eta_EC_loc,  P_ECRH)
                           + f_I_CD(R0, nbar_loc, eta_NBI_loc, P_NBI))
@@ -1242,7 +1399,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                     config, a, R0, B0_solution, nbar_loc, Tbar, nu_n, nu_T,
                     Zeff,
                     rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-                    T_ped_frac=T_ped_frac)
+                    T_ped_frac=T_ped_frac,
+                    Vprime_data=Vprime_data)
                 I_CD_loc   = f_I_CD(R0, nbar_loc, eta_CD_loc, P_CD_loc)
 
             I_Ohm_loc = f_I_Ohm(Ip_loc, Ib_loc, I_CD_loc)
@@ -1329,7 +1487,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                     Ip_loc, I_CD_loc, q95_loc, B0_solution, nbar_loc,
                     rho_CD_loc=_rho_CD_q, delta_CD_loc=_delta_CD_q,
                     n_rho=60, max_iter=10, tol=5e-3, damping=0.5,
-                    q_init=_q_profile_cache[0], Zeff_loc=Zeff)
+                    q_init=_q_profile_cache[0], Zeff_loc=Zeff,
+                    n_ion_frac_loc=n_ion_frac_loc)
                 _q_cache_I_Ohm[0] = I_Ohm_loc
                 _q_cache_Ip[0]    = Ip_loc
             except Exception:
@@ -2031,8 +2190,9 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # For D-D the fast charged products (3He, T, p) are treated as alphas.
     # Their pressure is negligible at D-D power levels.
     beta_fast_alpha, tau_sd_alpha, W_fast_alpha = f_beta_fast_alpha(
-        P_Alpha, Tbar, nbar_solution, B0_solution, Volume_solution, Z_eff=Zeff,
-        A_DT=Atomic_mass)
+        P_Alpha, Tbar, nbar_solution, B0_solution, Volume_solution, nu_n, nu_T,
+        rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
+        Vprime_data=Vprime_data, tau_i_e=tau_i_e, A_DT=Atomic_mass, fuel=Fuel)
     # Toroidal beta INCLUDING the fast-alpha pressure — the MHD-relevant beta
     # for the Troyon limit (kink / ballooning / NTM modes respond to the TOTAL
     # pressure, thermal + fast).  betaN_total is the quantity compared against
@@ -2051,7 +2211,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                                    rho_EC,
                                    theta_EC_pol_deg=config.theta_EC_pol_deg,
                                    rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-                                   T_ped_frac=T_ped_frac)
+                                   T_ped_frac=T_ped_frac,
+                    Vprime_data=Vprime_data)
     eta_NBI_solution = f_etaCD_NBI_physics(
         A_beam, E_beam_keV,
         a, R0, Tbar, nbar_solution, Zeff, nu_T, nu_n,
@@ -2059,13 +2220,15 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         f_alpha=f_alpha_solution,
         angle_NBI_deg=config.angle_NBI_deg,
         rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-        T_ped_frac=T_ped_frac, fuel=Fuel)
+        T_ped_frac=T_ped_frac, fuel=Fuel,
+                    Vprime_data=Vprime_data)
 
     if Operation_mode == 'Steady-State':
         # Steady-State: γ_eff is needed to invert I_CD → P_CD.
         eta_CD_solution = f_etaCD_effective(
             config, a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T, Zeff,
-            rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac)
+            rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
+                    Vprime_data=Vprime_data)
         I_Ohm_solution  = 0
         P_Ohm_solution  = 0
         I_CD_solution   = f_ICD(Ip_solution, Ib_solution, I_Ohm_solution)
@@ -2083,7 +2246,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             P_CD_solution = P_aux_input
             eta_CD_solution = f_etaCD_effective(
                 config, a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T, Zeff,
-                rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac)
+                rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
+                    Vprime_data=Vprime_data)
             I_CD_solution = f_I_CD(R0, nbar_solution, eta_CD_solution, P_CD_solution)
         I_Ohm_solution = f_I_Ohm(Ip_solution, Ib_solution, I_CD_solution)
         # Ohmic power from the profile-integrated neoclassical resistance
@@ -2218,7 +2382,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         B0_solution, nbar_solution,
         rho_CD_loc=_rho_CD_eff, delta_CD_loc=_delta_CD_eff,
         n_rho=80, max_iter=20, tol=1e-3, damping=0.5,
-        q_init=_q_profile_cache[0], Zeff_loc=Zeff)
+        q_init=_q_profile_cache[0], Zeff_loc=Zeff,
+        n_ion_frac_loc=1.0 - f_alpha_solution - f_imp_dilution + sum(imp_conc_list))
     li_solution      = _q_sc['li']
 
     # L-H power threshold — all Martin/Delabie scalings were fitted with line-averaged density
@@ -2434,7 +2599,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # The native Greenwald density Ip/(pi a^2) remains available as nG_raw.
     _f_n_sep_line = f_n_sep * (nbar_solution / nbar_line_solution)  # n_sep/n̄_line
     # Giacomin near-separatrix anchoring: n(rho=0.9)/n̄_line from the profile
-    _f_n_edge_line = (f_n_edge_ratio(nu_n, rho_ped, n_ped_frac)
+    _f_n_edge_line = (f_n_edge_ratio(nu_n, rho_ped, n_ped_frac,
+                                         Vprime_data=Vprime_data)
                       * (nbar_solution / nbar_line_solution))
     _P_tot_heat   = P_Alpha + P_Aux_solution + P_Ohm_solution       # [MW]
     n_DL_line, n_DL_native, n_DL_convention = f_density_limit(
@@ -2905,48 +3071,28 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         _H_CS_rd = f_H_CS(_Z_bore_half_cb)
     _H_CS_mod_rd = f_H_CS_module(_H_CS_rd, config.N_sub_CS)
 
-    # ── Techno-economic breakdown (Sheffield), recomputed here so the cost
-    # figure matches the run() report. Mirrors the run() cost block exactly;
-    # empty dict when cost_model is off or any required input is unavailable.
+    # ── Techno-economic breakdown (Sheffield), shared evaluate_costs() so the
+    # figure matches the RUN report and every other execution mode; empty dict
+    # when cost_model is off or any required input is unavailable.
     _cost_bd = {}
-    if getattr(config, "cost_model", "None") != "None":
-        try:
-            _P_th_c = config.P_fus * thermal_multiplier(config) + _P_CD   # neutron-only multiplication
-            _P_e_c  = max(_P_elec, 1.0)
-            _T_op_c = results[132]; _CF_c = results[135]
-            _t_bl_c = results[130]; _t_div_c = results[131]; _V_rb_BB_c = results[138]
-            (_, _, _, _V_FI_c) = f_volume(config.a, config.b, c_TF, c_CS, config.R0,
-                                          kappa_edge, Delta_TF, _H_TF_cb)
-            _cr = f_costs_Sheffield(
-                discount_rate=config.discount_rate, contingency=config.contingency,
-                T_life=config.T_life, T_build=config.T_build,
-                P_t=_P_th_c, P_e=_P_e_c, P_aux=_P_CD, Gamma_n=_Gamma_n,
-                T_op_limit=_T_op_c, CF=_CF_c, t_life_bl_yr=_t_bl_c,
-                t_life_div_yr=_t_div_c, V_FI=_V_FI_c,
-                V_pc=_V_TF_one * N_TF + _V_CS_geom, V_sg=_V_blanket,
-                V_bl=_V_rb_BB_c, S_tt=0.1 * _Surface,
-                Supra_cost_factor=config.Supra_cost_factor)
-            (_Top2, _CF2, _C_CO, _COE_c, _C_ind, _C_waste, _C_OM, _C_F,
-             _C_other, _C_BOP, _C_heat, _C_aux,
-             _C_tt, _C_bl, _C_sg, _C_pc) = _cr
-            _cost_bd = {
-                "COE": float(_COE_c), "C_invest": float(_C_CO),
-                "currency": "M EUR (2025)", "coe_unit": "EUR/MWh",
-                "capex": {"TF + CS coils":    float(_C_pc),
-                          "Breeding blanket":  float(_C_bl),
-                          "Shield + gaps":     float(_C_sg),
-                          "Divertor targets":  float(_C_tt),
-                          "Heating plant":     float(_C_heat),
-                          "Balance of plant":  float(_C_BOP),
-                          "Aux. heating":      float(_C_aux),
-                          "Buildings & other": float(_C_other),
-                          "Indirect":          float(_C_ind)},
-                "opex": {"O&M":               float(_C_OM),
-                         "Fuel / consumables": float(_C_F),
-                         "Waste":              float(_C_waste)},
-            }
-        except Exception:
-            _cost_bd = {}
+    _cr = evaluate_costs(config, results)
+    if _cr:
+        _cost_bd = {
+            "COE": _cr['COE'], "C_invest": _cr['C_invest'],
+            "currency": "M EUR (2025)", "coe_unit": "EUR/MWh",
+            "capex": {"TF + CS coils":    _cr['C_reac_pc'],
+                      "Breeding blanket":  _cr['C_reac_bl'],
+                      "Shield + gaps":     _cr['C_reac_sg'],
+                      "Divertor targets":  _cr['C_reac_tt'],
+                      "Heating plant":     _cr['C_syst_heat'],
+                      "Balance of plant":  _cr['C_syst_BOP'],
+                      "Aux. heating":      _cr['C_syst_aux'],
+                      "Buildings & other": _cr['C_syst_other'],
+                      "Indirect":          _cr['C_ind']},
+            "opex": {"O&M":               _cr['C_Op_OM'],
+                     "Fuel / consumables": _cr['C_Op_F'],
+                     "Waste":              _cr['C_Op_waste']},
+        }
 
     return {
         # Plasma geometry
@@ -4039,7 +4185,8 @@ def save_run_output(config: GlobalConfig,
             _Ptot_disp = (f_P_alpha(_Pfus_disp, fuel_power_split(config)[0])
                           + (_Pfus_disp / Q if Q > 0 else 0.0))
             _fnsl_disp = config.f_n_sep * (nbar / nbar_line)
-            _fnel_disp = (f_n_edge_ratio(nu_n, rho_ped, n_ped_frac)
+            _fnel_disp = (f_n_edge_ratio(nu_n, rho_ped, n_ped_frac,
+                                         Vprime_data=Vprime_data)
                           * (nbar / nbar_line))
             n_DL_line_d, n_DL_native_d, n_DL_conv_d = f_density_limit(
                 config.density_limit_model, Ip, config.a,
@@ -4137,6 +4284,21 @@ def save_run_output(config: GlobalConfig,
             print(f"[O] RE indicators could not be computed: {_e}", file=out)
         print("=========================================================================", file=out)
 
+        # ── Feasibility verdict (shared rule of SCAN / GENETIC / UNCERTAINTY) ──
+        _fz = evaluate_feasibility(config, results)
+        print("=== Feasibility (same rule in every execution mode) ===", file=out)
+        print("-------------------------------------------------------------------------", file=out)
+        _lbl = {'density': 'nbar_line / n_lim  (density)',
+                'beta':    'betaN_total / betaN_limit',
+                'q':       f"q_limit / {'q95' if config.kink_parameter == 'q95' else 'q*'}",
+                'Ip':      'Ip / Ip_limit'}
+        for _k, _v in _fz['ratios'].items():
+            print(f"[O] {_lbl[_k]:48s}: {_v:.3f} [-]", file=out)
+        print(f"[O] {'Radial build closes (r_d, c, d > 0)':48s}: {_fz['build_ok']}", file=out)
+        _verdict = 'FEASIBLE' if _fz['feasible'] else f"INFEASIBLE (binding: {_fz['binding']})"
+        print(f"[O] {'Verdict':48s}: {_verdict}", file=out)
+        print("=========================================================================", file=out)
+
         # ── Techno-economic cost assessment (post-convergence) ────────────
         # Sheffield & Milora, Fus. Sci. Technol. 70, 14–35 (2016).
         # Uses D0FUS radial build volumes and power balance outputs.
@@ -4144,41 +4306,20 @@ def save_run_output(config: GlobalConfig,
             print("=== Cost Assessment — Sheffield (2016) ===", file=out)
             print("-------------------------------------------------------------------------", file=out)
             try:
-                # Derived quantities from D0FUS convergence
-                P_th = config.P_fus * thermal_multiplier(config) + P_CD   # total thermal [MW], neutron-only multiplication
-                P_e  = max(P_elec, 1.0)                          # net electric [MWe]
-                S_FW = Surface                                   # first-wall surface [m^2]
-
-                # Component volumes from D0FUS radial build
-                _, _, _H_TF_c, _, _, _, _, _, _ = f_TF_cross_section(
-                    config.a, config.b, config.R0, c, Delta_TF_disp)
-                (_, _, _, V_FI_c) = f_volume(
-                    config.a, config.b, c, d, config.R0, κ, Delta_TF_disp, _H_TF_c)
-
-                _res = f_costs_Sheffield(
-                    discount_rate  = config.discount_rate,
-                    contingency    = config.contingency,
-                    T_life         = config.T_life,
-                    T_build        = config.T_build,
-                    P_t            = P_th,
-                    P_e            = P_e,
-                    P_aux          = P_CD,
-                    Gamma_n        = Gamma_n,
-                    T_op_limit     = T_op_limit,
-                    CF             = CF,
-                    t_life_bl_yr   = t_life_bl_yr,
-                    t_life_div_yr  = t_life_div_yr,
-                    V_FI           = V_FI_c,
-                    V_pc           = V_TF_one * N_TF_disp + V_CS_geom,
-                    V_sg           = V_blanket,
-                    V_bl           = V_rb_BB,
-                    S_tt           = 0.1 * S_FW,
-                    Supra_cost_factor = config.Supra_cost_factor,
-                )
+                # Shared cost evaluation (identical in every execution mode)
+                _cr = evaluate_costs(config, results)
+                if not _cr:
+                    raise ValueError("non-finite cost inputs")
+                P_th, P_e, V_FI_c = _cr['P_t'], _cr['P_e'], _cr['V_FI']
                 (T_op_limit, CF, C_invest, COE,
                  C_ind, C_Op_waste, C_Op_OM, C_Op_F,
                  C_syst_other, C_syst_BOP, C_syst_heat, C_syst_aux,
-                 C_reac_tt, C_reac_bl, C_reac_sg, C_reac_pc) = _res
+                 C_reac_tt, C_reac_bl, C_reac_sg, C_reac_pc) = (
+                    _cr[k] for k in ('T_op_limit', 'CF', 'C_invest', 'COE',
+                                     'C_ind', 'C_Op_waste', 'C_Op_OM', 'C_Op_F',
+                                     'C_syst_other', 'C_syst_BOP', 'C_syst_heat',
+                                     'C_syst_aux', 'C_reac_tt', 'C_reac_bl',
+                                     'C_reac_sg', 'C_reac_pc'))
                 C_D = C_invest - C_ind  # direct cost [M EUR]
 
                 # Inputs (condensed)
@@ -4328,6 +4469,7 @@ def _generate_run_figures(config: GlobalConfig, results: tuple,
                 T_ped_frac=run_dict["T_ped_frac"],
                 Vprime_data=run_dict.get("Vprime_data"),
                 rho_CD=config.rho_EC, delta_CD=0.15,
+                n_ion_frac=_ion_density_fraction(config, run_dict.get("f_He", 0.0)),
                 n_rho=120, max_iter=15, tol=1e-3, damping=0.5,
                 tau_i_e=config.tau_i_e)
         run_dict["_q_sc"]        = _q_sc
@@ -4462,4 +4604,4 @@ def main(input_file: str = None, save_figures: bool = False,
 if __name__ == "__main__":
     input_file = sys.argv[1] if len(sys.argv) > 1 else None
     main(input_file)
-    print("\nD0FUS_run completed successfully!")
+    print("\nD0FUS_run completed successfully!")

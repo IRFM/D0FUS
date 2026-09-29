@@ -2,7 +2,6 @@
 * Check the heating module with IRFM specialists -> Timothe
 * Check pep8 conventions -> Arthur
 * Look at the use of Greek letters in Python and decide whether to remove them -> Arthur
-* ni and ne proper values for pressure -> Timothe
 
 # Mid Term
 * Document the code using Sphinx ? It produces HTML documentation via formatted comments in the code -> Arthur
