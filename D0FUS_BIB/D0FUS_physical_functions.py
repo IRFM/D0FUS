@@ -255,7 +255,7 @@ if __name__ == "__main__":
     #          so that every block consumes the outputs of the previous
     #          ones, exactly like the production solver.
     # FROZEN : converged outputs of that deck (frozen 2026-06,
-    #          refreshed 2026-09 for the v2.10 ion dilution and bootstrap),
+    #          refreshed 2026-09 for the v2.9.4 ion dilution and bootstrap),
     #          re-asserted by the final full-deck regression block. Chain
     #          blocks read FROZEN only (i) to check consistency, and
     #          (ii) as forward references where the file order places a
@@ -5883,7 +5883,7 @@ The PROCESS documentation itself acknowledges (April 2025):
    flux surfaces across the plasma."
   (https://ukaea.github.io/PROCESS/physics-models/plasma_current/bootstrap_current/)
 
-Before v2.10 D0FUS used d(ln p)/dr with <B^2> in the denominator, without the
+Before v2.9.4 D0FUS used d(ln p)/dr with <B^2> in the denominator, without the
 d(psi)/d(rho) normalisation.  A comparison with that former assembly gave
 I_bs(D0FUS) / I_bs(Fable) = 1.40 for EU-DEMO 2017 conditions.  The missing
 d(psi)/d(rho) factor most likely explains most of this ratio.  The ratio with
