@@ -165,7 +165,8 @@ from D0FUS_BIB.D0FUS_physical_functions import f_volume
 from D0FUS_BIB.D0FUS_radial_build_functions import Number_TF_coils, f_TF_cross_section
 from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
 from D0FUS_BIB.D0FUS_cost_data import *
-from D0FUS_EXE.D0FUS_run import run, save_run_output, thermal_multiplier
+from D0FUS_EXE.D0FUS_run import (run, save_run_output, thermal_multiplier,
+                                  resolve_operating_point, core_plasma_values)
 
 # Backwards-compatible alias: some legacy parts of the file may still use
 # the `dc_replace` name (and the docstring references it).
@@ -2949,6 +2950,9 @@ def run_genetic_optimization(input_file,
     
     config = GlobalConfig(**{k: v for k, v in all_params.items()
                          if k in GlobalConfig.__dataclass_fields__})
+    # Resolve Greenwald closures (Tbar_mode / P_fus_mode) so that the summary
+    # and save_run_output report the solved Tbar and P_fus, as in main()
+    config = resolve_operating_point(config)
     final_output = run(config, verbose=0)
     
     # Extract key metrics via centralised index map
@@ -2966,6 +2970,8 @@ def run_genetic_optimization(input_file,
     d_CS      = final_output[_IDX['d']]
     r_d       = final_output[_IDX['r_d']]
     Ip        = final_output[_IDX['Ip']]
+    B0        = final_output[_IDX['B0']]
+    _core     = core_plasma_values(config, final_output)
 
     # Select kink parameter for final reporting (consistent with GA evaluation)
     _kink_param = static_inputs.get('kink_parameter',
@@ -3021,22 +3027,44 @@ def run_genetic_optimization(input_file,
         _within = _C_invest_best * 1e3 <= _budget if np.isfinite(_C_invest_best) else False
         _tag = "WITHIN BUDGET" if _within else "OVER BUDGET"
         print(f"    Budget ceiling:             {_budget*1e-3:.1f} B EUR  [{_tag}]")
-    print(f"\n Best design metrics:")
-    print(f"    R0 (major radius):          {config.R0:.4f} [m]")
-    print(f"    Volume proxy (V/P_fus):     {cost:.4f} [m^3/MW]")
-    print(f"    COE (Sheffield):            {_COE_best:.1f} [EUR/MWh]")
-    print(f"    C_invest:                   {_C_invest_best:.2f} [B EUR]")
-    print(f"    Q factor:                   {Q:.2f}")
-    print(f"    Ip:                         {Ip:.2f} MA")
-    print(f"    P_elec:                     {P_elec:.1f} MW")
-    print(f"    n_line/nG: {nbar_line/nG:.3f} ({(1-nbar_line/nG)*100:+.1f}% margin)")
-    print(f"    betaN_total/betaN_limit: {betaN_total/betaN_lim:.3f} "
-          f"({(1-betaN_total/betaN_lim)*100:+.1f}% margin, toroidal incl. fast α)")
-    if Ip_lim is not None:
-        print(f"    Ip/Ip_limit: {Ip/Ip_lim:.3f} ({(1-Ip/Ip_lim)*100:+.1f}% margin)")
-    q_lim = static_inputs.get('q_limit', DEFAULT_CONFIG.q_limit)
-    print(f"    {_q_label}/q_limit: {q_kink/q_lim:.3f} ({(q_kink/q_lim-1)*100:+.1f}% margin)")
-    print(f"    c_TF: {c_TF:.3f} m   d_CS: {d_CS:.3f} m   r_d: {r_d:.3f} m")
+    print("\n Best design metrics:")
+    print(f"    R0      (major radius)        : {config.R0:9.3f}  [m]")
+    print(f"    B0      (on-axis field)       : {B0:9.3f}  [T]")
+    print(f"    Ip      (plasma current)      : {Ip:9.2f}  [MA]")
+    print(f"    Q       (fusion gain)         : {Q:9.2f}")
+    print(f"    P_elec  (net electric)        : {P_elec:9.1f}  [MWe]")
+    print(f"    COE     (Sheffield)           : {_COE_best:9.1f}  [EUR/MWh]")
+    print(f"    C_invest                      : {_C_invest_best:9.2f}  [B EUR]")
+    print(f"    V/P_fus (volume proxy)        : {cost:9.4f}  [m^3/MW]")
+    print(f"    c_TF / d_CS / r_d             : {c_TF:.3f} / {d_CS:.3f} / {r_d:.3f}  [m]")
+
+    print("\n Core plasma (rho = 0):")
+    print(f"    Te0 / Ti0                     : {_core['Te0']:.2f} / {_core['Ti0']:.2f}  [keV]")
+    print(f"    ne0 / ni0 (fuel ions)         : {_core['ne0']:.3f} / {_core['ni0']:.3f}  [1e20 m^-3]")
+
+    # Operational limits: margin > 0 means inside the limit
+    def _lim_row(label, value, limit, upper=True, note=""):
+        if limit is None or not np.isfinite(limit) or limit <= 0:
+            print(f"    {label:<26s}{value:10.3f}{'':>10s}{'':>11s}  {note}")
+            return
+        margin = (1.0 - value / limit) if upper else (value / limit - 1.0)
+        print(f"    {label:<26s}{value:10.3f}{limit:10.3f}{margin*100:+9.1f} %  {note}")
+
+    _nG_GW   = Ip / (np.pi * config.a**2)                 # Greenwald density Ip/(pi a^2)
+    _dl_mod  = static_inputs.get('density_limit_model', DEFAULT_CONFIG.density_limit_model)
+    _dl_fac  = static_inputs.get('Greenwald_limit', DEFAULT_CONFIG.Greenwald_limit)
+    _Ip_lim  = (float(Ip_lim) if isinstance(Ip_lim, (int, float, np.integer, np.floating))
+                else None)
+    print(f"\n {'Operational limits':<29s}{'value':>10s}{'limit':>10s}{'margin':>11s}")
+    _lim_row("n_line / n_limit [1e20]", nbar_line, nG,
+             note=f"({_dl_mod} x {_dl_fac:g})")
+    _lim_row("n_line / n_G     [1e20]", nbar_line, _nG_GW,
+             note="(Greenwald, Ip/pi a^2)")
+    _lim_row("betaN / betaN_limit", betaN_total, betaN_lim,
+             note="(thermal + fast alpha)")
+    _lim_row(f"{_q_label} / q_limit", q_kink, q_lim, upper=False)
+    _lim_row("Ip / Ip_limit    [MA]", Ip, _Ip_lim,
+             note="" if _Ip_lim is not None else "(no ceiling)")
 
     # Radial build sanity check on final design
     _rb_ok, _rb_reason = check_radial_build(
