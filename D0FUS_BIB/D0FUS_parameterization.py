@@ -136,6 +136,10 @@ class GlobalConfig:
     Operation_mode     : str   = 'Pulsed'       # 'Steady-State' or 'Pulsed'
     Temps_Plateau_input: float = 3600.0         # Flat-top duration (pulsed only) [s]
     P_aux_input        : float = 50.0           # Auxiliary heating power (pulsed only) [MW]
+    Q_target           : float = None           # Pulsed only: P_aux = P_fus / Q_target [-],
+                                                # overrides P_aux_input (Multi: source powers
+                                                # rescaled in proportion). None = P_aux_input.
+                                                # Reported Q includes P_Ohm, slightly lower.
 
     Plasma_profiles    : str   = 'H'            # Profile peaking: 'L', 'H', 'Advanced', 'EU-DEMO', 'Manual'
     nu_n_manual        : float = 0.1            # Density peaking factor (Manual mode only) [-]
@@ -144,7 +148,11 @@ class GlobalConfig:
     n_ped_frac : float = 0.0                    # n_ped / nbar [-]
     T_ped_frac : float = 0.0                    # T_ped / Tbar [-]
 
-    Scaling_Law        : str   = 'IPB98(y,2)'   # Energy confinement scaling law
+    Scaling_Law        : str   = 'IPB98(y,2)'   # Energy confinement scaling law: 'IPB98(y,2)',
+                                                # 'ITPA20', 'ITPA20-IL', 'DS03', 'L-mode',
+                                                # 'L-mode OK', 'ITER89-P', 'Auclair2026',
+                                                # 'Auclair2026-fGW' (with Greenwald-fraction
+                                                # correction, see f_Get_fGW_correction)
     L_H_Scaling_choice : str   = 'New_Ip'       # L-H threshold scaling: 'Martin', 'New_S', 'New_Ip'
     Bootstrap_choice    : str   = 'Sauter-Redl' # Bootstrap current model 'Segal' or 'Sauter-Redl'
     trapped_fraction_model : str = 'Sauter2002' # 'Sauter2002' (standard, NEOS/JINTRAC)
@@ -386,7 +394,15 @@ class GlobalConfig:
     tau_h_HTS                : float = 10.0   # Detection + hold time, HTS magnets [s]
     T_hotspot                : float = 250.0  # Maximum hot-spot temperature [K]
                                               # It is taken as an equivalent of 150 K real hotspot + external contributions
-    RRR                      : float = 100.0  # Copper residual resistivity ratio [-] (pessimistic)
+    RRR                      : float = 300.0  # Copper residual resistivity ratio [-]
+                                              # Value of the stabilizer copper outside the strands / tapes
+                                              # (annealed OFHC), which carries most of the copper. One RRR is
+                                              # applied to all Cu: the in-tape electroplated Cu (RRR ~ 50) is
+                                              # a minor share and is not distinguished.
+                                              # Low sensitivity at 16 T / 250 K: 100 -> 300 gives +5 % on the
+                                              # quench integral Z (Kohler magnetoresistance, phonon-limited above 50 K).
+                                              # Refs: Boutboul et al., MT-24 (2015), ITER TF Nb3Sn strands RRR 100-240;
+                                              # Lu et al., arXiv:2410.09919 (2024), REBCO electroplated Cu RRR ~ 50.
     Dump_resistor_subdivision: int   = 2      # TF coils per dump resistor [-] (ITER reference)
 
     # ── 10. Power conversion ─────────────────────────────────────────────────

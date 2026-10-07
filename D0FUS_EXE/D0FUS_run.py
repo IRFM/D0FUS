@@ -582,15 +582,46 @@ def resolve_P_fus(config: GlobalConfig, verbose: int = 0) -> GlobalConfig:
     return dc_replace(config, P_fus=P_star, P_fus_mode='manual')
 
 
+def apply_Q_target(config: GlobalConfig) -> GlobalConfig:
+    """
+    Pulsed mode with config.Q_target set: P_aux = P_fus / Q_target.
+
+    The auxiliary power then follows P_fus (GA, scan, Greenwald closure on
+    P_fus). With CD_source = 'Multi' the deck source powers are rescaled in
+    proportion, so they set the mix only. The reported Q = P_fus /
+    (P_aux + P_Ohm) is slightly below Q_target. Idempotent.
+    """
+    Q_t = getattr(config, 'Q_target', None)
+    if Q_t is None:
+        return config
+    if config.Operation_mode != 'Pulsed':
+        raise ValueError("Q_target applies to Operation_mode = 'Pulsed' "
+                         "(Steady-State solves Q from the current drive).")
+    if not Q_t > 0:
+        raise ValueError(f"Q_target must be > 0 (got {Q_t}).")
+    P_aux = config.P_fus / Q_t
+    if config.CD_source != 'Multi':
+        return dc_replace(config, P_aux_input=P_aux)
+    P_src = config.P_LH + config.P_ECRH + config.P_NBI + config.P_ICRH
+    if not P_src > 0:
+        raise ValueError("Q_target with CD_source = 'Multi' needs non-zero "
+                         "deck source powers to define the mix.")
+    s = P_aux / P_src
+    return dc_replace(config, P_LH=config.P_LH * s, P_ECRH=config.P_ECRH * s,
+                      P_NBI=config.P_NBI * s, P_ICRH=config.P_ICRH * s)
+
+
 def resolve_operating_point(config: GlobalConfig,
                             verbose: int = 0) -> GlobalConfig:
     """
     Apply the Greenwald closure selected by the deck: Tbar_mode='greenwald'
     solves Tbar, P_fus_mode='greenwald' solves P_fus. Returns a fully
-    prescribed configuration (both modes 'manual').
+    prescribed configuration (both modes 'manual'), with P_aux set from
+    Q_target on the final P_fus when Q_target is given.
     """
     config = resolve_P_fus(config, verbose=verbose)
-    return resolve_Tbar(config, verbose=verbose)
+    config = resolve_Tbar(config, verbose=verbose)
+    return apply_Q_target(config)
 
 
 def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
@@ -645,7 +676,9 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     if ('greenwald' in (str(getattr(config, 'Tbar_mode', 'manual')).lower(),
                         str(getattr(config, 'P_fus_mode', 'manual')).lower())):
         config = resolve_operating_point(config, verbose=verbose)
-        
+    # P_aux = P_fus / Q_target when Q_target is set (pulsed mode)
+    config = apply_Q_target(config)
+
     # Unpack every field into local names so the downstream physics code
     # is unchanged (no 'config.X' references scattered throughout).
     R0                        = config.R0
@@ -926,6 +959,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # ── Confinement scaling law coefficients ──────────────────────────────────
     (C_SL, alpha_delta, alpha_M, alpha_kappa, alpha_epsilon,
      alpha_R, alpha_B, alpha_n, alpha_I, alpha_P) = f_Get_parameter_scaling_law(Scaling_Law)
+    # Optional Greenwald-fraction correction attached to the law (0 = none)
+    fgw_slope, fgw_ref = f_Get_fGW_correction(Scaling_Law)
 
     # ── Plasma geometry ───────────────────────────────────────────────────────
     κ             = f_Kappa(R0 / a, Option_Kappa, κ_manual, ms)
@@ -1023,7 +1058,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # the actual LCFS geometry, not the scaling-law convention.
     κ_a = Volume_solution / (2.0 * np.pi**2 * R0 * a**2)
 
-    _KAPPA_AREA_LAWS = {'IPB98(y,2)', 'DS03', 'L-mode', 'L-mode OK', 'ITER89-P'}
+    _KAPPA_AREA_LAWS = {'IPB98(y,2)', 'DS03', 'L-mode', 'L-mode OK', 'ITER89-P',
+                        'Auclair2026', 'Auclair2026-fGW'}
     _KAPPA_EDGE_LAWS = {'ITPA20', 'ITPA20-IL'}
     if Scaling_Law in _KAPPA_AREA_LAWS:
         κ_SL = κ_a
@@ -1321,7 +1357,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                       P_Alpha, P_Ohm_in, P_Aux_in, P_rad_core_loc,
                       H, C_SL,
                       alpha_delta, alpha_M, alpha_kappa, alpha_epsilon,
-                      alpha_R, alpha_B, alpha_n, alpha_I, alpha_P)
+                      alpha_R, alpha_B, alpha_n, alpha_I, alpha_P,
+                      fgw_slope=fgw_slope, fgw_ref=fgw_ref)
 
         if _dbg:
             print(f"    Ip={Ip_loc:.2f} MA")

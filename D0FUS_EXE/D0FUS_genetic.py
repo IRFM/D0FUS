@@ -679,6 +679,51 @@ def compute_stability_penalty(nbar_line, nG, betaT, betaN, q_kink,
     return is_stable, total_penalty, violations
 
 
+def compute_Ip_soft_multiplier(Ip, Ip_soft_start, Ip_limit, Ip_soft_penalty):
+    """
+    Soft fitness surcharge for a plasma current in the undesirable zone.
+
+    Between Ip_soft_start and Ip_limit the current is admissible but not
+    desirable (larger disruption loads, larger runaway-electron avalanche
+    gain). The fitness is multiplied by
+
+        m(Ip) = 1 + Ip_soft_penalty * x,
+        x     = (Ip - Ip_soft_start) / (Ip_limit - Ip_soft_start),
+
+    with x clipped to [0, 1]. The surcharge is linear, so its marginal price
+    is finite at Ip_soft_start: the search enters the zone only where the
+    relative objective gain per MA exceeds
+    Ip_soft_penalty / (Ip_limit - Ip_soft_start). Above Ip_limit the hard
+    constraint (feasibility band) takes over and the multiplier stays at its
+    maximum. The multiplier shapes the ranking only: the reported C_invest,
+    COE and P_elec of a design are never modified.
+
+    Parameters
+    ----------
+    Ip              : float  Plasma current [MA].
+    Ip_soft_start   : float  Lower edge of the undesirable zone [MA], or None.
+    Ip_limit        : float  Hard current ceiling [MA], or None.
+    Ip_soft_penalty : float  Relative surcharge reached at Ip_limit [-]
+                             (0.10 = +10 %). None or <= 0 disables it.
+
+    Returns
+    -------
+    float  Multiplier >= 1 (exactly 1.0 when the soft zone is not configured).
+    """
+    vals = (Ip, Ip_soft_start, Ip_limit, Ip_soft_penalty)
+    if any(v is None for v in vals):
+        return 1.0
+    try:
+        Ip, start, lim, k = (float(v) for v in vals)
+    except (TypeError, ValueError):
+        return 1.0
+    if (not all(np.isfinite(v) for v in (Ip, start, lim, k))
+            or k <= 0.0 or lim <= start):
+        return 1.0
+    x = min(max((Ip - start) / (lim - start), 0.0), 1.0)
+    return 1.0 + k * x
+
+
 #%% Fitness Evaluation
 
 def _safe_real(value):
@@ -944,6 +989,17 @@ def evaluate_individual(individual, verbose=False):
             excess = (_C_inv - C_max) / C_max
             budget_multiplier = 1.0 + 3.0 * excess ** 2
 
+        # ── Plasma-current comfort zone: soft linear surcharge ───────────
+        # Admissible but undesirable currents (Ip_soft_start < Ip <= Ip_limit)
+        # pay a surcharge rising linearly to Ip_soft_penalty at Ip_limit. It
+        # rides on the budget multiplier, so it acts inside the acceptable
+        # band only and leaves the feasibility-first ranking untouched.
+        budget_multiplier *= compute_Ip_soft_multiplier(
+            Ip,
+            _opt_float(static_inputs.get('Ip_soft_start')),
+            _opt_float(static_inputs.get('Ip_limit', DEFAULT_CONFIG.Ip_limit)),
+            _opt_float(static_inputs.get('Ip_soft_penalty')))
+
         # ── Feasibility-first (epsilon-relaxed Deb) fitness ──────────────
         # The multiplicative stability penalty above is superseded here for
         # RANKING: it is kept only to produce the `violations` map (and for
@@ -1021,6 +1077,7 @@ def load_input_file(input_file):
         'local_refine_initial_simplex_scale', 'local_refine_kwargs',
         'diversity_inject_fraction', 'cloud_refinement_min_dist', 'make_gif',
         'gif_var_x', 'gif_var_y', 'gif_resolution', 'gif_log_scale', 'gif_fps',
+        'feasibility_epsilon', 'Ip_soft_start', 'Ip_soft_penalty',
     }
     
     with open(input_file, "r", encoding='utf-8') as f:
@@ -2959,6 +3016,13 @@ def run_genetic_optimization(input_file,
     _lim_row(f"{_q_label} / q_limit", q_kink, q_lim, upper=False)
     _lim_row("Ip / Ip_limit    [MA]", Ip, _Ip_lim,
              note="" if _Ip_lim is not None else "(no ceiling)")
+    _Ip_soft = _opt_float(static_inputs.get('Ip_soft_start'))
+    _Ip_k    = _opt_float(static_inputs.get('Ip_soft_penalty'))
+    _Ip_mult = compute_Ip_soft_multiplier(Ip, _Ip_soft, _Ip_lim, _Ip_k)
+    if _Ip_soft is not None and _Ip_k:
+        print(f"    {'Ip soft zone     [MA]':<26s}{Ip:10.3f}{_Ip_soft:10.3f}"
+              f"  fitness surcharge {(_Ip_mult - 1.0) * 100:+.1f} %"
+              f"  (+{_Ip_k * 100:g} % at Ip_limit)")
 
     # Radial build sanity check on final design
     _rb_ok, _rb_reason = check_radial_build(
@@ -3070,7 +3134,8 @@ def run_genetic_optimization(input_file,
             "q_kink_over_qlim": to_serializable(q_kink/q_lim),
             "kink_parameter": _kink_param,
             "betaN_over_betaN_limit": to_serializable(betaN_total/betaN_lim) if betaN_lim > 0 else None,
-            "Ip_over_Ip_limit": to_serializable(Ip/Ip_lim) if Ip_lim is not None else None
+            "Ip_over_Ip_limit": to_serializable(Ip/Ip_lim) if Ip_lim is not None else None,
+            "Ip_soft_multiplier": to_serializable(_Ip_mult),
         },
         "radial_build": {
             "c_TF_m": to_serializable(c_TF),

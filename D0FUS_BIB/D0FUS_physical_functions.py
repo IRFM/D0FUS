@@ -7740,7 +7740,8 @@ def f_Ip(tauE, R0, a, κ, δ, nbar, B0, Atomic_mass,
          P_Alpha, P_Ohm, P_Aux, P_rad,
          H, C_SL,
          alpha_delta, alpha_M, alpha_kappa, alpha_epsilon,
-         alpha_R, alpha_B, alpha_n, alpha_I, alpha_P):
+         alpha_R, alpha_B, alpha_n, alpha_I, alpha_P,
+         fgw_slope=0.0, fgw_ref=0.0):
     """
     Invert a τ_E multi-machine scaling law to obtain the required plasma current.
 
@@ -7795,6 +7796,9 @@ def f_Ip(tauE, R0, a, κ, δ, nbar, B0, Atomic_mass,
         H-factor (confinement enhancement; H = 1 at the scaling-law value)
     C_SL, alpha_* : float
         Pre-factor and exponents from `f_Get_parameter_scaling_law`.
+    fgw_slope, fgw_ref : float, optional
+        Greenwald-fraction correction from `f_Get_fGW_correction`
+        (default 0: none).
 
     Returns
     -------
@@ -7809,6 +7813,12 @@ def f_Ip(tauE, R0, a, κ, δ, nbar, B0, Atomic_mass,
     Inverting for I_p:
         I_p = (τ_E / denom)^{1/α_I}
     with P = P_α + P_Ohm + P_aux − P_rad.
+
+    With the correction exp[s_f (f_GW − f_ref)], f_GW = n̄ π a² / I_p, the
+    residual in x = ln I_p,
+        g(x) = α_I x + s_f (n̄ π a² e^{−x} − f_ref) − ln(τ_E / denom),
+    is strictly increasing for α_I > 0 and s_f ≤ 0, so its single root is
+    found with brentq around the uncorrected solution.
     """
     P = P_Alpha + P_Ohm + P_Aux - P_rad
     ε = a / R0
@@ -7835,7 +7845,26 @@ def f_Ip(tauE, R0, a, κ, δ, nbar, B0, Atomic_mass,
              * P**alpha_P
              * (1 + δ)**alpha_delta)
 
-    return (tauE / denom) ** (1.0 / alpha_I)   # [MA]
+    Ip_law = (tauE / denom) ** (1.0 / alpha_I)   # [MA], uncorrected law
+    if fgw_slope == 0.0 or not (np.isfinite(Ip_law) and Ip_law > 0):
+        return Ip_law
+
+    # Greenwald-fraction correction: implicit in Ip through f_GW
+    F = nbar * np.pi * a**2                      # f_GW * Ip [MA]
+    ln_target = np.log(tauE / denom)
+
+    def _g(x):
+        return alpha_I * x + fgw_slope * (F * np.exp(-x) - fgw_ref) - ln_target
+
+    x0 = np.log(Ip_law)
+    x_lo, x_hi = x0 - 1.0, x0 + 1.0
+    for _ in range(20):                          # widen until g changes sign
+        if _g(x_lo) < 0.0 < _g(x_hi):
+            break
+        x_lo, x_hi = x_lo - 1.0, x_hi + 1.0
+    else:
+        return np.nan
+    return float(np.exp(brentq(_g, x_lo, x_hi, xtol=1e-10)))   # [MA]
 
 
 # ── Neutron wall loading ──────────────────────────────────────────────────────
@@ -8074,7 +8103,8 @@ def f_Get_parameter_scaling_law(Scaling_Law):
     Scaling_Law : str
         Registry key.  Supported values:
         ``'IPB98(y,2)'``, ``'ITPA20'``, ``'ITPA20-IL'``,
-        ``'DS03'``, ``'L-mode'``, ``'L-mode OK'``, ``'ITER89-P'``.
+        ``'DS03'``, ``'L-mode'``, ``'L-mode OK'``, ``'ITER89-P'``,
+        ``'Auclair2026'``, ``'Auclair2026-fGW'``.
 
     Returns
     -------
@@ -8106,6 +8136,9 @@ def f_Get_parameter_scaling_law(Scaling_Law):
     ITER89-P   : Yushmanov, Takizuka, Riedel, Kardaun, Cordey, Kaye &
         Post, Nucl. Fusion 30 (1990) 1999, Eq. 19 (ITER L-mode power-law
         scaling from the 1989 Confinement Workshop).
+    Auclair2026 : T. Auclair, energy confinement scaling selected on the
+        error for a device left out of the fit, paper 1 (in preparation,
+        2026), Table 3. Metal-wall factor included.
     """
     _registry = {
         # ITER Physics Basis (1999), NF 39, 2175 — Table 5, ELMy H-mode
@@ -8140,6 +8173,22 @@ def f_Get_parameter_scaling_law(Scaling_Law):
         'ITER89-P':   dict(C_SL=0.0381, α_δ=0,    α_M=0.5,  α_κ=0.5,
                            α_ε=0.3,   α_R=1.5,   α_B=0.2,
                            α_n=0.1,   α_I=0.85,  α_P=-0.5),
+        # Auclair (2026), paper 1, Table 3: Sauter-Martin reduced variables
+        # (a kappa_a B, n, P/V, q_eng) with Kadomtsev and gyro-Bohm
+        # constraints, one weight per device, fitted on STD5. kappa = kappa_a.
+        # Engineering prefactor from the reduced-variable intercept
+        # ln C_red = -4.025:  C = C_red (2 pi^2)^0.692 5^-0.570 = 0.0562,
+        # times the metal-wall factor exp(-0.115) = 0.891 (W/Be first wall,
+        # power plant default). Carbon-wall device: H = 1/0.891.
+        # ITER baseline (15 MA, 87 MW): tau_E = 2.96 s.
+        'Auclair2026':     dict(C_SL=0.0501, α_δ=0,    α_M=0,    α_κ=1.077,
+                                α_ε=1.199, α_R=2.460, α_B=0.385,
+                                α_n=0.552, α_I=0.570, α_P=-0.692),
+        # Same law with the within-device Greenwald-fraction correction of
+        # paper 2 (see f_Get_fGW_correction).
+        'Auclair2026-fGW': dict(C_SL=0.0501, α_δ=0,    α_M=0,    α_κ=1.077,
+                                α_ε=1.199, α_R=2.460, α_B=0.385,
+                                α_n=0.552, α_I=0.570, α_P=-0.692),
     }
 
     if Scaling_Law not in _registry:
@@ -8150,6 +8199,27 @@ def f_Get_parameter_scaling_law(Scaling_Law):
     p = _registry[Scaling_Law]
     return (p['C_SL'], p['α_δ'], p['α_M'], p['α_κ'],
             p['α_ε'], p['α_R'], p['α_B'], p['α_n'], p['α_I'], p['α_P'])
+
+
+def f_Get_fGW_correction(Scaling_Law):
+    """
+    Greenwald-fraction correction attached to a τ_E scaling law.
+
+        τ_E = τ_law · exp[s_f (f_GW − f_ref)],   f_GW = n̄_line π a² / I_p
+
+    Returns (s_f, f_ref); (0.0, 0.0) means no correction.
+
+    'Auclair2026-fGW' : s_f = −0.49, random-effects mean of the slopes of
+        ln(τ_E/τ_law) on f_GW fitted inside each device (13 devices of STD5,
+        ±0.08). DIII-D negative-triangularity phases, not in the database,
+        give −0.47 ± 0.06. f_ref = 0.52 is the device-balanced mean f_GW of
+        the fitting data, where the law is unbiased. The density benefit
+        of the law (n^0.55, an across-device exponent) then saturates near
+        the Greenwald limit, as observed inside every device.
+        Ref: T. Auclair, paper 2 (in preparation, 2026), section 4.
+    """
+    _corrections = {'Auclair2026-fGW': (-0.49, 0.52)}
+    return _corrections.get(Scaling_Law, (0.0, 0.0))
 
 
 # ── Global energy and confinement descriptors ─────────────────────────────────
@@ -8185,6 +8255,21 @@ if __name__ == "__main__":
          "Yushmanov 1990"),
         ("tau_IPB98, published convention [s]", _tau98, 3.7, 0.08,
          "IPB 1999"),
+    ])
+    # Auclair2026 at the ITER baseline point of paper 1 (Ip = 15 MA,
+    # B = 5.3 T, n19 = 10.3, P = 87 MW, R = 6.2 m, eps = 0.32,
+    # kappa_a = 1.7, metal wall): 2.96 s. The f_GW correction at
+    # f_GW = 0.85 lowers it by exp(-0.49 x 0.33) = 0.85.
+    _Csl, _ad, _aM, _ak, _ae, _aR, _aB, _an, _aI, _aP = \
+        f_Get_parameter_scaling_law('Auclair2026')
+    _tauA = (_Csl * 15**_aI * 5.3**_aB * 10.3**_an * 6.2**_aR
+             * 0.32**_ae * 1.70**_ak * 87.0**_aP)
+    _sf, _fref = f_Get_fGW_correction('Auclair2026-fGW')
+    _bench("Published anchors - Auclair2026 confinement law", [
+        ("tau_Auclair2026 at ITER baseline [s]", _tauA, 2.96, 0.01,
+         "paper 1 Table 3"),
+        ("f_GW correction at f_GW = 0.85 [-]", np.exp(_sf * (0.85 - _fref)),
+         np.exp(-0.49 * 0.33), 1e-3, "paper 2"),
     ])
 
 def f_tauE(pbar, V, P_Alpha, P_Aux, P_Ohm, P_rad):

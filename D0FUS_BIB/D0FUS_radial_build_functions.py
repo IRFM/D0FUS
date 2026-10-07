@@ -1084,18 +1084,21 @@ def J_non_Cu_REBCO(B, T, Tet=0, dataset='Fujikura_2019'):
         REBCO tape dataset:
 
         'Fujikura_2019' (default)
-            Senatore et al., Supercond. Sci. Technol. 37 (2024) 115013.
-            Fujikura FESC 19-0008: EuBCO 2.5 µm, IBAD/PLD, BHO columns.
-            Pinning-force scaling (Dew-Hughes) with exponential T dependence.
-            p=0.77, q=4.5 (Fig 8a); T*=22 K (Table 4); Bpeak(20K)=12.5 T.
-            Non-Cu Jc ~2000 A/mm² at 4.2 K, 19 T, B⊥tape.
+            Parameters derived from the measurements of Senatore et al.,
+            Supercond. Sci. Technol. 37 (2024) 115013 (the paper gives no
+            closed-form Jc(B,T,theta) law; see _J_REBCO_Senatore2024).
+            Fujikura EuBCO tapes with BHO artificial pinning (19-0007/19-0008).
+            p=0.77, q=4.5 (Fig 8a, tape 19-0007); T*=22 K (Table 4, 19-0008);
+            Bpeak(20K)=12.5 T (Table 5, 19-0007).
+            Non-Cu Jc ~2000 A/mm² at 4.2 K, 19 T, B⊥tape (Fig 9a, 19-0008).
             Representative of modern high-performance APC tapes.
 
         'SuperOx_2019'
-            Senatore et al., Supercond. Sci. Technol. 37 (2024) 115013.
-            SuperOx #337-R: YBCO 2.7 µm, IBAD/PLD, native Y₂O₃ particles.
-            p=0.64, q=2.2 (Fig 8b); T*=25 K (Table 4); Bpeak(20K)=17 T.
-            Non-Cu Jc ~2000 A/mm² at 4.2 K, 19 T, B⊥tape.
+            Parameters derived from Senatore et al. (2024), as above.
+            SuperOx YBCO tapes with native Y₂O₃ pinning (#337-R/#287-L).
+            p=0.64, q=2.2 (Fig 8b, #337-R); T*=25 K (Table 4, #287-L);
+            Bpeak(20K)=17 T (Table 5, #337-R).
+            Non-Cu Jc ~2000 A/mm² at 4.2 K, 19 T, B⊥tape (Fig 9a, #337-R).
             Higher T*: retains more Jc at 20 K than Fujikura.
             Representative of modern large-batch native-pinning tapes.
 
@@ -1217,7 +1220,16 @@ def _J_REBCO_Fleiter2014(B, T, Tet=0):
 
 def _J_REBCO_Senatore2024(B, T, Tet=0, dataset='Fujikura_2019'):
     """
-    Senatore et al. (2024) REBCO scaling — modern high-performance tapes.
+    REBCO Jc law built from the measurements of Senatore et al. (2024).
+
+    The paper provides the ingredients, not a closed-form Jc(B,T,theta) law.
+    This function assembles them: exponential T dependence (Eq. 3, Table 4),
+    Dew-Hughes pinning-force shape (Sec. 4.3, Fig. 8), a transport anchor
+    (Fig. 9a) and a simplified anisotropy (Table 2). Two choices are ours:
+    the field is normalised to Birr(T) instead of the paper's Bpeak, with
+    Birr(T) fitted so that Bpeak = Birr p/(p+q) reproduces Table 5; and the
+    angular dependence is a sin^2 interpolation, not the Hilton fit
+    (Eqs. 1-2). Cite as "parameters derived from Senatore et al. (2024)".
 
     Model: Dew-Hughes pinning-force scaling with exponential T dependence.
 
@@ -1234,7 +1246,7 @@ def _J_REBCO_Senatore2024(B, T, Tet=0, dataset='Fujikura_2019'):
 
     Angular dependence (simplified): at angles other than B⊥tape (Tet≠0),
     the c-axis Jc is multiplied by an empirical anisotropy factor
-    Γ(B) = 1 + k × B^m, fitted from Table 2 of [5]:
+    Γ(B) = 1 + k × B^m, fitted on Table 2 of [5] (Fujikura; assumed for SuperOx):
         Jc(B,T,θ) = Jc_c(B,T) × [1 + (Γ(B)-1) × sin²(θ)]
     This is a simplified model; for detailed angular studies, the full
     Hilton model (Eq. 1-2 of [5]) should be used.
@@ -1259,21 +1271,34 @@ def _J_REBCO_Senatore2024(B, T, Tet=0, dataset='Fujikura_2019'):
         The effect scales with the fractional Birr drop: negligible for tapes
         with low Birr0, significant for tapes with high Birr0.
 
-    Parameters fitted from Senatore et al. SST 37 (2024) 115013:
-    ---------------------------------------------------------------
-    Fujikura_2019 (FESC 19-0008, EuBCO, BHO artificial pinning):
-        p=0.77, q=4.5         [Fig 8a: pinning force shape]
-        Birr0=187 T            [Fitted from Bpeak(T) in Table 5]
-        n1=0.40, n2=1.0       [Birr temperature dependence]
-        T*=22 K                [Table 4: average over 1-6 T]
-        Jc_ref=2000 A/mm²     [Fig 9a: non-Cu Jc at 19T, 4.2K]
+    Parameters derived from Senatore et al. SST 37 (2024) 115013:
+    ----------------------------------------------------------------
+    The tape samples differ between figures and tables of the paper; the
+    sample behind each value is given in brackets.
 
-    SuperOx_2019 (#337-R, YBCO, native Y₂O₃ pinning):
-        p=0.64, q=2.2         [Fig 8b: pinning force shape]
-        Birr0=83.6 T           [Fitted from Bpeak(T) in Table 5]
-        n1=2.0, n2=2.18       [Birr temperature dependence]
-        T*=25 K                [Table 4: average over 1-6 T]
-        Jc_ref=2000 A/mm²     [Fig 9a: non-Cu Jc at 19T, 4.2K]
+    Fujikura_2019 (EuBCO, BHO artificial pinning):
+        p=0.77, q=4.5         [Fig 8a, sample 19-0007, fit over 20-77 K;
+                               19-0008 gives p=0.74, q=4.4, which changes
+                               Jc by < 0.5 % once Birr0 is refitted]
+        Birr0=187 T            [our fit: Bpeak = Birr p/(p+q) on Table 5,
+                               19-0007; gives Bpeak(20 K) = 12.5 T]
+        n1=0.40, n2=1.0       [our fit, Birr temperature dependence]
+        T*=22 K                [Table 4, 19-0008: 21.0-24.2 K over 1-6 T]
+        Jc_ref=2000 A/mm²     [Fig 9a, 19-0008: non-Cu Jc at 19 T, 4.2 K]
+        k_Gamma, m_Gamma      [our fit of Table 2, 19-0008 at 4.2 K:
+                               Gamma = 2.0/2.5/2.9/3.4 at 6/10/14/18 T,
+                               fit gives 1.94/2.41/2.85/3.26]
+
+    SuperOx_2019 (YBCO, native Y₂O₃ pinning):
+        p=0.64, q=2.2         [Fig 8b, sample #337-R]
+        Birr0=83.6 T           [our fit on Table 5, #337-R: Bpeak(20 K) = 17 T]
+        n1=2.0, n2=2.18       [our fit, Birr temperature dependence]
+        T*=25 K                [Table 4, sample #287-L: 23.7-25.5 K]
+        Jc_ref=2000 A/mm²     [Fig 9a, #337-R: non-Cu Jc at 19 T, 4.2 K]
+        k_Gamma, m_Gamma      [ASSUMED: Table 2 has no SuperOx data]
+
+    Validity: the pinning scaling is fitted at 20-77 K and T* at 1-6 T; use
+    at 4.2-20 K and 10-20 T relies on the 19 T / 4.2 K anchor.
 
     Reference
     ---------
@@ -1326,7 +1351,8 @@ def _J_REBCO_Senatore2024(B, T, Tet=0, dataset='Fujikura_2019'):
 
     # ── Angular dependence (simplified) ───────────────────────────────
     # Anisotropy ratio Γ(B) = Ic(ab-plane) / Ic(c-axis)
-    # Fitted from Table 2 of Senatore (2024) at 4.2 K.
+    # Fitted on Table 2 of Senatore (2024) at 4.2 K (Fujikura 19-0008).
+    # Table 2 has no SuperOx data: the SuperOx values are assumed.
     # Γ increases with B and with T; the T-dependence is neglected here
     # for simplicity (Γ(20K) ≈ 1.3 × Γ(4.2K) at 18 T).
     if np.any(Tet != 0):
@@ -1422,7 +1448,7 @@ def get_copper_properties(T, B, RRR):
     B : float
         Magnetic field [T]
     RRR : float
-        Residual Resistivity Ratio (default: 100)
+        Residual Resistivity Ratio (GlobalConfig default: 300)
         
     Returns
     -------
@@ -1498,7 +1524,7 @@ def compute_quench_integral(T_op, T_hotspot, B, RRR, n_steps=200):
     B : float
         Magnetic field [T]
     RRR : float
-        Residual Resistivity Ratio (default: 100)
+        Residual Resistivity Ratio (GlobalConfig default: 300)
     n_steps : int
         Number of integration steps (default: 200)
         
@@ -2314,7 +2340,7 @@ def calculate_cable_current_density(
     T_hotspot : float, optional
         Maximum hot-spot temperature [K] (default: 250 K)
     RRR : float, optional
-        Copper residual resistivity ratio (default: 100)
+        Copper residual resistivity ratio (GlobalConfig default: 300)
     Marge_T_He : float
         Helium temperature margin [K] (GlobalConfig production value 0.3,
         from 10-bar supercritical He operation)
