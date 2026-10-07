@@ -1,0 +1,15 @@
+{#- Location of the page as a terminal path: ~/d0fus › models › geometry.
+    The list d0fus_path is filled by docs/_ext/d0fus_theme.py. -#}
+{%- if pagename != root_doc and d0fus_path %}
+<nav aria-label="{{ _('Breadcrumb') }}" class="d0-path d-print-none">
+  <a href="{{ pathto(root_doc) }}" class="d0-path__root">~/d0fus</a>
+  {%- for label, link in d0fus_path %}
+  <span class="d0-path__sep" aria-hidden="true">›</span>
+  {%- if link %}
+  <a href="{{ link|e }}">{{ label }}</a>
+  {%- else %}
+  <span class="d0-path__here" aria-current="page">{{ label }}</span>
+  {%- endif %}
+  {%- endfor %}
+</nav>
+{%- endif %}

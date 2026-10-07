@@ -9,6 +9,7 @@
 <p align="center">
   <a href="https://cecill.info/licences/Licence_CeCILL-C_V1-en.html"><img src="https://img.shields.io/badge/License-CeCILL--C-blue.svg" alt="License: CeCILL-C"></a>
   <a href="https://pypi.org/project/d0fus/"><img src="https://badge.fury.io/py/d0fus.svg" alt="PyPI version"></a>
+  <a href="https://d0fus.readthedocs.io"><img src="https://readthedocs.org/projects/d0fus/badge/?version=latest" alt="Documentation"></a>
 </p>
 
 <p align="center">
@@ -22,6 +23,8 @@
 **D0FUS** (Design 0-dimensional for Fusion Systems) is a Python tokamak systems code for fast 0D/1D design-space exploration, covering plasma physics, superconducting magnet engineering, and techno-economic assessment. It is developed at CEA-IRFM.
 
 About 39 000 lines of pure Python: a core library of seven modules and over 500 functions, plus five execution modes. The code is fully documented in the PhD thesis of T. Auclair (2026), whose Appendix D serves as the reference manual; release **v2.7.0** is the version archived with the thesis.
+
+**Documentation: [d0fus.readthedocs.io](https://d0fus.readthedocs.io)**. Installation, user guide, the models with their derivations, the validation benchmarks, and an API reference generated from the code at every release.
 
 ---
 
@@ -161,7 +164,7 @@ Each model carries its own selector in `GlobalConfig`; the factories `preset_aca
 
 ## Inputs
 
-All parameters live in one typed dataclass, `GlobalConfig` (149 fields), each with a physically motivated default. A deck overrides only what it names; everything else keeps its default, so a complete machine fits in a few lines:
+All parameters live in one typed dataclass, `GlobalConfig` (159 fields), each with a physically motivated default. A deck overrides only what it names; everything else keeps its default, so a complete machine fits in a few lines:
 
 ```ini
 R0 = 7
@@ -190,7 +193,7 @@ Key parameters and their actual defaults:
 | `rho_rad_core` | Core/edge radiation boundary | 0.6 | 1.0 = conservative preset |
 | `cost_model` | Cost model | `Sheffield` | `Whyte`, `None` |
 
-The complete field list, with units, defaults and provenance comments, is in `D0FUS_parameterization.py`, reproduced in Appendix D of the thesis; every run also writes it to `output_detailed.txt`.
+The complete field list, with units, defaults and provenance comments, is in `D0FUS_parameterization.py` and on the [GlobalConfig fields](https://d0fus.readthedocs.io/en/latest/api/generated/globalconfig_fields.html) page of the documentation; every run also writes it to `output_detailed.txt`.
 
 ### Deck syntax by mode
 
@@ -228,7 +231,7 @@ Plasma geometry follows the Miller parameterisation (Miller 1998) with on-axis r
 
 The TF inboard leg is a Princeton-D (File, Mills & Sheffield 1971); conductors are CICC-like with a helium-fraction hierarchy; critical currents use ITER parameterisations (NbTi, Nb₃Sn) and REBCO datasets (Senatore 2024, Fujikura 2019); quench protection is sized on the Maddock hot-spot criterion; the winding pack can be radially graded. Costing follows Sheffield & Milora (2016), with a surface-proportional Whyte (2024) model for cross-checks; costs never feed back into the physics.
 
-Full derivations, validity domains and references: thesis, Chapter 1 and Appendices B-C.
+Full derivations, validity domains and references: [Models](https://d0fus.readthedocs.io/en/latest/theory/index.html) section of the documentation, adapted from the thesis (Chapter 1 and Appendices B-C).
 
 ---
 

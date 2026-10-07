@@ -60,3 +60,7 @@ D0FUS_INPUTS/ITER/
 SFPlant_cross_sections/
 
 D0FUS_INPUTS/SPARC/
+
+# Documentation build products (regenerated at every build)
+docs/_build/
+docs/api/generated/
