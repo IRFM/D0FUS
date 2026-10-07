@@ -197,15 +197,29 @@ def print_banner():
     if os.environ.get("D0FUS_NO_BANNER", "").strip() not in ("", "0", "false", "False"):
         return
 
-    # Resolve installed package version, fall back to a static string
+    # Resolve the version. A source checkout reads pyproject.toml next to this
+    # file (single source of truth, same as the detailed run report); the
+    # installed-package metadata is only a fallback, because it is frozen at
+    # the last "pip install" (editable installs included) and goes stale.
+    v = None
+    pp = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pyproject.toml")
     try:
-        from importlib.metadata import version, PackageNotFoundError
+        for line in open(pp, encoding="utf-8"):
+            t = line.strip()
+            if t.startswith("version") and "=" in t:
+                v = t.split("=", 1)[1].strip().strip('"').strip("'")
+                break
+    except OSError:
+        pass
+    if v is None:
         try:
-            v = version("d0fus")
-        except PackageNotFoundError:
+            from importlib.metadata import version, PackageNotFoundError
+            try:
+                v = version("d0fus")
+            except PackageNotFoundError:
+                v = "dev"
+        except ImportError:
             v = "dev"
-    except ImportError:
-        v = "dev"
 
     # The version is the only dynamic line; the others are hardcoded for clarity.
     # Inside width is 51 characters; the version is centered programmatically.

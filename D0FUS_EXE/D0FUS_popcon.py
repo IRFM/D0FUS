@@ -193,6 +193,8 @@ def compute_popcon(config, grid_spec, verbose=1):
     _KAPPA_EDGE_LAWS = {'ITPA20', 'ITPA20-IL'}
     kappa_SL = kappa if config.Scaling_Law in _KAPPA_EDGE_LAWS else kappa_a
     H = config.H
+    # Optional Greenwald-fraction correction of the law (explicit at fixed Ip)
+    fgw_slope, fgw_ref = f_Get_fGW_correction(config.Scaling_Law)
 
     # Temperature-independent part of the scaling (density factored per point).
     X_geom = (H * C_SL * Ip**a_I * R0**a_R * eps**a_e * kappa_SL**a_k
@@ -273,7 +275,8 @@ def compute_popcon(config, grid_spec, verbose=1):
             P_rad_tot  = P_Brem + P_syn + P_line_tot
 
             # Closed-form confinement balance at fixed machine.
-            X = X_geom * (nbl * 10.0)**a_n
+            X = (X_geom * (nbl * 10.0)**a_n
+                 * np.exp(fgw_slope * (nbl / nG_raw - fgw_ref)))
             expo = 1.0 + a_P
             if X <= 0 or W_MJ <= 0 or expo <= 0:
                 continue
