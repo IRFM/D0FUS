@@ -5,7 +5,7 @@
 :::{admonition} Source
 :class: thesis-source
 
-Adapted from T. Auclair, PhD thesis, Aix-Marseille Université (2026), Appendix B.9. The thesis describes D0FUS v2.7.0. Where the code has changed since, the {doc}`API reference </api/index>`, generated from the current sources, is authoritative.
+Adapted from T. Auclair, PhD thesis, Aix-Marseille Université (2026), Appendix B.9, which describes D0FUS v2.7.0, and updated to the code of October 2026. Where the code has changed since, the {doc}`API reference </api/index>`, generated from the current sources, is authoritative.
 :::
 
 
@@ -48,10 +48,10 @@ For NBCD (neutral beam current drive), a beam ion injected at energy $E_b$ slows
 *(i) Cordey velocity-space integral.* Above $v_c$, electron drag slows the beam ions without scattering their direction: below $v_c$, ion drag isotropises them on a comparable timescale and washes out the carried current. The effective current-carrying velocity is therefore the slowing-down average of $v$ between $v_b$ and $v_c$ {footcite:p}`cordey1979nbcd`:
 
 $$
-v_\mathrm{eff} = v_c \left(\frac{v_b^3 + v_c^3}{v_b^3}\right)^{\varepsilon_v - 1} \int_0^{v_b/v_c} x \left(\frac{x^3}{1+x^3}\right)^{\varepsilon_v}\!\mathrm{d}x
+v_\mathrm{eff} = v_c \left(\frac{v_b^3 + v_c^3}{v_b^3}\right)^{p} \int_0^{v_b/v_c} \left(\frac{x^3}{1+x^3}\right)^{1+p}\!\mathrm{d}x
 $$ (eq:cordey_integral)
 
-with $v_b = \sqrt{2 E_b / (A_b m_p)}$ the beam injection velocity, $v_c = \sqrt{2 E_c / (A_b m_p)}$, and $\varepsilon_v = 1 + \tfrac{2}{3}(v_g/v_c)^3$, where $v_g = \sqrt{2 E_{c,\gamma} / (A_b m_p)}$ is the velocity associated with the CD-modified critical energy $E_{c,\gamma} = 14.8\,T_e\,(2\sqrt{A_b}\,Z_\mathrm{eff})^{2/3}$. The textbook scaling $v_\mathrm{eff} \propto \sqrt{E_b/A_b}$ is recovered in the limit $v_b \gg v_c$.
+with $v_b = \sqrt{2 E_b / (A_b m_p)}$ the beam injection velocity, $v_c = \sqrt{2 E_c / (A_b m_p)}$, and $p = Z_\mathrm{eff}/(3 A_b \langle Z^2/A\rangle)$ the decay exponent of the pitch, with $\langle Z^2/A\rangle = \sum_i n_i Z_i^2/A_i\,/\,n_e$. It is the ratio of the pitch-angle deflection rate on the ions to the ion drag. The IPDG89 formula uses $0.8\, Z_\mathrm{eff}/A_b$ for the same exponent. The integral reproduces a direct integration of the test-particle slowing-down equations. The textbook scaling $v_\mathrm{eff} \propto \sqrt{E_b/A_b}$ is recovered in the limit $v_b \gg v_c$.
 
 *(ii) Lin-Liu electron return current.* The bulk electrons partially short-circuit the beam ion flow through a parallel return current. In a cylindrical plasma this cancellation is maximal, set by the Spitzer conductivity: in a tokamak, trapped electrons cannot carry parallel current, so more of the beam-driven current survives. The Lin-Liu neoclassical fit {footcite:p}`linliu1997trapping` captures the residual:
 
@@ -69,7 +69,7 @@ $$
 \gamma_\mathrm{NBI} = \frac{e}{2\pi\,E_b}\,(\tau_\mathrm{se}\, n_e)\,|\mu|\,v_\mathrm{eff}\,\left(1 - \frac{1 - G}{Z_\mathrm{eff}}\right)\,f_i
 $$ (eq:gamma_NBCD)
 
-where $\tau_\mathrm{se}\, n_e$ is almost density-independent, so $\gamma_\mathrm{NBI}$ depends on $n_e$ only weakly through $\ln\Lambda$ and the ion composition. Engineering inputs are $A_b$, $E_b$, $\theta_\mathrm{NBI}$ (default $20^\circ$ from tangential), and the helium ash fraction $f_\alpha$. The chain matches METIS to within $1.5\,\%$ on three machines cases (ITER 1 MeV D, ARC 150 keV D, EU-DEMO 1 MeV D).
+where $\tau_\mathrm{se}\, n_e$ is almost density-independent, so $\gamma_\mathrm{NBI}$ depends on $n_e$ only weakly through $\ln\Lambda$ and the ion composition. Engineering inputs are $A_b$, $E_b$, $\theta_\mathrm{NBI}$ (default $20^\circ$ from tangential), and the helium ash fraction $f_\alpha$. The chain agrees with the IPDG89 formula used by PROCESS to within $4\,\%$ on three beam cases (ITER 1 MeV D, ARC 150 keV D, EU-DEMO 1 MeV D).
 
 ```{rubric} References
 ```

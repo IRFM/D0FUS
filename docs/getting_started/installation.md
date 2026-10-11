@@ -39,3 +39,5 @@ The 3D machine view uses PyVista:
 ```bash
 pip install "d0fus[viz3d]"
 ```
+
+The option `--no-3d` of `D0FUS.py` skips this view in a RUN.

@@ -1,5 +1,5 @@
 # ══════════════════════════════════════════════════════════════════════════════
-# D0FUS Input Parameters — ITER 15 MA DT Q=10 Q=10 Baseline (benchmark conventions)
+# D0FUS Input Parameters — ITER 15 MA DT Q=10 Baseline (benchmark conventions)
 #
 # Canonical ITER deck, aligned on the published machine (thesis Chapter 2).
 # Three convention-driven choices:
@@ -8,12 +8,12 @@
 # Bmax_TF = 11.50 : peak field at the TF conductor; decays through the c_BP
 #                     (R0 - a - b). ITER quotes 11.8 T ON THE CONDUCTOR, deeper
 #                     in the WP (R = 2.78 m), where the front-face field is
-#                     10.6 T. This input reproduces B0 = 5.30 T exactly.
+#                     10.6 T. This input gives B0 = 5.62 T (ITER: 5.30 T).
 #                     Coil thicknesses at conductor-peak field are benchmarked
 #                     separately (envelope-anchored, thesis Sec. 2.1.2).
 #   Tbar_mode = greenwald, f_GW_target = 0.85 : the ITER operating point is
 #                     specified by its Greenwald fraction; Tbar is solved
-#                     (7.75 keV) instead of imposed.
+#                     (8.55 keV) instead of imposed.
 # ══════════════════════════════════════════════════════════════════════════════
 #
 # References (primary):
@@ -37,6 +37,7 @@
 #   [Lloyd91]     Lloyd et al., PPCF 33 (1991) 2031
 #   [Pitts19]     Pitts et al., NME 20 (2019) 100696
 #   [Libeyre09]   Libeyre et al., Fusion Eng. Des. 84 (2009) 1188
+#   [Libeyre06]   Libeyre et al., 21st IAEA FEC (2006) IT/2-1Ra
 #   [Corato16]    Corato et al., SST 29 (2016) 065014
 #   [Pinches04]   Pinches et al., PPCF 46 (2004) B187
 #
@@ -78,7 +79,7 @@ Bmax_CS_adm  = 15.0                 # Maximum admissible CS conductor field [T]
                                 # to allow design exploration at higher CS utilisation.
 
 Tbar  = 8.9                     # Volume-averaged temperature [keV]
-                                # (ignored in greenwald mode, solved = 7.75)
+                                # (ignored in greenwald mode, solved = 8.55)
 Tbar_mode    = greenwald        # Solve Tbar for the target Greenwald fraction
 f_GW_target  = 0.85             # ITER Q=10 operating point [Shimada07]
                                 # [Kim18] §3, Fig. 2(b): <Te> ~ 9 keV at flat-top
@@ -94,7 +95,7 @@ H     = 1.0                     # Confinement enhancement factor H98(y,2) [-]
 Operation_mode        = Pulsed  # ITER baseline Scenario 2 is inductively driven
                                 # [Shimada07] Table 3: ~400 s burn duration
 
-Temps_Plateau_input   = 450     # Flat-top (burn) duration [s]
+Temps_Plateau_input   = 400     # Flat-top (burn) duration [s]
                                 # [Shimada07] Table 2: 400 s for 15 MA inductive burn
                                 # [Kim18] §3: flat-top ends at t=500 s (ramp-up 60s + 440s)
                                 # The usable burn is ~400 s excluding ramp overhead.
@@ -269,11 +270,12 @@ f_heat_ramp = 0.0               # 0% du ramp-up assisté par NBI/ECCD (ITER : ~3
 
 # ── 6. Structural materials ──────────────────────────────────────────────────
 
-Chosen_Steel  = 316L            # ITER structural steel: 316L(N)-IG
+Chosen_Steel_TF = 316L          # ITER structural steel: 316L(N)-IG
                                 # σ_y ~ 200 MPa at 4.2 K for jacket material
+Chosen_Steel_CS = 316L          # ITER CS jacket JK2LB, allowable close to 316L
 nu_Steel      = 0.29            # Poisson's ratio for 316L stainless steel
 
-fatigue_CS    = 2.0             # CS fatigue knockdown factor (Pulsed + Wedging)
+fatigue_CS    = 2.0             # CS fatigue knockdown (Pulsed: wedging and light bucking)
                                 # [Casper14]: ITER CS designed for ~30 000 cycles
 
 # ── 7. TF coil engineering ───────────────────────────────────────────────────
@@ -310,8 +312,8 @@ T_helium       = 4.5            # Supercritical He at 4.5 K / 0.4 MPa
                                 # [Shimada07]: ITER operates at 4.5 K (not superfluid He-II)
 Marge_T_He     = 0.3            # Temperature margin from 10-bar He operation [K]
 
-Marge_T_Nb3Sn  = 1.5            # Nb3Sn temperature margin [K]
-                                # [Corato16]: conservative Nb3Sn operating margin
+Marge_T_Nb3Sn  = 0.7            # Nb3Sn temperature margin [K]
+                                # [Libeyre06]: design margin of the ITER TF and CS conductors
 
 f_He_pipe      = 0.10           # He cooling pipe/channel fraction in conductor [-]
                                 # ITER TF CICC central spiral tube.
@@ -322,13 +324,15 @@ f_void         = 0.30          # Interstitial void fraction in strand bundle [-]
                                 # NOTE: these are class-level attributes in GlobalConfig,
                                 # not dataclass fields.  Add ': float' type annotation
                                 # in D0FUS_parameterization.py for input-file override.
-f_In_cable           = 0.10           # Turn insulation fraction [-], calibrated on ITER c ~ 0.90 m
+f_In_cable           = 0.10           # Turn insulation fraction [-], ITER c_TF within 10 % of the 0.90 m published
 
 Eps            = -6e-3          # Effective axial strain on Nb3Sn [-]
                                 # [Corato16]; accounts for thermal + mechanical strain
 
 I_cond         = 68e3           # TF conductor current: ~68 kA
                                 # ITER TF CICC specification
+I_cond_CS      = 45e3           # CS conductor current: 45 kA at 13.1 T peak field
+                                # US ITER, Central Solenoid fact sheet (May 2026)
 V_max          = 10e3           # Maximum dump voltage [V]
 tau_h_LTS      = 4.0            # Detection + hold time [s]
                                 # ITER quench detection system specification
@@ -413,6 +417,8 @@ rho_EC      = 0.40              # Off-axis deposition: rho_tor ~ 0.35–0.45
 theta_deg   = 2.5               # Divertor strike-point grazing angle [deg]
                                 # [Pitts19]: ITER divertor target geometry
                                 # Grazing angle kept low to spread power over larger area.
+f_n_sep     = 0.47              # n_sep / <n_e>: n_e,sep = 3-6e19 m-3 at P_SOL = 100 MW
+                                # [Pitts19] sec. 3.1.2 (SOLPS-4.3): 4.5e19 / 0.95e20
 
 # ── 13. Maintenance constraints ──────────────────────────────────────────────
 

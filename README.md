@@ -79,7 +79,7 @@ from D0FUS_BIB.D0FUS_parameterization import DEFAULT_CONFIG
 from D0FUS_EXE import D0FUS_run
 
 cfg = replace(DEFAULT_CONFIG, R0=8.0, Bmax_TF=13.0, Supra_choice="REBCO")
-results = D0FUS_run.run(cfg)   # tuple of 93 scalar outputs (np.nan if no solution)
+results = D0FUS_run.run(cfg)   # tuple of 165 outputs (np.nan if no solution)
 ```
 
 > Input decks (`D0FUS_INPUTS/`) are not shipped in the PyPI package: clone the repository to get them.
@@ -115,25 +115,41 @@ D0FUS/
 
 ## Execution modes
 
-The mode is detected from the input file syntax:
+The mode is detected from the content of the input file. Text after `#` is a comment, and section titles such as `[POPCON]` are optional.
 
 | Mode | Purpose | Trigger in the deck |
 |------|---------|---------------------|
-| **RUN** | Single design point, 93 outputs, report files, 17 figures | Fixed values only (`R0 = 9`) |
-| **SCAN** | 2D feasibility map, 32 registered output quantities | Exactly 2 entries `[min, max, n_points]` |
+| **RUN** | Single design point, 165 outputs, report files, 16 figures | Fixed values only (`R0 = 9`) |
+| **SCAN** | 2D feasibility map, 108 registered output quantities | Exactly 2 entries `[min, max, n_points]`, other than the POPCON pair |
 | **OPTIMIZATION** | Genetic cost minimisation (DEAP) | 2+ entries `[min, max]` |
-| **POPCON** | Operating map (n̄, T̄) at fixed machine | `[POPCON]` section |
-| **UNCERTAINTY** | Monte-Carlo propagation of input uncertainties | `[UNCERTAINTY]` section |
+| **POPCON** | Operating map (n̄, T̄) at fixed machine | `nbar_line` and `Tbar` written `[min, max, n_points]` |
+| **UNCERTAINTY** | Monte-Carlo propagation of input uncertainties | At least one `tri()`, `norm()`, `unif()` or `envelope()` entry |
 
-**RUN** solves the coupled design point: in pulsed mode a scalar root-finding on the helium ash fraction (Brent), in steady-state a 2D solve on (f_α, Q) (Powell). Post-convergence: TF/CS sizing, flux budget, divertor loads, L-H margin, costs, runaway-electron indicators.
+**RUN** solves the coupled design point: in pulsed mode a scalar root-finding on the helium ash fraction (Brent), in steady-state a 2D solve on (f_α, Q) (Powell). An outer loop updates the q(ρ) profile of the bootstrap model and solves again, usually once. Post-convergence: TF/CS sizing, flux budget, divertor loads, L-H margin, costs, runaway-electron indicators.
 
 **SCAN** evaluates an independent grid in parallel (`joblib`/`loky`), overlaying the operational limits (Greenwald, Troyon, kink) and the radial-build closure on any registered output.
 
-**OPTIMIZATION** minimises `COE` (default), `C_invest`, `volume`, or maximises `P_elec`, under soft penalties on the plasma limits and an optional capital-cost ceiling, so the search converges toward the feasible boundary rather than fleeing it.
+**OPTIMIZATION** minimises `COE` (default), `C_invest`, `volume` or `R0`, or maximises `P_elec`. Feasibility follows the RUN rule and comes first in the ranking: any feasible design beats any infeasible one, and infeasible designs are ranked by their violation of the limits. An optional capital-cost ceiling adds a soft penalty.
 
-**POPCON** freezes the deck's converged machine and sweeps (n̄_line, T̄), returning Q, powers and the H-mode access margin at every node, bounded by the Greenwald and L-H limits (logic of the open-source `cfspopcon`, reusing the D0FUS physics chain).
+**POPCON** freezes the deck's converged machine and sweeps (n̄_line, T̄), returning Q, powers and the H-mode access margin at every node, bounded by the Greenwald, Troyon and L-H limits (logic of the open-source `cfspopcon`, reusing the D0FUS physics chain).
 
-**UNCERTAINTY** assigns distributions (`norm()`, `tri()`, `unif()`) to any inputs and discrete model switches with `envelope(A | B)`, draws Latin-Hypercube samples, and returns output distributions with feasibility shares, the no-solution draws being counted as failures.
+**UNCERTAINTY** assigns distributions (`norm()`, `tri()`, `unif()`) to any inputs and discrete model switches with `envelope(A | B)`, draws Latin-Hypercube samples, and returns output distributions and one feasible share with its 95 % Wilson confidence interval, the no-solution draws being counted as failures.
+
+### Command-line options
+
+```bash
+python D0FUS.py DECK [--output-dir DIR] [--no-figures] [--no-3d] [--seed N]
+```
+
+| Option | Effect |
+|--------|--------|
+| `--output-dir DIR` | Parent folder of the result folders, instead of `D0FUS_OUTPUTS` |
+| `--no-figures` | Reports and data files only |
+| `--no-3d` | RUN: skips the 3D machine view (PyVista), the slowest figure |
+| `--seed N` | Random seed of OPTIMIZATION and UNCERTAINTY, overriding the deck |
+| `-h` | Help, with the deck syntax of each mode |
+
+Without a deck, `D0FUS.py` lists the files of `D0FUS_INPUTS` with their detected mode.
 
 ### Execution time (14-core laptop)
 
@@ -164,7 +180,7 @@ Each model carries its own selector in `GlobalConfig`; the factories `preset_aca
 
 ## Inputs
 
-All parameters live in one typed dataclass, `GlobalConfig` (159 fields), each with a physically motivated default. A deck overrides only what it names; everything else keeps its default, so a complete machine fits in a few lines:
+All parameters live in one typed dataclass, `GlobalConfig` (165 fields), each with a physically motivated default. A deck overrides only what it names; everything else keeps its default, so a complete machine fits in a few lines:
 
 ```ini
 R0 = 7
@@ -180,8 +196,8 @@ Key parameters and their actual defaults:
 | `Bmax_TF` / `Bmax_CS_adm` | Peak field on TF / admissible on CS [T] | 12.0 / 25.0 | |
 | `Supra_choice` | Superconductor | `Nb3Sn` | `NbTi`, `Nb3Sn`, `REBCO` |
 | `Choice_Buck_Wedg` | TF mechanical configuration | `Wedging` | `Wedging`, `Bucking`, `Plug` |
-| `Chosen_Steel` | Structural steel | `316L` | `316L`, `N50H`, `Manual` |
-| `Scaling_Law` | Confinement scaling | `IPB98(y,2)` | `ITPA20`, `ITPA20-IL`, `DS03`, `L-mode`, `L-mode OK`, `ITER89-P` |
+| `Chosen_Steel_TF` / `Chosen_Steel_CS` | TF structural steel / CS jacket steel | `316L` / `316L` | `316L`, `N50H`, `Manual` |
+| `Scaling_Law` | Confinement scaling | `ITPA20` | `IPB98(y,2)`, `ITPA20-IL`, `DS03`, `L-mode`, `L-mode OK`, `ITER89-P` |
 | `Option_Kappa` | Elongation model | `Blend` | `Wenninger`, `Stambaugh`, `Freidberg`, `Manual` |
 | `Option_q95` | q₉₅ formula | `ITER_1989` | `Sauter` |
 | `density_limit_model` | Density limit | `greenwald` | `zanca`, `giacomin` |
@@ -221,13 +237,13 @@ Continuous distributions: `norm(sigma)`, `norm(lo, hi)`, `norm(lo, centre, hi)`,
 
 ## Outputs
 
-Every mode writes a timestamped folder under `D0FUS_OUTPUTS/`. A RUN produces `input_parameters.txt` (the deck), `output_highlight.txt` (key results), `output_detailed.txt` (every input including defaults, every output), and 17 figures (cross-section, Miller surfaces, profiles, q(ρ), radiation, divertor two-point, radial build, coil and CICC drawings, cost breakdown, temperature and density maps, optional PyVista 3D view). SCAN writes the 2D map, OPTIMIZATION the convergence history and Hall of Fame, POPCON the operating-contour map, UNCERTAINTY the per-output distributions with the feasibility verdict and figures.
+Every mode writes a folder named after the mode and the time, to the second, under `D0FUS_OUTPUTS/<mode>/`. From a clone, `D0FUS_OUTPUTS` is at the root of the repository, whatever the working directory. For an installed package, it is in the working directory. A RUN produces `input_parameters.txt` (the deck), `output_highlight.txt` (key results), `output_detailed.txt` (every input including defaults, every output), and 16 figures (cross-section, Miller surfaces, profiles, q(ρ), radiation, divertor two-point, radial build, coil and CICC drawings, cost breakdown, temperature and density maps, PyVista 3D view skipped with `--no-3d`). A design without a solution gives NaN in the reports and figures. SCAN writes the 2D map, OPTIMIZATION the convergence plot, `optimization_summary.json` (settings, seed, Hall of Fame), a copy of the deck and the reports of the best design, POPCON the operating-contour map, UNCERTAINTY a summary with the feasible share and its confidence interval, the per-output distributions and figures.
 
 ---
 
 ## Models in brief
 
-Plasma geometry follows the Miller parameterisation (Miller 1998) with on-axis regularity enforced (Ball & Parra 2015). The three first-order plasma limits are Greenwald, Troyon and the kink limit on q₉₅, with the density-limit model selectable (Greenwald, Zanca 2019, Giacomin 2022 near-separatrix). Impurity radiation uses the Mavrin (2018) cooling rates; the divertor is characterised by an Eich attached estimate or a two-point model with a Lengyel seeding closure on non-coronal OpenADAS curves. The L-H threshold offers Martin (2008) and two Delabie (ITPA TC-26) regressions. Current drive follows the METIS efficiency models, matched to METIS within 1.5 %. Runaway-electron indicators combine a hot-tail seed (Smith 2008) and avalanche amplification (Breizman 2019), for comparative ranking only.
+Plasma geometry follows the Miller parameterisation (Miller 1998) with on-axis regularity enforced (Ball & Parra 2015). The three first-order plasma limits are Greenwald, Troyon and the kink limit on q₉₅, with the density-limit model selectable (Greenwald, Zanca 2019, Giacomin 2022 near-separatrix). Impurity radiation uses the Mavrin (2018) cooling rates; the divertor is characterised by an Eich attached estimate or a two-point model with a Lengyel seeding closure on non-coronal OpenADAS curves. The L-H threshold offers Martin (2008) and the two ITPA TC-26 metal-wall scalings (Delabie 2026). Current drive follows the METIS efficiency models; the NBCD efficiency agrees with the IPDG89 formula used by PROCESS within 4 %. Runaway-electron indicators combine a hot-tail seed (Smith 2008) and avalanche amplification (Breizman 2019), for comparative ranking only.
 
 The TF inboard leg is a Princeton-D (File, Mills & Sheffield 1971); conductors are CICC-like with a helium-fraction hierarchy; critical currents use ITER parameterisations (NbTi, Nb₃Sn) and REBCO datasets (Senatore 2024, Fujikura 2019); quench protection is sized on the Maddock hot-spot criterion; the winding pack can be radially graded. Costing follows Sheffield & Milora (2016), with a surface-proportional Whyte (2024) model for cross-checks; costs never feed back into the physics.
 

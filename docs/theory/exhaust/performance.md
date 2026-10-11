@@ -5,7 +5,7 @@
 :::{admonition} Source
 :class: thesis-source
 
-Adapted from T. Auclair, PhD thesis, Aix-Marseille Université (2026), Section 1.4.3. The thesis describes D0FUS v2.7.0. Where the code has changed since, the {doc}`API reference </api/index>`, generated from the current sources, is authoritative.
+Adapted from T. Auclair, PhD thesis, Aix-Marseille Université (2026), Section 1.4.3, which describes D0FUS v2.7.0, and updated to the code of October 2026. Where the code has changed since, the {doc}`API reference </api/index>`, generated from the current sources, is authoritative.
 :::
 
 
@@ -27,18 +27,21 @@ $$
 P_\mathrm{WP} = \frac{P_\mathrm{aux}}{\eta_\mathrm{WP}}
 $$ (eq:Pwallplug)
 
-where $P_\mathrm{aux}$ is the total plasma-absorbed power across all heating and current-drive sources. The wall-plug efficiency $\eta_\mathrm{WP}$ varies considerably by source: lower hybrid klystrons reach $50$ to $60\,\%$, electron-cyclotron gyrotrons $40$ to $55\,\%$, neutral beam injectors $25$ to $40\,\%$ and ICRH amplifiers $70$ to $85\,\%$ {footcite:p}`gormezano2007icrh`. In Academic mode, D0FUS uses a single effective $\eta_\mathrm{WP,acad}$. In Multi-source mode, each source has its own efficiency and the wall-plug power is summed source by source. The net electrical output reads
+where $P_\mathrm{aux}$ is the total plasma-absorbed power across all heating and current-drive sources. The wall-plug efficiency $\eta_\mathrm{WP}$ varies considerably by source: lower hybrid klystrons reach $50$ to $60\,\%$, electron-cyclotron gyrotrons $40$ to $55\,\%$, neutral beam injectors $25$ to $40\,\%$ and ICRH amplifiers $70$ to $85\,\%$ {footcite:p}`gormezano2007icrh`. In Academic mode, D0FUS uses a single effective $\eta_\mathrm{WP,acad}$. In Multi-source mode, each source has its own efficiency and the wall-plug power is summed source by source. The net electrical output is the gross output of the thermal cycle minus the recirculated power,
 
 $$
-P_\mathrm{elec} = \eta_T\, P_\mathrm{th} - P_\mathrm{WP}
+P_\mathrm{elec} = \eta_T\, \bar{P}_\mathrm{th} - P_\mathrm{recirc}, \qquad
+P_\mathrm{recirc} = f_\mathrm{burn}\left(\frac{P_\mathrm{aux}}{\eta_\mathrm{WP}} + f_\mathrm{pump}\, P_\mathrm{th}\right) + P_\mathrm{CS} + P_\mathrm{cryo} + P_\mathrm{house}
 $$ (eq:Pelec)
 
-with $\eta_T$ the thermal-to-electric conversion efficiency: the cycle fits of the PROCESS engineering paper give about $0.31$ to $0.34$ for a Rankine cycle at water-blanket coolant temperatures, and up to $0.45$ for helium-cooled designs at higher outlet temperature {footcite:p}`kovari2016process`. This expression neglects the balance-of-plant auxiliary loads: cryogenics, fuelling and vacuum pumping, coolant circulation and control systems. These are however not necessarily small: for EU-DEMO, Wenninger *et al.* {footcite:p}`wenninger2017physics` quote about $150$ MW of circulating power for a helium-cooled blanket and about $20$ MW for a water-cooled one, so the $Q_\mathrm{eng}$ reported here is an upper bound. A parametric balance-of-plant term is left for future work.
+with $\eta_T$ the gross thermal-to-electric efficiency and $f_\mathrm{pump}$ the coolant pumping load as a fraction of the thermal power. The values of $M_\mathrm{blanket}$, $\eta_T$ and $f_\mathrm{pump}$ are those of the blanket concept chosen, taken from the comparison of Clark *et al.* {footcite:p}`clark2025blanket`, unless the deck sets them. The concept value of $M_\mathrm{blanket}$ is reduced when the breeder is thinner than the concept reference.
+
+In pulsed operation, a thermal store delivers a constant power $\bar{P}_\mathrm{th}$ over the whole cycle, flat-top and dwell, so that $P_\mathrm{elec}$ is a cycle average. The loads are averaged over the same cycle. The heating and the coolant pumping run during the burn only, $f_\mathrm{burn}$ being the flat-top fraction of the cycle. $P_\mathrm{CS}$ supplies the stored energy of the central solenoid once per cycle. The cryoplant $P_\mathrm{cryo}$, scaled on the magnet cold mass from the EU-DEMO reference, and the house load $P_\mathrm{house}$ run all the time. The house load follows the PROCESS model {footcite:p}`kovari2016process`: a fixed plant base, a term proportional to the building floor area, the tritium plant, the vacuum pumps and the TF power supplies. In steady state, $f_\mathrm{burn} = 1$ and $\bar{P}_\mathrm{th} = P_\mathrm{th}$. $P_\mathrm{elec}$ can be negative: the plant then produces no net electricity and the cost of electricity is undefined.
 
 The engineering gain factor closes the plant-level balance,
 
 $$
-Q_\mathrm{eng} = \frac{P_\mathrm{elec}}{P_\mathrm{WP}}
+Q_\mathrm{eng} = \frac{\eta_T\, \bar{P}_\mathrm{th}}{P_\mathrm{recirc}}
 $$ (eq:Q_eng)
 
 and quantifies how much electricity the plant produces per unit of recirculating power. Net electricity production requires $Q_\mathrm{eng} > 1$ (the engineering counterpart of the plasma break-even condition $Q > 1$), but commercial viability requires $Q_\mathrm{eng}$ well above unity, so that the recirculating power fraction $1/Q_\mathrm{eng}$ stays modest, the precise threshold depending on the local electricity price and the capital cost amortisation schedule {footcite:p}`whyte2026criteria`.

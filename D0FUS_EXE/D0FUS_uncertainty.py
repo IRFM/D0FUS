@@ -3,30 +3,37 @@ D0FUS_uncertainty.py -- Uncertainty quantification around a single design point.
 
 Fourth execution mode (RUN / SCAN / OPTIMIZATION / UNCERTAINTY), self-contained
 in the same spirit as the other input files: the user pastes a complete RUN deck
-(the design point), then appends an [UNCERTAINTY] section listing the parameters
-to study and their envelopes, plus a [CONTROLS] section.
+(the design point), then appends the parameters to study, written as
+distributions or model envelopes, and the study controls (n_samples, seed,
+retune, ...). These entries are recognised by their content, so the titles
+[UNCERTAINTY] and [CONTROLS] are optional.
 
   * The design point provides the CENTRAL value of every uncertain law, so the
     study auto-centres on the machine and re-centres if the design changes.
-  * A parameter is studied by listing it under [UNCERTAINTY] as a distribution
+  * A parameter is studied by writing it as a distribution
     tri(lo, hi) / tri(lo, mode, hi) / unif(lo, hi) / norm(...), or as a
-    model-form list envelope(A | B). The normal law is a TRUNCATED normal and
-    accepts three forms: norm(sigma) centres on the design value, norm(lo, hi)
-    centres on the design value with the bounds at about mean +/- 2 sigma, and
-    norm(lo, centre, hi) lets the user set both the bounds and the centre.
-  * Adding two scan axes  a = [min, max, n]  to the design point turns the study
-    into the (a, R0) feasibility map (planned).
+    model-form list envelope(A | B). The normal law is a TRUNCATED normal, see
+    _build_marginal for its forms. In norm(lo, hi) the centre is the design
+    value and sigma = (hi - lo) / 4: the bounds sit at +/- 2 sigma from the
+    midpoint of [lo, hi], so they are asymmetric in sigma units around a
+    design value that is not the midpoint.
+  * Every uncertain key is checked when the file is read: an unknown
+    field, an index out of range or an invalid model option stops the study
+    before any sample is run.
 
 Building blocks:
   - evaluate(config): one in-memory solver call (no file I/O, no figures)
     returning the QoIs, the feasibility flag and the constraint margins.
   - triangular / normal / uniform LHS sampler.
-  - parse_uq_file() / detect_mode(): the input-file front end.
+  - parse_uq_file(): the input-file front end (the mode itself is detected
+    by D0FUS.py).
   - run_uq_from_file(): forward propagation over the model envelope
     (Monte-Carlo evaluated in parallel with joblib/loky).
+  - classify() / feasible_share(): the single definition of the feasible
+    share used by the console, the summary file and the figures.
 
-Feasibility mirrors D0FUS_scan / D0FUS_genetic (Greenwald, Troyon, kink and
-radial-build closure) so "feasible" means exactly what the optimiser means.
+Feasibility is the shared RUN rule (D0FUS_run.evaluate_feasibility), so
+"feasible" means exactly what RUN, SCAN and GENETIC mean.
 """
 #%% Imports
 
@@ -49,40 +56,23 @@ except ModuleNotFoundError:
 
 # --- Project-specific D0FUS dependencies -------------------------------------
 from D0FUS_EXE import D0FUS_run as RUN
+from D0FUS_BIB.D0FUS_parameterization import coerce_input_value, resolve_deprecated_key
 
 # Backwards-compatible alias for dataclasses.replace, used throughout the module.
 dc_replace = replace
 
 
-# --- default uncertain set, documented as (family, *params); the file front end
-#     re-centres each marginal on the design point, so these are only a fallback.
-UNCERTAIN_SPEC = {
-    'H':                 ('tri', 0.75, 1.00, 1.50),
-    'Tbar':              ('tri', 7.90, 8.90, 9.90),
-    'C_Alpha':           ('tri', 3.00, 5.00, 7.00),
-    'nu_n_manual':       ('tri', 0.00, 0.01, 0.21),
-    'nu_T_manual':       ('tri', 1.80, 2.80, 3.80),
-    'rho_ped':           ('tri', 0.90, 0.95, 0.97),
-    'n_ped_frac':        ('tri', 0.85, 0.99, 0.99),
-    'T_ped_frac':        ('tri', 0.40, 0.55, 0.70),
-    'eta_WP_acad':       ('tri', 0.20, 0.30, 0.50),
-    'gamma_CD_acad':     ('tri', 0.05, 0.20, 0.50),
-    'Ce':                ('tri', 0.20, 0.45, 0.50),
-    'betaN_limit':       ('tri', 2.80, 2.80, 3.60),
-    'q_limit':           ('tri', 3.00, 3.50, 3.50),
-    'Greenwald_limit':   ('tri', 0.80, 1.00, 1.50),
-    'Supra_cost_factor': ('tri', 1.50, 2.00, 3.50),
-    'discount_rate':     ('tri', 0.05, 0.07, 0.10),
+# Study controls, recognised by name anywhere in the deck. A key that is
+# neither a control nor uncertain belongs to the design point.
+KNOWN_CONTROLS = {
+    'n_samples', 'seed',                                   # Monte-Carlo
+    'retune', 'Tbar_window', 'retune_points', 'retune_bisect',   # Tbar retuning
+    'cs_relief', 'flux_relief',                            # CS flux relief
+    'pulse_retune', 'ramp_retune',                         # legacy relief switches
 }
 
-# Convenience for the programmatic run_uq() path on a stock RUN deck that is not
-# already in the study frame; the file front end does NOT use this (the pasted
-# design deck is authoritative).
-FIXED_OVERRIDES = {'CD_source': 'Academic', 'kink_parameter': 'q95',
-                   'Plasma_profiles': 'Manual'}
-
-DIST_RE = re.compile(r'^(tri|norm|unif)\((.*)\)$', re.IGNORECASE)
-ENV_RE = re.compile(r'^envelope\((.*)\)$', re.IGNORECASE)
+DIST_RE = re.compile(r'^(tri|norm|unif)\s*\((.*)\)$', re.IGNORECASE)
+ENV_RE = re.compile(r'^envelope\s*\((.*)\)$', re.IGNORECASE)
 # Indexed access into a comma-separated string field, e.g. 'f_imp_core[0]'
 # samples the FIRST impurity concentration of the deck (species order given by
 # impurity_species) while leaving the other entries at their deck values.
@@ -165,8 +155,9 @@ def evaluate(cfg):
         return {'converged': False, 'feasible': False,
                 'failure': 'no_operating_point' if not plasma_ok else 'no_closure'}
 
-    c_TF = r_sep - r_c if np.isfinite(r_c) and np.isfinite(r_sep) else np.nan
-    d_CS = r_c - r_d   if np.isfinite(r_c) and np.isfinite(r_d)   else np.nan
+    # TF inboard leg and CS thicknesses from the run() tuple (r_sep - r_c would
+    # also count the TF-CS gap in a wedged design)
+    c_TF, d_CS = c, d
     f_bs = (Ib / Ip * 100.0) if Ip > 0 else np.nan
 
     # Cost and feasibility: shared RUN evaluators, identical in every mode.
@@ -212,10 +203,16 @@ def _retune_ladder(T0, T_lo, T_hi, n_points=4):
     compact device at 4.5 keV need no per-deck tuning), and the evaluation
     budget stays at most 2 * n_points extra solver calls per failing sample.
 
+    The fractions grow geometrically, (2^(k+1) - 1) / (2^n - 1): 1/15, 3/15,
+    7/15 and 1 for n = 4. The first rungs stay close to T0, so a narrow
+    feasible band next to the design point is not jumped over (with an
+    evenly spaced ladder on a 1-20 keV window, the first rung lies about
+    3 keV away).
+
     Returns (up, down): the candidate temperatures above and below T0,
     ordered from the nearest to the farthest.
     """
-    fractions = [(k + 1) / n_points for k in range(n_points)]
+    fractions = [(2 ** (k + 1) - 1) / (2 ** n_points - 1) for k in range(n_points)]
     up = [T0 + f * (T_hi - T0) for f in fractions if T_hi > T0]
     down = [T0 - f * (T0 - T_lo) for f in fractions if T_lo < T0]
     return up, down
@@ -232,49 +229,72 @@ def evaluate_retuned(cfg, window):
     operating point. This function asks the corresponding question: does a
     feasible operating temperature EXIST inside `window` = (T_lo, T_hi)?
 
-    The as-designed point (deck Tbar) is evaluated first; if it is feasible
+    The as-designed point (Tbar of cfg) is evaluated first; if it is feasible
     the sample is accepted unchanged. Otherwise the temperature is moved along
-    RETUNE_LADDER, trying first the direction suggested by the failure
-    signature: density-limit, beta-limit and radiative no-operating-point
-    failures call for a HIGHER temperature (lower density at fixed fusion
-    power), kink and flux-closure failures for a LOWER one; both directions
-    are eventually tried. The first feasible point is accepted and tagged
-    retuned=True with its Tbar_used. If no temperature in the window is
-    feasible, the best converged attempt is returned (so the margin statistics
-    stay meaningful), tagged feasible=False. In every case the key
-    'feasible_as_designed' preserves the frozen-point verdict, so summaries
-    can report both readings side by side.
+    the ladder of _retune_ladder, trying first the direction suggested by the
+    failure signature: density-limit, beta-limit and radiative
+    no-operating-point failures call for a HIGHER temperature (lower density
+    at fixed fusion power), kink and flux-closure failures for a LOWER one;
+    both directions are eventually tried. When a rung is feasible, the move
+    is refined by bisection between that rung and the last infeasible point
+    of the same direction (window[3] steps, default 3), so that Tbar_used is
+    the smallest move found rather than the rung itself. If no temperature in
+    the window is feasible, the best converged attempt is returned (so the
+    margin statistics stay meaningful), tagged feasible=False. In every case
+    the key 'feasible_as_designed' preserves the frozen-point verdict, so
+    summaries can report both readings side by side.
+
+    cfg must have its operating point resolved (Tbar_mode = 'manual'): with
+    the Greenwald closure on, run() would solve Tbar again and a move of Tbar
+    would have no effect. _uq_worker resolves it once per draw.
     """
     T_lo, T_hi = window[0], window[1]
     n_points = int(window[2]) if len(window) > 2 else 4
+    n_bisect = int(window[3]) if len(window) > 3 else 3
+    T0 = float(cfg.Tbar)
     r0 = evaluate(cfg)
     r0['feasible_as_designed'] = bool(r0.get('feasible'))
     r0['retuned'] = False
-    r0['Tbar_used'] = float(cfg.Tbar)
+    r0['Tbar_used'] = T0
     if r0['feasible_as_designed']:
         return r0
 
     up_first = (r0.get('binding') in ('greenwald', 'troyon')
                 or r0.get('failure') == 'no_operating_point')
-    up, down = _retune_ladder(float(cfg.Tbar), T_lo, T_hi, n_points)
+    up, down = _retune_ladder(T0, T_lo, T_hi, n_points)
     first, second = (up, down) if up_first else (down, up)
     # Interleave the two directions, preferred one first, nearest steps first.
     steps = [t for pair in zip(first, second) for t in pair]
     steps += first[len(second):] + second[len(first):]
 
-    tried = {round(float(cfg.Tbar), 3)}
+    tried = {round(T0, 3)}
+    last_bad = {+1: T0, -1: T0}   # last infeasible temperature per direction
     best = r0 if r0.get('converged') else None
     for T in steps:
         key = round(float(T), 3)
         if key in tried:
             continue
         tried.add(key)
+        direction = +1 if T > T0 else -1
         r = evaluate(dc_replace(cfg, Tbar=float(T)))
         r['feasible_as_designed'] = False
         r['Tbar_used'] = T
         if r.get('feasible'):
+            # Bisection between the last infeasible point and this rung
+            lo, hi = last_bad[direction], T
+            for _ in range(n_bisect):
+                Tm = 0.5 * (lo + hi)
+                rm = evaluate(dc_replace(cfg, Tbar=float(Tm)))
+                if rm.get('feasible'):
+                    hi = Tm
+                    rm['feasible_as_designed'] = False
+                    rm['Tbar_used'] = Tm
+                    r = rm
+                else:
+                    lo = Tm
             r['retuned'] = True
             return r
+        last_bad[direction] = T
         if best is None and r.get('converged'):
             r['retuned'] = False
             best = r
@@ -282,72 +302,6 @@ def evaluate_retuned(cfg, window):
         best = r0
     best.setdefault('retuned', False)
     return best
-
-
-def evaluate_pulse(cfg, tbar_window, pulse_cfg):
-    """Feasibility WITH pulse-length relaxation of the flux budget.
-
-    A design that closes structurally but exhausts the central-solenoid flux
-    is not simply infeasible: it can still run, on a shorter flat-top. This
-    function first evaluates the point at the full design pulse (with operator
-    temperature retuning when tbar_window is given). If that already passes,
-    the sample keeps pulse_frac = 1.0. Otherwise, and ONLY when the failure is
-    flux/build related (no build-flux closure, or the radial build binds), the
-    flat-top duration is walked down a ladder of pulse fractions and, last, an
-    absolute floor (e.g. 10 s). The largest pulse fraction that yields a
-    feasible design is recorded in 'pulse_frac' (with pulse_limited=True); if
-    even the floor fails, the design is genuinely flux-infeasible and keeps
-    its full-pulse verdict with pulse_frac = 0.0.
-
-    pulse_cfg = (fractions, floor_s). Pulse tranches are evaluated at the deck
-    operating temperature (a well-defined operating point), so the reported
-    pulse capability answers 'how much flat-top can this draw sustain on
-    flux', decoupled from the plasma-limit retuning of stage one.
-    """
-    r = evaluate_retuned(cfg, tbar_window) if tbar_window else evaluate(cfg)
-    r.setdefault('feasible_as_designed', bool(r.get('feasible')))
-    r['pulse_frac'] = 1.0
-    r['pulse_limited'] = False
-    if r.get('feasible') or pulse_cfg is None:
-        return r
-
-    # Only flux / build-closure failures are addressable by a shorter pulse.
-    addressable = (r.get('failure') == 'no_closure' or r.get('binding') == 'build')
-    if not addressable:
-        return r
-
-    fractions, floor_s = pulse_cfg
-    t_full = float(cfg.Temps_Plateau_input)
-    durations = sorted({f * t_full for f in fractions} | {float(floor_s)},
-                       reverse=True)
-    durations = [t for t in durations if 0.0 < t < t_full]
-    last_closed = None
-    for t in durations:
-        rp = evaluate(dc_replace(cfg, Temps_Plateau_input=float(t)))
-        if rp.get('feasible'):
-            rp['feasible_as_designed'] = False
-            rp['retuned'] = r.get('retuned', False)
-            rp['Tbar_used'] = r.get('Tbar_used', float(cfg.Tbar))
-            rp['pulse_frac'] = t / t_full
-            rp['pulse_limited'] = True
-            rp['Temps_Plateau_used'] = t
-            return rp
-        if rp.get('converged'):
-            last_closed = rp     # closes on flux at this pulse but plasma-limited
-    if last_closed is not None:
-        # A shorter pulse relieves the CS flux, but the design is still held
-        # back by a plasma limit (kink, Greenwald, ...). Report it by that TRUE
-        # binding rather than as a flux/build wall: the full-pulse no-closure
-        # was only the first symptom of the same (usually high-current) draw.
-        last_closed['feasible_as_designed'] = False
-        last_closed['retuned'] = r.get('retuned', False)
-        last_closed['Tbar_used'] = r.get('Tbar_used', float(cfg.Tbar))
-        last_closed['pulse_frac'] = 0.0
-        last_closed['pulse_limited'] = False
-        last_closed['pulse_relieved'] = True
-        return last_closed
-    r['pulse_frac'] = 0.0     # genuine CS wall: no closure at any pulse
-    return r
 
 
 # =============================================================================
@@ -469,25 +423,12 @@ def parse_relief_controls(controls):
             raw = '0.25, 0.5, 0.75'
         else:
             return None
-    return [float(x) for x in str(raw).split(',')]
-
-
-def parse_pulse_controls(controls):
-    """Read the optional pulse-relaxation controls.
-
-    [CONTROLS] keys:
-      pulse_retune    = Temps_Plateau_input   activates the pulse search
-      pulse_fractions = 0.75, 0.5, 0.25       tranches below the full pulse
-      pulse_floor     = 10.0                  absolute floor [s]
-    Returns (fractions, floor_s) or None when pulse relaxation is off.
-    """
-    if str(controls.get('pulse_retune', '')).strip() not in (
-            'Temps_Plateau_input', 'pulse', 'Temps_Plateau'):
+    if str(raw).strip().lower() in ('none', 'off', ''):
         return None
-    raw = str(controls.get('pulse_fractions', '0.75, 0.5, 0.25'))
-    fractions = [float(t) for t in raw.split(',')]
-    floor_s = float(controls.get('pulse_floor', 10.0))
-    return (fractions, floor_s)
+    fractions = [float(x) for x in str(raw).split(',')]
+    if not all(0.0 < f < 1.0 for f in fractions):
+        raise ValueError(f"[CONTROLS] cs_relief = {raw}: fractions must lie in (0, 1).")
+    return fractions
 
 
 def parse_retune_controls(controls):
@@ -497,15 +438,24 @@ def parse_retune_controls(controls):
       retune        = Tbar          activates the retuning search
       Tbar_window   = 6.0, 12.0     admissible operating window [keV]
       retune_points = 4             ladder resolution per direction (optional)
-    Returns (T_lo, T_hi, n_points) or None when retuning is off. The ladder is
-    built relative to the window (see _retune_ladder), so the window bounds are
-    always reachable whatever the deck's design temperature.
+      retune_bisect = 3             bisection steps refining a feasible rung
+                                    (optional, 0 keeps the rung itself)
+    Returns (T_lo, T_hi, n_points, n_bisect) or None when retuning is off. The
+    ladder is built relative to the window (see _retune_ladder), so the window
+    bounds are always reachable whatever the deck's design temperature.
     """
-    if str(controls.get('retune', '')).strip().lower() != 'tbar':
+    value = str(controls.get('retune', '')).strip().lower()
+    if value in ('', 'none', 'off'):
         return None
+    if value != 'tbar':
+        raise ValueError(f"[CONTROLS] retune = {controls.get('retune')!r}: "
+                         "the only retuning lever is Tbar (or none).")
     win = str(controls.get('Tbar_window', '6.0, 12.0'))
     lo, hi = (float(t) for t in win.split(','))
-    return (lo, hi, int(controls.get('retune_points', 4)))
+    if not lo < hi:
+        raise ValueError(f"[CONTROLS] Tbar_window = {win}: needs lo < hi.")
+    return (lo, hi, int(controls.get('retune_points', 4)),
+            int(controls.get('retune_bisect', 3)))
 
 
 # =============================================================================
@@ -593,23 +543,6 @@ def sample_lhs(spec, n, seed=0):
 # =============================================================================
 # Configuration assembly
 # =============================================================================
-def _coerce(val, ref):
-    """Coerce a string value to the type of the reference attribute."""
-    if isinstance(ref, bool):
-        return str(val).strip().lower() in ('true', '1', 'yes')
-    if isinstance(ref, int) and not isinstance(ref, bool):
-        try:
-            return int(float(val))
-        except ValueError:
-            return val
-    if isinstance(ref, float):
-        try:
-            return float(val)
-        except ValueError:
-            return val
-    return val
-
-
 def build_config(base, names, row, extra_overrides=None):
     """
     Apply an envelope combo and one sampled row to the base design.
@@ -623,7 +556,12 @@ def build_config(base, names, row, extra_overrides=None):
     if extra_overrides:
         for k, v in extra_overrides.items():
             if k in fields:
-                changes[k] = _coerce(v, getattr(base, k))
+                # Envelope options arrive as deck strings and get the deck
+                # typing. Numeric values (scanned design parameters) are
+                # kept as they are: casting them to the type of the deck
+                # value would truncate a scan of 'a = 2.0' (read as int 2)
+                # to whole metres.
+                changes[k] = coerce_input_value(k, v) if isinstance(v, str) else v
     for name, val in zip(names, row):
         m = IDX_RE.match(name)
         if m is not None and m.group(1) in fields:
@@ -677,9 +615,11 @@ def _build_marginal(name, fam, args, central):
         #   norm(lo, centre, hi)              -> mean = centre, bounds lo/hi
         #   norm(lo, centre, hi, sigma)       -> explicit symmetric sigma
         #   norm(lo, centre, hi, s_lo, s_hi)  -> SPLIT normal: sharp side / long tail
-        # For the 2/3-argument forms the standard deviation is set so that lo and hi
-        # sit at about mean +/- 2 sigma, i.e. sigma = (hi - lo) / 4. Use the 4th
-        # argument to decouple the width from the bounds (e.g. a narrow peak with a
+        # For the 2/3-argument forms sigma = (hi - lo) / 4: lo and hi sit at
+        # +/- 2 sigma from the MIDPOINT of [lo, hi]. Around a centre that is not
+        # the midpoint they are asymmetric in sigma units (H = norm(0.80, 1.60)
+        # centred on 1.0: lo at -1 sigma, hi at +3 sigma). Use the 4th argument
+        # to decouple the width from the bounds (e.g. a narrow peak with a
         # far-reaching but rare tail), and the 5th to make the two sides asymmetric.
         if len(args) == 1:                       # (sigma) -> mean = design value
             if central is None:
@@ -712,122 +652,119 @@ def _build_marginal(name, fam, args, central):
     raise ValueError(f"unknown marginal {fam}{tuple(args)}")
 
 
-def _load_design_config(design_lines):
+def _check_uncertain_key(base, key):
     """
-    Build a GlobalConfig from the design section by reusing the RUN deck parser.
+    Resolve and check one sampled [UNCERTAINTY] key against the design config.
 
-    The temporary deck is kept on disk (not deleted) and its path is returned, so that
-    parallel workers can rebuild the base configuration from it instead of receiving the
-    object through pickling, which the loky/spawn backend cannot always do on Windows.
+    A plain key must be a numeric GlobalConfig field (deprecated aliases are
+    resolved). An indexed key 'field[i]' must point to entry i of a
+    comma-separated field (e.g. f_imp_core[0]). Returns the resolved key.
     """
-    fd, tmp = tempfile.mkstemp(suffix='_uq_design.txt')
-    os.close(fd)
-    with open(tmp, 'w') as fh:
-        fh.write('\n'.join(design_lines) + '\n')
-    return RUN.load_config_from_file(tmp, verbose=0), tmp
+    fields = base.__dataclass_fields__
+    m = IDX_RE.match(key)
+    if m is not None:
+        fname = resolve_deprecated_key(m.group(1))
+        raw = getattr(base, fname, None) if fname in fields else None
+        if not isinstance(raw, str):
+            raise ValueError(f"[UNCERTAINTY] '{key}': '{fname}' is not a "
+                             "comma-separated GlobalConfig field.")
+        n_entries = len(raw.split(','))
+        if int(m.group(2)) >= n_entries:
+            raise ValueError(f"[UNCERTAINTY] '{key}': index {m.group(2)} out of "
+                             f"range, '{fname}' has {n_entries} entries in the deck.")
+        return f"{fname}[{m.group(2)}]"
+    name = resolve_deprecated_key(key)
+    if name not in fields:
+        import difflib
+        close = difflib.get_close_matches(name, fields.keys(), n=3, cutoff=0.6)
+        raise ValueError(f"[UNCERTAINTY] '{key}' is not a GlobalConfig field. "
+                         f"Closest fields: {close}")
+    if isinstance(getattr(base, name), (bool, str)):
+        raise ValueError(f"[UNCERTAINTY] '{key}' is not numeric: use "
+                         "envelope(A | B) for a model choice.")
+    return name
 
 
 def parse_uq_file(path):
     """
     Parse a self-contained UNCERTAINTY file.
 
-    Returns base (GlobalConfig built from the design point), spec (dict of
-    centred marginals), envelope (dict of model-option lists), controls (dict),
-    and deck_path (the persistent design deck the workers rebuild base from).
-    """
-    section = 'design'
-    design, raw_spec, controls = [], {}, {}
-    with open(path) as fh:
-        for line in fh:
-            s = line.strip()
-            if s.startswith('[') and s.endswith(']') and '=' not in s:
-                section = s[1:-1].strip().lower()
-                continue
-            if section == 'design':
-                design.append(line.rstrip('\n'))
-                continue
-            body = line.split('#', 1)[0].strip()
-            if not body or '=' not in body:
-                continue
-            key, rhs = (t.strip() for t in body.split('=', 1))
-            if section == 'controls':
-                controls[key] = int(rhs) if rhs.lstrip('-').isdigit() else rhs
-            else:                                # [uncertainty]
-                raw_spec[key] = rhs
+    Each line is classified by its content, with the rule of the mode
+    detection (D0FUS_run.deck_entries): a tri(), norm(), unif() or envelope()
+    value is an uncertain input, a key of KNOWN_CONTROLS a study control, any
+    other line belongs to the design point and is read in memory with the
+    RUN deck parser (no temporary file). The titles [UNCERTAINTY] and
+    [CONTROLS] are accepted and ignored. Every uncertain key is checked
+    (field name, numeric type, index range, envelope options), so that a
+    typo stops the study instead of drawing an input that has no effect.
 
-    # Split the [uncertainty] entries into model envelopes, distributions, and plain
-    # scalar overrides. Scalars are folded into the design deck so the base config the
-    # workers rebuild from disk is identical to the one used here.
-    env_rhs, dist_rhs, scalar_lines = {}, {}, []
+    Returns base (GlobalConfig built from the design point), spec (dict of
+    centred marginals), envelope (dict of model-option lists) and controls
+    (dict).
+    """
+    with open(path, encoding='utf-8') as fh:
+        lines = fh.read().splitlines()
+    mode, _ = RUN.detect_mode_from_lines(lines)
+    if mode != 'uncertainty':
+        raise ValueError(f"{path} has no uncertain entry: an UNCERTAINTY study "
+                         "needs at least one tri(), norm(), unif() or "
+                         "envelope() value.")
+
+    # Each entry is classified by its content: an uncertain value, a study
+    # control (known by name), or a design-point line for the RUN parser.
+    design, raw_spec, controls = [], {}, {}
+    for key, kind, rhs in RUN.deck_entries(lines):
+        if kind == 'uncertain':
+            if key in raw_spec:
+                raise ValueError(f"[UNCERTAINTY] '{key}' is defined twice in {path}.")
+            raw_spec[key] = rhs
+        elif key in KNOWN_CONTROLS:
+            if key in controls:
+                raise ValueError(f"[CONTROLS] '{key}' is defined twice in {path}.")
+            controls[key] = int(rhs) if rhs.lstrip('-').isdigit() else rhs
+        else:
+            design.append(f"{key} = {rhs}")
+
+    # Split the uncertain entries into model envelopes and distributions
+    env_rhs, dist_rhs = {}, {}
     for key, rhs in raw_spec.items():
         if ENV_RE.match(rhs):
             env_rhs[key] = rhs
         elif DIST_RE.match(rhs):
             dist_rhs[key] = rhs
         else:
-            scalar_lines.append(f"{key} = {rhs}")
+            raise ValueError(f"[UNCERTAINTY] '{key} = {rhs}': expected "
+                             "tri(...), norm(...), unif(...) or envelope(...).")
 
-    base, deck_path = _load_design_config(design + scalar_lines)
+    base = RUN.load_config_from_lines(design, verbose=0)
 
     spec, envelope = {}, {}
     for key, rhs in env_rhs.items():
-        envelope[key] = [o.strip() for o in ENV_RE.match(rhs).group(1).split('|')]
+        name = resolve_deprecated_key(key)
+        if name not in base.__dataclass_fields__:
+            raise ValueError(f"[UNCERTAINTY] envelope key '{key}' is not a "
+                             "GlobalConfig field.")
+        options = [o.strip() for o in ENV_RE.match(rhs).group(1).split('|')]
+        for opt in options:
+            try:
+                dc_replace(base, **{name: coerce_input_value(name, opt)})
+            except (ValueError, TypeError) as exc:
+                raise ValueError(f"[UNCERTAINTY] {name} = envelope(...): option "
+                                 f"'{opt}' is not valid ({exc}).") from None
+        envelope[name] = options
     for key, rhs in dist_rhs.items():
+        name = _check_uncertain_key(base, key)
         dist = DIST_RE.match(rhs)
         fam = dist.group(1).lower()
         args = [float(a) for a in dist.group(2).split(',')]
-        spec[key] = _build_marginal(key, fam, args, design_value(base, key))
-    return base, spec, envelope, controls, deck_path
-
-
-def detect_mode(path):
-    """Auto-detect RUN / SCAN / OPTIMIZATION / UNCERTAINTY from the file syntax."""
-    has_dist = has_env = has_scan = has_opt = False
-    with open(path) as fh:
-        for line in fh:
-            s = line.split('#', 1)[0].strip()
-            if s.lower() in ('[uncertainty]', '[controls]'):
-                return 'UNCERTAINTY'
-            if '=' not in s:
-                continue
-            rhs = s.split('=', 1)[1].strip()
-            if DIST_RE.match(rhs) or ENV_RE.match(rhs):
-                has_dist = True
-            elif rhs.startswith('[') and rhs.endswith(']'):
-                inner = rhs[1:-1].strip()
-                parts = [p.strip() for p in inner.split('|' if '|' in inner else ',')]
-                if '|' in inner or not all(_is_number(p) for p in parts):
-                    has_env = True
-                elif len(parts) == 3:
-                    has_scan = True
-                elif len(parts) == 2:
-                    has_opt = True
-    if has_dist or has_env:
-        return 'UNCERTAINTY'
-    if has_scan:
-        return 'SCAN'
-    if has_opt:
-        return 'OPTIMIZATION'
-    return 'RUN'
+        spec[name] = _build_marginal(name, fam, args, design_value(base, name))
+    return base, spec, envelope, controls
 
 
 # =============================================================================
 # Forward propagation
 # =============================================================================
-# Per-process cache of base configurations, keyed by deck path. Each spawned worker
-# rebuilds the base config from the deck once and reuses it for all its samples.
-_BASE_CACHE = {}
-
-
-def _load_base_cached(deck_path):
-    base = _BASE_CACHE.get(deck_path)
-    if base is None:
-        base = RUN.load_config_from_file(deck_path, verbose=0)
-        _BASE_CACHE[deck_path] = base
-    return base
-
-
-def _uq_worker(deck_path, names, row, combo, retune=None, relief=None):
+def _uq_worker(base_dict, names, row, combo, retune=None, relief=None):
     """
     Worker for the parallel Monte-Carlo. Every dependency is imported LOCALLY.
 
@@ -835,20 +772,35 @@ def _uq_worker(deck_path, names, row, combo, retune=None, relief=None):
     namespace. When D0FUS.py is launched with %runfile in Spyder, __main__ is
     polluted with scipy symbols (erfc, ...); without local imports the loky workers
     fail to un-serialise the task ("Can't get attribute 'erfc' on __main__"). Every
-    argument is a plain type (deck path, list of names, numpy row, dict), so the task
-    is always picklable regardless of how the parent imported the modules. This
-    mirrors the scan worker (_run_scan_point), which is robust on Windows/Spyder.
+    argument is a plain type (dict of the base configuration, list of names, numpy
+    row, dict), so the task is always picklable regardless of how the parent
+    imported the modules. This mirrors the scan worker (_run_scan_point).
+
+    The Greenwald closure of the draw (Tbar_mode or P_fus_mode = 'greenwald')
+    is solved once here. The retuning and relief ladders then move a resolved
+    operating point instead of solving it again at every step.
     """
     import os
     import sys
+    import warnings
     _parent = os.path.normpath(
         os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
     if _parent not in sys.path:
         sys.path.insert(0, _parent)
-    from D0FUS_EXE.D0FUS_uncertainty import (_load_base_cached, build_config,
-                                             evaluate, evaluate_retuned,
-                                             evaluate_relief)
-    cfg = build_config(_load_base_cached(deck_path), names, row, combo)
+    from D0FUS_BIB.D0FUS_parameterization import GlobalConfig
+    from D0FUS_EXE.D0FUS_run import resolve_operating_point
+    from D0FUS_EXE.D0FUS_uncertainty import (build_config, evaluate,
+                                             evaluate_retuned, evaluate_relief)
+    cfg = build_config(GlobalConfig(**base_dict), names, row, combo)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            cfg = resolve_operating_point(cfg)
+    except ValueError:
+        # No temperature (or fusion power) reaches the target Greenwald fraction
+        return {'converged': False, 'feasible': False, 'failure': 'no_operating_point'}
+    except Exception:
+        return {'converged': False, 'feasible': False, 'failure': 'crash'}
     if relief is not None:
         return evaluate_relief(cfg, retune, relief)
     if retune is not None:
@@ -856,37 +808,40 @@ def _uq_worker(deck_path, names, row, combo, retune=None, relief=None):
     return evaluate(cfg)
 
 
-def run_uq(base_deck_path, spec=UNCERTAIN_SPEC, n=200, seed=0, overrides=None):
-    """Programmatic propagation for a single model combo on a stock deck (serial)."""
-    base = RUN.load_config_from_file(base_deck_path, verbose=0)
-    names, X = sample_lhs(spec, n, seed=seed)
-    rows = [evaluate(build_config(base, names, X[i], overrides)) for i in range(n)]
-    return names, X, rows
+def model_combos(envelope):
+    """All combinations of the model-form envelopes (one empty combo if none)."""
+    if not envelope:
+        return [{}]
+    keys = list(envelope.keys())
+    return [dict(zip(keys, vals)) for vals in itertools.product(*envelope.values())]
 
 
-def run_uq_from_file(path, n_override=None, n_jobs=-1, verbose=5):
+def run_uq_from_file(path, n_override=None, n_jobs=-1, verbose=5, seed=None):
     """
     Parse a self-contained UNCERTAINTY file and propagate over the model envelope.
+    seed, when given, overrides the seed of [CONTROLS].
 
     The Monte-Carlo is evaluated in parallel with joblib/loky. On Windows the
     calling script MUST be guarded by  if __name__ == '__main__':  for the loky
     backend to spawn workers.
 
-    Returns names, X, results (combo -> rows), controls.
+    Returns names, X, results (combo -> rows), controls, and the parsed
+    (base, spec, envelope) so that callers do not read the file again.
     """
     from joblib import Parallel, delayed
 
-    base, spec, envelope, controls, deck_path = parse_uq_file(path)
+    base, spec, envelope, controls = parse_uq_file(path)
+    if seed is not None:
+        controls['seed'] = int(seed)
     n = n_override or controls.get('n_samples', 1000)
     retune = parse_retune_controls(controls)
     relief = parse_relief_controls(controls)
+    if retune is not None and 'Tbar' in spec:
+        raise ValueError("Tbar is both sampled in [UNCERTAINTY] and retuned by "
+                         "the operator (retune = Tbar): keep one of the two.")
     names, X = sample_lhs(spec, n, seed=controls.get('seed', 0))
-
-    if envelope:
-        keys = list(envelope.keys())
-        combos = [dict(zip(keys, vals)) for vals in itertools.product(*envelope.values())]
-    else:
-        combos = [{}]
+    combos = model_combos(envelope)
+    base_dict = asdict(base)
 
     # Flatten (combo, sample) into one task list for balanced core utilisation.
     flat = [(combo, X[i]) for combo in combos for i in range(n)]
@@ -894,7 +849,7 @@ def run_uq_from_file(path, n_override=None, n_jobs=-1, verbose=5):
     # 'generator' preserves submission order, so the index-based slicing below
     # that maps results back to each model combo stays valid.
     _gen = Parallel(n_jobs=n_jobs, return_as="generator")(
-        delayed(_uq_worker)(deck_path, names, row, combo, retune, relief)
+        delayed(_uq_worker)(base_dict, names, row, combo, retune, relief)
         for combo, row in flat)
     out = list(tqdm(_gen, total=len(flat), desc="UQ Monte-Carlo",
                     unit="run", disable=(verbose == 0)))
@@ -903,7 +858,7 @@ def run_uq_from_file(path, n_override=None, n_jobs=-1, verbose=5):
     for c_idx, combo in enumerate(combos):
         key = tuple(sorted(combo.items())) if combo else ('nominal',)
         results[key] = out[c_idx * n:(c_idx + 1) * n]
-    return names, X, results, controls
+    return names, X, results, controls, (base, spec, envelope)
 
 
 def _pct(vals):
@@ -914,36 +869,118 @@ def _pct(vals):
 
 
 # =============================================================================
+# Single definition of the outcome of a sample and of the feasible share
+# =============================================================================
+def classify(r):
+    """
+    Outcome class of one sample, shared by the console, the summary file and
+    the figures:
+      'feasible_as_designed' : feasible at the deck operating point
+      'feasible_retuned'     : feasible after operator Tbar retuning
+      'feasible_relieved'    : feasible only with CS flux relief (H&CD ramp
+                               assist and/or a shorter flat-top)
+      'stability'            : a plasma limit (kink, Greenwald, Troyon, Ip) binds
+      'radial_build'         : the radial build does not close, even with relief
+      'no_operating_point'   : the plasma solver found no solution
+      'crash'                : the solver raised
+    """
+    if r.get('feasible'):
+        if r.get('build_relieved'):
+            return 'feasible_relieved'
+        if r.get('retuned') and not r.get('feasible_as_designed', False):
+            return 'feasible_retuned'
+        return 'feasible_as_designed'
+    if not r.get('converged'):
+        f = r.get('failure')
+        if f == 'no_closure':
+            return 'radial_build'
+        return 'crash' if f == 'crash' else 'no_operating_point'
+    if r.get('category') == 'radial_build' or r.get('binding') == 'build':
+        return 'radial_build'
+    return 'stability'
+
+
+# Feasible classes counted at each level of recourse
+_LEVELS = {
+    'as_designed': ('feasible_as_designed',),
+    'window':      ('feasible_as_designed', 'feasible_retuned'),
+    'relief':      ('feasible_as_designed', 'feasible_retuned', 'feasible_relieved'),
+}
+
+
+def wilson_interval(k, n, z=1.96):
+    """Wilson score interval (default 95 %) of a proportion k / n, in [0, 1]."""
+    if n <= 0:
+        return (np.nan, np.nan)
+    p = k / n
+    den = 1.0 + z * z / n
+    centre = (p + z * z / (2 * n)) / den
+    half = z * np.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / den
+    return (max(0.0, centre - half), min(1.0, centre + half))
+
+
+def feasible_share(rows, level='window'):
+    """
+    Share of feasible samples over ALL samples (no-solution draws counted as
+    failures), with its 95 % Wilson interval.
+
+    level : 'as_designed' (frozen operating point), 'window' (plus operator
+            Tbar retuning, the headline of the study) or 'relief' (plus CS
+            flux relief, reported separately because it changes the pulse).
+
+    Returns (share, lo, hi) in percent, and the sample count.
+    """
+    n = len(rows)
+    k = sum(1 for r in rows if classify(r) in _LEVELS[level])
+    lo, hi = wilson_interval(k, n)
+    return (100.0 * k / max(n, 1), 100.0 * lo, 100.0 * hi), n
+
+
+def verdict_of(share):
+    """Verdict on the headline share [%]."""
+    return ('LARGELY FEASIBLE' if share >= 85 else
+            'MARGINAL' if share >= 60 else 'AT RISK')
+
+
+# =============================================================================
 # Entry point for the UNCERTAINTY mode (called by D0FUS.py)
 # =============================================================================
 def summarize_results(results):
     """Return (n_total, n_converged, n_feasible, binding_counter, failure_counter).
 
-    binding counts the most-violated limit among CONVERGED infeasible samples;
-    failures counts the non-convergence categories ('no_operating_point',
-    'no_closure', 'crash') so that 'this draw has no solution' is reported
-    separately from 'this draw violates an operational limit'.
+    n_feasible counts the headline 'window' level (as designed or after
+    Tbar retuning, see classify). binding counts the most-violated limit among
+    CONVERGED samples that are not feasible at any level (the draws feasible
+    with CS flux relief are reported apart). failures counts the
+    non-convergence categories ('no_operating_point', 'no_closure', 'crash')
+    so that 'this draw has no solution' is reported separately from 'this
+    draw violates an operational limit'.
     """
     all_rows = [r for k in results for r in results[k]]
     conv = [r for r in all_rows if r.get('converged')]
-    feas = [r for r in conv if r.get('feasible')]
-    binding = Counter(r.get('binding') for r in conv if not r.get('feasible'))
+    feas = [r for r in all_rows if classify(r) in _LEVELS['window']]
+    binding = Counter(r.get('binding') for r in conv
+                      if classify(r) in ('stability', 'radial_build'))
     failures = Counter(r.get('failure', 'unknown')
                        for r in all_rows if not r.get('converged'))
     return len(all_rows), len(conv), len(feas), binding, failures
 
 
+def _share_line(rows, level):
+    (p, lo, hi), n = feasible_share(rows, level)
+    return f"{p:.0f}% (95% CI {lo:.0f}-{hi:.0f}%)"
+
+
 def _write_summary(path, input_file, results, controls, scans=None):
     """Write a concise human-readable summary of the uncertainty study."""
     n, n_conv, n_feas, binding, failures = summarize_results(results)
+    all_rows = [r for k in results for r in results[k]]
+    conv = [r for r in all_rows if r.get('converged')]
     # The headline verdict is read over ALL samples, the no-solution draws
-    # counted as failures (thesis convention, Chapter 4). The converged-only
-    # share is still reported alongside for diagnosis.
-    p_feas_conv = 100.0 * n_feas / max(n_conv, 1)
-    p_feas_all  = 100.0 * n_feas / max(n, 1)
-    verdict = ('LARGELY FEASIBLE' if p_feas_all >= 85 else
-               'MARGINAL' if p_feas_all >= 60 else 'AT RISK')
-    conv = [r for k in results for r in results[k] if r.get('converged')]
+    # counted as failures (thesis convention, Chapter 4), at the 'window'
+    # level: as designed or after operator Tbar retuning.
+    (p_win, _, _), _ = feasible_share(all_rows, 'window')
+    verdict = verdict_of(p_win)
 
     def pct(key):
         a = np.array([r[key] for r in conv if np.isfinite(r.get(key, np.nan))])
@@ -953,53 +990,21 @@ def _write_summary(path, input_file, results, controls, scans=None):
     L = ["D0FUS uncertainty study summary",
          f"Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
          f"Input file : {os.path.basename(input_file)}",
+         f"Seed       : {controls.get('seed', 0)}",
          "",
          f"Samples    : {n} total = {n_conv} converged + "
          f"{n - n_conv} without a solution ({fail_txt})",
-         f"Feasible   : {p_feas_conv:.0f}% of converged samples "
-         f"({p_feas_all:.0f}% of all samples)",
-         f"Verdict    : {verdict}  (thresholds on the all-samples share; "
-         "no-solution draws counted as failures)"]
-    # Two-reading breakdown when operator retuning was active: the frozen
-    # design-point verdict versus the operating-window verdict.
-    if any('feasible_as_designed' in r for k in results for r in results[k]):
-        n_design = sum(1 for r in conv if r.get('feasible_as_designed'))
-        n_ret = sum(1 for r in conv if r.get('feasible') and r.get('retuned'))
-        L.append(f"Retuning   : {100.0 * n_design / max(n_conv, 1):.0f}% feasible "
-                 f"as designed; +{100.0 * n_ret / max(n_conv, 1):.0f}% recovered "
-                 f"by moving Tbar inside the operating window")
-    # Pulse-capability breakdown when pulse relaxation was active.
-    if any('pulse_frac' in r for k in results for r in results[k]):
-        all_rows = [r for k in results for r in results[k]]
-        pl = [r for r in conv if r.get('pulse_limited')]
-        n_full = sum(1 for r in conv if r.get('feasible')
-                     and not r.get('pulse_limited'))
-        # Genuinely flux/build-infeasible: went through the pulse ladder and
-        # still did not close (pulse_frac forced to 0.0). These live in the
-        # non-converged pool, so count them over all rows, as a share of the
-        # whole Monte-Carlo.
-        n_floor = sum(1 for r in all_rows
-                      if r.get('pulse_frac') == 0.0 and not r.get('feasible'))
-        buckets = [('>=3/4 pulse', 0.75, 1.0), ('1/2-3/4 pulse', 0.5, 0.75),
-                   ('1/4-1/2 pulse', 0.25, 0.5), ('<1/4 pulse', 0.0, 0.25)]
-        L.append("")
-        L.append(f"Pulse      : of the converged designs, "
-                 f"{100.0 * n_full / max(n_conv, 1):.0f}% keep the full flat-top and "
-                 f"{100.0 * len(pl) / max(n_conv, 1):.0f}% are feasible only on a "
-                 f"shorter one; {100.0 * n_floor / max(n, 1):.0f}% of all samples do "
-                 f"not close on flux even at the floor pulse")
-        for name, lo, hi in buckets:
-            k = sum(1 for r in pl if lo < r.get('pulse_frac', 0.0) <= hi)
-            if k:
-                L.append(f"  reduced to {name:14s}: {100.0 * k / max(n_conv, 1):.0f}% "
-                         f"of converged")
-        n_relieved = sum(1 for r in conv if r.get('pulse_relieved'))
-        if n_relieved:
-            L.append(f"  note: {100.0 * n_relieved / max(n_conv, 1):.0f}% of converged "
-                     f"exhaust the CS flux at full pulse but are ultimately held by a "
-                     f"plasma limit (counted under that binding, not as a flux wall)")
+         f"Feasible   : {_share_line(all_rows, 'window')} of all samples, "
+         f"as designed or after Tbar retuning",
+         f"Verdict    : {verdict}  (thresholds 85% / 60% on the share above)"]
+    if any('feasible_as_designed' in r for r in all_rows):
+        L.append(f"  as designed (frozen operating point)    : "
+                 f"{_share_line(all_rows, 'as_designed')}")
+    if any(classify(r) == 'feasible_relieved' for r in all_rows):
+        L.append(f"  including the draws that close only with CS flux relief "
+                 f"(ramp assist and/or shorter pulse): {_share_line(all_rows, 'relief')}")
     if binding:
-        L.append("Binding limit among converged infeasible: "
+        L.append("Binding limit among converged non-feasible samples: "
                  + ", ".join(f"{k}={v}" for k, v in binding.items()))
     L += ["",
           "Headroom to each limit (normalised margin, P5 / P50 / P95):"]
@@ -1010,61 +1015,66 @@ def _write_summary(path, input_file, results, controls, scans=None):
 
     combos = [k for k in results if k != ('nominal',)]
     if combos:
-        L += ["", "Feasibility by model combination:"]
+        L += ["", "Feasible share by model combination (as designed or after Tbar retuning):"]
         for k in combos:
-            rws = results[k]
-            f = sum(1 for r in rws if r.get('converged') and r.get('feasible'))
             label = " · ".join(str(v) for _, v in k)
-            L.append(f"  {label:34s}: {100.0 * f / max(len(rws), 1):.0f}%")
+            L.append(f"  {label:34s}: {_share_line(results[k], 'window')}")
 
     if scans:
-        L += ["", "Feasibility at the design value of each scanned parameter:"]
-        for p, (xs, pf, nomv) in scans.items():
-            L.append(f"  {p:8s} = {nomv:<8g}: {float(np.interp(nomv, xs, pf)):.0f}%")
+        L += ["", "Feasible share AS DESIGNED (no retuning, model combos cycled) "
+              "at the design value of each scanned parameter:"]
+        for p, (xs, pf, nomv, n_s) in scans.items():
+            k = int(round(float(np.interp(nomv, xs, pf)) * n_s / 100.0))
+            lo, hi = wilson_interval(k, n_s)
+            L.append(f"  {p:8s} = {nomv:<8g}: {float(np.interp(nomv, xs, pf)):.0f}% "
+                     f"(95% CI {100 * lo:.0f}-{100 * hi:.0f}%, {n_s} samples)")
 
     with open(path, 'w', encoding='utf-8') as fh:
         fh.write("\n".join(L) + "\n")
 
 
 def main(input_file, save_figures=True, output_dir=None, n_override=None,
-         scan=True, scan_npts=11, scan_n=40, scan_frac=0.4, n_jobs=-1):
+         scan=True, scan_npts=11, scan_n=40, scan_frac=0.4, n_jobs=-1,
+         seed=None):
     """
-    Run the full uncertainty study for an input file. Like the RUN / SCAN / GENETIC
-    modes, it writes a timestamped folder under D0FUS_OUTPUTS/uncertainty/ containing a
-    copy of the input deck, a synthetic summary, and the figures.
+    Run the full uncertainty study for an input file. Like the other modes,
+    it writes a timestamped folder under <output_dir>/uncertainty/ with a
+    copy of the input deck, a synthetic summary and, when save_figures is
+    True, the figures and the parameter feasibility scan.
+
+    output_dir : parent folder of the uncertainty/ result folders. Default:
+                 default_output_root() of D0FUS_run.
+    seed       : sampling seed. Overrides the seed of [CONTROLS].
     """
     if output_dir is None:
-        output_dir = os.path.normpath(os.path.join(
-            os.path.dirname(os.path.abspath(input_file)), '..', 'D0FUS_OUTPUTS'))
+        output_dir = RUN.default_output_root()
 
-    names, X, results, controls = run_uq_from_file(
-        input_file, n_override=n_override, n_jobs=n_jobs, verbose=5)
+    names, X, results, controls, (base, spec, envelope) = run_uq_from_file(
+        input_file, n_override=n_override, n_jobs=n_jobs, verbose=5, seed=seed)
 
     n, n_conv, n_feas, binding, failures = summarize_results(results)
-    p_feas_conv = 100.0 * n_feas / max(n_conv, 1)
-    p_feas_all  = 100.0 * n_feas / max(n, 1)
-    verdict = ('LARGELY FEASIBLE' if p_feas_conv >= 85 else
-               'MARGINAL' if p_feas_conv >= 60 else 'AT RISK')
-    print(f"\n  UNCERTAINTY verdict: {p_feas_conv:.0f}% of the {n_conv} converged "
-          f"samples feasible ({p_feas_all:.0f}% of all {n})  ->  {verdict}")
+    all_rows = [r for k in results for r in results[k]]
+    (p_win, lo, hi), _ = feasible_share(all_rows, 'window')
+    print(f"\n  UNCERTAINTY verdict: {p_win:.0f}% of all {n} samples feasible "
+          f"(95% CI {lo:.0f}-{hi:.0f}%), as designed or after Tbar retuning  "
+          f"->  {verdict_of(p_win)}")
+    if any(classify(r) == 'feasible_relieved' for r in all_rows):
+        print(f"  Including the draws that close only with CS flux relief: "
+              f"{_share_line(all_rows, 'relief')}")
     if failures:
         print("  Samples without a solution: "
               + ', '.join(f'{k}={v}' for k, v in failures.items()))
     if binding:
-        print("  Binding limit among converged infeasible: "
+        print("  Binding limit among converged non-feasible samples: "
               + ', '.join(f'{k}={v}' for k, v in binding.items()))
 
+    output_path, _ = RUN.new_output_dir(os.path.join(output_dir, 'uncertainty'),
+                                        "Uncertainty_D0FUS")
     scans = None
     if save_figures:
         from D0FUS_BIB import D0FUS_figures as FIG
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = os.path.join(output_dir, 'uncertainty',
-                                   f"Uncertainty_D0FUS_{timestamp}")
         fig_dir = os.path.join(output_path, 'figures')
         os.makedirs(fig_dir, exist_ok=True)
-
-        # base, the centred marginals and the model-form envelope, parsed once.
-        base, spec, envelope = parse_uq_file(input_file)[0:3]
 
         FIG.fig_robustness(results, save_dir=fig_dir)
         FIG.fig_margins(results, save_dir=fig_dir)
@@ -1083,17 +1093,17 @@ def main(input_file, save_figures=True, output_dir=None, n_override=None,
             n_scan = sum(s[2] + 1 for s in specs.values()) * scan_n
             print(f"  Parameter feasibility scan: {len(specs)} params, ~{n_scan} runs "
                   f"(longest step; progress bar follows)...", flush=True)
-            scans = FIG.scan_feasibility(input_file, specs, n_samples=scan_n, n_jobs=n_jobs)
-            FIG.fig_scan(scans, save_dir=fig_dir)
+            scans = FIG.scan_feasibility(input_file, specs, n_samples=scan_n, n_jobs=n_jobs,
+                                         seed=controls.get('seed', 0))
+            (p_des, lo_des, hi_des), _ = feasible_share(all_rows, 'as_designed')
+            FIG.fig_scan(scans, save_dir=fig_dir,
+                         reference=(p_des, lo_des, hi_des))
 
-        # copy of the input deck and synthetic summary, alongside the figures
-        try:
-            shutil.copy2(input_file, os.path.join(output_path, 'input_parameters.txt'))
-        except Exception:
-            pass
-        _write_summary(os.path.join(output_path, 'uncertainty_summary.txt'),
-                       input_file, results, controls, scans)
-        print(f"  Output written to: {output_path}")
+    # copy of the input deck and synthetic summary, alongside the figures
+    shutil.copy2(input_file, os.path.join(output_path, 'input_parameters.txt'))
+    _write_summary(os.path.join(output_path, 'uncertainty_summary.txt'),
+                   input_file, results, controls, scans)
+    print(f"  Output written to: {output_path}")
 
     return results
 
@@ -1105,30 +1115,28 @@ if __name__ == '__main__':
     UQ_FILE = 'D0FUS_INPUTS/4_uncertainty_ITER.txt'
 
     print(f"=== {UQ_FILE} ===")
-    print(f"  detected mode: {detect_mode(UQ_FILE)}")
-    base, spec, envelope, controls, deck_path = parse_uq_file(UQ_FILE)
+    base, spec, envelope, controls = parse_uq_file(UQ_FILE)
 
-    nom = evaluate(base)
+    nom = evaluate(RUN.resolve_operating_point(base))
     print(f"\n  Nominal design point: converged={nom['converged']} "
           f"feasible={nom['feasible']}  Q={nom['Q']:.3g}  "
           f"C_invest={nom['C_invest']:.3g} B EUR")
     print(f"  margins: greenwald={nom['gw_margin']:.3f} "
           f"troyon={nom['troyon_margin']:.3f} kink={nom['kink_margin']:.3f}")
 
-    print("\n  Marginals auto-centred on the design point (lo, mode, hi):")
-    for k in ['H', 'Tbar', 'q_limit', 'eta_WP_acad', 'n_ped_frac', 'betaN_limit']:
-        print(f"    {k:14s} {spec[k]}")
+    print("\n  Marginals auto-centred on the design point:")
+    for k in spec:
+        print(f"    {k:18s} {spec[k]}")
     print(f"  envelope: {envelope}")
     print(f"  controls: {controls}")
 
     N = 64   # capped for the self-test
-    names, X, results, controls = run_uq_from_file(
+    names, X, results, controls, _ = run_uq_from_file(
         UQ_FILE, n_override=N, n_jobs=2, verbose=0)
     print(f"\n=== Envelope propagation (parallel), N={N} per combo ===")
     for combo, rows in results.items():
-        conv = [r for r in rows if r.get('converged')]
-        feas = [r for r in conv if r['feasible']]
+        feas = [r for r in rows if classify(r) in _LEVELS['window']]
         p5, p50, p95 = _pct([r.get('C_invest') for r in feas])
         label = ', '.join(f"{k}={v}" for k, v in combo) if combo != ('nominal',) else 'nominal'
-        print(f"  [{label}] converged {len(conv)}/{N}, feasible {len(feas)}/{len(conv)}; "
+        print(f"  [{label}] feasible {_share_line(rows, 'window')}; "
               f"C_invest P5/P50/P95 = {p5:.3g}/{p50:.3g}/{p95:.3g} B EUR")

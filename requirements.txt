@@ -1,12 +1,10 @@
 # D0FUS runtime dependencies
 # Python >= 3.10
 
-numpy
-scipy
-pandas
-sympy
-matplotlib
-tqdm
-deap
-joblib
+numpy>=2.0
+scipy>=1.13
+matplotlib>=3.8.4
+tqdm>=4.60.0
+deap>=1.3.3
+joblib>=1.3
 pyvista   # optional at runtime: only needed for the 3D machine view figure

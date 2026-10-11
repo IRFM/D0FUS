@@ -26,9 +26,21 @@ from D0FUS_BIB.D0FUS_parameterization import *
 from D0FUS_BIB.D0FUS_radial_build_functions import *
 from D0FUS_BIB.D0FUS_physical_functions import *
 from D0FUS_BIB.D0FUS_cost_data import *
-from D0FUS_EXE.D0FUS_run import (run, load_config_from_file, _PROFILE_PRESETS, _compute_Zeff_effective,
-                                 evaluate_costs, evaluate_feasibility)
-from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG, coerce_input_value, resolve_deprecated_key
+from D0FUS_EXE.D0FUS_run import (load_config_from_file, evaluate_costs,
+                                 evaluate_feasibility, new_output_dir,
+                                 default_output_root)
+from matplotlib.ticker import MaxNLocator, FormatStrFormatter
+from D0FUS_BIB.D0FUS_parameterization import (GlobalConfig, DEFAULT_CONFIG, coerce_input_value,
+                                               resolve_deprecated_key, apply_legacy_split_keys)
+
+# Deck keys read by the SCAN driver itself (not GlobalConfig fields).
+#   iso_param_1, iso_param_2 : iso-contour layers of the map (registry key or none)
+#   compute_re               : runaway-electron indicators at each point (bool)
+#   clip_to_viable           : restrict iso-contours to the feasible region (bool)
+#   n_workers                : worker processes (default: one per 8 grid
+#                              points, at most one per CPU)
+SCAN_SETTING_KEYS = ('iso_param_1', 'iso_param_2', 'compute_re',
+                     'clip_to_viable', 'n_workers')
 
 # Backwards-compatible alias for dataclasses.replace (from D0FUS_import).
 dc_replace = replace
@@ -104,13 +116,13 @@ OUTPUT_REGISTRY = {
     ),
     'Cost': OutputParameter(
         name='Cost',
-        label='Cost',
-        unit='m$^3$',
-        levels=(0, 1000, 20),
-        fmt='%d',
+        label='$(V_{BB}+V_{TF}+V_{CS})/P_{fus}$',
+        unit='m$^3$/MW',
+        levels=(0, 20, 0.5),
+        fmt='%.1f',
         use_radial_mask=False,
         category='performance',
-        description='Reactor volume (cost proxy)'
+        description='Geometric cost proxy, build volume per unit fusion power'
     ),
     'COE': OutputParameter(
         name='COE',
@@ -159,7 +171,7 @@ OUTPUT_REGISTRY = {
     'beta_N': OutputParameter(
         name='beta_N',
         label='$\\beta_N$',
-        unit='%',
+        unit='% m T/MA',
         levels=(0.5, 5, 0.25),
         fmt='%.2f',
         use_radial_mask=True,
@@ -240,11 +252,11 @@ OUTPUT_REGISTRY = {
         name='f_alpha',
         label='$f_\\alpha$',
         unit='%',
-        levels=(0, 100, 5),
+        levels=(0, 20, 1),
         fmt='%d',
         use_radial_mask=False,
         category='plasma',
-        description='Alpha heating fraction'
+        description='Helium ash fraction n_He/n_e'
     ),
     
     # -------------------------------------------------------------------------
@@ -306,13 +318,13 @@ OUTPUT_REGISTRY = {
     # -------------------------------------------------------------------------
     'Heat': OutputParameter(
         name='Heat',
-        label='$q_\\parallel B_T/B_P$',
-        unit='MW·T/m',
-        levels=(500, 15000, 500),
+        label='$P_{sep}/R_0$',
+        unit='MW/m',
+        levels=(0, 60, 2),
         fmt='%d',
         use_radial_mask=False,
         category='power',
-        description='Parallel heat flux parameter'
+        description='Divertor heat scaling P_sep/R0'
     ),
     'Gamma_n': OutputParameter(
         name='Gamma_n',
@@ -332,7 +344,7 @@ OUTPUT_REGISTRY = {
         fmt='%d',
         use_radial_mask=False,
         category='power',
-        description='Current drive power'
+        description='Heating and current-drive power coupled to the plasma'
     ),
     'P_sep': OutputParameter(
         name='P_sep',
@@ -388,11 +400,11 @@ OUTPUT_REGISTRY = {
         name='q_target',
         label='$q_{target}$',
         unit='MW/m²',
-        levels=(0, 50, 2),
+        levels=(0, 2000, 25),
         fmt='%d',
         use_radial_mask=False,
         category='power',
-        description='Peak divertor heat flux'
+        description='Unmitigated attached peak target heat flux (Eich lambda_q)'
     ),
     'lambda_q': OutputParameter(
         name='lambda_q',
@@ -514,23 +526,23 @@ OUTPUT_REGISTRY = {
     # -------------------------------------------------------------------------
     'sigma_TF': OutputParameter(
         name='sigma_TF',
-        label='$\\sigma_{VM,TF}$',
+        label='$|\\sigma|_{max,TF}$',
         unit='MPa',
         levels=(0, 1000, 50),
         fmt='%d',
         use_radial_mask=True,
         category='structural',
-        description='TF coil Von Mises stress'
+        description='TF coil largest principal stress in absolute value'
     ),
     'sigma_CS': OutputParameter(
         name='sigma_CS',
-        label='$\\sigma_{VM,CS}$',
+        label='$|\\sigma|_{max,CS}$',
         unit='MPa',
         levels=(0, 1000, 50),
         fmt='%d',
         use_radial_mask=True,
         category='structural',
-        description='CS coil Von Mises stress'
+        description='CS coil largest principal stress in absolute value'
     ),
     'Steel_fraction_TF': OutputParameter(
         name='Steel_fraction_TF',
@@ -564,7 +576,7 @@ OUTPUT_REGISTRY = {
         fmt='%d',
         use_radial_mask=False,
         category='power',
-        description='Total impurity line radiation'
+        description='Impurity radiation, Mavrin L_z (line + recombination + bremsstrahlung)'
     ),
     'P_wallplug': OutputParameter(
         name='P_wallplug',
@@ -638,7 +650,7 @@ OUTPUT_REGISTRY = {
         fmt='%.1f',
         use_radial_mask=True,
         category='plasma',
-        description='Alpha particle confinement time'
+        description='He ash particle confinement time tau*_He = C_Alpha tau_E'
     ),
 
     # -------------------------------------------------------------------------
@@ -748,7 +760,7 @@ OUTPUT_REGISTRY = {
         fmt='%.0f',
         use_radial_mask=True,
         category='runaway',
-        description='Hot-tail RE seed current (Smith 2008) — unmitigated ~kA range; stored in kA'
+        description='Hot-tail RE seed current at the post-pellet density (Smith 2008), stored in kA'
     ),
     'I_RE_aval': OutputParameter(
         name='I_RE_aval',
@@ -862,7 +874,7 @@ OUTPUT_REGISTRY = {
         fmt='%.1f',
         use_radial_mask=False,
         category='limits',
-        description='Radial build validity flag'
+        description='Feasibility flag (R0 where the radial build closes and the plasma limits hold, NaN elsewhere)'
     ),
 
     # -------------------------------------------------------------------------
@@ -994,7 +1006,7 @@ OUTPUT_REGISTRY = {
     ),
     'M_rb_total': OutputParameter(
         name='M_rb_total',
-        label='$M_{\\mathrm{blanket}}^{\\mathrm{tot}}$',
+        label='$M_{\\mathrm{rb}}^{\\mathrm{tot}}$',
         unit='t',
         levels=(0, 50000, 5000),
         fmt='%.0f',
@@ -1399,27 +1411,69 @@ def load_scan_parameters(input_file):
             
             scan_param = parse_scan_parameter(line)
             if scan_param:
-                scan_params.append(scan_param)
-                scan_param_names.append(scan_param[0])
+                name = resolve_deprecated_key(scan_param[0])
+                if name not in GlobalConfig.__dataclass_fields__:
+                    raise ValueError(f"Scan parameter '{name}' is not a "
+                                     "GlobalConfig field.")
+                scan_params.append((name,) + scan_param[1:])
+                scan_param_names.append(name)
                 continue
             
             if '=' in line:
                 parts = line.split('=', 1)
-                param_name = parts[0].strip()
+                param_name = resolve_deprecated_key(parts[0].strip())
                 param_value = parts[1].strip()
                 
-                if param_name in scan_param_names:
+                if param_name in SCAN_SETTING_KEYS:
                     continue
                 
                 # Type-aware coercion shared with the run / genetic loaders.
-                param_name = resolve_deprecated_key(param_name)
                 fixed_params[param_name] = coerce_input_value(
                     param_name, param_value)
     
     if len(scan_params) != 2:
         raise ValueError(f"Expected exactly 2 scan parameters, found {len(scan_params)}")
+    if scan_param_names[0] == scan_param_names[1]:
+        raise ValueError(f"Both scan axes use '{scan_param_names[0]}'.")
     
+    # A scanned key also given as a scalar keeps its scan range
+    for name in scan_param_names:
+        fixed_params.pop(name, None)
+
+    # Old single keys split per coil system (Chosen_Steel, σ_manual)
+    fixed_params = apply_legacy_split_keys(fixed_params)
+
     return scan_params, fixed_params
+
+
+def load_scan_settings(input_file):
+    """
+    SCAN driver settings written in the deck (see SCAN_SETTING_KEYS).
+
+    Returns
+    -------
+    dict  Only the keys present in the deck. iso_param_* are kept as
+          strings, compute_re and clip_to_viable as bool, n_workers as int.
+    """
+    settings = {}
+    with open(input_file, 'r', encoding='utf-8') as fh:
+        for line in fh:
+            line = line.split('#')[0].strip()
+            if '=' not in line:
+                continue
+            key, _, val = (t.strip() for t in line.partition('='))
+            if key not in SCAN_SETTING_KEYS:
+                continue
+            if key in ('compute_re', 'clip_to_viable'):
+                low = val.lower()
+                if low not in ('1', 'true', 'yes', 'on', '0', 'false', 'no', 'off'):
+                    raise ValueError(f"{key} = {val}: expected true or false.")
+                settings[key] = low in ('1', 'true', 'yes', 'on')
+            elif key == 'n_workers':
+                settings[key] = max(1, int(float(val)))
+            else:
+                settings[key] = val
+    return settings
 
 
 
@@ -1498,11 +1552,11 @@ INPUT_PARAMETER_REGISTRY = {
         unit='', min_val=0.5, max_val=1.0, n_default=10, tick_step=0.1),
 
     # ── 5. Profile peaking (Manual mode) ─────────────────────────────────────
-    'nu_n': InputParameter(
-        name='nu_n', display_name='Density peaking exponent (Manual profiles)',
+    'nu_n_manual': InputParameter(
+        name='nu_n_manual', display_name='Density peaking exponent (Manual profiles)',
         unit='', min_val=0.0, max_val=1.5, n_default=10, tick_step=0.25),
-    'nu_T': InputParameter(
-        name='nu_T', display_name='Temperature peaking exponent (Manual profiles)',
+    'nu_T_manual': InputParameter(
+        name='nu_T_manual', display_name='Temperature peaking exponent (Manual profiles)',
         unit='', min_val=0.5, max_val=3.5, n_default=10, tick_step=0.5),
 
     # ── 6. Operation and heating ──────────────────────────────────────────────
@@ -1574,7 +1628,10 @@ INPUT_PARAMETER_REGISTRY = {
 
     # ── 10. Quench protection ─────────────────────────────────────────────────
     'I_cond': InputParameter(
-        name='I_cond', display_name='Nominal conductor current',
+        name='I_cond', display_name='Nominal TF conductor current',
+        unit='A', min_val=20e3, max_val=100e3, n_default=8, fmt='%.0f', tick_step=10000),
+    'I_cond_CS': InputParameter(
+        name='I_cond_CS', display_name='Nominal CS conductor current',
         unit='A', min_val=20e3, max_val=100e3, n_default=8, fmt='%.0f', tick_step=10000),
     'V_max': InputParameter(
         name='V_max', display_name='Maximum dump voltage',
@@ -1664,9 +1721,12 @@ INPUT_PARAMETER_REGISTRY = {
     'Dwell_factor': InputParameter(
         name='Dwell_factor', display_name='Dwell factor (1.0 = SS)',
         unit='', min_val=0.5, max_val=1.0, n_default=10, tick_step=0.1),
-    'dt_rep': InputParameter(
-        name='dt_rep', display_name='Scheduled replacement downtime',
-        unit='yr', min_val=0.5, max_val=3.0, n_default=10, tick_step=0.5),
+    'dt_rep_bl': InputParameter(
+        name='dt_rep_bl', display_name='Blanket replacement downtime',
+        unit='yr', min_val=0.2, max_val=3.0, n_default=10, tick_step=0.5),
+    'dt_rep_div': InputParameter(
+        name='dt_rep_div', display_name='Divertor replacement downtime',
+        unit='yr', min_val=0.2, max_val=3.0, n_default=10, tick_step=0.5),
     'Supra_cost_factor': InputParameter(
         name='Supra_cost_factor', display_name='SC coil cost multiplier',
         unit='', min_val=1.0, max_val=4.0, n_default=10, tick_step=0.5),
@@ -1697,14 +1757,14 @@ def display_input_parameters():
         ('Magnetic field',           ['Bmax_TF', 'Bmax_CS_adm']),
         ('Fusion power',             ['P_fus']),
         ('Core plasma physics',      ['Tbar', 'tau_i_e', 'H', 'Zeff', 'betaN_limit', 'C_Alpha', 'rho_rad_core']),
-        ('Profile peaking (Manual)', ['nu_n', 'nu_T']),
+        ('Profile peaking (Manual)', ['nu_n_manual', 'nu_T_manual']),
         ('Operation & heating',      ['P_aux_input', 'Temps_Plateau_input']),
         ('MHD limits',               ['q_limit', 'Greenwald_limit']),
         ('TF/CS engineering',        ['fatigue_CS', 'SF_TF', 'SF_CS', 'coef_inboard_tension', 'Gap', 'c_BP']),
         ('Superconductor',           ['T_helium', 'Marge_T_He', 'Marge_T_Nb3Sn',
                                       'Marge_T_NbTi', 'Marge_T_REBCO',
                                       'f_He_pipe', 'f_void', 'f_In_cable', 'f_In_WP']),
-        ('Quench protection',        ['I_cond', 'V_max', 'T_hotspot', 'RRR']),
+        ('Quench protection',        ['I_cond', 'I_cond_CS', 'V_max', 'T_hotspot', 'RRR']),
         ('Power conversion',         ['eta_T', 'M_blanket', 'eta_RF']),
         ('Multi-source CD',          ['f_heat_LH', 'f_heat_EC', 'f_heat_NBI',
                                       'rho_EC', 'rho_NBI', 'E_beam_keV']),
@@ -1714,7 +1774,7 @@ def display_input_parameters():
                                      ['tau_TQ', 'Te_final_eV', 'pellet_dilution']),
         ('Techno-economics (Sheffield, post-convergence)',
                                      ['discount_rate', 'T_life', 'T_build', 'contingency',
-                                      'Util_factor', 'Dwell_factor', 'dt_rep',
+                                      'Util_factor', 'Dwell_factor', 'dt_rep_bl', 'dt_rep_div',
                                       'Supra_cost_factor', 'C_invest_max']),
     ]
     print("\n" + "=" * 78)
@@ -1748,6 +1808,11 @@ def _run_scan_point(args):
     inside the worker.  Plain dicts with scalar values are always picklable,
     regardless of how the parent process imported the GlobalConfig class.
 
+    The Greenwald closure of the deck (Tbar_mode or P_fus_mode = 'greenwald')
+    is solved here, before run(), and the resolved configuration is returned,
+    so that the stored P_fus, the costs and the runaway indicators use the
+    solved operating point.
+
     Parameters
     ----------
     args : tuple  (y, x, config_dict, compute_re)
@@ -1757,11 +1822,15 @@ def _run_scan_point(args):
 
     Returns
     -------
-    tuple : (y, x, results_tuple, re_dict, exc_str)
+    tuple : (y, x, results, re_dict, error, config_dict_resolved)
+        results is None and error holds the exception text when the point
+        fails. re_dict is None when compute_re is False, and holds a single
+        'error' key when the RE indicators fail at this point.
     """
     # Bootstrap imports only (see module header): everything else comes from
     # the module globals re-created when the worker re-imports D0FUS_scan.
     import os, sys
+    from dataclasses import asdict as _asdict
 
     # Make the D0FUS package importable in the worker process.
     _parent = os.path.normpath(
@@ -1773,60 +1842,36 @@ def _run_scan_point(args):
 
     # Reconstruct GlobalConfig from the plain dict.
     from D0FUS_BIB.D0FUS_parameterization import GlobalConfig
+    from D0FUS_EXE.D0FUS_run import (run, resolve_operating_point,
+                                     runaway_indicators)
     config = GlobalConfig(**config_dict)
 
     try:
-        from D0FUS_EXE.D0FUS_run import run
         with np.errstate(all='ignore'), warnings.catch_warnings():
             warnings.simplefilter('ignore')
+            config = resolve_operating_point(config)
             results = run(config, verbose=0)
     except Exception as exc:
-        return (y, x, None, None, str(exc))
+        return (y, x, None, None, f"{type(exc).__name__}: {exc}", None)
 
     re_dict = None
-    if compute_re:
+    if compute_re and np.isfinite(float(np.real(results[5]))):   # converged Q
         try:
-            from D0FUS_BIB.D0FUS_physical_functions import compute_RE_indicators
-            from D0FUS_EXE.D0FUS_run import _PROFILE_PRESETS
+            with np.errstate(all='ignore'), warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                re_dict = runaway_indicators(config, results)
+        except Exception as exc:
+            re_dict = {'error': f"{type(exc).__name__}: {exc}"}
 
-            if config.Plasma_profiles == 'Manual':
-                nu_n       = config.nu_n_manual
-                nu_T       = config.nu_T_manual
-                rho_ped    = config.rho_ped
-                n_ped_frac = config.n_ped_frac
-                T_ped_frac = config.T_ped_frac
-            else:
-                _pp        = _PROFILE_PRESETS.get(config.Plasma_profiles,
-                                                   _PROFILE_PRESETS['H'])
-                nu_n       = _pp['nu_n'];       nu_T       = _pp['nu_T']
-                rho_ped    = _pp['rho_ped'];    n_ped_frac = _pp['n_ped_frac']
-                T_ped_frac = _pp['T_ped_frac']
+    return (y, x, results, re_dict, None, _asdict(config))
 
-            nbar   = results[12]
-            Volume = results[6]
-            Ip     = results[8]
-            κ      = results[62]
-            li_sc  = results[72]
-            f_alpha_sol = results[40]   # converged helium ash fraction n_He/n_e
 
-            re_dict = compute_RE_indicators(
-                Ip=Ip, nbar=nbar, Tbar=config.Tbar,
-                a=config.a, R0=config.R0, κ=κ,
-                Z_eff=_compute_Zeff_effective(config, f_alpha_sol), li=li_sc,
-                nu_n=nu_n, nu_T=nu_T,
-                rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-                T_ped_frac=T_ped_frac,
-                Te_final_eV=config.Te_final_eV,
-                tau_TQ=config.tau_TQ,
-                V=Volume,
-                N_rho=30,
-                n_times=100,
-                pellet_dilution=config.pellet_dilution,
-            )
-        except Exception:
-            pass
-
-    return (y, x, results, re_dict, None)
+def _finite(v):
+    """True if v is a finite real number (False for None, NaN, Inf, text)."""
+    try:
+        return bool(np.isfinite(float(np.real(v))))
+    except (TypeError, ValueError):
+        return False
 
 
 def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
@@ -1847,18 +1892,17 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
         Base configuration from which each grid point is derived via
         ``dc_replace``.
     compute_re : bool, optional
-        If True (default), compute runaway electron indicators at each grid
-        point after the main physics chain.  Uses reduced resolution
-        (N_rho=30, n_times=100) to limit overhead.  Disable for large scans
-        (>30×30 points) or when RE quantities are not needed.
+        If True (default), compute the runaway electron indicators at each
+        grid point with the RUN settings (runaway_indicators in D0FUS_run),
+        so that a scan cell and a RUN of the same inputs give the same
+        values. The cost is a few milliseconds per point.
     n_workers : int or None, optional
         Number of parallel worker processes.
-        None (default) → use all logical CPUs (os.cpu_count()).
+        None (default) → one per 8 grid points, at most one per CPU.
         1              → sequential execution.
         N              → use exactly N worker processes.
-        Uses loky (cloudpickle-based) when available — works on all
-        platforms including Windows without any special guards.
-        joblib handles all platforms including Windows without restart.
+        joblib/loky (cloudpickle-based) runs on every platform, Windows
+        included, without any special guard.
 
     Returns
     -------
@@ -1876,11 +1920,12 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
     
     param1_values = np.linspace(param1_min, param1_max, param1_n)
     param2_values = np.linspace(param2_min, param2_max, param2_n)
+    n_points = param1_n * param2_n
     
     print(f"\nStarting 2D scan:")
     print(f"  {param1_name}: [{param1_min}, {param1_max}] with {param1_n} points")
     print(f"  {param2_name}: [{param2_min}, {param2_max}] with {param2_n} points")
-    print(f"  Total calculations: {param1_n * param2_n}")
+    print(f"  Total calculations: {n_points}")
 
     # Initialize outputs container
     outputs = ScanOutputs(shape=(param1_n, param2_n))
@@ -1891,10 +1936,11 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
     base = dc_replace(base_config, **fixed_overrides) if fixed_overrides else base_config
     
     # ── Resolve number of workers ─────────────────────────────────────────────
-    # n_workers=None  → auto (all logical CPUs)
-    # n_workers=1     → sequential
+    # Default: one worker per 8 points, at most one per CPU. Each worker
+    # imports D0FUS once (about 2 s), so small grids run faster sequentially.
     _n_cpu = os.cpu_count() or 1
-    n_workers = n_workers if n_workers is not None else _n_cpu
+    if n_workers is None:
+        n_workers = min(_n_cpu, n_points // 8)
     n_workers = max(1, int(n_workers))
 
     _mode = f"parallel — {n_workers}/{_n_cpu} CPUs (joblib/loky)" if n_workers > 1 else "sequential"
@@ -1910,28 +1956,40 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
             jobs.append((y, x, asdict(cfg), compute_re))
 
     # ── Execute jobs ──────────────────────────────────────────────────────────
+    # The progress bar advances when a point is finished (not when it is
+    # submitted). Results come back in submission order.
+    _desc = f'Scanning {param1_name}/{param2_name}'
     if n_workers == 1:
-        results_list = [_run_scan_point(job)
-                        for job in tqdm(jobs, desc=f'Scanning {param1_name}/{param2_name}')]
+        results_list = [_run_scan_point(job) for job in tqdm(jobs, desc=_desc)]
     else:
         # loky (via joblib) uses cloudpickle — robust to module reloads.
         # The dict-based cache in D0FUS_radial_build_functions is picklable,
         # unlike the former @lru_cache wrapper which failed after %runfile.
-        results_list = Parallel(n_jobs=n_workers, backend='loky', verbose=0)(
-            delayed(_run_scan_point)(job)
-            for job in tqdm(jobs, desc=f'Scanning {param1_name}/{param2_name}')
-        )
+        _gen = Parallel(n_jobs=n_workers, backend='loky', verbose=0,
+                        return_as='generator')(
+            delayed(_run_scan_point)(job) for job in jobs)
+        results_list = list(tqdm(_gen, total=len(jobs), desc=_desc))
 
-    # ── Process results in order (joblib preserves submission order) ──────────
-    for job_args, (y, x, res, re_dict, exc) in zip(jobs, results_list):
-        _, _, config_dict, _ = job_args
-        config = GlobalConfig(**config_dict)   # reconstruct for Sheffield model
+    # ── Process results in order ──────────────────────────────────────────────
+    def _sigma_max(*sig):
+        # Largest principal stress in absolute value [Pa -> MPa]
+        return (max(abs(s) for s in sig) * 1e-6
+                if all(_finite(s) for s in sig) else np.nan)
 
+    def _pct(v):
+        # Fraction -> percent, NaN kept for failed points
+        return v * 100 if _finite(v) else np.nan
+
+    n_error, n_no_plasma, n_no_build, n_re_error = 0, 0, 0, 0
+    error_examples = {}   # first grid point of each distinct error message
+    for y, x, res, re_dict, exc, config_dict in results_list:
         if res is None:
             outputs.fill_nan(y, x)
-            if y < 2 and x < 2:
-                print(f"\n  Debug: Error at index ({y},{x}): {exc}")
+            n_error += 1
+            error_examples.setdefault(exc, (y, x))
             continue
+        # Resolved configuration of this point (Greenwald closure solved)
+        config = GlobalConfig(**config_dict)
 
         # ===========================================================
         # Unpack the full run() return tuple
@@ -1974,6 +2032,10 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
         _cres = evaluate_costs(config, res)
         _COE_val      = _cres.get('COE', np.nan)
         _C_invest_val = _cres.get('C_invest', np.nan) * 1e-3 if _cres else np.nan  # M EUR -> B EUR
+        if not _finite(Q):
+            n_no_plasma += 1
+        elif not _fz['build_ok']:
+            n_no_build += 1
 
         # ── Unpack radial build component volumes (offsets 37–43) ────────────
         V_rb_SOL_s        = _coil_extra[37]
@@ -2028,14 +2090,14 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
             nbar_vol=nbar,
             pbar=pbar,
             beta_N=betaN,
-            beta_T=betaT,
+            beta_T=_pct(betaT),
             beta_P=betaP,
             q95=q95,
             qstar=qstar,
             tauE=tauE,
             W_th=W_th * 1e-6,
-            f_bs=Ib/Ip * 100 if Ip > 0 else 0,
-            f_alpha=f_alpha * 100,
+            f_bs=Ib / Ip * 100 if (_finite(Ip) and Ip > 0) else np.nan,
+            f_alpha=_pct(f_alpha),
             tau_alpha=tau_alpha,
             B0=B0,
             BCS=B_CS,
@@ -2054,27 +2116,28 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
             P_line=P_line,
             P_wallplug=P_wallplug,
             q_target=q_target,
-            lambda_q=lambda_q * 1000 if lambda_q else np.nan,
+            lambda_q=lambda_q * 1000 if _finite(lambda_q) else np.nan,
             eta_LH=eta_LH,
             eta_EC=eta_EC,
             eta_NBI=eta_NBI,
-            c=r_sep - r_c if not np.isnan(r_c) else np.nan,
-            d=r_c - r_d   if not np.isnan(r_d) else np.nan,
-            r_minor=r_minor,
+            c=c,
+            d=d,
+            c_d=c + d,
+            r_minor=config.a,
             kappa=κ,
             kappa_95=κ_95,
             delta=δ,
             Volume=Volume,
             Surface=Surface,
             A=config.R0 / config.a if config.a > 0 else np.nan,
-            sigma_TF=max(abs(σ_z_TF), abs(σ_theta_TF), abs(σ_r_TF)) if σ_z_TF else np.nan,
-            sigma_CS=max(abs(σ_z_CS), abs(σ_theta_CS), abs(σ_r_CS)) if σ_z_CS else np.nan,
-            Steel_fraction_TF=Steel_fraction_TF * 100 if Steel_fraction_TF else np.nan,
-            Steel_fraction_CS=Steel_fraction_CS * 100 if Steel_fraction_CS else np.nan,
-            f_sc_TF=f_sc_TF * 100 if np.isfinite(f_sc_TF) else np.nan,
-            f_He_TF=f_He_TF * 100 if np.isfinite(f_He_TF) else np.nan,
-            f_sc_CS=f_sc_CS * 100 if np.isfinite(f_sc_CS) else np.nan,
-            f_He_CS=f_He_CS * 100 if np.isfinite(f_He_CS) else np.nan,
+            sigma_TF=_sigma_max(σ_z_TF, σ_theta_TF, σ_r_TF),
+            sigma_CS=_sigma_max(σ_z_CS, σ_theta_CS, σ_r_CS),
+            Steel_fraction_TF=_pct(Steel_fraction_TF),
+            Steel_fraction_CS=_pct(Steel_fraction_CS),
+            f_sc_TF=_pct(f_sc_TF),
+            f_He_TF=_pct(f_He_TF),
+            f_sc_CS=_pct(f_sc_CS),
+            f_He_CS=_pct(f_He_CS),
             limits=max_limit,
             density_limit=n_condition,
             beta_limit=beta_condition,
@@ -2115,23 +2178,17 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
             CF=CF_s_out,
         )
 
-        # Combined TF + CS thickness
-        c_val = r_sep - r_c if not np.isnan(r_c) else np.nan
-        d_val = r_c  - r_d  if not np.isnan(r_d) else np.nan
-        outputs['c_d'][y, x] = (c_val + d_val
-                                if not (np.isnan(c_val) or np.isnan(d_val))
-                                else np.nan)
-
-        # Radial build validity
-        if _fz['feasible']:
-            outputs['radial_build'][y, x] = config.R0
-        else:
-            outputs['radial_build'][y, x] = np.nan
+        # Global feasibility (RUN rule): the radial build closes AND every
+        # plasma limit ratio is <= 1. Drawn as the black feasibility limit.
+        outputs['radial_build'][y, x] = config.R0 if _fz['feasible'] else np.nan
 
         # ── Runaway electron indicators (computed in worker) ─────────
-        # re_dict is produced by _run_scan_point and is None when
-        # compute_re=False or when the RE calculation failed.
-        if compute_re and re_dict is not None:
+        # re_dict is None when compute_re=False. It holds an 'error' key
+        # when the RE calculation failed at this point.
+        if re_dict is not None and 'error' in re_dict:
+            n_re_error += 1
+            error_examples.setdefault(f"RE indicators: {re_dict['error']}", (y, x))
+        elif re_dict is not None:
             outputs['I_RE_seed'][y, x]  = re_dict['I_RE_seed'] * 1e-3
             outputs['I_RE_aval'][y, x]  = re_dict['I_RE_avalanche'] * 1e-6
             outputs['f_RE_Ip'][y, x]    = re_dict['f_RE_to_Ip'] * 100
@@ -2140,7 +2197,27 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
             outputs['E_RE_kin'][y, x]   = re_dict['E_RE_kin']
             outputs['W_mag_RE'][y, x]   = re_dict['W_mag_RE']
 
-    print("\n✓ Scan calculation completed!\n")
+    # ── Summary of the scan ──────────────────────────────────────────────────
+    n_ok = n_points - n_error - n_no_plasma - n_no_build
+    print(f"\n✓ Scan calculation completed: {n_points} points")
+    print(f"  {n_ok:5d} converged with a closed radial build")
+    print(f"  {n_no_build:5d} converged plasma, radial build not closed")
+    print(f"  {n_no_plasma:5d} no converged plasma (solver)")
+    print(f"  {n_error:5d} raised an exception")
+    if compute_re and n_re_error:
+        print(f"  {n_re_error:5d} without runaway indicators (RE calculation failed)")
+    if error_examples:
+        print("  Distinct error messages (first grid point of each):")
+        for _msg, (_y, _x) in list(error_examples.items())[:8]:
+            print(f"    {param1_name} = {param1_values[_y]:.4g}, "
+                  f"{param2_name} = {param2_values[_x]:.4g}: {_msg}")
+        if len(error_examples) > 8:
+            print(f"    ... {len(error_examples) - 8} more")
+    if n_error == n_points:
+        raise RuntimeError(
+            f"All {n_points} scan points raised an exception, for example: "
+            f"{next(iter(error_examples))}")
+    print()
     return outputs, param1_values, param2_values, param1_name, param2_name
 
 
@@ -2174,12 +2251,18 @@ def get_user_plot_choice(prompt, valid_options):
 
     Returns
     -------
-    str or None
-        Selected parameter name, or None if the user enters "none" to
-        suppress the iso-contour layer entirely.
+    str
+        Selected parameter name, or "none" when the user types "none" to
+        suppress the iso-contour layer, or when no answer can be read
+        (closed input stream).
     """
     while True:
-        choice = input(prompt).strip()
+        try:
+            choice = input(prompt).strip()
+        except (EOFError, OSError, RuntimeError):
+            # No readable console (closed stdin, notebook without stdin)
+            print("  No console input available: layer left out.")
+            return "none"
         # Allow explicit opt-out: typing "none" disables the iso-contour layer
         if choice.lower() == "none":
             return "none"
@@ -2188,6 +2271,60 @@ def get_user_plot_choice(prompt, valid_options):
         print(f"  Invalid choice '{choice}'. "
               f"Please choose from the available parameters, or type 'none' to skip.")
         print(f"  Hint: {', '.join(valid_options[:10])}...")
+
+
+def _console_attached():
+    """
+    True when input() can reach a user: a terminal, or an IPython kernel
+    (Spyder, Jupyter). False in batch runs, CI and piped executions.
+    """
+    try:
+        if sys.stdin is not None and sys.stdin.isatty():
+            return True
+    except (AttributeError, ValueError):
+        pass
+    return 'ipykernel' in sys.modules
+
+
+def select_iso_params(iso_param_1=None, iso_param_2=None, interactive=None):
+    """
+    Iso-contour layers of the scan map.
+
+    A layer given as None is asked on the console when one is attached
+    (interactive=None detects it, True forces the prompt, False never
+    prompts) and is left out otherwise, so that a batch scan never blocks
+    on input(). The string 'none' leaves the layer out.
+
+    Returns
+    -------
+    (str or None, str or None)
+        Registry keys of the two layers, None for a layer left out.
+
+    Raises
+    ------
+    ValueError  If a requested name is not a plottable registry key.
+    """
+    valid = [k for keys in ScanOutputs.list_plottable_parameters().values()
+             for k in keys]
+    if interactive is None:
+        interactive = _console_attached()
+    prompts = ("\nChoose ISO-CONTOUR 1 (black dashed lines): ",
+               "Choose ISO-CONTOUR 2 (white dashed lines): ")
+    if interactive and (iso_param_1 is None or iso_param_2 is None):
+        display_available_parameters()
+    chosen = []
+    for value, prompt in zip((iso_param_1, iso_param_2), prompts):
+        if value is None:
+            value = get_user_plot_choice(prompt, valid) if interactive else 'none'
+        if str(value).lower() == 'none':
+            chosen.append(None)
+        elif value in valid:
+            chosen.append(value)
+        else:
+            raise ValueError(f"Iso-contour parameter '{value}' is not a "
+                             f"plottable output. Valid names: "
+                             f"{', '.join(valid)}, or none.")
+    return tuple(chosen)
 
 
 def plot_generic_contours(ax, matrix, param_key,
@@ -2206,8 +2343,8 @@ def plot_generic_contours(ax, matrix, param_key,
         Key in OUTPUT_REGISTRY.
     color, linestyle, linewidth, fontsize : plot styling.
     X, Y : ndarray or None
-        Physical coordinate meshgrids.  When provided the contours are
-        drawn in physical space (requires imshow ``extent`` on the axes).
+        Physical coordinate meshgrids (cell centres). When provided the
+        contours are drawn in the scanned parameter coordinates.
 
     Returns
     -------
@@ -2251,6 +2388,42 @@ def plot_generic_contours(ax, matrix, param_key,
         return None
 
 
+# Mathtext symbols of the most common scan axes. The other inputs are
+# labelled with their deck key in plain text.
+_AXIS_SYMBOLS = {
+    'R0': '$R_0$', 'a': '$a$', 'b': '$b$',
+    'Bmax_TF': '$B_{max,TF}$', 'Bmax_CS_adm': '$B_{max,CS}$',
+    'P_fus': '$P_{fus}$', 'Tbar': r'$\bar{T}$', 'H': '$H$',
+    'Zeff': '$Z_{eff}$', 'betaN_limit': r'$\beta_{N,lim}$',
+    'q_limit': '$q_{lim}$',
+}
+
+
+def _axis_label(param_name):
+    """Axis label of a scanned input: symbol (or deck key) and unit."""
+    unit = get_input_parameter_unit(param_name)
+    label = _AXIS_SYMBOLS.get(param_name, param_name)
+    return f"{label} [{unit}]" if unit else label
+
+
+def _tick_formatter(param_name):
+    """
+    Tick label format of a scanned input: the registry fmt, else as many
+    decimals as its tick_step, else None (matplotlib default formatter).
+    """
+    entry = INPUT_PARAMETER_REGISTRY.get(param_name)
+    if entry is None:
+        return None
+    if entry.fmt:
+        return FormatStrFormatter(entry.fmt)
+    if entry.tick_step:
+        txt = f"{entry.tick_step:g}"
+        if 'e' not in txt:
+            n_dec = len(txt.split('.')[1]) if '.' in txt else 0
+            return FormatStrFormatter(f"%.{n_dec}f")
+    return None
+
+
 def plot_scan_results(outputs, param1_values, param2_values,
                       param1_name, param2_name, config, output_dir,
                       iso_param_1=None, iso_param_2=None,
@@ -2267,67 +2440,33 @@ def plot_scan_results(outputs, param1_values, param2_values,
     param2_name   : str           Name of second scan parameter.
     config        : GlobalConfig  Reference configuration (for default values).
     output_dir    : str or None   Unused, kept for API compatibility.
-    iso_param_1   : str or None   Pre-selected first iso-contour parameter.
-    iso_param_2   : str or None   Pre-selected second iso-contour parameter.
+    iso_param_1   : str or None   First iso-contour layer (black dashed),
+                                  'none' to leave it out. None asks on the
+                                  console when one is attached.
+    iso_param_2   : str or None   Second iso-contour layer (white dashed).
     clip_to_viable : bool
         If True (default), iso-contour quantities are restricted to the
-        viable design region where both the radial build converges AND all
-        plasma stability limits are satisfied.  The boundary curves
-        themselves (white and black solid lines) are always drawn on the
-        full domain since they define the viable region's edges.
-        If False, iso-contour 1 is masked to the radial-build-valid region
-        only, and iso-contour 2 is unmasked.
+        viable design region where the radial build closes AND all plasma
+        limits are satisfied. The two boundary curves (white: plasma
+        limits, black: feasibility limit, i.e. radial build and plasma
+        limits together) are always drawn on the full domain.
+        If False, iso-contour 1 is masked to the feasible region, and
+        iso-contour 2 is unmasked.
 
     Returns
     -------
     fig, ax, iso_param_1, iso_param_2
     """
-    
-    # Get units for scan parameters
-    unit_param1 = get_input_parameter_unit(param1_name)
-    unit_param2 = get_input_parameter_unit(param2_name)
-    
-    # Get available plottable parameters
-    all_plottable = []
-    for params_list in ScanOutputs.list_plottable_parameters().values():
-        all_plottable.extend(params_list)
-    
-    # User selection if not provided
-    if iso_param_1 is None or iso_param_2 is None:
-        display_available_parameters()
-    
-    if iso_param_1 is None:
-        iso_param_1 = get_user_plot_choice(
-            "\nChoose ISO-CONTOUR 1 (black dashed lines): ", 
-            all_plottable
-        )
-    
-    if iso_param_2 is None:
-        iso_param_2 = get_user_plot_choice(
-            "Choose ISO-CONTOUR 2 (white dashed lines): ", 
-            all_plottable
-        )
-    
-    # Normalize sentinel: the string "none" (case-insensitive) means
-    # "no iso-contour requested" — convert to Python None so all downstream
-    # guards only need to check `is not None`.
-    if isinstance(iso_param_1, str) and iso_param_1.lower() == "none":
-        iso_param_1 = None
-    if isinstance(iso_param_2, str) and iso_param_2.lower() == "none":
-        iso_param_2 = None
-
+    iso_param_1, iso_param_2 = select_iso_params(iso_param_1, iso_param_2)
     print(f"\n  Plotting: iso_1={iso_param_1 or 'none'}, iso_2={iso_param_2 or 'none'}")
 
-    # Font sizes
+    # Font sizes (set on each artist: no change of the global rcParams)
     font_iso_1 = 22      # Black iso-contours
     font_iso_2 = 22      # White iso-contours
     font_legend = 20
     font_other = 15
-    plt.rcParams.update({'font.size': font_other})
     
-    # Get matrices in natural order (row 0 = smallest param1 value).
-    # origin='lower' in imshow will place row 0 at the bottom of the plot,
-    # so param1 increases upward — no manual [::-1] inversion needed.
+    # Matrices in natural order (row 0 = smallest param1 value, at the bottom)
     radial_build = outputs['radial_build']
     
     # Limit matrices for colored background
@@ -2380,46 +2519,36 @@ def plot_scan_results(outputs, param1_values, param2_values,
     fig, ax = plt.subplots(figsize=(10, 13))
     
     # ── Physical coordinate system ──────────────────────────────────────
-    # extent maps the pixel grid onto [param2_min, param2_max] × [param1_min, param1_max].
-    # With origin='lower', row 0 (smallest param1) sits at the bottom.
-    extent = [param2_values[0], param2_values[-1],
-              param1_values[0], param1_values[-1]]
-    
-    # Meshgrid for contour calls (natural order, matching the matrices)
+    # Each colour cell is centred on its grid point (shading='nearest'), the
+    # same coordinates as the contour lines drawn below.
     X, Y = np.meshgrid(param2_values, param1_values)
     
     # Plot color maps for plasma limits
-    min_val, max_val = 0.5, 2.0
-    im_density = ax.imshow(density_plot, cmap='Blues', aspect='auto',
-                          interpolation='nearest', norm=Normalize(vmin=min_val, vmax=max_val),
-                          extent=extent, origin='lower')
-    im_q = ax.imshow(q_plot, cmap='Greens', aspect='auto',
-                     interpolation='nearest', norm=Normalize(vmin=min_val, vmax=max_val),
-                     extent=extent, origin='lower')
-    im_beta = ax.imshow(beta_plot, cmap='Reds', aspect='auto',
-                       interpolation='nearest', norm=Normalize(vmin=min_val, vmax=max_val),
-                       extent=extent, origin='lower')
+    _norm = Normalize(vmin=0.5, vmax=2.0)
+    im_density = ax.pcolormesh(X, Y, density_plot, cmap='Blues', norm=_norm,
+                               shading='nearest')
+    im_q = ax.pcolormesh(X, Y, q_plot, cmap='Greens', norm=_norm,
+                         shading='nearest')
+    im_beta = ax.pcolormesh(X, Y, beta_plot, cmap='Reds', norm=_norm,
+                            shading='nearest')
     
     # Plasma stability boundary (limit = 1) — always drawn on full data
     linewidth = 2.5
     ax.contour(X, Y, limits_all, levels=[1.0], colors='white', linewidths=linewidth)
     white_boundary = mlines.Line2D([], [], color='white', linewidth=linewidth,
-                                   label='Plasma stability boundary')
+                                   label='Plasma limits boundary')
     
-    # Radial build boundary — always drawn on full data
+    # Feasibility limit (radial build and plasma limits) — full data
     filled_matrix = np.where(np.isnan(radial_build), -1, 1)
     ax.contour(X, Y, filled_matrix, levels=[0], linewidths=linewidth, colors='black')
     black_boundary = mlines.Line2D([], [], color='black', linewidth=linewidth,
-                                   label='Radial build limit')
+                                   label='Feasibility limit')
     
     # Configure axes labels
-    label_param2 = f"${param2_name}$" + (f" [{unit_param2}]" if unit_param2 else "")
-    label_param1 = f"${param1_name}$" + (f" [{unit_param1}]" if unit_param1 else "")
-    ax.set_xlabel(label_param2, fontsize=24)
-    ax.set_ylabel(label_param1, fontsize=24)
+    ax.set_xlabel(_axis_label(param2_name), fontsize=24)
+    ax.set_ylabel(_axis_label(param1_name), fontsize=24)
     
     # ── Axis ticks — use registry tick_step when available ─────────────
-    from matplotlib.ticker import MaxNLocator, MultipleLocator, FormatStrFormatter
     _entry_x = INPUT_PARAMETER_REGISTRY.get(param2_name)
     _entry_y = INPUT_PARAMETER_REGISTRY.get(param1_name)
     if _entry_x and _entry_x.tick_step:
@@ -2430,8 +2559,10 @@ def plot_scan_results(outputs, param1_values, param2_values,
         ax.yaxis.set_major_locator(MultipleLocator(_entry_y.tick_step))
     else:
         ax.yaxis.set_major_locator(MaxNLocator(nbins=10, steps=[1, 2, 2.5, 5, 10]))
-    ax.xaxis.set_major_formatter(FormatStrFormatter('%.1f'))
-    ax.yaxis.set_major_formatter(FormatStrFormatter('%.1f'))
+    for _axis, _name in ((ax.xaxis, param2_name), (ax.yaxis, param1_name)):
+        _fmt = _tick_formatter(_name)
+        if _fmt is not None:
+            _axis.set_major_formatter(_fmt)
     ax.tick_params(labelsize=font_legend, axis='x', rotation=45)
     ax.tick_params(labelsize=font_legend, axis='y')
     
@@ -2462,6 +2593,7 @@ def plot_scan_results(outputs, param1_values, param2_values,
     
     for cax in [cax1, cax2, cax3]:
         cax.axvline(x=1, color='white', linewidth=2.5)
+        cax.tick_params(labelsize=font_other)
     
     # Plot ISO-CONTOUR 1 (black dashed) — skipped when iso_param_1 is None
     iso_legend_1 = (
@@ -2496,35 +2628,34 @@ def plot_scan_results(outputs, param1_values, param2_values,
 
 #%% Save Results
 
-def save_scan_results(fig, outputs, param1_values, param2_values,
-                     param1_name, param2_name, config, output_dir,
-                     iso_param_1, iso_param_2, input_file_path=None):
+def save_scan_results(outputs, param1_values, param2_values,
+                      param1_name, param2_name, config, output_dir,
+                      input_file_path=None, iso_param_1=None, iso_param_2=None):
     """
-    Save scan results to timestamped directory.
+    Save a finished scan in a new folder output_dir/scan/Scan_D0FUS_<time>:
+    the result matrices (scan_matrices.npz) and the deck
+    (scan_parameters.txt, copied, or rebuilt from config when no deck file
+    is given). main() calls it before plotting, so that a plotting error
+    never loses a finished scan.
 
     Parameters
     ----------
     config : GlobalConfig
-        Reference configuration (used to dump fixed parameters).
+        Reference configuration (used to rebuild the deck when no file).
 
     Returns
     -------
     str : Path to output directory.
     """
+    output_path, _ = new_output_dir(os.path.join(output_dir, 'scan'),
+                                    'Scan_D0FUS')
     
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_name = f"Scan_D0FUS_{timestamp}"
-    output_path = os.path.join(output_dir, 'scan', output_name)
-    
-    os.makedirs(output_path, exist_ok=True)
-    
-    # Copy original input file if provided
+    input_copy = os.path.join(output_path, "scan_parameters.txt")
     if input_file_path and os.path.exists(input_file_path):
-        input_copy = os.path.join(output_path, "scan_parameters.txt")
+        # Copy of the original input file
         shutil.copy2(input_file_path, input_copy)
     else:
         # Generate input file from configuration
-        input_copy = os.path.join(output_path, "scan_parameters.txt")
         config_dict = asdict(config)
         with open(input_copy, "w", encoding='utf-8') as f:
             f.write("# D0FUS Scan Parameters\n")
@@ -2537,48 +2668,57 @@ def save_scan_results(fig, outputs, param1_values, param2_values,
                 if key not in (param1_name, param2_name):
                     f.write(f"{key} = {value}\n")
             f.write(f"\n# Visualization:\n")
-            f.write(f"iso_param_1 = {iso_param_1}  # Black dashed lines\n")
-            f.write(f"iso_param_2 = {iso_param_2}  # White dashed lines\n")
-    
-    # Save figure — use "none" as filename token when a layer is suppressed
-    _iso1_tag = iso_param_1 if iso_param_1 is not None else "none"
-    _iso2_tag = iso_param_2 if iso_param_2 is not None else "none"
-    fig_filename = f"scan_map_{param1_name}_{param2_name}_{_iso1_tag}_{_iso2_tag}.png"
-    fig_path = os.path.join(output_path, fig_filename)
-    fig.savefig(fig_path, dpi=300, bbox_inches='tight')
+            f.write(f"iso_param_1 = {iso_param_1 or 'none'}  # Black dashed lines\n")
+            f.write(f"iso_param_2 = {iso_param_2 or 'none'}  # White dashed lines\n")
     
     # Save matrices as NPZ for post-processing
-    matrices_path = os.path.join(output_path, "scan_matrices.npz")
-    np.savez(matrices_path, 
+    np.savez(os.path.join(output_path, "scan_matrices.npz"),
              param1_values=param1_values,
              param2_values=param2_values,
              param1_name=param1_name,
              param2_name=param2_name,
              **outputs.to_dict())
     
-    print(f"✓ All results saved to: {output_path}\n")
-    
-    plt.rcdefaults()
-    
+    print(f"✓ Scan data saved to: {output_path}")
     return output_path
+
+
+def save_scan_figure(fig, output_path, param1_name, param2_name,
+                     iso_param_1, iso_param_2):
+    """Save the scan map (PNG, 300 dpi) in output_path. Returns its path."""
+    # "none" is the filename token of a layer left out
+    _iso1_tag = iso_param_1 if iso_param_1 is not None else "none"
+    _iso2_tag = iso_param_2 if iso_param_2 is not None else "none"
+    fig_path = os.path.join(
+        output_path,
+        f"scan_map_{param1_name}_{param2_name}_{_iso1_tag}_{_iso2_tag}.png")
+    fig.savefig(fig_path, dpi=300, bbox_inches='tight')
+    print(f"✓ Scan map saved to: {fig_path}\n")
+    return fig_path
 
 
 #%% Main Function
 
 def main(input_file=None, auto_plot=False,
          iso_param_1=None, iso_param_2=None,
-         compute_re=True, clip_to_viable=True, n_workers=None):
+         compute_re=True, clip_to_viable=True, n_workers=None,
+         output_dir=None, save_figures=True):
     """
     Main execution function for scans.
 
     Parameters
     ----------
-    input_file   : str or None   Path to input file.
-    auto_plot    : bool           If True, use provided iso parameters without prompting.
+    input_file   : str or None   Path to input file (default: the ITER
+                                  example D0FUS_INPUTS/2_scan_ITER.txt).
+    auto_plot    : bool           If True, never prompt: a layer given
+                                  neither here nor in the deck is left out.
+                                  If False (default), such a layer is asked
+                                  on the console when one is attached.
     iso_param_1  : str or None    First iso-contour parameter (black lines).
+                                  Overrides the deck key iso_param_1.
     iso_param_2  : str or None    Second iso-contour parameter (white lines).
+                                  Overrides the deck key iso_param_2.
     compute_re   : bool           If True (default), compute runaway electron indicators.
-                                  Set to False to speed up large scans.
                                   Can also be overridden by ``compute_re = 0`` in the input file.
     clip_to_viable : bool         If True (default), iso-contours are restricted to
                                   the viable design region (radial build valid AND
@@ -2586,55 +2726,47 @@ def main(input_file=None, auto_plot=False,
                                   Set to False to revert to legacy masking behavior.
                                   Can also be overridden by ``clip_to_viable = 0`` in the
                                   input file.
+    n_workers    : int or None    Worker processes. Overrides the deck key
+                                  n_workers. Default: one per 8 grid
+                                  points, at most one per CPU.
+    output_dir   : str or None    Parent folder of the scan/ result folders.
+                                  Default: default_output_root() of D0FUS_run.
+    save_figures : bool           If False, the map is not drawn, saved or
+                                  shown, and no layer is asked. The matrices
+                                  (NPZ) and the deck are written anyway.
     """
-    
-    input_file_path = input_file
-    
     if input_file is None:
-        default_input = os.path.join(os.path.dirname(__file__), '..', 'D0FUS_INPUTS', 'scan_R0_a_example.txt')
-        if os.path.exists(default_input):
-            input_file = default_input
-        else:
-            raise FileNotFoundError("No input file provided and default scan input not found")
-    
+        input_file = os.path.join(os.path.dirname(__file__), '..',
+                                  'D0FUS_INPUTS', '2_scan_ITER.txt')
     if not os.path.exists(input_file):
         raise FileNotFoundError(f"Input file not found: {input_file}")
     
     print(f"\nLoading parameters from: {input_file}")
 
     # ── Build base config from fixed parameters in the input file ────────
-    # load_config_from_file skips bracketed scan declarations and returns a
-    # GlobalConfig with only the scalar overrides applied.
-    base_config = load_config_from_file(input_file, verbose=2)
+    # load_config_from_file skips bracketed scan declarations and the SCAN
+    # settings, and returns a GlobalConfig with the scalar overrides applied.
+    base_config = load_config_from_file(input_file, verbose=2,
+                                        ignore_keys=SCAN_SETTING_KEYS)
     
     # Load scan and fixed parameters (for grid definition and display)
     scan_params, fixed_params = load_scan_parameters(input_file)
 
-    # Allow input file to override boolean flags
-    # (e.g. "compute_re = 0", "clip_to_viable = false")
-    _TRUTHY = {'1', 'true', 'yes', 'on'}
-    _FALSY  = {'0', 'false', 'no', 'off'}
-    try:
-        with open(input_file, 'r', encoding='utf-8') as _fh:
-            for _line in _fh:
-                _line = _line.split('#')[0].strip()
-                if not _line or '=' not in _line:
-                    continue
-                _k, _, _v = _line.partition('=')
-                _k = _k.strip().lower()
-                _v = _v.strip().lower()
-                if _k == 'compute_re':
-                    if _v in _TRUTHY:
-                        compute_re = True
-                    elif _v in _FALSY:
-                        compute_re = False
-                elif _k == 'clip_to_viable':
-                    if _v in _TRUTHY:
-                        clip_to_viable = True
-                    elif _v in _FALSY:
-                        clip_to_viable = False
-    except OSError:
-        pass
+    # SCAN settings of the deck (iso-contours, RE indicators, masking, workers)
+    settings = load_scan_settings(input_file)
+    compute_re = settings.get('compute_re', compute_re)
+    clip_to_viable = settings.get('clip_to_viable', clip_to_viable)
+    if n_workers is None:
+        n_workers = settings.get('n_workers')
+    if iso_param_1 is None:
+        iso_param_1 = settings.get('iso_param_1')
+    if iso_param_2 is None:
+        iso_param_2 = settings.get('iso_param_2')
+    # Layers chosen before the scan: a wrong name fails now, and the
+    # console question is not left waiting after a long computation.
+    iso_param_1, iso_param_2 = select_iso_params(
+        iso_param_1, iso_param_2,
+        interactive=False if (auto_plot or not save_figures) else None)
     
     # Print scan configuration
     print("\n" + "="*73)
@@ -2649,29 +2781,25 @@ def main(input_file=None, auto_plot=False,
             n_workers=n_workers
         )
         
-        # Plot results.
-        # auto_plot=True with both params explicitly set (including "none")
-        # bypasses the interactive prompt entirely.
-        if auto_plot and (iso_param_1 is not None or iso_param_2 is not None):
-            fig, ax, iso_used_1, iso_used_2 = plot_scan_results(
-                outputs, param1_values, param2_values, param1_name, param2_name,
-                base_config, None, iso_param_1, iso_param_2,
-                clip_to_viable=clip_to_viable
-            )
-        else:
-            fig, ax, iso_used_1, iso_used_2 = plot_scan_results(
-                outputs, param1_values, param2_values, param1_name, param2_name,
-                base_config, None,
-                clip_to_viable=clip_to_viable
-            )
-        
-        # Save results
-        output_dir = os.path.join(os.path.dirname(__file__), '..', 'D0FUS_OUTPUTS')
+        # Save the data first, then plot
+        if output_dir is None:
+            output_dir = default_output_root()
         os.makedirs(output_dir, exist_ok=True)
         output_path = save_scan_results(
-            fig, outputs, param1_values, param2_values, param1_name, param2_name,
-            base_config, output_dir, iso_used_1, iso_used_2, input_file_path
+            outputs, param1_values, param2_values, param1_name, param2_name,
+            base_config, output_dir, input_file_path=input_file,
+            iso_param_1=iso_param_1, iso_param_2=iso_param_2
         )
+        if not save_figures:
+            return outputs, param1_values, param2_values, output_path
+        
+        fig, ax, iso_used_1, iso_used_2 = plot_scan_results(
+            outputs, param1_values, param2_values, param1_name, param2_name,
+            base_config, None, iso_param_1 or 'none', iso_param_2 or 'none',
+            clip_to_viable=clip_to_viable
+        )
+        save_scan_figure(fig, output_path, param1_name, param2_name,
+                         iso_used_1, iso_used_2)
         
         plt.show()
         

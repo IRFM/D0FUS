@@ -144,11 +144,6 @@ _last_graded_profile = {}
 
 _GRADED_DAMPING = 0.2   # Picard under-relaxation, see _solve_graded_wp
 
-# Record of every silent-fallback event of the graded TF solver, so that a
-# batch run can be audited afterwards rather than only at warning time.
-# Cleared by the caller when a fresh audit is wanted.
-_GRADED_FALLBACKS = []
-
 
 def _solve_graded_wp(R_ext, B_max, J_max, sigma_max, omega, n, ln_term,
                      dR=5e-4, alpha_min=0.01, max_iter=60, tol=1e-4):
@@ -370,7 +365,7 @@ def _solve_graded_wp(R_ext, B_max, J_max, sigma_max, omega, n, ln_term,
             sigma_z, 0.0, result['f_steel'])
 
 
-def _find_bracket(residual_fn, d_lo, d_hi, n_pts):
+def _find_bracket(residual_fn, d_lo, d_hi, n_pts, return_probes=False):
     """
     Hybrid log+linear probe for root bracketing on a potentially partial domain.
 
@@ -392,6 +387,8 @@ def _find_bracket(residual_fn, d_lo, d_hi, n_pts):
     n_pts : int
         Target number of probe points (actual count may differ slightly
         after deduplication of log and linear grids).
+    return_probes : bool
+        Also return the probe abscissae and residuals (default False).
 
     Returns
     -------
@@ -401,6 +398,8 @@ def _find_bracket(residual_fn, d_lo, d_hi, n_pts):
     sign_changes : list of (float, float)
         All brackets (d_left, d_right) around sign changes,
         ordered by increasing d_left.
+    d_vals, y_vals : ndarray
+        Probe abscissae and residuals, only if return_probes is True.
     """
     # Hybrid grid: 2/3 log-spaced (resolution at small d for thin HTS WP)
     # + 1/3 linear in the upper 60% (fills gaps at large d for thick LTS WP)
@@ -425,7 +424,99 @@ def _find_bracket(residual_fn, d_lo, d_hi, n_pts):
         if finite_p and finite_c and fp * fc < 0:
             sign_changes.append((d_vals[i - 1], d_vals[i]))
 
+    if return_probes:
+        return nan_transitions, sign_changes, d_vals, y_vals
     return nan_transitions, sign_changes
+
+
+def _dip_root(residual_fn, d_probe, y_probe, d_lo, d_hi, select='smallest',
+              n_golden=40, tol=1e-5, brentq_xtol=1e-4):
+    """
+    Root inside a feasible window narrower than the probe spacing.
+
+    Close to a design limit, the window where the residual is negative
+    shrinks around the residual minimum. When no probe falls inside it, the
+    probes show no sign change. The minimum then lies between the two
+    neighbours of the probe with the smallest finite residual. A
+    golden-section search on that interval locates it. If it is negative,
+    the root between the minimum and the neighbour on the side given by
+    ``select`` is returned.
+
+    Parameters
+    ----------
+    residual_fn : callable
+        Scalar function f(d) → float or NaN.
+    d_probe, y_probe : ndarray
+        Probe abscissae and residuals, in any order.
+    d_lo, d_hi : float
+        Search domain bounds.
+    select : str
+        'smallest' (root below the minimum) or 'largest' (root above it).
+    n_golden : int
+        Golden-section iterations (default 40).
+    tol : float
+        Absolute tolerance of the golden-section search [m] (default 1e-5).
+    brentq_xtol : float
+        Absolute tolerance of brentq [m] (default 1e-4).
+
+    Returns
+    -------
+    d_root : float
+        Root of residual_fn, or NaN if the residual minimum is not negative.
+    """
+    order = np.argsort(d_probe)
+    d_all = np.asarray(d_probe, dtype=float)[order]
+    y_all = np.asarray(y_probe, dtype=float)[order]
+    finite = np.isfinite(y_all)
+    if not finite.any():
+        return np.nan
+    i = int(np.argmin(np.where(finite, y_all, np.inf)))
+    lo = d_all[i - 1] if i > 0 else d_lo
+    hi = d_all[i + 1] if i < len(d_all) - 1 else d_hi
+
+    def f(d):
+        v = residual_fn(d)
+        return v if np.isfinite(v) else np.inf
+
+    # Golden-section search of the residual minimum on [lo, hi]
+    invphi = (np.sqrt(5.0) - 1.0) / 2.0
+    a, b = lo, hi
+    c, e = b - invphi * (b - a), a + invphi * (b - a)
+    fc, fe = f(c), f(e)
+    for _ in range(n_golden):
+        if fc <= fe:
+            b, e, fe = e, c, fc
+            c = b - invphi * (b - a)
+            fc = f(c)
+        else:
+            a, c, fc = c, e, fe
+            e = a + invphi * (b - a)
+            fe = f(e)
+        if b - a < tol:
+            break
+    d_min, f_min = (c, fc) if fc <= fe else (e, fe)
+    if not f_min < 0.0:
+        return np.nan
+
+    # Root between the minimum and the neighbour probe on the selected side.
+    # Where the residual is undefined at that neighbour, the edge of the
+    # defined domain is located first by bisection on finiteness.
+    side = lo if select == 'smallest' else hi
+    if not np.isfinite(residual_fn(side)):
+        a, b = side, d_min                   # a undefined, b defined
+        for _ in range(40):
+            m = 0.5 * (a + b)
+            if np.isfinite(residual_fn(m)):
+                b = m
+            else:
+                a = m
+            if abs(b - a) < tol:
+                break
+        side = b
+    if residual_fn(side) <= 0.0:
+        return float(side)                   # feasible from the domain edge
+    return float(brentq(residual_fn, min(side, d_min), max(side, d_min),
+                        xtol=brentq_xtol))
 
 
 def _bisect_valid_boundary(residual_fn, lo, hi, n_iter=25, tol=1e-6):
@@ -620,8 +711,13 @@ def _adaptive_root_search(residual_fn, d_lo, d_hi,
 
     Pass 3 — brentq on every bracket; return best root per ``select``.
 
+    Without any bracket, the residual minimum is searched between the
+    neighbours of the best probe (_dip_root): close to a design limit the
+    feasible window can be narrower than the probe spacing.
+
     Worst-case evaluation budget: n_probe_1 + (25 + n_probe_2 + 15) per
-    nan transition ~ 85 with a single transition, the typical TF case.
+    nan transition ~ 85 with a single transition, plus about 60 for the
+    minimum search when no bracket is found.
 
     Parameters
     ----------
@@ -648,8 +744,8 @@ def _adaptive_root_search(residual_fn, d_lo, d_hi,
         return np.nan
 
     # ── Pass 1: coarse hybrid probe ──────────────────────────────────
-    nan_transitions, sign_changes = _find_bracket(
-        residual_fn, d_lo, d_hi, n_probe_1)
+    nan_transitions, sign_changes, d_probe, y_probe = _find_bracket(
+        residual_fn, d_lo, d_hi, n_probe_1, return_probes=True)
 
     # ── Pass 2: refine around every nan → finite transition ──────────
     # A nan → finite boundary can hide a sign change immediately adjacent
@@ -670,9 +766,11 @@ def _adaptive_root_search(residual_fn, d_lo, d_hi,
         d_min_valid = _bisect_valid_boundary(residual_fn, nt_lo, nt_hi)
         if d_min_valid >= d_hi:
             continue
-        _, new_scs = _find_bracket(
-            residual_fn, d_min_valid, d_hi, n_probe_2)
+        _, new_scs, d2, y2 = _find_bracket(
+            residual_fn, d_min_valid, d_hi, n_probe_2, return_probes=True)
         sign_changes.extend(new_scs)
+        d_probe = np.concatenate([d_probe, d2])
+        y_probe = np.concatenate([y_probe, y2])
 
     # Pass 1 and Pass 2 may report the same bracket more than once when
     # their probe grids happen to land on adjacent points around the same
@@ -689,14 +787,17 @@ def _adaptive_root_search(residual_fn, d_lo, d_hi,
         sign_changes = unique
 
     if not sign_changes:
-        # No sign change anywhere on the explored domain. Two sub-cases:
+        # No sign change anywhere on the explored domain. Three sub-cases:
         #
         # (a) Residual < 0 everywhere in the valid domain:
         #     stress constraint is satisfied for ALL valid d.
         #     Return the thinnest valid winding pack (d_min_valid).
         #     This can happen for conservative sigma limits with high-Jc HTS.
         #
-        # (b) Residual > 0 everywhere, or the residual is undefined over
+        # (b) Residual negative only in a window narrower than the probe
+        #     spacing, around its minimum: found by _dip_root.
+        #
+        # (c) Residual > 0 everywhere, or the residual is undefined over
         #     the whole domain: design infeasible → return NaN.
         if select == 'smallest' and nan_transitions:
             d_boundary = _bisect_valid_boundary(
@@ -706,7 +807,8 @@ def _adaptive_root_search(residual_fn, d_lo, d_hi,
             y_boundary = residual_fn(d_boundary)
             if np.isfinite(y_boundary) and y_boundary < 0:
                 return d_boundary
-        return np.nan
+        return _dip_root(residual_fn, d_probe, y_probe, d_lo, d_hi,
+                         select=select, brentq_xtol=brentq_xtol)
 
     # ── Pass 3: brentq on every bracket, collect all roots ───────────
     roots = []
@@ -758,7 +860,9 @@ def _unpack_CS_config(config):
         )
     return dict(
         Gap            = config.Gap,
-        I_cond         = config.I_cond,
+        # CS conductor current, the TF one when not given
+        I_cond         = (config.I_cond_CS if config.I_cond_CS is not None
+                          else config.I_cond),
         V_max          = config.V_max,
         f_He_pipe      = config.f_He_pipe,
         f_void         = config.f_void,
@@ -783,7 +887,8 @@ def _unpack_CS_config(config):
         f_swing_usable = f_swing_usable_val,
         # Steel allowable safety factor for the CS structural jacket.
         # Applied at the top of each f_CS_* solver as σ_CS ← σ_CS / SF_CS.
-        # Composes multiplicatively with fatigue_CS in pulsed/wedging cases.
+        # Composes multiplicatively with fatigue_CS in pulsed wedging and
+        # light bucking (see _cs_allowable).
         SF_CS          = SF_CS_val,
     )
 
@@ -874,19 +979,25 @@ def Number_TF_coils(R0, a, b, ripple_adm, L_min):
     if L_min <= 0:
         raise ValueError("L_min must be positive.")
 
-    # Scan Delta from 0 to delta_max
-    Delta = 0.0
-    while Delta <= delta_max:
-        r2 = R0 + a + b + Delta
-        for N_TF in range(N_min, N_max + 1):
-            ripple = ((R0 - a - b) / (R0 + a)) ** N_TF + ((R0 + a) / r2) ** N_TF
-            L_access = 2 * math.pi * r2 / N_TF
-            if ripple <= ripple_adm and L_access >= L_min:
-                return N_TF, ripple, Delta
-        Delta += delta_step
-
-    raise ValueError(f"No N_TF and Delta combination found up to Delta_max={delta_max} m "
-                     f"satisfying ripple ≤ {ripple_adm} and L_access ≥ {L_min} m")
+    # Delta scanned from 0 to delta_max by steps of delta_step (running sum,
+    # as a loop Delta += delta_step would give), N_TF from N_min to N_max:
+    # the first Delta with a feasible N_TF, then the smallest such N_TF.
+    n_step = int(delta_max / delta_step) + 1
+    Delta = np.concatenate(([0.0], np.cumsum(np.full(n_step, delta_step))))
+    Delta = Delta[Delta <= delta_max]
+    N_TF = np.arange(N_min, N_max + 1)
+    r2 = R0 + a + b + Delta[:, None]
+    ripple = (((R0 - a - b) / (R0 + a)) ** N_TF.astype(float)
+              + ((R0 + a) / r2) ** N_TF.astype(float))
+    L_access = 2 * math.pi * r2 / N_TF
+    ok = (ripple <= ripple_adm) & (L_access >= L_min)
+    rows = np.flatnonzero(ok.any(axis=1))
+    if rows.size == 0:
+        raise ValueError(f"No N_TF and Delta combination found up to Delta_max={delta_max} m "
+                         f"satisfying ripple ≤ {ripple_adm} and L_access ≥ {L_min} m")
+    i = int(rows[0])
+    j = int(np.argmax(ok[i]))
+    return int(N_TF[j]), float(ripple[i, j]), float(Delta[i])
     
 #%% TF coil number test
 
@@ -1006,17 +1117,21 @@ def J_non_Cu_Nb3Sn(B, T, Eps=-0.006):
         Eps0a - np.sqrt(Eps**2 + Eps0a**2)
     )
     
-    # Critical temperature and field
+    # Critical temperature and field. The reduced values are clipped below 1
+    # inside the formula and kept raw for the mask, which sets Jc = 0 beyond
+    # the critical surface.
     Tc0_eps = Tcm * s_eps**(1/3)
-    t = np.clip(T / Tc0_eps, 0, 1 - 1e-10)
+    t_raw = T / Tc0_eps
+    t = np.clip(t_raw, 0, 1 - 1e-10)
     
     Bc2_T_eps = Bc2m * s_eps * (1 - t**1.52)
-    b = np.clip(B / Bc2_T_eps, 0, 1 - 1e-10)
+    b_raw = B / Bc2_T_eps
+    b = np.clip(b_raw, 0, 1 - 1e-10)
     
     # Jc formula
     Jc = (C / B) * s_eps * (1 - t**1.52) * (1 - t**2) * b**p * (1 - b)**q
     Jc = Jc * 1e6  # AT/mm² → A/m²
-    Jc = np.where((t >= 1) | (b >= 1) | (B <= 0), 0.0, Jc)
+    Jc = np.where((t_raw >= 1) | (b_raw >= 1) | (B <= 0), 0.0, Jc)
     
     return np.squeeze(Jc)
 
@@ -1052,13 +1167,17 @@ def J_non_Cu_NbTi(B, T):
     C0 = 168512                    # [A·T/mm²] on NbTi area
     alpha, beta, gamma = 1.0, 1.54, 2.1
     
-    t = np.clip(T / Tc0, 0, 1 - 1e-10)
+    # Reduced values clipped below 1 inside the formula, kept raw for the
+    # mask that sets Jc = 0 beyond the critical surface.
+    t_raw = T / Tc0
+    t = np.clip(t_raw, 0, 1 - 1e-10)
     Bc2_T = Bc20 * (1 - t**1.7)
-    b = np.clip(B / Bc2_T, 0, 1 - 1e-10)
+    b_raw = B / Bc2_T
+    b = np.clip(b_raw, 0, 1 - 1e-10)
     
     Jc = (C0 / B) * (1 - t**1.7)**gamma * b**alpha * (1 - b)**beta
     Jc = Jc * 1e6  # A/mm² → A/m²
-    Jc = np.where((t >= 1) | (b >= 1) | (B <= 0), 0.0, Jc)
+    Jc = np.where((t_raw >= 1) | (b_raw >= 1) | (B <= 0), 0.0, Jc)
     
     return np.squeeze(Jc)
 
@@ -1185,8 +1304,9 @@ def _J_REBCO_Fleiter2014(B, T, Tet=0):
     n2 = 4.45
     a_Bi = 0.1              # Additive correction in Biab(T) expression
     
-    # Angular interpolation parameters
-    Nu = 0.857
+    # Angular interpolation parameters. nu = 1.85 as published (Fleiter &
+    # Ballarino 2014, listed in Pardo et al., arXiv:2509.06621, App. A).
+    Nu = 1.85
     g0, g1, g2, g3 = 0.03, 0.25, 0.06, 0.058
     
     # Reduced temperature
@@ -1212,8 +1332,9 @@ def _J_REBCO_Fleiter2014(B, T, Tet=0):
     # Convert to engineering Jc on tape cross-section
     Jc = Ic / A_tape_non_Cu
     
-    # Zero outside valid range
-    Jc = np.where((tred >= 1) | (B <= 0), 0.0, Jc)
+    # Zero outside the valid range: above Tc, or above both irreversibility
+    # fields (c-axis and ab-plane components both vanish there)
+    Jc = np.where((tred >= 1) | (B <= 0) | ((B >= Bic) & (B >= Biab)), 0.0, Jc)
     
     return np.squeeze(Jc)
 
@@ -1376,7 +1497,7 @@ if __name__ == "__main__":
     # Table 2.1): Jc(12 T, 4.2 K, ε=-0.3%) must sit in the ITER/DEMO strand
     # class — ITER TF strand spec ≥ 800 A/mm² at 12 T, 4.22 K
     # [Devred et al., SuST 27 (2014) 044001].
-    _J = float(J_non_Cu_Nb3Sn(12., 4.2))/1e6
+    _J = float(J_non_Cu_Nb3Sn(12., 4.2, Eps=-0.003))/1e6
     assert 700. < _J < 1200., _J
     # NbTi (Bottura fit, IEEE TAS 10 (2000) 1054; ITER parameters per
     # Corato 2016): Jc(5 T, 4.2 K) ≈ 3000 A/mm² (textbook benchmark curve).
@@ -1387,11 +1508,12 @@ if __name__ == "__main__":
     # reproduction guards against drift of the scaling chain.
     _J3 = float(J_non_Cu_REBCO(19., 4.2, dataset='Fujikura_2019'))/1e6
     assert abs(_J3/2000. - 1) < 1e-3, _J3
-    # Physical invariants: Jc strictly decreasing in B and in T.
+    # Physical invariants: Jc strictly decreasing in B and in T (in T at
+    # 8 T, below the upper critical field of NbTi at 4.2 K).
     for _f in (J_non_Cu_Nb3Sn, J_non_Cu_NbTi,
                lambda B, T: J_non_Cu_REBCO(B, T, dataset='Fujikura_2019')):
         assert float(_f(10., 4.2)) > float(_f(14., 4.2))
-        assert float(_f(12., 4.2)) > float(_f(12., 6.5))
+        assert float(_f(8., 4.2)) > float(_f(8., 6.5))
     print(f"OK  Supra: Nb3Sn {_J:.0f} (spec ITER ≥800), NbTi {_J2:.0f} (≈3000), "
           f"REBCO {_J3:.0f} (ancre Senatore exacte)")
 
@@ -1443,7 +1565,7 @@ def get_copper_properties(T, B, RRR):
     
     Parameters
     ----------
-    T : float
+    T : float or ndarray
         Temperature [K]
     B : float
         Magnetic field [T]
@@ -1452,9 +1574,9 @@ def get_copper_properties(T, B, RRR):
         
     Returns
     -------
-    rho : float
+    rho : float or ndarray
         Electrical resistivity [Ω·m]
-    cp_vol : float
+    cp_vol : float or ndarray
         Volumetric heat capacity [J/(m³·K)]
         
     Notes
@@ -1465,7 +1587,7 @@ def get_copper_properties(T, B, RRR):
     Includes magnetoresistance effect (Kohler's rule).
     """
     # Clamp inputs to valid range
-    TT = max(0.1, min(T, 1000.0))
+    TT = np.clip(np.asarray(T, dtype=float), 0.1, 1000.0)
     R = max(1.5, min(RRR, 3000.0))
     BB = max(0.0, min(B, 30.0))
     
@@ -1477,7 +1599,7 @@ def get_copper_properties(T, B, RRR):
     rhoZero = RHO273 / (R - 1.0)
     
     # Ideal resistivity (phonon scattering)
-    arg = min((P5 / TT)**P6, 30.0)
+    arg = np.minimum((P5 / TT)**P6, 30.0)
     rhoI = P1 * TT**P2 / (1.0 + P1 * P3 * TT**(P2 + P4) * np.exp(-arg))
     
     # Matthiessen's rule with deviation term
@@ -1488,8 +1610,8 @@ def get_copper_properties(T, B, RRR):
     RHORRR = 2.37e-8
     A1, A2, A3, A4 = 0.382806e-3, 1.32407, 0.167634e-2, 0.789953
     rhoIce = RHO273 + RHORRR / R
-    brr = min(BB * rhoIce / rho0, 40.0e3)
-    magR = A1 * brr**A2 / (1.0 + A3 * brr**A4) + 1.0 if brr > 1 else 1.0
+    brr = np.minimum(BB * rhoIce / rho0, 40.0e3)
+    magR = np.where(brr > 1, A1 * brr**A2 / (1.0 + A3 * brr**A4) + 1.0, 1.0)
     
     rho = magR * rho0
     
@@ -1497,17 +1619,20 @@ def get_copper_properties(T, B, RRR):
     DENSITY = 8900.0  # kg/m³
     T0, T1 = 10.4529369, 48.26583891
     
-    if TT <= T0:
-        Cp = 0.01188007*TT - 0.00050323*TT**2 + 0.00075762*TT**3
-    elif TT <= T1:
-        Cp = -5.03283229 + 1.27426834*TT - 0.11610718*TT**2 + 0.00522402*TT**3 - 5.2996e-5*TT**4
-    else:
-        Cp = (-65.07570094*TT / (1.833505318 + TT)**0.518553624 +
-              624.7552517*TT**3 / (16.55124429 + TT)**2.855560719 +
-              0.529512119*TT**4 / (-0.000101401 + TT)**2.983928329)
+    Cp = np.where(
+        TT <= T0,
+        0.01188007*TT - 0.00050323*TT**2 + 0.00075762*TT**3,
+        np.where(
+            TT <= T1,
+            -5.03283229 + 1.27426834*TT - 0.11610718*TT**2 + 0.00522402*TT**3 - 5.2996e-5*TT**4,
+            (-65.07570094*TT / (1.833505318 + TT)**0.518553624 +
+             624.7552517*TT**3 / (16.55124429 + TT)**2.855560719 +
+             0.529512119*TT**4 / (-0.000101401 + TT)**2.983928329)))
     
-    cp_vol = max(Cp, 0) * DENSITY
+    cp_vol = np.maximum(Cp, 0) * DENSITY
     
+    if np.ndim(T) == 0:
+        return float(rho), float(cp_vol)
     return rho, cp_vol
 
 
@@ -1541,11 +1666,9 @@ def compute_quench_integral(T_op, T_hotspot, B, RRR, n_steps=200):
     """
     temp_array = np.linspace(T_op, T_hotspot, n_steps)
     
-    # Vectorized integration: evaluate Cp/rho at all temperature points
-    # and use trapezoidal rule (replaces scalar for-loop, ~5x faster)
-    properties = np.array([get_copper_properties(T, B, RRR) for T in temp_array])
-    rho_arr = properties[:, 0]   # Electrical resistivity [Ohm.m]
-    cp_arr  = properties[:, 1]   # Volumetric heat capacity [J/(m³·K)]
+    # Cp/rho at all temperature points in one array evaluation, then the
+    # trapezoidal rule
+    rho_arr, cp_arr = get_copper_properties(temp_array, B, RRR)
     Z = np.trapezoid(cp_arr / rho_arr, temp_array)
     
     return Z
@@ -1572,34 +1695,52 @@ if __name__ == "__main__":
     print(f"OK  Cuivre: ρ(273K) = {_rho273:.3e} vs 1.543e-8 NIST, RRR exact, "
           f"cv = {_cv273:.2e}")
 
-def calculate_E_mag_TF(B_max, r_bore_in, r_bore_out, H_TF):
+def _bore_log_integral(R, Z):
     """
-    Magnetic energy stored in toroidal field.
-    
-    The toroidal field varies as B(r) = B_max × r_bore_in / r.
-    Integration over the toroidal volume yields:
-        E_mag = (B_max² × r_bore_in² / 2μ₀) × 2π × H_TF × ln(r_bore_out / r_bore_in)
-    
+    Integral of dR dZ / R over the region enclosed by the closed contour
+    (R, Z), by Green's theorem: oint ln(R) dZ, trapezoidal on each segment.
+    """
+    R_next, Z_next = np.roll(R, -1), np.roll(Z, -1)
+    return abs(np.sum(0.5 * (np.log(R) + np.log(R_next)) * (Z_next - Z)))
+
+
+def calculate_E_mag_TF(B_max, a, b, R0, c, Delta_TF):
+    """
+    Magnetic energy stored in the toroidal field.
+
+    Inside the TF coils the field is B(R) = B_max R_in / R, with B_max at
+    the plasma-facing face of the inboard leg, R_in = R0 - a - b. The
+    energy is integrated over the bore of the Princeton-D coil built by
+    f_TF_cross_section, the region enclosed by its inner contour:
+
+        E_mag = (pi (B_max R_in)^2 / mu0) * iint dR dZ / R
+
+    The field energy inside the winding itself, a few percent, is not
+    included. The bore depends on the coil thickness c through the
+    centreline of the Princeton-D.
+
     Parameters
     ----------
-    B_max : float
-        Peak toroidal field at inner bore radius [T]
-    r_bore_in : float
-        Inner radius of TF bore (where B = B_max) [m]
-        Typically: R_0 - a - gaps, or inner radius of TF inner leg
-    r_bore_out : float
-        Outer radius of toroidal volume [m]
-        Typically: R_0 + a + gaps, or outer radius of TF outer leg
-    H_TF : float
-        Effective height of toroidal field region [m]
-        
+    B_max    : float  Peak toroidal field at R_in [T].
+    a, b, R0 : float  Plasma minor radius, inboard build, major radius [m].
+    c        : float  TF inboard radial thickness [m]. c = 0 gives the bore
+                      of a thin coil, used before c is known.
+    Delta_TF : float  Outboard port-access clearance [m] (Number_TF_coils).
+
     Returns
     -------
-    E_mag : float
-        Magnetic energy [J]
+    E_mag : float  Magnetic energy [J], NaN for a non-viable geometry.
+
+    References
+    ----------
+    Wilson, Superconducting Magnets (1983), ch. 9 (stored energy);
+    File, Mills & Sheffield, IEEE Trans. Nucl. Sci. 18 (1971) 277 (shape).
     """
-    E_mag = (B_max**2 * r_bore_in**2 / (2 * μ0)) * 2 * np.pi * H_TF * np.log(r_bore_out / r_bore_in)
-    return E_mag
+    R_in = R0 - a - b
+    *_, R_bore, Z_bore = f_TF_cross_section(a, b, R0, c, Delta_TF)
+    if not (np.all(np.isfinite(R_bore)) and np.all(R_bore > 0)):
+        return np.nan
+    return np.pi * (B_max * R_in)**2 / μ0 * _bore_log_integral(R_bore, Z_bore)
 
 
 
@@ -1843,91 +1984,6 @@ def size_cable_fractions(J_non_Cu, B_peak, T_op, t_dump,
         "J_wost":    J_wost,
     }
 
-#%% E_mag and t_dump test
-    
-if __name__ == "__main__":
-    # Stored-energy anchors (asserted; the detailed table follows below).
-    # ITER CS: 6.4 GJ at 13 T [Schultz et al., 21st SOFE (2005);
-    # iter.org/machine/magnets] with the documented winding envelope
-    # (r_in = 1.32 m, r_out = 2.07 m, H = 12 m): D0FUS gives 6.33 GJ.
-    _E_CS = calculate_E_mag_CS(13., 1.32, 2.07, 12.)
-    assert abs(_E_CS/6.4e9 - 1) < 0.06, _E_CS/1e9
-    # TF model algebraic identity: the cylindrical-bore toroidal energy is
-    # E = π H B_max² r_in² ln(r_out/r_in) / μ0 (B ∝ 1/R between the legs).
-    # NB vs the published 41 GJ [Mitchell IEEE TAS 18 (2008)] this bore
-    # model overestimates by ~20 % since the true D-shape tapers — the
-    # comparison is printed in the validation table below.
-    _Eid = np.pi*14.*11.8**2*2.6**2*np.log(11.5/2.6)/(4e-7*np.pi)
-    assert abs(calculate_E_mag_TF(11.8, 2.6, 11.5, 14.)/_Eid - 1) < 1e-9
-    print(f"OK  E_mag: CS = {_E_CS/1e9:.2f} GJ vs 6.4 publié; identité TF exacte")
-
-if __name__ == "__main__":
-    """
-    Validation of magnetic energy and quench discharge time calculations.
-    
-    References
-    ----------
-    [1] Mitchell, N. et al., "The ITER Magnet System", IEEE Trans. Appl. Supercond. 18(2), 2008.
-    [2] Fink, S. et al., "Transient electrical behaviour of the ITER TF coils during fast discharge", 
-        Fusion Eng. Des. 75-79, 2005.
-    [3] Takahashi, Y. et al., "Quench Detection Using Pick-Up Coils for the ITER Central Solenoid",
-        IEEE Trans. Appl. Supercond. 15(2), 2005.
-    [4] Duchateau, J.-L. et al., "Detailed design of the ITER central solenoid", 
-        Fusion Eng. Des. 84(2-6), 2009.
-    """
-    
-    print("\n" + "="*65)
-    print("MAGNETIC ENERGY & DISCHARGE TIME VALIDATION")
-    print("="*65)
-    
-    # =========================================================================
-    # ITER TF SYSTEM
-    # =========================================================================
-    # The TF system consists of 18 coils with 9 Fast Discharge Units (FDU).
-    # Reference values [1,2]: E_mag = 41 GJ, tau_dis = 11 s, I = 68 kA
-    print("\n--- ITER TF ---")
-    # Geometry: r_bore_in/out are the inner/outer radii of the toroidal volume
-    # where B_tor exists, i.e., the TF inner and outer leg positions.
-    B_max_TF = 11.8       # Peak field at inner leg [T]
-    r_bore_in_TF = 2.7    # Inner leg radius [m]
-    r_bore_out_TF = 9.5   # Outer leg radius [m]
-    H_TF = 12.0           # Effective height [m]
-    E_TF = calculate_E_mag_TF(B_max_TF, r_bore_in_TF, r_bore_out_TF, H_TF)
-    E_TF_ref = 41e9
-    # Discharge parameters [2]: 9 FDU, V_max ~ 6 kV, tau_dis ~ 11 s
-    I_TF = 68e3
-    V_max_TF = 10e3
-    N_FDU_TF = 9
-    tau_h_TF = 2.0
-    t_dump_TF = calculate_t_dump(E_TF, I_TF, V_max_TF, N_FDU_TF, tau_h_TF)
-    tau_dis_TF = 2 * E_TF / (I_TF * V_max_TF * N_FDU_TF)
-    print(f"  E_mag   = {E_TF/1e9:.1f} GJ   (ref: 41 GJ)")
-    print(f"  tau_dis = {tau_dis_TF:.1f} s    (ref: ~11 s)")
-    
-    # =========================================================================
-    # ITER CS SYSTEM
-    # =========================================================================
-    # The CS consists of 6 independent modules, each with its own FDU.
-    # Reference values [3,4]: E_mag = 6.4 GJ, tau_dis = 7.5 s, I = 45 kA
-    print("\n--- ITER CS ---")
-    # Geometry: thick solenoid with nearly uniform axial field
-    B_max_CS = 13.0       # Peak field [T]
-    r_in_CS = 1.3         # Inner winding pack radius [m]
-    r_out_CS = 2.1        # Outer winding pack radius [m]
-    H_CS = 12.0           # Total height [m]
-    E_CS = calculate_E_mag_CS(B_max_CS, r_in_CS, r_out_CS, H_CS)
-    E_CS_ref = 6.4e9
-    # Discharge parameters [3]: 6 modules, tau_dis = 7.5 s
-    # V_max derived from: V = 2*E / (I * tau_dis * N) ≈ 6.3 kV
-    I_CS = 45e3
-    V_max_CS = 6.3e3
-    N_FDU_CS = 6
-    tau_h_CS = 2.0
-    t_dump_CS = calculate_t_dump(E_CS, I_CS, V_max_CS, N_FDU_CS, tau_h_CS)
-    tau_dis_CS = 2 * E_CS / (I_CS * V_max_CS * N_FDU_CS)
-    print(f"  E_mag   = {E_CS/1e9:.1f} GJ   (ref: 6.4 GJ)")
-    print(f"  tau_dis = {tau_dis_CS:.1f} s    (ref: 7.5 s)")
-    
 #%% Print
         
 if __name__ == "__main__":
@@ -2054,16 +2110,21 @@ def _compute_cable_current_density_core(
     
     # 1. Superconductor critical current density
     if sc_type == "Manual":
+        # J_wost is imposed, so the SC / Cu split of the strands is unknown.
+        # The input fractions (He pipe, void, insulation) are kept, and the
+        # whole strand area is booked as superconductor, so that the cable
+        # volumes and masses stay defined.
+        f_active = 1.0 - f_In_cable - f_He_pipe - f_In_WP
         return {
             'J_non_Cu': np.nan,
             'J_wost': J_wost_Manual,
-            'f_sc': np.nan,
-            'f_cu': np.nan,
-            'f_He_pipe': np.nan,
-            'f_void': np.nan,
-            'f_He': np.nan,
-            'f_In_cable': np.nan,
-            't_dump': np.nan,
+            'f_sc': f_active * (1.0 - f_void),
+            'f_cu': 0.0,
+            'f_He_pipe': f_He_pipe,
+            'f_void': f_void * f_active,
+            'f_He': f_He_pipe + f_void * f_active,
+            'f_In_cable': f_In_cable,
+            't_dump': calculate_t_dump(E_mag, I_cond, V_max, N_sub, tau_h),
         }
     elif sc_type == "Nb3Sn":
         T_eff = T_op + Marge_T_He + Marge_T_Nb3Sn
@@ -2140,9 +2201,12 @@ def _compute_cable_current_density_core(
 
 # Plain dict cache replacing @lru_cache — a dict is always picklable by
 # cloudpickle, unlike lru_cache wrappers whose identity changes on module
-# reload (which caused PicklingError in joblib parallel scans).
+# reload (which caused PicklingError in joblib parallel scans). Bounded to
+# _CABLE_CACHE_MAX entries, the oldest entry being dropped first, so that a
+# long scan or GA run does not grow it without limit.
 _cable_density_cache: dict = {}
 _cable_density_stats = {'hits': 0, 'misses': 0}
+_CABLE_CACHE_MAX = 2000
 
 def _cached_cable_current_density(
     sc_type: str,
@@ -2168,7 +2232,7 @@ def _cached_cable_current_density(
     f_In_WP: float = 0.0,
 ):
     """
-    LRU-cached wrapper for cable current density calculations.
+    Cached wrapper for cable current density calculations.
     
     This function provides memoization of expensive cable current density
     calculations. It uses rounded input parameters to improve cache hit rates
@@ -2227,9 +2291,9 @@ def _cached_cable_current_density(
     This function should NOT be called directly by users. Use the public
     calculate_cable_current_density() function instead.
     
-    The cache uses LRU (Least Recently Used) eviction policy with a maximum
-    of 2000 entries. This provides significant speedup for iterative design
-    optimization where similar cable configurations are evaluated repeatedly.
+    The cache keeps at most _CABLE_CACHE_MAX entries and drops the oldest
+    one first. A copy of the cached dict is returned, so that a caller
+    modifying its result cannot alter the cache.
     
     Cache key considerations:
     - All parameters must be hashable (hence conversion of J_wost_Manual)
@@ -2241,7 +2305,7 @@ def _cached_cable_current_density(
            Marge_T_Nb3Sn, Marge_T_NbTi, Marge_T_REBCO, Eps, Tet, J_wost_Manual, f_In_WP)
     if key in _cable_density_cache:
         _cable_density_stats['hits'] += 1
-        return _cable_density_cache[key]
+        return dict(_cable_density_cache[key])
     _cable_density_stats['misses'] += 1
     result = _compute_cable_current_density_core(
         sc_type=sc_type,
@@ -2266,8 +2330,19 @@ def _cached_cable_current_density(
         J_wost_Manual=J_wost_Manual if J_wost_Manual > 0 else None,
         f_In_WP=f_In_WP,
     )
+    if len(_cable_density_cache) >= _CABLE_CACHE_MAX:
+        del _cable_density_cache[next(iter(_cable_density_cache))]   # oldest entry
     _cable_density_cache[key] = result
-    return result
+    return dict(result)
+
+
+def default_f_void(sc_type):
+    """
+    Interstitial void fraction of the strand bundle when the deck does not
+    give it: REBCO tapes are stacked without void, LTS round strands are
+    cabled in a CICC with about 33 % void.
+    """
+    return 0.00 if "REBCO" in sc_type else 0.33
 
 
 def calculate_cable_current_density(
@@ -2396,6 +2471,10 @@ def calculate_cable_current_density(
     get_cache_stats : Retrieve cache performance statistics
     """
     
+    # f_void = None (GlobalConfig default): value of the conductor technology
+    if f_void is None:
+        f_void = default_f_void(sc_type)
+
     # Guard against invalid inputs (NaN propagation prevention)
     if np.isnan(B_peak) or np.isnan(E_mag) or np.isnan(N_sub):
         f_active = 1.0 - f_In_cable - f_He_pipe - f_In_WP
@@ -2493,14 +2572,8 @@ def get_cache_stats():
     
     Notes
     -----
-    A high hit rate (>80%) indicates effective cache utilization and
-    significant computational savings. Low hit rates may suggest:
-    - Parameter ranges too broad (consider tighter rounding)
-    - Sequential rather than iterative calculations
-    - Cache size too small (increase maxsize in @lru_cache)
-    
-    For optimization studies with >10,000 evaluations, cache hit rates
-    above 95% are typical and can reduce computation time by 10-30x.
+    A low hit rate means that the conductor is rarely sized twice with the
+    same rounded inputs. The cache size is set by _CABLE_CACHE_MAX.
     """
     total = _cable_density_stats['hits'] + _cable_density_stats['misses']
     return {
@@ -4138,9 +4211,6 @@ def Winding_Pack_refined(R_0, a, b, sigma_max, J_max, B_max, omega, n,
     # of several tens of percent in the returned thickness for a few percent of
     # change in the inputs, which reads as a non-monotonicity of the model.
     if not np.isfinite(c_graded):
-        _GRADED_FALLBACKS.append({'reason': 'graded solver did not converge',
-                                  'B_max': B_max, 'J_max': J_max,
-                                  'sigma_max': sigma_max, 'R_ext': R_ext})
         warnings.warn(
             "TF graded winding-pack solver did not converge "
             f"(B_max={B_max:.1f} T, J={J_max/1e6:.0f} MA/m2, "
@@ -4153,9 +4223,6 @@ def Winding_Pack_refined(R_0, a, b, sigma_max, J_max, B_max, omega, n,
         return result_graded
     if c_graded <= c_ungraded:
         return result_graded
-    _GRADED_FALLBACKS.append({'reason': 'graded thicker than ungraded baseline',
-                              'B_max': B_max, 'J_max': J_max,
-                              'sigma_max': sigma_max, 'R_ext': R_ext})
     warnings.warn(
         "TF graded winding-pack solution exceeds the ungraded baseline "
         f"({c_graded:.3f} m vs {c_ungraded:.3f} m); this is not physical and "
@@ -4235,8 +4302,19 @@ def Nose_refined(R_ext_Nose, sigma_max, omega, B_max, R_0, a, b,
         F_z_tot = np.pi * B_max**2 * (R_0 - a - b)**2 * log_term / μ0
         log_term = log_term * max(0.0, 1.0 - F_CClamp / F_z_tot)
     
-    # Compute the full expression under the square root
-    term_intermediate = (R_ext_Nose**2 / sigma_max) * (2 * P + (1 - omega) * (B_max**2 * coef_inboard_tension / μ0) * log_term)
+    # Tresca at the nose bore, sigma_z - sigma_theta = sigma_max, with the
+    # Lame hoop stress of a cylinder under external pressure P,
+    #   sigma_theta(Ri) = -2 P R_ext_Nose^2 / (R_ext_Nose^2 - Ri^2),
+    # and the axial stress of the nose share of the vertical force,
+    #   sigma_z = F_nose / (pi (R_ext_Nose^2 - Ri^2)),
+    #   F_nose  = (1 - omega) coef pi B_max^2 R_ext^2 ln(R2/R1) / mu0.
+    # F_nose is a share of the same total force as the WP sigma_z (Auclair
+    # et al. 2026, Eqs. 5 and 23), written with B_max R_ext = B0 R0 at the
+    # conductor radius R_ext = R_0 - a - b, not with the nose radius.
+    R_ext = R_0 - a - b
+    term_intermediate = (2 * P * R_ext_Nose**2
+                         + (1 - omega) * coef_inboard_tension * B_max**2 * R_ext**2
+                         * log_term / μ0) / sigma_max
     term = R_ext_Nose**2 - term_intermediate
     if term < 0:
         # raise ValueError("Negative value under square root. Check your input parameters.")
@@ -4705,7 +4783,7 @@ def Magnetic_flux(Ip, I_Ohm, R0, a, κ, li, Ce, Temps_Plateau,
                   E_BD, beta_p,
                   nbar, Tbar, Z_eff, q, nu_T, nu_n, eta_model,
                   rho_ped=1.0, n_ped_frac=0.0, T_ped_frac=0.0,
-                  Vprime_data=None):
+                  Vprime_data=None, trapped_fraction_model='Sauter2002'):
     """
     Assemble the four magnetic flux components for a tokamak plasma scenario.
 
@@ -4758,6 +4836,9 @@ def Magnetic_flux(Ip, I_Ohm, R0, a, κ, li, Ce, Temps_Plateau,
         Pedestal parameters (passed to f_Vloop).
     Vprime_data : tuple or None, optional
         Miller volume derivative data (passed to f_Vloop).
+    trapped_fraction_model : str, optional
+        Geometric trapped fraction of the neoclassical resistivity
+        (passed to f_Vloop).
 
     Returns
     -------
@@ -4789,7 +4870,8 @@ def Magnetic_flux(Ip, I_Ohm, R0, a, κ, li, Ce, Temps_Plateau,
     Vloop    = f_Vloop(I_Ohm, a, κ, R0, Tbar, nbar, Z_eff, q,
                        nu_T, nu_n, eta_model,
                        rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-                       T_ped_frac=T_ped_frac, Vprime_data=Vprime_data)
+                       T_ped_frac=T_ped_frac, Vprime_data=Vprime_data,
+                       trapped_fraction_model=trapped_fraction_model)
     Ψplateau = Vloop * Temps_Plateau
 
     # --- 4. PF coil contribution (Shafranov vertical field) ---
@@ -4935,6 +5017,40 @@ def _CS_geometry_init(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, κ,
 
     return RCS_ext, ΨCS, H_CS
 
+def _cs_allowable(sigma_allow, fatigue_CS, Operation_mode, Choice_Buck_Wedg,
+                  sigma_theta_peak):
+    """
+    Steel allowable of the CS Tresca check, the same for the three CS models.
+
+    In pulsed operation, a CS whose hoop stress is tensile at peak current
+    breathes in tension at each pulse: always in wedging, and in light
+    bucking, where the CS load exceeds the TF back-pressure. Its allowable
+    is divided by the fatigue knockdown fatigue_CS. A CS that stays in hoop
+    compression (strong bucking) or rests on a plug does not propagate
+    cracks (crack closure, Elber 1971): no knockdown. The allowable switches
+    where the hoop stress at peak current changes sign, so the CS thickness
+    jumps at the light / strong bucking boundary.
+
+    Parameters
+    ----------
+    sigma_allow      : float  Static allowable [Pa].
+    fatigue_CS       : float  Fatigue knockdown factor [-].
+    Operation_mode   : str    'Pulsed' or 'Steady-State'.
+    Choice_Buck_Wedg : str    'Wedging', 'Bucking' or 'Plug'.
+    sigma_theta_peak : float  Hoop stress at peak CS current, TF back-pressure
+                              included [Pa]. Only its sign is used.
+
+    Returns
+    -------
+    float : allowable of the full Tresca stress [Pa].
+    """
+    breathing = (Choice_Buck_Wedg == 'Wedging'
+                 or (Choice_Buck_Wedg == 'Bucking' and sigma_theta_peak > 0.0))
+    if Operation_mode == 'Pulsed' and breathing:
+        return sigma_allow / fatigue_CS
+    return sigma_allow
+
+
 def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, σ_CS,
               Supra_choice_CS, Jc_manual, T_Helium, Choice_Buck_Wedg, κ, N_sub_CS, tau_h,
               config: GlobalConfig):
@@ -5022,9 +5138,9 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     # Apply safety factor on the steel mechanical allowable. The downstream
     # stress residual compares the smeared Tresca equivalent against this
     # reduced allowable, so the solver sizes the CS jacket to saturate
-    # σ_CS / SF_CS. In pulsed/wedging cases the fatigue knockdown
-    # (fatigue_CS) is applied on top in stress_residual, yielding a
-    # combined effective allowable σ_CS / (SF_CS × fatigue_CS).
+    # σ_CS / SF_CS. In pulsed wedging and light bucking the fatigue
+    # knockdown (fatigue_CS) is applied on top (see _cs_allowable), giving
+    # an effective allowable σ_CS / (SF_CS × fatigue_CS).
     σ_CS = σ_CS / SF_CS
     debug = False
     Tol_CS = 1e-3
@@ -5059,9 +5175,9 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     #   depend on R_int, which depends on J_wost.
     # ------------------------------------------------------------------
     
-    # Conservative B estimate for Jc evaluation (overestimates B by up to
-    # ~50% for wide WP → J_wost conservative → d_SU is an upper bound).
-    # The true B_CS = μ₀Jd is computed after convergence.
+    # First field estimate for the Jc evaluation, B = Psi / (pi R_e^2). The
+    # loop below replaces it with the field of the winding found, B = mu0 J d,
+    # until the field, Jc(B) and the inner radius agree.
     B_CS_est = ΨCS / (np.pi * RCS_ext**2)
     
     if debug:
@@ -5072,7 +5188,7 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
     RCS_int = max(0.1 * RCS_ext, RCS_ext - d_est)
     
     # --- Iterative convergence loop ---
-    max_iter_CS = 15
+    max_iter_CS = 50
     converged = False
     
     for i_iter in range(max_iter_CS):
@@ -5111,11 +5227,18 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
                   f"(ΔR = {abs(RCS_int_new - RCS_int)*1e3:.2f} mm, "
                   f"J_wost = {J_max_CS/1e6:.1f} MA/m²)")
         
-        # Convergence check
-        if abs(RCS_int_new - RCS_int) < Tol_CS:
+        # Peak field of the winding just found (Ampere, uniform J)
+        B_CS_new = μ0 * J_max_CS * (RCS_ext - RCS_int_new)
+
+        # Convergence check on the radius and on the field used for Jc
+        if (abs(RCS_int_new - RCS_int) < Tol_CS
+                and abs(B_CS_new - B_CS_est) < 1e-3 * B_CS_new):
             converged = True
             RCS_int = RCS_int_new
             break
+
+        # Damped update of the field used for Jc
+        B_CS_est = 0.5 * (B_CS_est + B_CS_new)
         
         RCS_int = RCS_int_new
     
@@ -5173,18 +5296,10 @@ def f_CS_ACAD(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS, 
         
         if Sigma_CS < Tol_CS:
             return np.nan
-        # Effective stress allowable: apply fatigue knockdown only when the
-        # light case (CS own electromagnetic load dominant) governs AND the
-        # scenario is pulsed. In Wedging the light case is the only case
-        # (no TF back-pressure); in Bucking it governs when |P_CS-P_TF| > P_TF.
-        _light_governs = (
-            (Choice_Buck_Wedg == 'Wedging') or
-            (Choice_Buck_Wedg == 'Bucking' and abs(P_CS - P_TF) > P_TF)
-        )
-        σ_eff = (σ_CS / fatigue_CS
-                 if (Operation_mode == 'Pulsed' and _light_governs)
-                 else σ_CS)
-        return Sigma_CS - σ_eff
+        # Net hoop stress at peak current (thin shell), TF back-pressure included
+        sigma_theta_peak = (P_CS - P_TF) * RCS_sep / d_SS
+        return Sigma_CS - _cs_allowable(σ_CS, fatigue_CS, Operation_mode,
+                                        Choice_Buck_Wedg, sigma_theta_peak)
     
     # ------------------------------------------------------------------
     # STEP 2 — Direct two-point brentq (no linear scan required)
@@ -5414,9 +5529,9 @@ def f_CS_refined(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_C
     # Apply safety factor on the steel mechanical allowable. The downstream
     # stress residual compares the smeared Tresca equivalent against this
     # reduced allowable, so the solver sizes the CS jacket to saturate
-    # σ_CS / SF_CS. In pulsed/wedging cases the fatigue knockdown
-    # (fatigue_CS) is applied on top in f_sigma_diff, yielding a combined
-    # effective allowable σ_CS / (SF_CS × fatigue_CS).
+    # σ_CS / SF_CS. In pulsed wedging and light bucking the fatigue
+    # knockdown (fatigue_CS) is applied on top (see _cs_allowable), giving
+    # an effective allowable σ_CS / (SF_CS × fatigue_CS).
     σ_CS = σ_CS / SF_CS
     debug = False
     Tol_CS = 1e-3
@@ -5553,20 +5668,8 @@ def f_CS_refined(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_C
         Sigma_CS, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = d_to_solve(d)
         if not np.isfinite(Sigma_CS):
             return np.nan
-        # Effective stress allowable: apply fatigue knockdown only when the light
-        # case (CS own electromagnetic load dominant) governs AND the scenario is
-        # pulsed. The light case is identified by a net tensile hoop stress
-        # (sigma_theta > 0). In Wedging, sigma_theta is always tensile (no TF
-        # back-pressure); in Bucking, the sign depends on the relative magnitudes
-        # of P_CS and P_TF.
-        _light_governs = (
-            Choice_Buck_Wedg in ('Wedging', 'Bucking')
-            and np.isfinite(σ_theta) and σ_theta > 0.0
-        )
-        σ_eff = (σ_CS / fatigue_CS
-                 if (Operation_mode == 'Pulsed' and _light_governs)
-                 else σ_CS)
-        return Sigma_CS - σ_eff
+        return Sigma_CS - _cs_allowable(σ_CS, fatigue_CS, Operation_mode,
+                                        Choice_Buck_Wedg, σ_theta)
     
     # ------------------------------------------------------------------
     # Root-finding — adaptive multi-bracket solver
@@ -5684,9 +5787,9 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
     Young_modul_Steel = config.Young_modul_Steel
     nu_Steel          = config.nu_Steel
     # Apply safety factor on the steel mechanical allowable. The CIRCE radial
-    # equilibrium uses σ_CS / SF_CS as the Tresca cap inside f_sigma_diff;
-    # in pulsed/wedging cases the fatigue knockdown (fatigue_CS) multiplies
-    # on top, giving an effective allowable σ_CS / (SF_CS × fatigue_CS).
+    # equilibrium uses σ_CS / SF_CS as the Tresca cap inside f_sigma_diff.
+    # In pulsed wedging and light bucking the fatigue knockdown (fatigue_CS)
+    # multiplies on top (see _cs_allowable), giving σ_CS / (SF_CS × fatigue_CS).
     σ_CS = σ_CS / SF_CS
     debug = False
     Tol_CS = 1e-3
@@ -5809,15 +5912,8 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
             tresca_strong = tresca_radial(SigT_S, SigR_S, 0.0, scale_tr, scale_z)
 
             Sigma_CS = max(tresca_light, tresca_strong)
-            # Inner-radius signed hoop stress: preserves sign so that the
-            # fatigue knockdown in f_sigma_diff fires only when the light
-            # case genuinely produces tensile hoop (σ_θ > 0).  The previous
-            # np.max(np.abs(...)) always returned a positive value, making
-            # _light_governs erroneously True even when P_TF dominates and
-            # the hoop is compressive — this inflated the required thickness
-            # by applying the fatigue penalty to the strong (compressive)
-            # case.  Fixed: use SigT_L[0] (inner radius, where σ_r = 0 and
-            # σ_θ is maximum in magnitude) with its physical sign.
+            # Hoop stress at the inner radius at peak current, with its sign
+            # (σ_r = 0 there): it decides the fatigue knockdown (_cs_allowable)
             σ_theta  = float(SigT_L[0]) * scale_tr
             σ_r      = float(np.max(np.abs(SigR_L))) * scale_tr
             σ_z      = σ_z_steel
@@ -5829,9 +5925,7 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
             SigR_W, SigT_W, _, _, _ = F_CIRCE0D(
                 disR, R_arr, J_w, B_w, 0, 0, E_arr, nu_Steel, config_arr)
             Sigma_CS = tresca_radial(SigT_W, SigR_W, σ_z_smear, scale_tr, scale_z)
-            # Inner-radius signed hoop stress (consistent with Bucking fix).
-            # In Wedging σ_θ is always tensile (no TF back-pressure), so
-            # this change has no functional impact — only sign consistency.
+            # Hoop stress at the inner radius, with its sign
             σ_theta  = float(SigT_W[0]) * scale_tr
             σ_r      = float(np.max(np.abs(SigR_W))) * scale_tr
             σ_z      = σ_z_steel
@@ -5853,7 +5947,7 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
                 tresca_strong = tresca_radial(SigT_S, SigR_S, 0.0, scale_tr, scale_z)
 
                 Sigma_CS = max(tresca_light, tresca_strong)
-                # Inner-radius signed hoop stress (same fix as Bucking).
+                # Hoop stress at the inner radius, with its sign
                 σ_theta  = float(SigT_L[0]) * scale_tr
                 σ_r      = float(np.max(np.abs(SigR_L))) * scale_tr
                 σ_z      = σ_z_steel
@@ -5892,20 +5986,8 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
         Sigma_CS, σ_z, σ_theta, σ_r, Steel_fraction, B_CS, J_max_CS = d_to_solve(d)
         if not np.isfinite(Sigma_CS):
             return np.nan
-        # Effective stress allowable: apply fatigue knockdown only when the light
-        # case (CS own electromagnetic load dominant) governs AND the scenario is
-        # pulsed. The light case is identified by a net tensile hoop stress
-        # (sigma_theta > 0). In Wedging, sigma_theta is always tensile (no TF
-        # back-pressure); in Bucking, the sign depends on the relative magnitudes
-        # of P_CS and P_TF.
-        _light_governs = (
-            Choice_Buck_Wedg in ('Wedging', 'Bucking')
-            and np.isfinite(σ_theta) and σ_theta > 0.0
-        )
-        σ_eff = (σ_CS / fatigue_CS
-                 if (Operation_mode == 'Pulsed' and _light_governs)
-                 else σ_CS)
-        return Sigma_CS - σ_eff
+        return Sigma_CS - _cs_allowable(σ_CS, fatigue_CS, Operation_mode,
+                                        Choice_Buck_Wedg, σ_theta)
     
     # ------------------------------------------------------------------
     # Root-finding — adaptive multi-bracket solver
@@ -5946,41 +6028,51 @@ def f_CS_CIRCE(ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, B_max_TF, B_max_CS,
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def _princeton_D_contour(r1: float, r2: float, n_leg: int = 50) -> tuple:
+# Gauss-Legendre rule (nodes and weights on [-1, 1]) of the Princeton-D height
+# integral, applied on each segment of the contour.
+_PD_GL_T, _PD_GL_W = np.polynomial.legendre.leggauss(8)
+
+
+def _princeton_D_contour(r1: float, r2: float, n_leg: int = 50,
+                         n_arc: int = 256) -> tuple:
     """
     Princeton-D constant-tension coil contour in the (R, Z) plane.
 
-    Arc-length ODE:  dR/ds = cos(α),  dZ/ds = sin(α),  dα/ds = 1/(k·R),
-    with k = ½ ln(r₂/r₁).  Starts at (r₂, 0) with α = π/2, stops at α = 3π/2.
+    Arc-length equations:  dR/ds = cos(α),  dZ/ds = sin(α),  dα/ds = 1/(k·R),
+    with k = ½ ln(r₂/r₁), from (r₂, 0) at α = π/2 to the inboard leg at
+    α = 3π/2 [File, Mills & Sheffield 1971].  With the tangent angle α as
+    parameter, dR/dα = k R cos(α) integrates in closed form:
+        R(α) = r₂ exp(k (sin(α) − 1)),   R(3π/2) = r₁,
+        Z(α) = k ∫_{π/2}^{α} R(a) sin(a) da.
+    The nodes are equally spaced in α (n_arc segments with the same turning
+    angle, a node at the top α = π).  Z is integrated on each segment with an
+    8-point Gauss-Legendre rule, exact to round-off for this smooth integrand.
+    With n_arc = 256, the layer volumes of f_radial_build_layers (offsets of
+    this contour) are within 1e-4 of their converged values on the reference
+    decks.
     Closed contour assembled as: top arc + straight inboard leg + mirrored arc.
 
     Parameters
     ----------
-    r1 : float  Inboard-leg radius (inner bore) [m].
-    r2 : float  Outboard midplane radius (outer face) [m].
+    r1    : float  Inboard-leg radius (inner bore) [m].
+    r2    : float  Outboard midplane radius (outer face) [m].
+    n_leg : int    Points on the straight inboard leg.
+    n_arc : int    Segments on each arc.
 
     Returns
     -------
     R, Z : ndarray  Closed contour (clockwise winding).
     """
     k = 0.5 * np.log(r2 / r1)
+    alpha = np.linspace(0.5 * np.pi, 1.5 * np.pi, n_arc + 1)
+    r_top = r2 * np.exp(k * (np.sin(alpha) - 1.0))
 
-    def _rhs(_s, y):
-        _r, _z, _alpha = y
-        return [np.cos(_alpha), np.sin(_alpha), 1.0 / (k * _r)]
+    # Z at the nodes: Gauss-Legendre on each segment, then cumulative sum
+    h = 0.5 * np.diff(alpha)
+    a_gl = (alpha[:-1] + h)[:, None] + h[:, None] * _PD_GL_T
+    f_gl = k * r2 * np.exp(k * (np.sin(a_gl) - 1.0)) * np.sin(a_gl)
+    z_top = np.concatenate(([0.0], np.cumsum(h * (f_gl @ _PD_GL_W))))
 
-    def _evt_alpha(_s, y):
-        return y[2] - 3.0 * np.pi / 2.0
-    _evt_alpha.terminal = True
-
-    y0    = [r2, 0.0, np.pi / 2.0]
-    s_max = 30.0 * r2
-    sol   = solve_ivp(_rhs, [0.0, s_max], y0,
-                      events=_evt_alpha,
-                      max_step=0.01 * r2,
-                      rtol=1e-10, atol=1e-12)
-
-    r_top = sol.y[0];  z_top = sol.y[1]
     z_leg = z_top[-1]; r_leg = r_top[-1]
 
     z_leg_pts = np.linspace(z_leg, -z_leg, n_leg)
@@ -5998,7 +6090,7 @@ def _princeton_D_r2_from_height(r1: float, Z_target: float) -> float:
     half-height equals Z_target, given inboard leg radius r1.
 
     Height is monotonically increasing with r2 (for fixed r1), so a
-    simple brentq root-find on the Princeton-D ODE is used.
+    simple brentq root-find on the Princeton-D contour is used.
 
     Parameters
     ----------
@@ -6100,9 +6192,9 @@ def f_TF_cross_section(a: float, b: float, R0: float,
     coil 8 % (EU-DEMO 2017) to 13 % (SF Plant V2) taller, with L_turn taken on
     the outer face, a further 7 % of conductor.
 
-    Accuracy. The ODE matches a quadrature of the analytic curve
-    R(alpha) = r2 exp(k(sin alpha - 1)) to below 1 mm, and A_cross equals
-    L_turn * c to 0.05 %. Against the built ITER coil (~14 m) the two
+    Accuracy. The contour is the closed form of the constant-tension curve
+    (_princeton_D_contour), and A_cross equals L_turn * c to 0.06 %.
+    Against the built ITER coil (~14 m) the two
     conventions bracket: centreline 13.1 m, outer envelope 14.5 m. Neither is
     exact because ITER's D is not constant-tension; the centreline is kept as
     the one with a physical basis. A coil still coming out too tall points at
@@ -6111,11 +6203,10 @@ def f_TF_cross_section(a: float, b: float, R0: float,
     R_bore   = R0 - a - b - c
     R_TF_out = R0 + a + b + Delta_TF + c
 
-    # Degenerate/non-viable geometry (e.g. R_bore <= 0): the Princeton-D ODE
-    # has k = 0.5*ln(R_TF_out/R_bore) undefined or non-positive, which would
-    # otherwise send solve_ivp into a non-terminating step-rejection loop on
-    # NaN derivatives. Short-circuit to NaN, consistent with how other
-    # non-viable design points are flagged.
+    # Degenerate/non-viable geometry (e.g. R_bore <= 0): the Princeton-D
+    # parameter k = 0.5*ln(R_TF_out/R_bore) is undefined or non-positive.
+    # Short-circuit to NaN, consistent with how other non-viable design
+    # points are flagged.
     if not (np.isfinite(R_bore) and np.isfinite(R_TF_out)) or R_bore <= 0:
         _nan_pts = np.full(2, np.nan)
         return (R_bore, R_TF_out, np.nan, np.nan, np.nan,
@@ -6177,6 +6268,115 @@ def f_V_TF(a: float, b: float, R0: float,
     return A_cross * 2.0 * np.pi * R_bore / float(N_TF)
 
 
+#%% E_mag and t_dump test
+# (after f_TF_cross_section, which calculate_E_mag_TF uses)
+    
+if __name__ == "__main__":
+    # Stored-energy anchors (asserted; the detailed table follows below).
+    # ITER CS: 6.4 GJ at 13 T [Schultz et al., 21st SOFE (2005);
+    # iter.org/machine/magnets] with the documented winding envelope
+    # (r_in = 1.32 m, r_out = 2.07 m, H = 12 m): D0FUS gives 6.33 GJ.
+    _E_CS = calculate_E_mag_CS(13., 1.32, 2.07, 12.)
+    assert abs(_E_CS/6.4e9 - 1) < 0.06, _E_CS/1e9
+    # TF energy: the Green line integral is exact on a rectangle,
+    # iint dR dZ / R = H ln(r_out/r_in). ITER: Princeton-D bore of the
+    # ITER deck (a = 2.0, b = 1.1, R0 = 6.2, c = 0.9, Delta_TF = 1.59 m)
+    # with the published B0 R0 = 5.3 T x 6.2 m, i.e. B_max = 10.6 T at
+    # R0 - a - b, against 41 GJ [Mitchell IEEE TAS 18 (2008)].
+    _Rr, _Zr = np.array([2.6, 11.5, 11.5, 2.6]), np.array([-7., -7., 7., 7.])
+    assert abs(_bore_log_integral(_Rr, _Zr) / (14. * np.log(11.5 / 2.6)) - 1) < 1e-12
+    _E_TF = calculate_E_mag_TF(5.3 * 6.2 / 3.1, 2.0, 1.1, 6.2, 0.9, 1.59)
+    assert abs(_E_TF / 41e9 - 1) < 0.10, _E_TF / 1e9
+    print(f"OK  E_mag: CS = {_E_CS/1e9:.2f} GJ vs 6.4 published; "
+          f"TF = {_E_TF/1e9:.1f} GJ vs 41 published")
+
+if __name__ == "__main__":
+    """
+    Validation of magnetic energy and quench discharge time calculations.
+    
+    References
+    ----------
+    [1] Mitchell, N. et al., "The ITER Magnet System", IEEE Trans. Appl. Supercond. 18(2), 2008.
+    [2] Fink, S. et al., "Transient electrical behaviour of the ITER TF coils during fast discharge", 
+        Fusion Eng. Des. 75-79, 2005.
+    [3] Takahashi, Y. et al., "Quench Detection Using Pick-Up Coils for the ITER Central Solenoid",
+        IEEE Trans. Appl. Supercond. 15(2), 2005.
+    [4] Duchateau, J.-L. et al., "Detailed design of the ITER central solenoid", 
+        Fusion Eng. Des. 84(2-6), 2009.
+    """
+    
+    print("\n" + "="*65)
+    print("MAGNETIC ENERGY & DISCHARGE TIME VALIDATION")
+    print("="*65)
+    
+    # =========================================================================
+    # ITER TF SYSTEM
+    # =========================================================================
+    # The TF system consists of 18 coils with 9 Fast Discharge Units (FDU).
+    # Reference values [1,2]: E_mag = 41 GJ, tau_dis = 11 s, I = 68 kA
+    print("\n--- ITER TF ---")
+    # Geometry: r_bore_in/out are the inner/outer radii of the toroidal volume
+    # where B_tor exists, i.e., the TF inner and outer leg positions.
+    # Princeton-D bore of the ITER deck with the published B0 R0 = 5.3 x 6.2
+    # T m, i.e. B_max = 10.6 T at R0 - a - b = 3.1 m.
+    E_TF = calculate_E_mag_TF(5.3 * 6.2 / 3.1, 2.0, 1.1, 6.2, 0.9, 1.59)
+    E_TF_ref = 41e9
+    # Discharge parameters [2]: 9 FDU, V_max ~ 6 kV, tau_dis ~ 11 s
+    I_TF = 68e3
+    V_max_TF = 10e3
+    N_FDU_TF = 9
+    tau_h_TF = 2.0
+    t_dump_TF = calculate_t_dump(E_TF, I_TF, V_max_TF, N_FDU_TF, tau_h_TF)
+    tau_dis_TF = 2 * E_TF / (I_TF * V_max_TF * N_FDU_TF)
+    print(f"  E_mag   = {E_TF/1e9:.1f} GJ   (ref: 41 GJ)")
+    print(f"  tau_dis = {tau_dis_TF:.1f} s    (ref: ~11 s)")
+    
+    # =========================================================================
+    # ITER CS SYSTEM
+    # =========================================================================
+    # The CS consists of 6 independent modules, each with its own FDU.
+    # Reference values [3,4]: E_mag = 6.4 GJ, tau_dis = 7.5 s, I = 45 kA
+    print("\n--- ITER CS ---")
+    # Geometry: thick solenoid with nearly uniform axial field
+    B_max_CS = 13.0       # Peak field [T]
+    r_in_CS = 1.3         # Inner winding pack radius [m]
+    r_out_CS = 2.1        # Outer winding pack radius [m]
+    H_CS = 12.0           # Total height [m]
+    E_CS = calculate_E_mag_CS(B_max_CS, r_in_CS, r_out_CS, H_CS)
+    E_CS_ref = 6.4e9
+    # Discharge parameters [3]: 6 modules, tau_dis = 7.5 s
+    # V_max derived from: V = 2*E / (I * tau_dis * N) ≈ 6.3 kV
+    I_CS = 45e3
+    V_max_CS = 6.3e3
+    N_FDU_CS = 6
+    tau_h_CS = 2.0
+    t_dump_CS = calculate_t_dump(E_CS, I_CS, V_max_CS, N_FDU_CS, tau_h_CS)
+    tau_dis_CS = 2 * E_CS / (I_CS * V_max_CS * N_FDU_CS)
+    print(f"  E_mag   = {E_CS/1e9:.1f} GJ   (ref: 6.4 GJ)")
+    print(f"  tau_dis = {tau_dis_CS:.1f} s    (ref: 7.5 s)")
+    
+def _contour_distance(R_pts: np.ndarray, Z_pts: np.ndarray,
+                      R_poly: np.ndarray, Z_poly: np.ndarray) -> np.ndarray:
+    """
+    Distance from each point (R_pts, Z_pts) to the closed polyline
+    (R_poly, Z_poly) [m]: minimum over the segments of the distance to the
+    orthogonal projection, clipped to the segment ends. The points are
+    processed by blocks of 64, so that the (points x segments) temporaries
+    stay in cache.
+    """
+    dR = np.roll(R_poly, -1) - R_poly
+    dZ = np.roll(Z_poly, -1) - Z_poly
+    L2 = dR**2 + dZ**2
+    L2 = np.where(L2 > 0.0, L2, 1.0)
+    dist = np.empty(len(R_pts))
+    for i in range(0, len(R_pts), 64):
+        pR = R_pts[i:i + 64, None] - R_poly[None, :]
+        pZ = Z_pts[i:i + 64, None] - Z_poly[None, :]
+        t  = np.clip((pR * dR + pZ * dZ) / L2, 0.0, 1.0)
+        dist[i:i + 64] = np.min(np.hypot(pR - t * dR, pZ - t * dZ), axis=1)
+    return dist
+
+
 def _moment_area(R: np.ndarray, Z: np.ndarray) -> float:
     """
     Compute ∫∫_enclosed R dA for a closed contour via Green's theorem.
@@ -6223,7 +6423,7 @@ def f_V_blanket(a: float, b: float, R0: float,
     N_theta  : int            Points on the Miller LCFS contour.
     R_outer, Z_outer : ndarray or None
                               Pre-computed outer boundary contour (TF inner face).
-                              When provided, the Princeton-D ODE is not re-solved.
+                              When provided, the Princeton-D is not recomputed.
 
     Returns
     -------
@@ -6290,6 +6490,14 @@ def f_radial_build_layers(
         V_total      — sum of all layer volumes [m³]
         V_divertor   — divertor volume (fraction of FW+breeder+structure+multiplier) [m³]
         delta_BB_ib, delta_BB_ob — breeder-layer IB/OB thicknesses [m]
+        delta_BB_local, w_BB_local — local breeder thickness at each point
+                        of its inner surface [m] and the area weights of
+                        these points (sum 1). The TBR and the energy
+                        multiplication are averaged with them (f_TBR,
+                        f_blanket_multiplication)
+        delta_BB_eff — area-weighted mean of delta_BB_local [m]
+        stack_scale  — scale of the fixed layers, below 1 when b is smaller
+                        than the fixed stack (radial_layers_effective)
     """
     layers    = radial_layers_effective(Blanket_choice, b, Delta_TF)
     i_breeder = next(i for i, L in enumerate(layers) if L['role'] == 'breeder')
@@ -6339,6 +6547,16 @@ def f_radial_build_layers(
 
     V_total = sum(L['V'] for L in layers)
 
+    # Local breeder thickness at each point of its inner surface (distance
+    # to the outer surface) and area weight 2π R dl of each point
+    delta_BB_local = _contour_distance(R_breeder_in, Z_breeder_in,
+                                       R_breeder_out, Z_breeder_out)
+    R_next, Z_next = np.roll(R_breeder_in, -1), np.roll(Z_breeder_in, -1)
+    seg = 0.5 * (R_breeder_in + R_next) * np.hypot(R_next - R_breeder_in,
+                                                    Z_next - Z_breeder_in)
+    w_BB_local = 0.5 * (seg + np.roll(seg, 1))
+    w_BB_local = w_BB_local / w_BB_local.sum()
+
     # ── Divertor: fraction of FW + breeder/structure/multiplier volume ──────
     _DIV_ROLES = ('FW', 'breeder', 'structure', 'multiplier')
     V_FW_BB    = sum(L['V'] for L in layers if L['role'] in _DIV_ROLES)
@@ -6361,13 +6579,15 @@ def f_radial_build_layers(
         'V_divertor':  V_divertor,
         'delta_BB_ib': breeder['delta_ib'],
         'delta_BB_ob': breeder['delta_ob'],
+        'delta_BB_local': delta_BB_local,
+        'w_BB_local':  w_BB_local,
+        'delta_BB_eff': float(np.sum(w_BB_local * delta_BB_local)),
+        'stack_scale': breeder['stack_scale'],
     }
 
 
-def f_V_CS(a: float, b: float, c: float, d: float,
-           R0: float, κ: float,
-           Gap: float, Choice_Buck_Wedg: str,
-           H_CS: float = None) -> float:
+def f_V_CS(a: float, b: float, c: float, d: float, R0: float,
+           Gap: float, Choice_Buck_Wedg: str, H_CS: float) -> float:
     """
     Volume of the full CS solenoid (annular right cylinder, all modules).
 
@@ -6379,14 +6599,10 @@ def f_V_CS(a: float, b: float, c: float, d: float,
     c    : float  TF inboard radial thickness c_TF [m].
     d    : float  CS winding-pack radial thickness [m].
     R0   : float  Major radius [m].
-    κ    : float  Plasma elongation [-].
     Gap  : float  Radial TF bore → CS gap (Wedging only) [m].
     Choice_Buck_Wedg : str  'Wedging', 'Bucking', or 'Plug'.
-    H_CS : float, optional
-        CS total height [m], as resolved by f_H_CS. MUST be passed by any
-        caller that also uses H_CS elsewhere, otherwise the volume and the
-        ampere-turns describe two different coils. When omitted the legacy
-        expression 2 (κ a + b + 1) is used, for backward compatibility only.
+    H_CS : float  CS total height [m], as resolved by f_H_CS, so that the
+                  volume and the ampere-turns describe the same coil.
 
     Returns
     -------
@@ -6395,8 +6611,6 @@ def f_V_CS(a: float, b: float, c: float, d: float,
     _gap_eff = Gap if Choice_Buck_Wedg == 'Wedging' else 0.0
     R_CS_ext = R0 - a - b - c - _gap_eff
     R_CS_int = R_CS_ext - d
-    if H_CS is None or not np.isfinite(H_CS) or H_CS <= 0.0:
-        H_CS = f_H_CS(κ, a, b, model='legacy')
     return np.pi * H_CS * (R_CS_ext ** 2 - R_CS_int ** 2)
 
 
@@ -6407,23 +6621,30 @@ def f_coil_material_volumes(
     V_CS_geom: float,
     Steel_fraction_CS: float,
     f_sc_CS: float, f_cu_CS: float, f_He_CS: float, f_In_CS: float,
+    f_In_WP: float,
 ) -> tuple:
     """
     Material volumes for the TF system (total = V_TF_one × N_TF) and the CS.
 
     Decomposition:
         V_total = V_steel + V_cable
-        V_cable = V_sc + V_cu + V_He + V_In   (wost fractions)
+        V_cable = V_sc + V_cu + V_He + V_In            (wost fractions)
+        V_In    = V_cable × (f_In_cable + f_In_WP)     (turn + winding-pack
+                                                         insulation)
 
     Parameters
     ----------
     V_TF_one          : float  Volume of one TF coil [m³].
     N_TF              : int    Number of TF coils.
-    Steel_fraction_TF : float  Steel fraction of TF winding pack [-].
-    f_sc_TF … f_In_TF : float  Wost material fractions for TF.
+    Steel_fraction_TF : float  Steel fraction of the whole TF coil
+                               (winding pack, nose and backplate) [-].
+    f_sc_TF … f_In_TF : float  Wost material fractions for TF, f_In_TF being
+                               the turn insulation f_In_cable.
     V_CS_geom         : float  Total CS solenoid volume [m³].
     Steel_fraction_CS : float  Steel fraction of CS winding pack [-].
     f_sc_CS … f_In_CS : float  Wost material fractions for CS.
+    f_In_WP           : float  Winding-pack insulation and clearance fraction
+                               of the wost, common to TF and CS [-].
 
     Returns
     -------
@@ -6436,14 +6657,14 @@ def f_coil_material_volumes(
     V_sc_TF    = cable_TF * f_sc_TF
     V_cu_TF    = cable_TF * f_cu_TF
     V_He_TF    = cable_TF * f_He_TF
-    V_In_TF    = cable_TF * f_In_TF
+    V_In_TF    = cable_TF * (f_In_TF + f_In_WP)
 
     cable_CS   = V_CS_geom * (1.0 - Steel_fraction_CS)
     V_steel_CS = V_CS_geom * Steel_fraction_CS
     V_sc_CS    = cable_CS * f_sc_CS
     V_cu_CS    = cable_CS * f_cu_CS
     V_He_CS    = cable_CS * f_He_CS
-    V_In_CS    = cable_CS * f_In_CS
+    V_In_CS    = cable_CS * (f_In_CS + f_In_WP)
 
     return (V_steel_TF, V_sc_TF, V_cu_TF, V_He_TF, V_In_TF,
             V_steel_CS, V_sc_CS, V_cu_CS, V_He_CS, V_In_CS)
@@ -6452,8 +6673,9 @@ def f_coil_material_volumes(
 def f_coil_masses(
     V_steel_TF: float, V_sc_TF: float, V_cu_TF: float, V_In_TF: float,
     V_steel_CS: float, V_sc_CS: float, V_cu_CS: float, V_In_CS: float,
-    Chosen_Steel: str, Supra_choice: str,
+    Chosen_Steel_TF: str, Supra_choice: str,
     f_TF_steel_mass: float = 1.0,
+    Chosen_Steel_CS: str = None,
 ) -> tuple:
     """
     Compute the mass of each material component for the TF and CS coil systems.
@@ -6468,18 +6690,20 @@ def f_coil_masses(
         Total material volumes for the full TF system (all N_TF coils) [m³].
     V_steel_CS, V_sc_CS, V_cu_CS, V_In_CS : float
         Material volumes for the full CS solenoid [m³].
-    Chosen_Steel : str   Steel grade ('316L', 'N50H', 'Manual').
+    Chosen_Steel_TF : str   TF steel grade ('316L', 'N50H', 'Manual').
     Supra_choice : str   SC type ('Nb3Sn', 'NbTi', 'REBCO', 'Manual').
     f_TF_steel_mass : float
         Multiplicative factor on M_steel_TF to account for geometry
         approximations, gravitational supports, and inter-coil structures [-].
+    Chosen_Steel_CS : str or None
+        Steel grade of the CS jacket. None: Chosen_Steel_TF.
 
     Returns
     -------
     (M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF,
      M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS)  all in [kg].
     """
-    rho = material_rho(Chosen_Steel, Supra_choice)
+    rho = material_rho(Chosen_Steel_TF, Supra_choice)
     rho_st  = rho['steel']
     rho_sc  = rho['SC']
     rho_cu  = rho['Cu']
@@ -6491,7 +6715,9 @@ def f_coil_masses(
     M_In_TF    = V_In_TF    * rho_ins
     M_total_TF = M_steel_TF + M_sc_TF + M_cu_TF + M_In_TF
 
-    M_steel_CS = V_steel_CS * rho_st
+    rho_st_CS  = (rho_st if Chosen_Steel_CS is None
+                  else material_rho(Chosen_Steel_CS, Supra_choice)['steel'])
+    M_steel_CS = V_steel_CS * rho_st_CS
     M_sc_CS    = V_sc_CS    * rho_sc
     M_cu_CS    = V_cu_CS    * rho_cu
     M_In_CS    = V_In_CS    * rho_ins
@@ -6501,7 +6727,7 @@ def f_coil_masses(
             M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS)
 
 
-def f_TBR(delta_BB_ib: float, Blanket_choice: str) -> float:
+def f_TBR(delta_BZ, Blanket_choice: str, weights=None) -> float:
     """
     Tritium breeding ratio from a saturation-curve fit to the breeder-zone
     thickness.
@@ -6511,28 +6737,61 @@ def f_TBR(delta_BB_ib: float, Blanket_choice: str) -> float:
 
     delta_e is set so that TBR reaches 95% of TBR_max at delta_BZ = delta_BB_sat.
     TBR_max and delta_BB_sat are taken from BLANKET_CONCEPTS[Blanket_choice].
-    The breeder layer's own IB thickness (delta_BB_ib, from
-    radial_layers_effective()) is used directly as delta_BZ.
+    With the local thicknesses and area weights of f_radial_build_layers
+    (delta_BB_local, w_BB_local), the TBR is the area-weighted mean of the
+    local values. A thin inboard breeder then lowers the TBR even when the
+    outboard breeder is thick.
 
     Parameters
     ----------
-    delta_BB_ib    : float  Inboard breeder-layer thickness [m].
-    Blanket_choice : str    Concept key (see BLANKET_CONCEPTS).
+    delta_BZ       : float or ndarray  Breeder thickness [m].
+    Blanket_choice : str               Concept key (see BLANKET_CONCEPTS).
+    weights        : ndarray or None   Area weights of delta_BZ (sum 1).
 
     Returns
     -------
     TBR : float  Achieved tritium breeding ratio [-].
     """
-    concept  = material_blanket(Blanket_choice)
-    delta_BZ = max(delta_BB_ib, 0.0)
-    delta_e  = concept['delta_BB_sat'] / np.log(20.0)
-    return concept['TBR_max'] * (1.0 - np.exp(-delta_BZ / delta_e))
+    concept = material_blanket(Blanket_choice)
+    delta_e = concept['delta_BB_sat'] / np.log(20.0)
+    tbr = concept['TBR_max'] * (1.0 - np.exp(-np.maximum(delta_BZ, 0.0) / delta_e))
+    return float(tbr) if weights is None else float(np.sum(weights * tbr))
+
+
+def f_blanket_multiplication(M_blanket: float, delta_BZ, Blanket_choice: str,
+                             weights=None) -> float:
+    """
+    Energy multiplication of a breeder of thickness delta_BZ.
+
+        M(delta_BZ) = 1 + (M_blanket - 1) (1 - exp(-delta_BZ / delta_e))
+
+    The exothermic reactions behind M (6Li(n,t), multiplier) occur in the
+    breeder, so M follows the saturation curve of the TBR (same delta_e,
+    f_TBR) and falls to 1 where the breeder vanishes. With local
+    thicknesses and area weights, M is their area-weighted mean.
+
+    Parameters
+    ----------
+    M_blanket      : float             Multiplication of a thick breeder [-].
+    delta_BZ       : float or ndarray  Breeder thickness [m].
+    Blanket_choice : str               Concept key (see BLANKET_CONCEPTS).
+    weights        : ndarray or None   Area weights of delta_BZ (sum 1).
+
+    Returns
+    -------
+    float : energy multiplication of the neutron power [-].
+    """
+    concept = material_blanket(Blanket_choice)
+    delta_e = concept['delta_BB_sat'] / np.log(20.0)
+    M = 1.0 + (M_blanket - 1.0) * (1.0 - np.exp(-np.maximum(delta_BZ, 0.0) / delta_e))
+    return float(M) if weights is None else float(np.sum(weights * M))
 
 
 def f_cable_length(
     N_TF: int, L_turn_TF: float, Bmax_TF: float, R_TF_in: float,
-    I_cond: float,
+    I_cond_TF: float,
     N_sub_CS: int, L_turn_CS: float, B_CS: float, H_CS_NI: float,
+    I_cond_CS: float,
 ) -> tuple:
     """
     Total cable conductor length for the TF and CS systems.
@@ -6541,12 +6800,12 @@ def f_cable_length(
     (R_TF_in = R0 − a − b), consistent with the NI convention used
     throughout D0FUS (save_run_output, calculate_E_mag_TF):
         NI_total = Bmax_TF × 2π × R_TF_in / μ₀
-        N_turns  = NI_total / (N_TF × I_cond)
+        N_turns  = NI_total / (N_TF × I_cond_TF)
         L_cable  = N_TF × N_turns × L_turn_TF
 
     CS — solenoid law:
         NI_total = B_CS × H_CS / μ₀
-        N_turns  = NI_total / (N_sub_CS × I_cond)
+        N_turns  = NI_total / (N_sub_CS × I_cond_CS)
         L_cable  = N_sub_CS × N_turns × L_turn_CS
 
     Parameters
@@ -6557,32 +6816,33 @@ def f_cable_length(
     R_TF_in    : float  Plasma-facing inner face radius = R0 − a − b [m].
                         This is the radius used for Ampere's law throughout
                         D0FUS (consistent with N_turns displayed in output).
-    I_cond     : float  Operating current per conductor [A].
+    I_cond_TF  : float  Operating current per TF conductor [A].
     N_sub_CS   : int    Number of CS modules.
     L_turn_CS  : float  Mean CS turn perimeter = π × (R_ext + R_int) [m].
     B_CS       : float  CS peak field [T].
     H_CS_NI    : float  CS total height used for the solenoid Ampere law [m].
                         Pass the H_CS resolved by f_H_CS, the same value that
                         feeds the stored energy, the volume and the stresses.
+    I_cond_CS  : float  Operating current per CS conductor [A].
 
     Returns
     -------
     (L_cable_TF, L_cable_CS, Nturns_TF, Nturns_CS)
         Lengths in [m], turns in turns/coil or turns/module.
     """
-    if I_cond > 0 and N_TF > 0:
+    if I_cond_TF > 0 and N_TF > 0:
         NI_TF      = Bmax_TF * 2.0 * np.pi * R_TF_in / μ0
-        Nturns_TF  = NI_TF / (float(N_TF) * I_cond)
+        Nturns_TF  = NI_TF / (float(N_TF) * I_cond_TF)
         L_cable_TF = float(N_TF) * Nturns_TF * L_turn_TF
     else:
         Nturns_TF  = np.nan
         L_cable_TF = np.nan
 
     _N_sub = max(int(N_sub_CS), 1)
-    if (np.isfinite(B_CS) and B_CS > 0 and I_cond > 0
+    if (np.isfinite(B_CS) and B_CS > 0 and I_cond_CS > 0
             and np.isfinite(H_CS_NI) and H_CS_NI > 0):
         NI_CS      = B_CS * H_CS_NI / μ0
-        Nturns_CS  = NI_CS / (_N_sub * I_cond)
+        Nturns_CS  = NI_CS / (_N_sub * I_cond_CS)
         L_cable_CS = _N_sub * Nturns_CS * L_turn_CS
     else:
         Nturns_CS  = np.nan
@@ -6677,7 +6937,7 @@ if __name__ == "__main__":
 if __name__ == "__main__":
     # ─────────────────────────────────────────────────────────────────────
     # General ITER check (radial build): the shipped reference deck must
-    # reproduce the frozen 2026-06 coil quantities (anti-drift guard;
+    # reproduce the frozen 2026-10 coil quantities (anti-drift guard;
     # intentional model changes must update these anchors). Context: the
     # ITER actual builds are TF inboard ≈ 1.0 m and CS Δr = 0.75 m at
     # B_CS = 13 T [Mitchell IEEE TAS 18 (2008); Schultz 21st SOFE (2005)];
@@ -6696,7 +6956,7 @@ if __name__ == "__main__":
             import sys; sys.path.insert(0, %r)
             from D0FUS_EXE.D0FUS_run import load_config_from_file, run
             res = run(load_config_from_file(%r), verbose=0)
-            frozen = {44: 0.7859, 45: 0.4424, 46: 0.2735, 51: 0.3787, 1: 7.781}
+            frozen = {44: 0.9385, 45: 0.5029, 46: 0.3656, 51: 0.7254, 1: 12.009}
             names = {44: 'c_TF', 45: 'c_WP', 46: 'c_Nose', 51: 'd_CS', 1: 'B_CS'}
             for i, v in frozen.items():
                 assert abs(float(res[i])/v - 1) < 5e-3, \
@@ -6706,7 +6966,7 @@ if __name__ == "__main__":
         _r = subprocess.run([sys.executable, '-c', _code],
                             capture_output=True, text=True, timeout=600)
         assert _r.returncode == 0, _r.stderr[-400:]
-        print("OK  Deck ITER (build): c_TF/c_WP/c_Nose/d_CS/B_CS gelés 2026-06, "
+        print("OK  Deck ITER (build): c_TF/c_WP/c_Nose/d_CS/B_CS gelés 2026-10, "
               "dérive < 0.5 % (sous-process isolé)")
     else:
         print("--  Deck ITER absent : test général build sauté")

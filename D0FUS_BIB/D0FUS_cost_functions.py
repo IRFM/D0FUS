@@ -347,6 +347,20 @@ def f_costs_Sheffield(discount_rate, contingency, T_life, T_build,
     Ref: Sheffield & Milora, Fus. Sci. Technol. 70, 14-35 (2016).
     Benchmark: Jo et al., Energies 14, 6817 (2021) — COE 109-140 mills/kWh.
 
+    Deviations from Sheffield & Milora, kept on purpose (their model as
+    restated by Jo et al. 2021, Eqs. 8 and 12-14):
+      - The first blanket and divertor are in the fusion-island direct
+        cost, so they carry the indirect charges, the interest during
+        construction and the contingency. Sheffield & Milora charge them
+        every year through the fixed charge rate, in the fuel cycle cost.
+      - C_waste_sfd = 5 $/MWh is added to the COE. Sheffield & Milora add
+        0.5 mill/kWh for waste and 1.0 mill/kWh for decommissioning, that
+        is 1.5 $/MWh.
+      - Supra_cost_factor multiplies c_pc_sfd, which is already the unit
+        cost of a superconducting coil set.
+      - The divertor target area S_tt is an input (evaluate_costs takes
+        f_div_area_fraction x plasma surface).
+
     Parameters
     ----------
     discount_rate  : float  Real discount rate [-].
@@ -354,7 +368,8 @@ def f_costs_Sheffield(discount_rate, contingency, T_life, T_build,
     T_life         : int    Plant operational lifetime [yr].
     T_build        : int    Construction time [yr].
     P_t            : float  Thermal power output [MWth].
-    P_e            : float  Net electric power output [MWe].
+    P_e            : float  Net electric power output [MWe]. The COE is NaN
+                            when P_e <= 0 (no net electric output).
     P_aux          : float  Auxiliary heating power to plasma [MW].
     Gamma_n        : float  Neutron wall load [MW/m^2].
     T_op_limit     : float  Operation time per replacement cycle [yr]
@@ -409,8 +424,11 @@ def f_costs_Sheffield(discount_rate, contingency, T_life, T_build,
                                                0.1, C_aux, C_fa_sfd)
     C_OM = f_annual_OandM_costs_Sheffield(C_OM_sfd, P_e, P_OM_sfd, x_OM_sfd)
 
-    # Cost of electricity [2010 $/MWh]
-    COE = 1e6 * (C_CO * F_CRO + C_F + C_OM) / (8760 * CF * P_e) + C_waste_sfd
+    # Cost of electricity [2010 $/MWh], undefined without net electric output
+    if P_e > 0.0:
+        COE = 1e6 * (C_CO * F_CRO + C_F + C_OM) / (8760 * CF * P_e) + C_waste_sfd
+    else:
+        COE = np.nan
 
     # Convert all outputs to 2025 EUR
     C_reac_pc    = C_pc  * (1+red_pc_sfd)    * cur_conv

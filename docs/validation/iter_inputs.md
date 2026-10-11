@@ -5,7 +5,7 @@
 :::{admonition} Source
 :class: thesis-source
 
-Adapted from T. Auclair, PhD thesis, Aix-Marseille Université (2026), Appendix D.9. The thesis describes D0FUS v2.7.0. Where the code has changed since, the {doc}`API reference </api/index>`, generated from the current sources, is authoritative.
+Adapted from T. Auclair, PhD thesis, Aix-Marseille Université (2026), Appendix D.9, which describes D0FUS v2.7.0, and updated to the code of October 2026. Where the code has changed since, the {doc}`API reference </api/index>`, generated from the current sources, is authoritative.
 :::
 
 
@@ -34,7 +34,7 @@ Adapted from T. Auclair, PhD thesis, Aix-Marseille Université (2026), Appendix 
 | Greenwald fraction                                   | $\bar n/n_\mathrm{GW}$               | 0.85                              | —        |
 | Density peaking                                      | $\nu_n$                              | 0.01                              | —        |
 | Temperature peaking                                  | $\nu_T$                              | 2.80                              | —        |
-| Pedestal radius                                      | $\rho_\mathrm{ped}$                  | 0.95                              | —        |
+| Pedestal radius (toroidal-flux label)                | $\rho_\mathrm{ped}$                  | 0.95                              | —        |
 | Ped. density fraction                                | $n_\mathrm{ped}/\bar{n}$             | 0.99                              | —        |
 | Ped. temperature fraction                            | $T_\mathrm{ped}/\bar{T}$             | 0.55                              | —        |
 | *Plasma composition and radiation*                   |                                      |                                   |          |
@@ -49,21 +49,22 @@ Adapted from T. Auclair, PhD thesis, Aix-Marseille Université (2026), Appendix 
 | Backplate cover                                      | $c_\mathrm{BP}$                      | 0.07                              | m        |
 | Superconductor                                       | —                                    | Nb$_3$Sn                          | —        |
 | Helium temperature                                   | $T_\mathrm{He}$                      | 4.5                               | K        |
-| Temperature margin                                   | $\Delta T_\mathrm{Nb_3Sn}$           | 1.5                               | K        |
-| Conductor current                                    | $I_\mathrm{cond}$                    | 68                                | kA       |
+| Temperature margin                                   | $\Delta T_\mathrm{Nb_3Sn}$           | 0.7                               | K        |
+| TF conductor current                                 | $I_\mathrm{cond}$                    | 68                                | kA       |
+| CS conductor current                                 | $I_\mathrm{cond,CS}$                 | 45                                | kA       |
 | Strain on SC                                         | $\varepsilon$                        | $-6\times10^{-3}$                 | —        |
 | *CICC helium fractions*                              |                                      |                                   |          |
 | Cooling channel fraction                             | $f_\mathrm{CC}$                      | 0.10                              | —        |
 | Void fraction                                        | $f_\mathrm{void}$                    | 0.30                              | —        |
-| Insulation fraction                                  | $f_\mathrm{In}$                      | 0.15                              | —        |
+| Insulation fraction                                  | $f_\mathrm{In}$                      | 0.10                              | —        |
 | *Mechanical configuration*                           |                                      |                                   |          |
 | Radial build model                                   | —                                    | Refined                           | —        |
 | Type of architecture                                 | —                                    | Wedging                           | —        |
-| Steel grade                                          | —                                    | 316L                              | —        |
+| Steel grade (TF / CS)                                | —                                    | 316L / 316L                       | —        |
 | CS fatigue knockdown                                 | —                                    | 2.0                               | —        |
 | *Operation and current drive*                        |                                      |                                   |          |
 | Operation mode                                       | —                                    | Pulsed                            | —        |
-| Plateau duration                                     | $t_\mathrm{plateau}$                 | 450                               | s        |
+| Plateau duration                                     | $t_\mathrm{plateau}$                 | 400                               | s        |
 | Auxiliary heating                                    | $P_\mathrm{aux}$                     | 50                                | MW       |
 | NBI / EC / IC                                        | —                                    | $33 / 6.7 / 10$                   | MW       |
 | Ejima coefficient                                    | $C_e$                                | 0.45                              | —        |

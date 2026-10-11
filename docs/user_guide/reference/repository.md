@@ -6,7 +6,7 @@
 :::{admonition} Source
 :class: thesis-source
 
-Adapted from T. Auclair, PhD thesis, Aix-Marseille Université (2026), Appendix D.1. The thesis describes D0FUS v2.7.0. Where the code has changed since, the {doc}`API reference </api/index>`, generated from the current sources, is authoritative.
+Adapted from T. Auclair, PhD thesis, Aix-Marseille Université (2026), Appendix D.1, which describes D0FUS v2.7.0, and updated to the code of October 2026. Where the code has changed since, the {doc}`API reference </api/index>`, generated from the current sources, is authoritative.
 :::
 
 
@@ -14,7 +14,7 @@ This section collects the practical material supporting Section {ref}`General ar
 
 D0FUS is organised around two guiding principles. The first is *one file, one domain*: each source file covers a single physical or engineering topic (plasma physics, magnet sizing, cost modelling, etc.), so that a reader looking for, say, the bootstrap current model only needs to open one file. The second is *every function is callable in isolation*: all physics and engineering models can be imported and evaluated independently, without running a full tokamak calculation. This makes the code equally useful as a library for standalone analyses and as an integrated systems code.
 
-The code depends on standard scientific Python libraries: NumPy, SciPy (optimisation, integration, interpolation), Matplotlib, Pandas, and the DEAP evolutionary algorithm framework. All dependencies are centralised in a single import file (`D0FUS_import.py`), so that version requirements and platform-specific settings are handled in one place. Python 3.10 or later is required.
+The code depends on standard scientific Python libraries: NumPy, SciPy (optimisation, integration, interpolation), Matplotlib and the DEAP evolutionary algorithm framework. All dependencies are centralised in a single import file (`D0FUS_import.py`), so that version requirements and platform-specific settings are handled in one place. Python 3.10 or later is required.
 
 The repository is structured as follows:
 

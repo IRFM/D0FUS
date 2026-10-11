@@ -23,6 +23,7 @@
 #   [Lloyd91]     Lloyd et al., PPCF 33 (1991) 2031
 #   [Pitts19]     Pitts et al., NME 20 (2019) 100696
 #   [Libeyre09]   Libeyre et al., Fusion Eng. Des. 84 (2009) 1188
+#   [Libeyre06]   Libeyre et al., 21st IAEA FEC (2006) IT/2-1Ra
 #   [Corato16]    Corato et al., SST 29 (2016) 065014
 #   [Pinches04]   Pinches et al., PPCF 46 (2004) B187
 #
@@ -43,6 +44,14 @@ P_fus = 500                     # Fusion power [MW]
 a = [1, 3, 15]               # Minor radius scan [m]
 R0 = [3, 9, 15]              # Major radius scan [m]
 
+# SCAN settings (optional, read by the SCAN driver). An iso-contour layer not
+# set here is asked on the console, or left out in a batch run.
+# iso_param_1    = c_d        # Black dashed iso-contours (output name or none)
+# iso_param_2    = Q          # White dashed iso-contours (output name or none)
+# compute_re     = true       # Runaway-electron indicators at each point
+# clip_to_viable = true       # Iso-contours only where the design is feasible
+# n_workers      = 4          # Worker processes (default: one per 8 points, at most one per CPU)
+
 b     = 1.10                    # Inboard stack per published ITER build [m]
                                 # [Sborchia08; Mitchell11; Libeyre09]
                                 # ITER shielding block + breeding blanket radial build.
@@ -56,15 +65,14 @@ Bmax_TF  = 11.50               # Peak field at the TF conductor [T]. The field d
                                #   values are not jointly self-consistent in a 0D build);
                                #   gives B0 = 5.62 T and reproduces the TF thickness.
                                 # ITER quotes 11.8 T on the conductor deeper in the
-                                # WP (R=2.78 m), where the front-face field is 10.6 T;
-                                # this input reproduces B0 = 5.30 T exactly.
+                                # WP (R=2.78 m), where the front-face field is 10.6 T.
                                 # [Shimada07] Table 2: B0 = 5.3 T at R = 6.2 m
                                 # Peak field on inner-leg: Bmax ≈ B0 × R0/(R0−a−Δr) ≈ 11.8 T
 
 Bmax_CS_adm  = 15.0                 # Maximum admissible CS conductor field [T]
                                 # Relaxed from ITER Nb3Sn limit (13.5 T, Libeyre09).
 
-Tbar  = 7.75                    # Volume-averaged temperature [keV]
+Tbar  = 8.55                    # Volume-averaged temperature [keV]
                                 # = value solved by the greenwald mode at f_GW = 0.85
                                 # (benchmark point); kept manual here to avoid the
                                 # nested Tbar solve in batch modes.
@@ -81,7 +89,7 @@ H     = 1.0                     # Confinement enhancement factor H98(y,2) [-]
 Operation_mode        = Pulsed  # ITER baseline Scenario 2 is inductively driven
                                 # [Shimada07] Table 3: ~400 s burn duration
 
-Temps_Plateau_input   = 450     # Flat-top (burn) duration [s]
+Temps_Plateau_input   = 400     # Flat-top (burn) duration [s]
                                 # [Shimada07] Table 2: 400 s for 15 MA inductive burn
                                 # [Kim18] §3: flat-top ends at t=500 s (ramp-up 60s + 440s)
                                 # The usable burn is ~400 s excluding ramp overhead.
@@ -248,17 +256,14 @@ eta_model = sauter              # Sauter neoclassical resistivity model
                                 # → 0.3 V/m sufficient (EC-assisted pre-ionisation).
 
 
-C_PF      = 0.95                # PF flux coefficient [-]
-                                # ITER PF system optimised; close to theoretical max.
-                                # [Casper14]: PF coils well within limits at 15 MA.
-
 # ── 6. Structural materials ──────────────────────────────────────────────────
 
-Chosen_Steel  = 316L            # ITER structural steel: 316L(N)-IG
+Chosen_Steel_TF = 316L          # ITER structural steel: 316L(N)-IG
                                 # σ_y ~ 200 MPa at 4.2 K for jacket material
+Chosen_Steel_CS = 316L          # ITER CS jacket JK2LB, allowable close to 316L
 nu_Steel      = 0.29            # Poisson's ratio for 316L stainless steel
 
-fatigue_CS    = 2.0             # CS fatigue knockdown factor (Pulsed + Wedging)
+fatigue_CS    = 2.0             # CS fatigue knockdown (Pulsed: wedging and light bucking)
                                 # [Casper14]: ITER CS designed for ~30 000 cycles
 
 # ── 7. TF coil engineering ───────────────────────────────────────────────────
@@ -294,21 +299,23 @@ T_helium       = 4.5            # Supercritical He at 4.5 K / 0.4 MPa
                                 # [Shimada07]: ITER operates at 4.5 K (not superfluid He-II)
 Marge_T_He     = 0.3            # Temperature margin from 10-bar He operation [K]
 
-Marge_T_Nb3Sn  = 1.5            # Nb3Sn temperature margin [K]
-                                # [Corato16]: conservative Nb3Sn operating margin
+Marge_T_Nb3Sn  = 0.7            # Nb3Sn temperature margin [K]
+                                # [Libeyre06]: design margin of the ITER TF and CS conductors
 
 f_He_pipe      = 0.10           # He cooling pipe/channel fraction in conductor [-]
 f_void         = 0.30          # Interstitial void fraction in strand bundle [-]
                                 # NOTE: class-level attributes, not dataclass fields.
                                 # Add ': float' annotation in GlobalConfig to enable
                                 # input-file override.
-f_In_cable           = 0.10           # Turn insulation fraction [-], calibrated on ITER c ~ 0.90 m
+f_In_cable           = 0.10           # Turn insulation fraction [-], ITER c_TF within 10 % of the 0.90 m published
 
 Eps            = -6e-3          # Effective axial strain on Nb3Sn [-]
                                 # [Corato16]; accounts for thermal + mechanical strain
 
 I_cond         = 68e3           # TF conductor current: ~68 kA
                                 # ITER TF CICC specification
+I_cond_CS      = 45e3           # CS conductor current: 45 kA at 13.1 T peak field
+                                # US ITER, Central Solenoid fact sheet (May 2026)
 V_max          = 10e3           # Maximum dump voltage [V]
 tau_h_LTS      = 4.0            # Detection + hold time [s]
                                 # ITER quench detection system specification
@@ -393,6 +400,8 @@ rho_EC      = 0.40              # Off-axis deposition: rho_tor ~ 0.35–0.45
 theta_deg   = 2.5               # Divertor strike-point grazing angle [deg]
                                 # [Pitts19]: ITER divertor target geometry
                                 # Grazing angle kept low to spread power over larger area.
+f_n_sep     = 0.47              # n_sep / <n_e>: n_e,sep = 3-6e19 m-3 at P_SOL = 100 MW
+                                # [Pitts19] sec. 3.1.2 (SOLPS-4.3): 4.5e19 / 0.95e20
 
 # ── 13. Maintenance constraints ──────────────────────────────────────────────
 

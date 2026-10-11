@@ -11,8 +11,10 @@ upon downloading the software and/or exercising any of the rights granted under 
 
 """
 #%% Imports
-import sys
+import argparse
 import os
+import sys
+from pathlib import Path
 
 # Add the path
 project_root = os.path.dirname(__file__)
@@ -30,160 +32,29 @@ from D0FUS_EXE import D0FUS_scan, D0FUS_run, D0FUS_genetic, D0FUS_uncertainty, D
 
 def detect_mode_from_input(input_file):
     """
-    Detect if input file is for RUN, SCAN, or OPTIMIZATION mode
-    
+    Detect the execution mode of an input file from its content.
+
+    Comments (text after #) are ignored and section titles such as [POPCON]
+    are optional. The rule is D0FUS_run.detect_mode_from_lines, shared with
+    the parsers of the modes:
+      - a tri(), norm(), unif() or envelope() entry           -> 'uncertainty'
+      - axes nbar_line and Tbar written [min, max, n_points]  -> 'popcon'
+      - 2 other axes written [min, max, n_points]             -> 'scan'
+      - 2 or more parameters written [min, max]               -> 'optimization'
+      - none of these                                         -> 'run'
+
     Returns:
-        tuple: ('run', 'scan', or 'optimization', additional parameters)
-        
+        tuple: (mode, details), see D0FUS_run.detect_mode_from_lines
+
     Raises:
         ValueError: if invalid configuration
         FileNotFoundError: if input file doesn't exist
     """
     if not os.path.exists(input_file):
         raise FileNotFoundError(f"Input file not found: {input_file}")
-    
-    with open(input_file, 'r', encoding='utf-8') as f:
-        content = f.read()
-    
-    # POPCON mode: a [POPCON] section. Checked first so that the grid triples
-    # nbar_line/Tbar = [min, max, n] do not make the file look like a SCAN.
-    if re.search(r'^\s*\[\s*popcon\s*\]', content, re.MULTILINE | re.IGNORECASE):
-        return 'popcon', None
 
-    # UNCERTAINTY mode: an [UNCERTAINTY] section, or any tri()/norm()/unif()/envelope()
-    # marginal. Checked first so that optional map axes (a = [min, max, n]) do not make
-    # the file look like a SCAN.
-    if (re.search(r'^\s*\[\s*uncertainty\s*\]', content, re.MULTILINE | re.IGNORECASE)
-            or re.search(r'=\s*(tri|norm|unif|envelope)\s*\(', content, re.IGNORECASE)):
-        n_uncertain = len(re.findall(r'^\s*\w+\s*=\s*(?:tri|norm|unif|envelope)\s*\(',
-                                     content, re.MULTILINE | re.IGNORECASE))
-        return 'uncertainty', n_uncertain
-    
-    # Extract genetic algorithm parameters if present
-    genetic_params = {}
-    genetic_keywords = {
-        'population_size': ('population_size', int),
-        'generations': ('generations', int),
-        'crossover_rate': ('crossover_rate', float),
-        'mutation_rate': ('mutation_rate', float)
-    }
-    
-    for keyword, (param_name, param_type) in genetic_keywords.items():
-        pattern = rf'^\s*{keyword}\s*[:=]\s*([0-9.]+)'
-        match = re.search(pattern, content, re.MULTILINE | re.IGNORECASE)
-        if match:
-            try:
-                genetic_params[param_name] = param_type(match.group(1))
-            except ValueError:
-                raise ValueError(f"Invalid value for {keyword}: {match.group(1)}")
-    
-    # Find all bracket patterns: parameter = [values]
-    bracket_pattern = r'^\s*(\w+)\s*[:=]\s*\[([^\]]+)\]'
-    matches = re.findall(bracket_pattern, content, re.MULTILINE)
-    
-    if not matches:
-        # No brackets → RUN mode
-        return 'run', []
-    
-    # Classify each bracket parameter
-    scan_params = []      # [min, max, n_points]
-    opt_params = {}       # [min, max]
-    
-    for param_name, values_str in matches:
-        values = re.split(r'[,;]', values_str)
-        values = [v.strip() for v in values if v.strip()]
-        
-        if len(values) == 2:
-            # 2 values → OPTIMIZATION parameter
-            try:
-                min_val = float(values[0])
-                max_val = float(values[1])
-                opt_params[param_name] = (min_val, max_val)
-            except ValueError as e:
-                raise ValueError(
-                    f"\n Invalid values for parameter {param_name}: {values_str}\n"
-                    f"Values must be numeric: [min, max]\n"
-                    f"Error: {str(e)}"
-                )
-        elif len(values) == 3:
-            # 3 values → SCAN parameter
-            try:
-                min_val = float(values[0])
-                max_val = float(values[1])
-                n_points = int(float(values[2]))
-                scan_params.append((param_name, min_val, max_val, n_points))
-            except ValueError as e:
-                raise ValueError(
-                    f"\n Invalid values for scan parameter {param_name}: {values_str}\n"
-                    f"Values must be numeric: [min, max, n_points]\n"
-                    f"Error: {str(e)}"
-                )
-        else:
-            raise ValueError(
-                f"\n Invalid bracket format for {param_name}: {values_str}\n"
-                f"Expected:\n"
-                f"  - [min, max] for optimization\n"
-                f"  - [min, max, n_points] for scan\n"
-            )
-    
-    # Determine mode based on what we found
-    n_scan = len(scan_params)
-    n_opt = len(opt_params)
-    
-    if n_opt > 0 and n_scan == 0:
-        # Only optimization parameters → OPTIMIZATION mode
-        if n_opt < 2:
-            param_name = list(opt_params.keys())[0]
-            raise ValueError(
-                f"\n Invalid optimization: Found only 1 parameter ({param_name}).\n"
-                f"\n"
-                f"OPTIMIZATION mode requires at least 2 parameters with [min, max].\n"
-                f"\n"
-                f"Example:\n"
-                f"  R0 = [3, 9]\n"
-                f"  a = [1, 3]\n"
-                f"  Bmax = [10, 16]\n"
-            )
-        return 'optimization', (opt_params, genetic_params)
-    
-    elif n_scan > 0 and n_opt == 0:
-        # Only scan parameters → SCAN mode
-        if n_scan == 1:
-            param_name = scan_params[0][0]
-            raise ValueError(
-                f"\n Invalid scan: Found only 1 parameter ({param_name}).\n"
-                f"\n"
-                f"SCAN mode requires exactly 2 parameters with [min, max, n_points].\n"
-                f"\n"
-                f"Example:\n"
-                f"  R0 = [3, 9, 25]\n"
-                f"  a = [1, 3, 25]\n"
-            )
-        elif n_scan == 2:
-            return 'scan', scan_params
-        else:
-            param_names = [p[0] for p in scan_params]
-            raise ValueError(
-                f"\n Invalid scan: Found {n_scan} parameters: {', '.join(param_names)}.\n"
-                f"\n"
-                f"SCAN mode requires exactly 2 parameters.\n"
-            )
-    
-    elif n_opt > 0 and n_scan > 0:
-        # Mixed parameters → ERROR
-        raise ValueError(
-            f"\n Invalid input file: Mixed parameter formats detected.\n"
-            f"  - {n_opt} optimization parameter(s) with [min, max]\n"
-            f"  - {n_scan} scan parameter(s) with [min, max, n_points]\n"
-            f"\n"
-            f"Please choose ONE mode:\n"
-            f"  - OPTIMIZATION: Use [min, max] for all variable parameters\n"
-            f"  - SCAN: Use [min, max, n_points] for exactly 2 parameters\n"
-            f"  - RUN: Remove all brackets for fixed values\n"
-        )
-    
-    # Should not reach here
-    return 'run', []
+    with open(input_file, 'r', encoding='utf-8') as f:
+        return D0FUS_run.detect_mode_from_lines(f.read().splitlines())
 
 #%% Main functions
 
@@ -240,54 +111,73 @@ def print_banner():
     """
     print(banner)
 
+def _modes_text():
+    """Description of the modes shown by --help. GA defaults from GA_SETTINGS."""
+    ga = D0FUS_genetic.GA_SETTINGS
+    return f"""
+Modes, detected from the content of the input file (text after # is a
+comment, section titles such as [POPCON] are optional):
+
+  RUN          One design point. No bracketed value, no distribution.
+                 R0 = 6.2
+  SCAN         2D map. Exactly 2 parameters written [min, max, n_points].
+                 R0 = [3, 9, 25]
+                 a  = [1, 3, 25]
+  GENETIC      Genetic-algorithm optimisation. 2 or more parameters
+               written [min, max].
+                 R0      = [3, 9]
+                 a       = [1, 3]
+                 Bmax_TF = [10, 16]
+               GA settings are read from the file. Defaults:
+                 population_size = {ga['population_size'][0]}, generations = {ga['generations'][0]},
+                 crossover_rate = {ga['crossover_rate'][0]}, mutation_rate = {ga['mutation_rate'][0]}, patience = {ga['patience'][0]}
+  UNCERTAINTY  Monte-Carlo robustness study of one design point. At
+               least one tri(), norm(), unif() or envelope() entry.
+                 H           = tri(0.75, 1.5)
+                 betaN_limit = tri(2.8, 3.6)
+                 Scaling_Law = envelope(IPB98(y,2) | ITPA20)
+               Study settings (n_samples, seed, retune, ...) are read
+               by name.
+  POPCON       Operating-space map of one design point. The two axes
+               are the density and the temperature.
+                 nbar_line = [0.35, 1.45, 45]
+                 Tbar      = [3.5, 24.0, 36]
+
+A file cannot mix [min, max], [min, max, n_points] and uncertain entries.
+Each run writes a timestamped folder under D0FUS_OUTPUTS, or under the
+folder given by --output-dir.
+"""
+
+def build_parser():
+    """Command line parser of D0FUS.py."""
+    parser = argparse.ArgumentParser(
+        prog="D0FUS.py",
+        description="D0FUS: 0D design of tokamak fusion power plants.",
+        epilog=_modes_text(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        add_help=False)
+    parser.add_argument("input_file", nargs="?", default=None,
+                        help="Input file. Without it, a menu lists the files "
+                             "of D0FUS_INPUTS.")
+    parser.add_argument("--output-dir", metavar="DIR", default=None,
+                        help="Parent folder of the result folders. Default: "
+                             "D0FUS_OUTPUTS of the source tree (of the current "
+                             "folder for an installed package).")
+    parser.add_argument("--no-figures", action="store_true",
+                        help="Write the reports and data files without any figure.")
+    parser.add_argument("--no-3d", action="store_true",
+                        help="RUN: skip the 3D machine view (PyVista), the "
+                             "slowest figure.")
+    parser.add_argument("--seed", type=int, metavar="N", default=None,
+                        help="Random seed of GENETIC and UNCERTAINTY. "
+                             "Overrides the input file.")
+    parser.add_argument("-h", "--help", action="store_true",
+                        help="Show this help and exit.")
+    return parser
+
 def print_usage():
     """Print usage information"""
-    usage = """
-Usage:
-    python D0FUS.py [input_file]
-    
-If no input file is provided, interactive mode will start.
-
-Modes (detected automatically from input file format):
-    
-    RUN mode:          Single point calculation
-                       No brackets in input file
-                       Example: R0 = 9
-    
-    SCAN mode:         2D parameter space exploration
-                       Exactly 2 parameters with [min, max, n_points]
-                       Example: R0 = [3, 9, 25]
-                                a = [1, 3, 25]
-    
-    OPTIMIZATION mode: Genetic algorithm optimization
-                       2+ parameters with [min, max] (no n_points)
-                       Example: R0 = [3, 9]
-                                a = [1, 3]
-                                Bmax = [10, 16]
-                       
-                       Optional genetic algorithm parameters:
-                       population_size = 50     (default: 50)
-                       generations = 100        (default: 100)
-                       crossover_rate = 0.7     (default: 0.7)
-                       mutation_rate = 0.2      (default: 0.2)
-
-    UNCERTAINTY mode:  Monte-Carlo robustness study around one design point
-                       An [UNCERTAINTY] section listing parameter ranges
-                       Example: H = tri(0.75, 1.5)
-                                betaN_limit = tri(2.8, 3.6)
-                                Scaling_Law = envelope(IPB98(y,2) | ITPA20)
-
-Detection rules:
-    • [min, max] format (2 values) → OPTIMIZATION (need 2+ parameters)
-    • [min, max, n] format (3 values) → SCAN (need exactly 2 parameters)
-    • [UNCERTAINTY] section or tri()/norm()/unif()/envelope() → UNCERTAINTY
-    • No brackets (and no [UNCERTAINTY] section) → RUN
-    • Cannot mix scan and optimization formats in same file
-
-For help:
-    python D0FUS.py --help
-    """
-    print(usage)
+    build_parser().print_help()
 
 def list_input_files():
     """List available input files in D0FUS_INPUTS directory"""
@@ -319,16 +209,18 @@ def select_input_file():
                 param_names = [p[0] for p in params]
                 mode_str = f"SCAN ({param_names[0]} × {param_names[1]})"
             elif mode == 'optimization':
-                opt_params, genetic_params = params
+                opt_params = params
                 param_names = list(opt_params.keys())
                 mode_str = f"GENETIC ({len(param_names)} params)"
             elif mode == 'uncertainty':
                 mode_str = (f"UNCERTAINTY ({params} params)" if params
                             else "UNCERTAINTY (Monte-Carlo)")
+            elif mode == 'popcon':
+                mode_str = "POPCON"
             else:
                 mode_str = "RUN"
             print(f"  {i}. {file.name:<30} [{mode_str}]")
-        except:
+        except (OSError, ValueError):
             print(f"  {i}. {file.name:<30} [Unknown]")
     print(f"  0. Use default parameters (RUN mode)")
     print("="*60)
@@ -350,24 +242,34 @@ def select_input_file():
             print("\n\nOperation cancelled by user.")
             sys.exit(0)
 
-def execute_with_mode_detection(input_file):
+def execute_with_mode_detection(input_file, output_dir=None, save_figures=True,
+                                seed=None, view_3d=True):
     """
     Execute D0FUS with automatic mode detection
-    
+
     Args:
-        input_file: Path to input file (or None for defaults)
+        input_file   : Path to input file (or None for defaults)
+        output_dir   : Parent folder of the result folders (None: default
+                       of each mode, D0FUS_run.default_output_root())
+        save_figures : False writes no figure (reports and data only)
+        seed         : Random seed of GENETIC and UNCERTAINTY (None: from
+                       the input file)
+        view_3d      : False skips the 3D machine view of a RUN
     """
     if input_file is None:
         # No input file → use defaults for RUN mode
         print("\n" + "="*60)
         print("Mode: RUN (default parameters)")
         print("="*60 + "\n")
-        D0FUS_run.main(None, save_figures=True)
+        D0FUS_run.main(None, save_figures=save_figures, output_dir=output_dir,
+                       view_3d=view_3d)
         return
     
     # Detect mode from input file
     try:
         mode, params = detect_mode_from_input(input_file)
+        if seed is not None and mode in ('run', 'scan', 'popcon'):
+            print(f"\n [note] --seed has no effect in {mode.upper()} mode.")
         
         if mode == 'run':
             # RUN mode detected
@@ -375,14 +277,16 @@ def execute_with_mode_detection(input_file):
             print("Mode: RUN (single point calculation)")
             print(f"Input: {os.path.basename(input_file)}")
             print("="*60 + "\n")
-            D0FUS_run.main(input_file, save_figures=True)
+            D0FUS_run.main(input_file, save_figures=save_figures,
+                           output_dir=output_dir, view_3d=view_3d)
         
         elif mode == 'popcon':
             print("\n" + "="*60)
             print("Mode: POPCON (operating-space contour map)")
             print(f"Input: {os.path.basename(input_file)}")
             print("="*60 + "\n")
-            D0FUS_popcon.main(input_file, save_figures=True)
+            D0FUS_popcon.main(input_file, save_figures=save_figures,
+                              output_dir=output_dir)
         elif mode == 'scan':
             # SCAN mode detected
             param_names = [p[0] for p in params]
@@ -396,11 +300,12 @@ def execute_with_mode_detection(input_file):
                 print(f"  {param_name}: [{min_val}, {max_val}] with {n_points} points")
             print("="*60 + "\n")
             
-            D0FUS_scan.main(input_file)
+            D0FUS_scan.main(input_file, output_dir=output_dir,
+                            save_figures=save_figures)
         
         elif mode == 'optimization':
             # OPTIMIZATION mode detected
-            opt_params, genetic_params = params
+            opt_params = params
             param_names = list(opt_params.keys())
             print("\n" + "="*60)
             print(f"Mode: OPTIMIZATION (genetic algorithm)")
@@ -410,33 +315,13 @@ def execute_with_mode_detection(input_file):
             # Display optimization ranges
             for param_name, (min_val, max_val) in opt_params.items():
                 print(f"  {param_name}: [{min_val}, {max_val}]")
-            
-            # Display genetic algorithm parameters
-            print("\nGenetic algorithm parameters:")
-            default_params = {
-                'population_size': 50,
-                'generations': 100,
-                'crossover_rate': 0.7,
-                'mutation_rate': 0.2
-            }
-            for param_name, default_value in default_params.items():
-                actual_value = genetic_params.get(param_name, default_value)
-                status = "" if param_name in genetic_params else " (default)"
-                print(f"  {param_name}: {actual_value}{status}")
-            
             print("="*60 + "\n")
             
-            # Prepare parameters for genetic optimization
-            ga_params = {
-                'population_size': genetic_params.get('population_size', 50),
-                'generations': genetic_params.get('generations', 100),
-                'crossover_rate': genetic_params.get('crossover_rate', 0.7),
-                'mutation_rate': genetic_params.get('mutation_rate', 0.2),
-                'verbose': True
-            }
-            
-            # Run genetic optimization with specified or default parameters
-            D0FUS_genetic.run_genetic_optimization(input_file, **ga_params)
+            # GA settings come from the deck, or else from the GA_SETTINGS
+            # defaults. run_genetic_optimization prints them with their source.
+            D0FUS_genetic.run_genetic_optimization(
+                input_file, verbose=True, seed=seed, output_dir=output_dir,
+                save_figures=save_figures)
         
         elif mode == 'uncertainty':
             # UNCERTAINTY mode detected (Monte-Carlo robustness study)
@@ -445,7 +330,8 @@ def execute_with_mode_detection(input_file):
             print(f"Input: {os.path.basename(input_file)}")
             print("="*60 + "\n")
             
-            D0FUS_uncertainty.main(input_file, save_figures=True)
+            D0FUS_uncertainty.main(input_file, save_figures=save_figures,
+                                   output_dir=output_dir, seed=seed)
     
     except ValueError as e:
         # Invalid number of brackets or parsing error
@@ -460,7 +346,7 @@ def execute_with_mode_detection(input_file):
         traceback.print_exc()
         sys.exit(1)
 
-def interactive_mode():
+def interactive_mode(**options):
     """Interactive mode: select file, auto-detect mode, execute"""
     print_banner()
     
@@ -468,9 +354,9 @@ def interactive_mode():
     input_file = select_input_file()
     
     # Execute with automatic mode detection
-    execute_with_mode_detection(input_file)
+    execute_with_mode_detection(input_file, **options)
 
-def command_line_mode(input_file):
+def command_line_mode(input_file, **options):
     """Command line mode: auto-detect mode from input file"""
     print_banner()
     
@@ -483,30 +369,39 @@ def command_line_mode(input_file):
         sys.exit(1)
     
     # Execute with automatic mode detection
-    execute_with_mode_detection(input_file)
+    execute_with_mode_detection(input_file, **options)
 
-def main():
-    """Main entry point"""
-    # Check for help flag
-    if len(sys.argv) > 1 and sys.argv[1] in ['--help', '-h', 'help']:
+def main(argv=None):
+    """Main entry point. argv: command line arguments (default: sys.argv[1:])."""
+    # A console that cannot encode a character (cp1252 terminal, pipe from
+    # Git Bash) shows a replacement mark instead of stopping the run.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
+
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    # Help flag ('help' as a file name kept for the former command line)
+    if args.help or args.input_file == 'help':
         print_banner()
-        print_usage()
+        parser.print_help()
         sys.exit(0)
-    
+
+    options = dict(output_dir=args.output_dir,
+                   save_figures=not args.no_figures,
+                   seed=args.seed,
+                   view_3d=not args.no_3d)
+
     # Run in appropriate mode
     try:
-        if len(sys.argv) == 1:
-            # No arguments → interactive mode
-            interactive_mode()
-        elif len(sys.argv) == 2:
-            # One argument → command line mode with input file
-            input_file = sys.argv[1]
-            command_line_mode(input_file)
+        if args.input_file is None:
+            # No input file → interactive mode
+            interactive_mode(**options)
         else:
-            print("Error: Too many arguments.")
-            print_usage()
-            sys.exit(1)
-    
+            # Input file → command line mode
+            command_line_mode(args.input_file, **options)
+
     except KeyboardInterrupt:
         print("\n\n Operation cancelled by user")
         sys.exit(0)

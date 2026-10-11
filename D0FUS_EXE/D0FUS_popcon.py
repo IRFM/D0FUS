@@ -4,9 +4,8 @@ D0FUS POPCON execution mode — Plasma OPeration CONtour maps.
 Produces an operating-space map in the (line-averaged density, volume-averaged
 temperature) plane at FIXED machine design: the deck is a standard RUN deck
 (which defines the design point: geometry, fields, current, profiles, seeding)
-followed by a [POPCON] section specifying the map grid:
+that also holds the two map axes, which make it a POPCON deck:
 
-    [POPCON]
     nbar_line = [0.3, 1.6, 40]    # line-averaged density grid [1e20 m^-3]
     Tbar      = [4.0, 25.0, 30]   # volume-averaged temperature grid [keV]
 
@@ -77,48 +76,28 @@ from tqdm import tqdm
 
 def parse_popcon_file(path):
     """
-    Split a POPCON deck into the design section (a standard RUN deck) and the
-    [POPCON] grid specification.
+    Read a POPCON deck: a standard RUN deck (the design point) that also
+    holds the two map axes nbar_line = [min, max, n_points] and
+    Tbar = [min, max, n_points]. A [POPCON] title line is accepted and
+    ignored. The deck must pass the shared mode rule
+    (D0FUS_run.detect_mode_from_lines) as a POPCON deck.
 
     Returns
     -------
     config : GlobalConfig      Design-point configuration (RUN parser).
     grid : dict                {'nbar_line': (min, max, n), 'Tbar': (min, max, n)}
     """
-    section = 'design'
-    design, grid_spec = [], {}
     with open(path, encoding='utf-8') as fh:
-        for line in fh:
-            s = line.strip()
-            if s.startswith('[') and s.endswith(']') and '=' not in s:
-                section = s[1:-1].strip().lower()
-                continue
-            if section == 'design':
-                design.append(line.rstrip('\n'))
-                continue
-            if section == 'popcon':
-                body = line.split('#', 1)[0].strip()
-                if not body or '=' not in body:
-                    continue
-                key, val = (x.strip() for x in body.split('=', 1))
-                m = re.match(r'^\[\s*([^,\]]+)\s*,\s*([^,\]]+)\s*,\s*([^,\]]+)\s*\]$', val)
-                if not m:
-                    raise ValueError(
-                        f"[POPCON] entry '{key}' must be of the form "
-                        f"[min, max, n_points]; got '{val}'.")
-                grid_spec[key] = (float(m.group(1)), float(m.group(2)),
-                                  int(float(m.group(3))))
+        lines = fh.read().splitlines()
+    mode, grid_spec = RUN.detect_mode_from_lines(lines)
+    if mode != 'popcon':
+        raise ValueError(f"{path} is not a POPCON deck (detected mode: {mode}). "
+                         "A POPCON map needs nbar_line = [min, max, n_points] "
+                         "and Tbar = [min, max, n_points].")
 
-    for needed in ('nbar_line', 'Tbar'):
-        if needed not in grid_spec:
-            raise ValueError(f"[POPCON] section must define '{needed} = "
-                             f"[min, max, n_points]'.")
-
-    fd, tmp = tempfile.mkstemp(suffix='_popcon_design.txt')
-    os.close(fd)
-    with open(tmp, 'w', encoding='utf-8') as fh:
-        fh.write('\n'.join(design) + '\n')
-    config = RUN.load_config_from_file(tmp, verbose=0)
+    # The two axes are bracketed, so the RUN parser skips them and keeps the
+    # scalar Tbar of the design point.
+    config = RUN.load_config_from_lines(lines, verbose=0)
     return config, grid_spec
 
 
@@ -142,12 +121,17 @@ def compute_popcon(config, grid_spec, verbose=1):
     # ── Reference design point ────────────────────────────────────────────
     if verbose:
         print("POPCON: solving the reference design point (RUN driver)...")
+    # Greenwald closure (Tbar_mode or P_fus_mode = 'greenwald') solved first,
+    # so that the design point, the frozen impurity dilution and the star of
+    # the map use the solved Tbar and P_fus, as in the RUN report.
+    config = RUN.resolve_operating_point(config)
     res = RUN.run(config, verbose=0)
     rd = RUN._build_run_dict(config, res)
 
     B0      = float(res[_IDX['B0']])
     Ip      = float(res[_IDX['Ip']])
     V       = float(res[_IDX['Volume']])
+    S_LCFS  = float(res[_IDX['Surface']])
     I_Ohm   = float(res[_IDX['I_Ohm']])
     f_alpha = float(res[_IDX['f_alpha']])
     kappa   = float(res[_IDX['kappa']])
@@ -179,19 +163,22 @@ def compute_popcon(config, grid_spec, verbose=1):
     else:
         Vprime_data = None
 
+    # Core/edge radiation boundary: deck label rho_tor, profiles in rho_V
+    rho_rad_core_V = float(rho_V_of_rho_tor(config.rho_rad_core, Vprime_data))
+
     # Impurity inventory (frozen species/concentrations from the deck).
     imp_species, imp_conc = RUN._parse_impurity_inventory(config)
     f_imp_dilution = sum(get_Z_mean(s, config.Tbar) * c
                          for s, c in zip(imp_species, imp_conc))
 
-    # Scaling-law registry coefficients and kappa convention, replicating the
-    # RUN driver selection: IPB98-class laws were fitted with the AREA
-    # elongation kappa_a = V/(2 pi^2 R0 a^2); ITPA20-class with kappa_edge.
+    # Scaling-law registry coefficients and kappa convention, as in the RUN
+    # driver: the area elongation kappa_a = V/(2 pi^2 R0 a^2) or the LCFS
+    # elongation, following f_Get_kappa_convention.
     (C_SL, a_d, a_M, a_k, a_e, a_R, a_B, a_n, a_I, a_P) = \
         f_Get_parameter_scaling_law(config.Scaling_Law)
     kappa_a = V / (2.0 * np.pi**2 * R0 * a**2)
-    _KAPPA_EDGE_LAWS = {'ITPA20', 'ITPA20-IL'}
-    kappa_SL = kappa if config.Scaling_Law in _KAPPA_EDGE_LAWS else kappa_a
+    kappa_SL = (kappa_a if f_Get_kappa_convention(config.Scaling_Law) == 'area'
+                else kappa)
     H = config.H
     # Optional Greenwald-fraction correction of the law (explicit at fixed Ip)
     fgw_slope, fgw_ref = f_Get_fGW_correction(config.Scaling_Law)
@@ -216,7 +203,7 @@ def compute_popcon(config, grid_spec, verbose=1):
 
     def _column(it, Tbar):
         # Forward fusion power from the existing inversion: P = C(T) n^2.
-        n_ref_vol = f_nbar(P_REF, nu_n, nu_T, f_alpha, Tbar, R0, a, kappa,
+        n_ref_vol = f_nbar(P_REF, nu_n, nu_T, f_alpha, Tbar, R0, a, kappa, delta,
                            rho_ped=rho_ped, n_ped_frac=n_ped_frac,
                            T_ped_frac=T_ped_frac, Vprime_data=Vprime_data,
                            f_imp=f_imp_dilution, tau_i_e=tau_ie,
@@ -248,7 +235,8 @@ def compute_popcon(config, grid_spec, verbose=1):
                 I_Ohm, a, kappa, R0, Tbar, nbar_vol, Zeff_eff, q95_ref,
                 nu_T, nu_n, eta_model=config.eta_model,
                 rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
-                Vprime_data=Vprime_data)
+                Vprime_data=Vprime_data,
+                trapped_fraction_model=config.trapped_fraction_model)
 
             # Core/total radiation, same calls (and Miller Jacobian) as RUN.
             Zeff_fuel = 1.0 + 2.0 * f_alpha - f_imp_dilution
@@ -268,7 +256,7 @@ def compute_popcon(config, grid_spec, verbose=1):
                     sp, fc, nbar_vol, Tbar, nu_n, nu_T, V,
                     rho_ped=rho_ped, n_ped_frac=n_ped_frac,
                     T_ped_frac=T_ped_frac, Vprime_data=Vprime_data,
-                    rho_core=config.rho_rad_core, N=150)
+                    rho_core=rho_rad_core_V, N=150)
                 P_line_core += _Pc
                 P_line_tot += _Pt
             P_rad_core = P_Brem + P_syn + P_line_core
@@ -289,19 +277,15 @@ def compute_popcon(config, grid_spec, verbose=1):
             P_sep = P_alpha + max(P_aux, 0.0) - P_rad_tot
             Q = P_fus / (P_aux + P_Ohm) if P_aux > 0 else np.inf
 
-            # L-H threshold per the deck selector.
-            if config.L_H_Scaling_choice == 'Martin':
-                P_LH = P_Thresh_Martin(nbl, B0, a, R0, kappa, M)
-            elif config.L_H_Scaling_choice == 'New_S':
-                P_LH = P_Thresh_New_S(nbl, B0, a, R0, kappa, M)
-            else:
-                P_LH = P_Thresh_New_Ip(nbl, B0, a, R0, kappa, Ip, M)
+            # L-H threshold per the deck selector, on the LCFS area of the
+            # design point (nominal divertor factor, as in the RUN driver).
+            P_LH = f_P_thresh(nbl, B0, S_LCFS, M, Ip=Ip, R0=R0,
+                              Option_PLH=config.L_H_Scaling_choice)
 
             # Model-selectable density limit (power-dependent ones use P_sep).
             try:
                 _fnsl = config.f_n_sep * (nbar_vol / nbl)
-                _fnel = (f_n_edge_ratio(nu_n, rho_ped, n_ped_frac,
-                                         Vprime_data=Vprime_data)
+                _fnel = (f_n_edge_ratio(nu_n, rho_ped, n_ped_frac)
                          * (nbar_vol / nbl))
                 n_DL_line, _, _ = f_density_limit(
                     config.density_limit_model, Ip, a,
@@ -362,7 +346,9 @@ def compute_popcon(config, grid_spec, verbose=1):
                          nbar_line_design=float(res[_IDX['nbar_line']]),
                          Tbar_design=float(config.Tbar),
                          scaling_law=config.Scaling_Law, H=H,
-                         density_limit_model=config.density_limit_model)
+                         density_limit_model=config.density_limit_model,
+                         Greenwald_limit=float(config.Greenwald_limit),
+                         betaN_limit=float(config.betaN_limit))
     return out
 
 
@@ -419,15 +405,29 @@ def plot_popcon(out, save_path=None, show=True):
                linewidths=2.0)
     ax.plot([], [], color='crimson', lw=2, label='P_sep = P_LH')
 
-    ax.contour(N, T, out['f_GW'], colors='purple', levels=[1.0],
+    # Density limits as in the RUN feasibility rule: the model cap scaled by
+    # Greenwald_limit (f_GW and f_DL are the plain fractions of the cap).
+    f_lim = dsn.get('Greenwald_limit', 1.0)
+    ax.contour(N, T, out['f_GW'], colors='purple', levels=[f_lim],
                linewidths=2.0, linestyles='-.')
-    ax.plot([], [], color='purple', lw=2, ls='-.', label='Greenwald limit')
+    ax.plot([], [], color='purple', lw=2, ls='-.',
+            label=(f'Greenwald limit (x {f_lim:g})' if f_lim != 1.0
+                   else 'Greenwald limit'))
 
     if np.isfinite(out['f_DL']).any() and dsn['density_limit_model'] != 'greenwald':
-        ax.contour(N, T, out['f_DL'], colors='magenta', levels=[1.0],
-                   linewidths=1.8, linestyles=(0, (3, 1, 1, 1)))
+        ax.contour(N, T, out['f_DL'], colors='magenta', levels=[f_lim],
+                   linewidths=1.8, linestyles=[(0, (3, 1, 1, 1))])
         ax.plot([], [], color='magenta', lw=1.8, ls=(0, (3, 1, 1, 1)),
-                label=f"Density limit ({dsn['density_limit_model']})")
+                label=f"Density limit ({dsn['density_limit_model']}"
+                      + (f" x {f_lim:g})" if f_lim != 1.0 else ")"))
+
+    # Troyon limit: betaN (thermal + fast alpha, as in RUN) = betaN_limit
+    bN_lim = dsn.get('betaN_limit', np.nan)
+    if np.isfinite(bN_lim) and np.nanmax(out['betaN']) > bN_lim:
+        ax.contour(N, T, out['betaN'], colors='saddlebrown', levels=[bN_lim],
+                   linewidths=2.0, linestyles=[(0, (5, 2))])
+        ax.plot([], [], color='saddlebrown', lw=2.0, ls=(0, (5, 2)),
+                label=rf'Troyon limit ($\beta_N$ = {bN_lim:g})')
 
     ax.plot(dsn['nbar_line_design'], dsn['Tbar_design'], marker='*',
             markersize=16, color='red', markeredgecolor='k',
@@ -461,35 +461,34 @@ def main(input_file, save_figures=True, output_dir=None, show=None):
     """
     POPCON mode entry point (called by D0FUS.py).
 
-    Writes a timestamped folder under D0FUS_OUTPUTS/popcon/ containing the
-    figure (PNG), the raw maps (NPZ) and a copy of the deck.
+    Writes a timestamped folder under <output_dir>/popcon/ containing the
+    figure (PNG), the raw maps (NPZ) and a copy of the deck. output_dir
+    defaults to default_output_root() of D0FUS_run. With save_figures
+    False and show None, no figure is drawn.
     """
     config, grid_spec = parse_popcon_file(input_file)
     out = compute_popcon(config, grid_spec, verbose=1)
 
     if output_dir is None:
-        output_dir = os.path.normpath(os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            'D0FUS_OUTPUTS', 'popcon'))
+        output_dir = RUN.default_output_root()
     # Folder naming mirrors the other execution modes
-    # (Run_D0FUS_*, Scan_D0FUS_*, Genetic_D0FUS_*, Sobol_D0FUS_*).
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    folder = os.path.join(output_dir, f"Popcon_D0FUS_{timestamp}")
-    os.makedirs(folder, exist_ok=True)
+    # (Run_D0FUS_*, Scan_D0FUS_*, Genetic_D0FUS_*, Uncertainty_D0FUS_*).
+    folder, _ = RUN.new_output_dir(os.path.join(output_dir, 'popcon'),
+                                   "Popcon_D0FUS")
 
     np.savez(os.path.join(folder, 'popcon_maps.npz'),
              **{k: v for k, v in out.items() if isinstance(v, np.ndarray)},
              **{f"design_{k}": v for k, v in out['design'].items()
                 if isinstance(v, (int, float))})
-    with open(os.path.join(folder, 'deck_copy.txt'), 'w', encoding='utf-8') as f:
-        f.write(open(input_file, encoding='utf-8').read())
+    shutil.copy2(input_file, os.path.join(folder, 'deck_copy.txt'))
 
     # The figure is displayed interactively by default (like the RUN-mode
     # figures), in addition to being saved when save_figures is True.
     if show is None:
-        show = True
+        show = save_figures
     fig_path = os.path.join(folder, 'popcon.png') if save_figures else None
-    plot_popcon(out, save_path=fig_path, show=show)
+    if fig_path or show:
+        plot_popcon(out, save_path=fig_path, show=show)
     print(f"POPCON outputs written to {folder}")
     return out
 
@@ -497,7 +496,7 @@ def main(input_file, save_figures=True, output_dir=None, show=None):
 if __name__ == "__main__":
     import argparse
     p = argparse.ArgumentParser(description="D0FUS POPCON mode (stand-alone)")
-    p.add_argument('deck', help="POPCON deck (RUN deck + [POPCON] section)")
+    p.add_argument('deck', help="POPCON deck (RUN deck + nbar_line and Tbar axes)")
     p.add_argument('--no-show', action='store_true',
                    help="suppress the interactive display (save only)")
     args = p.parse_args()

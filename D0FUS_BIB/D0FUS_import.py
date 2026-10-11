@@ -57,8 +57,6 @@ import numpy as np
 # Those now reach the user.
 np.seterr(divide='ignore', invalid='ignore', over='ignore')
 
-import pandas as pd
-import sympy as sp
 from typing import List, Tuple
 from dataclasses import dataclass, replace, asdict
 
@@ -79,7 +77,6 @@ from scipy.optimize import (
     root_scalar,
     shgo
 )
-from scipy.signal import find_peaks
 from scipy.special import erfc
 
 import matplotlib.cm as cm
@@ -93,13 +90,13 @@ import matplotlib.lines as mlines
 import matplotlib.patches as mpatches
 import matplotlib.cm as cm
 from matplotlib.animation import FuncAnimation, PillowWriter
+from matplotlib.collections import PatchCollection
 from matplotlib.colors import Normalize
 from matplotlib.gridspec import GridSpec
 from matplotlib.patches import Circle, Rectangle, Patch
 from matplotlib.ticker import MultipleLocator
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  (registers the '3d' projection)
-from pandas.plotting import table
 from tqdm import tqdm
 from dataclasses import dataclass
 from typing import Optional, Dict, List, Tuple

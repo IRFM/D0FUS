@@ -24,6 +24,8 @@ else:
     # Import using absolute paths for standalone execution
     from D0FUS_BIB.D0FUS_import import *
 
+from dataclasses import fields
+
 #%% D0FUS Physical Constants
 """
 Fundamental physical constants. These values are fixed by nature
@@ -59,7 +61,45 @@ including primary scan variables (geometry, field, power) and
 physical/engineering assumptions.
 """
 
-@dataclass
+# Valid values of the option fields of GlobalConfig. Any other value is
+# rejected when the configuration is built (GlobalConfig.__post_init__), so a
+# typo in an input deck stops the run with the list of valid options instead
+# of silently selecting a default branch further down the code.
+CONFIG_OPTIONS = {
+    'Tbar_mode':              ('manual', 'greenwald'),
+    'P_fus_mode':             ('manual', 'greenwald'),
+    'Operation_mode':         ('Pulsed', 'Steady-State'),
+    'Plasma_profiles':        ('L', 'H', 'Advanced', 'EU-DEMO', 'Manual'),
+    'Scaling_Law':            ('IPB98(y,2)', 'ITPA20', 'ITPA20-IL', 'DS03',
+                               'L-mode', 'L-mode OK', 'ITER89-P',
+                               'Auclair2026', 'Auclair2026-fGW'),
+    'L_H_Scaling_choice':     ('TC26_Bt', 'TC26_Bpol', 'Martin'),
+    'Bootstrap_choice':       ('Sauter-Redl', 'Segal'),
+    'trapped_fraction_model': ('Sauter2002', 'ASTRA'),
+    'Option_q95':             ('ITER_1989', 'Sauter'),
+    'Option_Kappa':           ('Blend', 'Wenninger', 'Stambaugh', 'Freidberg',
+                               'Manual'),
+    'Triangularity':          ('positive', 'negative'),
+    'q_profile_mode':         ('refined', 'academic'),
+    'Plasma_geometry':        ('refined', 'Academic'),
+    'kink_parameter':         ('q95', 'q_star'),
+    'density_limit_model':    ('greenwald', 'giacomin', 'zanca'),
+    'Fuel':                   ('DT', 'DD'),
+    'detachment_impurity':    ('Ne', 'N', 'Ar', ''),
+    'eta_model':              ('redl', 'sauter', 'spitzer', 'old'),
+    'Chosen_Steel_TF':        ('316L', 'N50H', 'Manual'),
+    'Chosen_Steel_CS':        ('316L', 'N50H', 'Manual'),
+    'Radial_build_model':     ('refined', 'academic', 'CIRCE'),
+    'Choice_Buck_Wedg':       ('Wedging', 'Bucking', 'Plug'),
+    'Supra_choice':           ('Nb3Sn', 'NbTi', 'REBCO', 'Manual'),
+    'CD_source':              ('Academic', 'LHCD', 'ECCD', 'NBCD', 'Multi'),
+    'cost_model':             ('Sheffield', 'None'),
+    # Must match the keys of BLANKET_CONCEPTS, defined further down.
+    'Blanket_choice':         ('HCPB', 'HCLL', 'DCLL', 'SCLL', 'SCLV', 'F-LIB'),
+}
+
+
+@dataclass(frozen=True)
 class GlobalConfig:
     """
     Complete configuration object for a D0FUS design point.
@@ -67,13 +107,19 @@ class GlobalConfig:
     All fields carry physically motivated default values corresponding
     to a conservative DEMO-class power plant baseline.
 
+    Instances are frozen: a field cannot be changed after creation. Derive a
+    variant with dataclasses.replace(), which builds a new, validated object.
+    Every field is checked at creation (see __post_init__): numbers must be
+    numbers, booleans must be booleans, and option fields must take one of
+    the values listed in CONFIG_OPTIONS.
+
     Usage
     -----
     Full default run:
         cfg = GlobalConfig()
 
     Override selected parameters only (all others stay at default):
-        cfg = GlobalConfig(R0=8.0, Bmax=13.0, Supra_choice='REBCO')
+        cfg = GlobalConfig(R0=8.0, Bmax_TF=13.0, Supra_choice='REBCO')
 
     Create a variant from an existing config (useful for scans):
         from dataclasses import replace
@@ -144,16 +190,16 @@ class GlobalConfig:
     Plasma_profiles    : str   = 'H'            # Profile peaking: 'L', 'H', 'Advanced', 'EU-DEMO', 'Manual'
     nu_n_manual        : float = 0.1            # Density peaking factor (Manual mode only) [-]
     nu_T_manual        : float = 1.0            # Temperature peaking factor (Manual mode only) [-]
-    rho_ped    : float = 1.0                    # Normalised pedestal radius (1.0 = no pedestal) [-]
+    rho_ped    : float = 1.0                    # Pedestal radius, toroidal-flux label rho_tor (1.0 = no pedestal) [-]
     n_ped_frac : float = 0.0                    # n_ped / nbar [-]
     T_ped_frac : float = 0.0                    # T_ped / Tbar [-]
 
-    Scaling_Law        : str   = 'IPB98(y,2)'   # Energy confinement scaling law: 'IPB98(y,2)',
-                                                # 'ITPA20', 'ITPA20-IL', 'DS03', 'L-mode',
+    Scaling_Law        : str   = 'ITPA20'       # Energy confinement scaling law: 'ITPA20',
+                                                # 'IPB98(y,2)', 'ITPA20-IL', 'DS03', 'L-mode',
                                                 # 'L-mode OK', 'ITER89-P', 'Auclair2026',
                                                 # 'Auclair2026-fGW' (with Greenwald-fraction
                                                 # correction, see f_Get_fGW_correction)
-    L_H_Scaling_choice : str   = 'New_Ip'       # L-H threshold scaling: 'Martin', 'New_S', 'New_Ip'
+    L_H_Scaling_choice : str   = 'TC26_Bt'      # L-H threshold scaling: 'TC26_Bt', 'TC26_Bpol' (Delabie 2026), 'Martin'
     Bootstrap_choice    : str   = 'Sauter-Redl' # Bootstrap current model 'Segal' or 'Sauter-Redl'
     trapped_fraction_model : str = 'Sauter2002' # 'Sauter2002' (standard, NEOS/JINTRAC)
                                                 # 'ASTRA' (Fable, used by PROCESS/ASTRA)
@@ -271,7 +317,7 @@ class GlobalConfig:
     #                   Can make f_GW-targeted decks infeasible: the ITER
     #                   example deck cannot reach f_GW = 0.85 near 1.0.
     # ITER-deck sensitivity 0.6 -> 0.85: Ip +6 %, L-H margin -12 %.
-    rho_rad_core : float = 0.6  # Core/edge radiation boundary (normalised radius) [-]
+    rho_rad_core : float = 0.6  # Core/edge radiation boundary, toroidal-flux label rho_tor [-]
     # Fraction of computed core radiation (ρ < rho_rad_core) subtracted from
     # P_loss in the confinement power balance (τ_E, scaling-law inversion):
     # P_loss = P_α + P_aux + P_Ohm − coreradiationfraction × P_rad_core.
@@ -298,12 +344,14 @@ class GlobalConfig:
                                  # Ref: Lloyd et al., Nucl. Fusion 31 (1991) 2031.
                                  
     # ── 6. Structural materials ──────────────────────────────────────────────
-    Chosen_Steel         : str   = '316L'   # Structural steel grade '316L' , 'N50H', 'Manual'
-    σ_manual             : float = 1500.0   # Manual steel yield strength [MPa] (used only if Chosen_Steel='Manual')
+    Chosen_Steel_TF      : str   = '316L'   # TF structural steel: '316L', 'N50H', 'Manual'
+    Chosen_Steel_CS      : str   = '316L'   # CS jacket steel: '316L', 'N50H', 'Manual'
+    σ_manual_TF          : float = 1500.0   # TF steel allowable stress [MPa], used if Chosen_Steel_TF = 'Manual'
+    σ_manual_CS          : float = 1500.0   # CS steel allowable stress [MPa], used if Chosen_Steel_CS = 'Manual'
     nu_Steel             : float = 0.29     # Steel Poisson's ratio [-] (only used in CIRCE model)
     Young_modul_Steel    : float = 200e9    # Steel Young's modulus [Pa] (only used in CIRCE model)
     Young_modul_GF       : float = 90e9     # S-glass fiber Young's modulus [Pa] (only used in CIRCE model)
-    fatigue_CS           : float = 2.0      # CS fatigue knockdown factor (pulsed & wedging only) [-]
+    fatigue_CS           : float = 2.0      # CS fatigue knockdown, pulsed wedging and light bucking [-]
     # ── Steel allowable safety factors ───────────────────────────────────────
     # Dimensionless knockdown applied to the steel mechanical allowable inside
     # the TF and CS thickness solvers: σ_eff = σ_allowable / SF.
@@ -388,7 +436,8 @@ class GlobalConfig:
     Tet : float = 0.0    # REBCO tape field angle [rad]  (0 = B⊥tape, π/2 = B∥ab-plane)
 
     # Quench protection
-    I_cond                   : float = 50e3   # Nominal conductor current [A]
+    I_cond                   : float = 50e3   # Nominal TF conductor current [A]
+    I_cond_CS                : float = None   # Nominal CS conductor current [A], I_cond when None
     V_max                    : float = 10e3   # Maximum terminal voltage (= I × R_dump) [V]
     tau_h_LTS                : float = 3.0    # Detection + hold time, LTS magnets [s]
     tau_h_HTS                : float = 10.0   # Detection + hold time, HTS magnets [s]
@@ -406,8 +455,8 @@ class GlobalConfig:
     Dump_resistor_subdivision: int   = 2      # TF coils per dump resistor [-] (ITER reference)
 
     # ── 10. Power conversion ─────────────────────────────────────────────────
-    eta_T     : float = 0.40   # Thermal-to-electric conversion efficiency [-] (0.35–0.45)
-    M_blanket : float = 1.0    # Blanket energy multiplication factor [-] (1.0–1.3)
+    eta_T     : float = None   # Gross thermal-to-electric efficiency [-], blanket concept value when None
+    M_blanket : float = None   # Blanket energy multiplication [-], blanket concept value when None
     eta_RF    : float = 0.4    # Wall-plug efficiency for Multi CD modes [-] (reserved)
 
     # ── 11. Auxiliary heating and current drive ──────────────────────────────
@@ -434,13 +483,13 @@ class GlobalConfig:
     f_heat_NBI : float = 0.25   # Heating fraction allocated to NBCD [-]
     f_heat_ICR : float = 0.25   # Heating fraction allocated to ICRH [-]
     # ECCD deposition and injection parameters
-    rho_EC : float = 0.3      # Normalised deposition radius [-]
+    rho_EC : float = 0.3      # Deposition radius, toroidal-flux label rho_tor [-]
     theta_EC_pol_deg : float = 0.0  # Poloidal angle of EC deposition [deg]
                                     # 0 = outboard midplane (LFS, conservative)
                                     # 90 = top of plasma
                                     # 180 = inboard midplane (HFS, best for CD)
     # NBCD deposition and beam parameters
-    rho_NBI    : float = 0.3      # Normalised deposition radius [-]
+    rho_NBI    : float = 0.3      # Deposition radius, toroidal-flux label rho_tor [-]
     A_beam     : int   = 2        # Beam ion mass number: 1 = H, 2 = D, 3 = T
     E_beam_keV : float = 500.0    # Beam injection energy [keV]
     angle_NBI_deg : float = 20.0  # NBI injection angle from tangential [deg]
@@ -453,8 +502,12 @@ class GlobalConfig:
     # Refined divertor exhaust (two-point model, Stangeby 2018). All used only
     # in the post-convergence f_heat_two_point evaluation; they do not feed the
     # core power balance.
-    f_n_sep       : float = 0.20  # n_sep / volume-average density n̄ [-].
-                                  # Groth value taken from https://arxiv.org/pdf/2406.15693
+    f_n_sep       : float = 0.45  # n_sep / volume-average density n̄ [-].
+                                  # Reactor-grade points with a dissipative divertor:
+                                  # ITER 0.32-0.63 (n_e,sep = 3-6e19 m-3 at P_SOL = 100 MW,
+                                  # Pitts et al., NME 20 (2019) 100696, sec. 3.1.2),
+                                  # EU-DEMO 2017 0.46 (PROCESS nesep / dene),
+                                  # BEST 0.54 (Europed inputs, BEST Research Plan 2025).
     f_cooling_div : float = 0.0   # SOL volumetric power-loss fraction [-] (2PM input)
     f_mom_div     : float = 0.0   # SOL volumetric momentum-loss fraction [-] (2PM input)
     q_dep_limit   : float = 5.0   # Tolerable deposited target heat flux [MW/m²]
@@ -489,16 +542,25 @@ class GlobalConfig:
 
 
     # ── Plant electrical balance and pulsed thermal storage ─────────────────
-    # Recirculating loads scaled on EU-DEMO reference values: cryogenics on
-    # the magnet cold mass, house load on P_fus, BoP on P_th.
+    # Cryogenics scaled on the magnet cold mass of EU-DEMO, from the PROCESS
+    # output of the EU DEMO1 2017 baseline (IDM 2NDSKT v1.0, PROCESS 1.0.10,
+    # May 2017), variable names in brackets. Coolant pumping on P_th. House
+    # load from the PROCESS model (f_house_load): facilities on the floor area
+    # of the plant buildings, tritium plant, vacuum pumps, TF power supplies.
     eta_store                 : float = 0.90     # Thermal storage round-trip efficiency (pulsed) [-]
-    P_fus_DEMO_ref            : float = 2037.0   # EU-DEMO 2017 fusion power [MW]
-    M_cold_DEMO_ref           : float = 6.24e6   # EU-DEMO TF + CS cold mass [kg], D0FUS run of
+    M_cold_DEMO_ref           : float = 6.47e6   # EU-DEMO TF + CS cold mass [kg], D0FUS run of
                                                  # run_EUDEMO2017 (f_TF_steel_mass = 1)
-    P_cryo_cool_DEMO_ref      : float = 103.0    # EU-DEMO refrigeration load at 4.5 K [kW]
-    P_cryo_electric_DEMO_ref  : float = 29.0     # EU-DEMO cryoplant electrical power [MWe]
-    P_house_load_DEMO_ref     : float = 46.5     # EU-DEMO house load [MWe]
-    f_BoP                     : float = 0.03     # Balance-of-plant load fraction of P_th [-]
+    P_cryo_cool_DEMO_ref      : float = 82.0     # EU-DEMO refrigeration load at 4.5 K [kW] (helpow)
+    P_cryo_electric_DEMO_ref  : float = 40.4     # EU-DEMO cryoplant electrical power [MWe] (crypmw)
+    P_plant_base              : float = 5.0      # Facility base load [MWe] (PROCESS p_plant_electric_base)
+    pflux_plant_floor         : float = 150.0    # Facility load per effective floor area [W/m²]
+                                                 # (PROCESS pflux_plant_floor_electric)
+    P_tritium_plant           : float = 15.0     # Tritium plant, D-T fuel only [MWe] (PROCESS p_tritium_plant_electric_mw)
+    P_vacuum_pumps            : float = 0.5      # Vacuum pumps [MWe] (PROCESS vachtmw)
+    dr_TF_cryostat            : float = 2.37     # TF outer face to cryostat wall, PF coils included [m]
+                                                 # (EU DEMO1 2017: cryostat radius rdewex 19.45 m,
+                                                 # TF outer radius 17.08 m)
+    f_BoP                     : float = None     # Coolant pumping load, fraction of P_th [-], blanket concept value when None
     # ── 17. Radial build sublayer widths ─────────────────────────────────────
     # b = total plasma→TF radial gap (drives all existing machinery).
     # Per-concept layer widths (SOL, FW, breeder, structure, shields, VV, gaps)
@@ -510,15 +572,19 @@ class GlobalConfig:
     # Selects the breeder/coolant/structure/multiplier combination and the
     # breeding-blanket (BB) sub-layer breakdown from BLANKET_CONCEPTS below.
     # Options: 'HCPB', 'HCLL', 'DCLL', 'SCLL', 'SCLV', 'F-LIB'
-    # Ref: "Infinity Two pilot plant blanket trade study",
-    #      J. Plasma Phys. 91, E79 (2025), doi:10.1017/S002237782500039X
+    # Ref: Clark et al., J. Plasma Phys. 91, E86 (2025),
+    #      doi:10.1017/S002237782500039X
     Blanket_choice : str = 'HCPB'
 
     # ── Effective volumetric densities for radial-build mass estimates ────────
     # Plasma->TF radial_layers densities are derived per layer from their
     # 'composition' (volume fractions) and BLANKET_MATERIAL_DENSITIES; see
     # BLANKET_CONCEPTS[Blanket_choice]['radial_layers'].
-    rho_divertor : float = 13000.0   # Divertor             [kg/m³]
+    # Divertor density smeared over the divertor volume of the radial build,
+    # calibrated on ITER: 54 cassettes of 7.9 t with their PFCs (F4E) give
+    # 427 t for the 173 m³ of the D0FUS run of 1_run_ITER.txt. EU-DEMO 2017
+    # (48 cassettes of 7.6 t, 365 t) is then overestimated by a factor 2.4.
+    rho_divertor : float = 2460.0    # Divertor             [kg/m³]
 
     # ── 16. Component lifetime & availability model ───────────────────────────
     # Blanket lifetime: t_bl [fpy] = dpa_lim * A_FW / (0.8 * C_dpa * P_fus)
@@ -534,6 +600,39 @@ class GlobalConfig:
     # Replacement downtimes (performed in parallel if scheduled together)
     dt_rep_bl           : float = 0.5    # Blanket replacement downtime [yr]
     dt_rep_div          : float = 0.4    # Divertor replacement downtime [yr]
+
+    def __post_init__(self):
+        """
+        Check every field when the configuration is created.
+
+        The type expected for a field is the type of its default value.
+        Numeric fields, including the optional ones (default None), must
+        hold a number. Boolean fields must hold True or False. Option fields
+        must hold one of the values listed in CONFIG_OPTIONS.
+
+        Raises
+        ------
+        TypeError
+            Wrong type, e.g. a deck line "R0 = 6.2m" or "TF_grading = Flase".
+        ValueError
+            Option value not in CONFIG_OPTIONS, e.g. "Tbar_mode = greenwlad".
+        """
+        for f in fields(self):
+            value = getattr(self, f.name)
+            default = f.default
+            if isinstance(default, bool):
+                if not isinstance(value, bool):
+                    raise TypeError(f"{f.name} = {value!r}: expected True or False.")
+            elif default is None or isinstance(default, (int, float)):
+                is_number = (isinstance(value, (int, float, np.integer, np.floating))
+                             and not isinstance(value, bool))
+                if not (is_number or (default is None and value is None)):
+                    raise TypeError(f"{f.name} = {value!r}: expected a number.")
+            if f.name in CONFIG_OPTIONS and value not in CONFIG_OPTIONS[f.name]:
+                valid = ', '.join(repr(v) for v in CONFIG_OPTIONS[f.name])
+                raise ValueError(f"{f.name} = {value!r} is not a valid option. "
+                                 f"Valid options: {valid}.")
+
 
 # Module-level default instance — import and reuse rather than reinstantiating
 DEFAULT_CONFIG = GlobalConfig()
@@ -616,6 +715,45 @@ def resolve_deprecated_key(key):
         f"Please update the deck.",
         DeprecationWarning, stacklevel=2)
     return new_key
+
+
+# Old single keys, now split into one key per coil system. The old value is
+# given to every current key that the deck does not set itself, so that an
+# old deck keeps its meaning: the CS took the TF steel before the split.
+LEGACY_SPLIT_KEYS = {
+    'Chosen_Steel': ('Chosen_Steel_TF', 'Chosen_Steel_CS'),
+    'σ_manual':     ('σ_manual_TF', 'σ_manual_CS'),
+}
+
+
+def apply_legacy_split_keys(values):
+    """
+    Expand the old keys of LEGACY_SPLIT_KEYS onto their current keys.
+
+    Parameters
+    ----------
+    values : dict
+        Key-value pairs read from an input deck.
+
+    Returns
+    -------
+    dict
+        Copy of `values` without the old keys. Each current key that the deck
+        does not set takes the old value, typed for that key. A warning names
+        the keys that received it.
+    """
+    out = dict(values)
+    for old, new_keys in LEGACY_SPLIT_KEYS.items():
+        if old not in out:
+            continue
+        value = out.pop(old)
+        filled = [k for k in new_keys if k not in out]
+        for k in filled:
+            out[k] = coerce_input_value(k, str(value))
+        target = ' and '.join(filled) if filled else 'no key (both set in the deck)'
+        print(f"  [warn]   '{old}' is an old key: its value {value!r} is applied "
+              f"to {target}. Please update the deck.")
+    return out
 
 
 def coerce_input_value(key, raw_value):
@@ -926,8 +1064,17 @@ BLANKET_MATERIAL_DENSITIES = {
 # ─────────────────────────────────────────────────────────────────────────────
 # Breeding-blanket concepts
 # ─────────────────────────────────────────────────────────────────────────────
-# Six concepts compared in the "Infinity Two pilot plant blanket trade study"
-# (J. Plasma Phys. 91, E79 (2025), doi:10.1017/S002237782500039X).
+# Six concepts compared in Clark et al., "Breeder blanket and tritium fuel
+# cycle feasibility of the Infinity Two fusion pilot plant", J. Plasma Phys.
+# 91, E86 (2025), doi:10.1017/S002237782500039X. Values of the basic designs:
+#   TBR_max      Table 3, upper-limit TBR of the 1D parametric study
+#   delta_BB_sat Table 3, minimum breeder thickness (magnet fluence limit),
+#                used as the thickness reaching 95 % of TBR_max
+#   M_blanket    Table 4, blanket energy multiplication
+#   eta_T        Table 5, Rankine efficiency. It is a gross efficiency: the
+#                coolant pumping is a separate load, f_pump = Table 5 pumping
+#                power / Table 4 thermal power. eta_T P_th - f_pump P_th then
+#                gives the Table 5 net power within 2 % of P_th.
 #
 # Each entry defines a concept-specific radial-build layer stack 'radial_layers'
 # (ordered plasma -> TF, widths in [m]), reflecting the inboard radial builds of
@@ -945,11 +1092,13 @@ BLANKET_MATERIAL_DENSITIES = {
 # several figure sub-layers, 'composition' is the volume-weighted average
 # over those sub-layers.
 #
-# TBR_max and delta_BB_sat (breeder-zone thickness for ~95% of TBR_max) feed the
-# saturation-curve model f_TBR():
+# TBR_max and delta_BB_sat feed the saturation-curve model f_TBR():
 #   TBR(delta_BZ) = TBR_max * (1 - exp(-delta_BZ / delta_e)),
 #   delta_e = delta_BB_sat / ln(20)
-# where delta_BZ = delta_BB_ib (breeder-layer IB thickness).
+# where delta_BZ is the local breeder thickness, and the TBR is averaged
+# over the breeder surface. The energy multiplication follows the same curve,
+# 1 + (M_blanket - 1)(1 - exp(-delta_BZ / delta_e)), so that it falls to 1
+# where the breeder vanishes.
 #
 # All numeric values are illustrative, smeared 0D estimates consistent with
 # the ranges reported in the reference study; they are not a substitute for
@@ -964,10 +1113,11 @@ BLANKET_CONCEPTS = {
         'multiplier':  'Be12Ti (pebble bed)',
         'coolant':     'He',
         'structure':   'EUROFER97',
-        'TBR_max':       1.46,   # [-]   saturated TBR (parametric study)
-        'delta_BB_sat':  0.50,   # [m]   breeder-zone thickness for ~saturated TBR
-        'M_blanket':     1.35,   # [-]   energy multiplication factor
-        'eta_T_range':  (0.30, 0.40),   # [-] net thermal efficiency range
+        'TBR_max':       1.46,   # [-]   Table 3, upper-limit TBR
+        'delta_BB_sat':  0.50,   # [m]   Table 3, minimum breeder thickness
+        'M_blanket':     1.30,   # [-]   Table 4
+        'eta_T':         0.342,  # [-]   Table 5, Rankine efficiency
+        'f_pump':        0.0362, # [-]   Table 5 pumping / Table 4 thermal power (18.3 / 506 MW)
         'Li6_enrichment': 'Not required (natural Li)',
         'shield_quality': 'Excellent (dense solid breeder)',
         'VV_feasible':    True,
@@ -1008,10 +1158,11 @@ BLANKET_CONCEPTS = {
         'multiplier':  'None (PbLi self-multiplies)',
         'coolant':     'He',
         'structure':   'EUROFER97',
-        'TBR_max':       1.38,   # [-]   mid-range (1.35-1.40)
-        'delta_BB_sat':  0.60,   # [m]
-        'M_blanket':     1.32,   # [-]
-        'eta_T_range':  (0.30, 0.35),
+        'TBR_max':       1.39,   # [-]   Table 3, upper-limit TBR
+        'delta_BB_sat':  0.70,   # [m]   Table 3, minimum breeder thickness
+        'M_blanket':     1.15,   # [-]   Table 4
+        'eta_T':         0.335,  # [-]   Table 5, Rankine efficiency
+        'f_pump':        0.0576, # [-]   Table 5 pumping / Table 4 thermal power (26.4 / 458 MW)
         'Li6_enrichment': '90% required',
         'shield_quality': 'Intermediate',
         'VV_feasible':    True,
@@ -1051,10 +1202,11 @@ BLANKET_CONCEPTS = {
         'multiplier':  'None (PbLi self-multiplies); SiC flow-channel inserts',
         'coolant':     'He (primary) + PbLi (secondary, self-cooled)',
         'structure':   'EUROFER97 / F82H',
-        'TBR_max':       1.42,   # [-]
-        'delta_BB_sat':  0.70,   # [m]
-        'M_blanket':     1.32,   # [-]
-        'eta_T_range':  (0.30, 0.40),
+        'TBR_max':       1.47,   # [-]   Table 3, upper-limit TBR
+        'delta_BB_sat':  0.90,   # [m]   Table 3, minimum breeder thickness
+        'M_blanket':     1.15,   # [-]   Table 4
+        'eta_T':         0.364,  # [-]   Table 5, Rankine efficiency
+        'f_pump':        0.0356, # [-]   Table 5 pumping / Table 4 thermal power (16.3 / 458 MW)
         'Li6_enrichment': '90% required',
         'shield_quality': 'Lower than HCPB (thicker shielding needed)',
         'VV_feasible':    True,
@@ -1094,10 +1246,11 @@ BLANKET_CONCEPTS = {
         'multiplier':  'Optional Be booster/reflector',
         'coolant':     'Self-cooled (PbLi flow)',
         'structure':   'SiC composite',
-        'TBR_max':       1.47,   # [-]   highest among liquid concepts
-        'delta_BB_sat':  0.45,   # [m]   most compact radial build
-        'M_blanket':     1.30,   # [-]
-        'eta_T_range':  (0.35, 0.45),
+        'TBR_max':       1.47,   # [-]   Table 3, upper-limit TBR
+        'delta_BB_sat':  0.90,   # [m]   Table 3, minimum breeder thickness
+        'M_blanket':     1.10,   # [-]   Table 4
+        'eta_T':         0.456,  # [-]   Table 5, Rankine efficiency
+        'f_pump':        0.0233, # [-]   Table 5 pumping / Table 4 thermal power (10.3 / 442 MW)
         'Li6_enrichment': '90% required',
         'shield_quality': 'Adequate (limited by liquid-metal moderation)',
         'VV_feasible':    True,
@@ -1130,10 +1283,11 @@ BLANKET_CONCEPTS = {
         'multiplier':  'Optional external multiplier/reflector',
         'coolant':     'Self-cooled (Li flow)',
         'structure':   'V-4Cr-4Ti (vanadium alloy)',
-        'TBR_max':       1.47,   # [-]   equivalent to SCLL
-        'delta_BB_sat':  0.55,   # [m]   mid-range
-        'M_blanket':     1.35,   # [-]
-        'eta_T_range':  (0.35, 0.40),
+        'TBR_max':       1.47,   # [-]   Table 3, upper-limit TBR
+        'delta_BB_sat':  1.00,   # [m]   Table 3, minimum breeder thickness
+        'M_blanket':     1.10,   # [-]   Table 4
+        'eta_T':         0.406,  # [-]   Table 5, Rankine efficiency
+        'f_pump':        0.0380, # [-]   Table 5 pumping / Table 4 thermal power (16.8 / 442 MW)
         'Li6_enrichment': 'Not required (natural Li)',
         'shield_quality': 'Lower than solid breeders (thicker build needed)',
         'VV_feasible':    False,   # oxidation/embrittlement concerns
@@ -1169,10 +1323,11 @@ BLANKET_CONCEPTS = {
         'multiplier':  'Be (inherent + optional additions)',
         'coolant':     'Self-cooled (quasi-stagnant salt pool)',
         'structure':   'Inconel-718 (not low-activation)',
-        'TBR_max':       1.09,   # [-]   lowest of all concepts (self-shielding)
-        'delta_BB_sat':  0.35,   # [m]   smallest radial builds
-        'M_blanket':     1.20,   # [-]
-        'eta_T_range':  (0.35, 0.40),
+        'TBR_max':       1.06,   # [-]   Table 3, upper-limit TBR (the text quotes 1.09)
+        'delta_BB_sat':  0.60,   # [m]   Table 3, minimum breeder thickness
+        'M_blanket':     1.20,   # [-]   Table 4
+        'eta_T':         0.421,  # [-]   Table 5, Rankine efficiency
+        'f_pump':        0.0445, # [-]   Table 5 pumping / Table 4 thermal power (21.1 / 474 MW)
         'Li6_enrichment': 'Optional (not yet optimised)',
         'shield_quality': 'Superior moderation/absorption, but self-shielding limits breeding',
         'VV_feasible':    False,   # VV not adequately shielded for 5-yr lifetime
@@ -1242,32 +1397,32 @@ def material_blanket(Blanket_choice: str) -> dict:
     Returns
     -------
     dict  Concept entry (label, breeder, coolant, structure, multiplier,
-          TBR_max, delta_BB_sat, M_blanket, eta_T_range, Li6_enrichment,
+          TBR_max, delta_BB_sat, M_blanket, eta_T, f_pump, Li6_enrichment,
           shield_quality, VV_feasible, sublayers).
     """
     return BLANKET_CONCEPTS.get(Blanket_choice, BLANKET_CONCEPTS['HCPB'])
 
 
-def M_blanket_effective(Blanket_choice: str) -> float:
+def plant_conversion(config) -> tuple:
     """
-    Blanket energy multiplication factor [-] for the selected concept.
+    Blanket energy multiplication, thermal-to-electric efficiency and
+    coolant pumping fraction of a configuration.
 
-    Returns BLANKET_CONCEPTS[Blanket_choice]['M_blanket'], used in place of
-    the generic GlobalConfig.M_blanket default in the power balance.
+    A value given in the deck (M_blanket, eta_T, f_BoP) is used as is.
+    A value left at None is taken from the blanket concept (Clark et al.
+    2025, see BLANKET_CONCEPTS).
+
+    Returns
+    -------
+    M_blanket : float  Energy multiplication of the neutron power [-].
+    eta_T     : float  Gross thermal-to-electric efficiency [-].
+    f_pump    : float  Coolant pumping load, fraction of P_th [-].
     """
-    return material_blanket(Blanket_choice)['M_blanket']
-
-
-def eta_T_effective(Blanket_choice: str) -> float:
-    """
-    Thermal-to-electric conversion efficiency [-] for the selected concept.
-
-    Returns the midpoint of BLANKET_CONCEPTS[Blanket_choice]['eta_T_range'],
-    used in place of the generic GlobalConfig.eta_T default in the power
-    balance.
-    """
-    eta_lo, eta_hi = material_blanket(Blanket_choice)['eta_T_range']
-    return 0.5 * (eta_lo + eta_hi)
+    concept = material_blanket(config.Blanket_choice)
+    M = concept['M_blanket'] if config.M_blanket is None else config.M_blanket
+    eta = concept['eta_T'] if config.eta_T is None else config.eta_T
+    f_pump = concept['f_pump'] if config.f_BoP is None else config.f_BoP
+    return M, eta, f_pump
 
 
 def radial_layers_effective(Blanket_choice: str, b: float, Delta_TF: float = 0.0) -> list:
@@ -1284,7 +1439,10 @@ def radial_layers_effective(Blanket_choice: str, b: float, Delta_TF: float = 0.0
         delta_breeder_ib = b            - sum(fixed widths)
         delta_breeder_ob = b + Delta_TF - sum(fixed widths)
 
-    clipped to >= 0.
+    When b is smaller than the fixed stack, the fixed layers are scaled by
+    b / sum(fixed widths) so that the stack still fits: the breeder then
+    vanishes inboard and keeps Delta_TF outboard. Each layer carries this
+    scale as 'stack_scale' (1 when the stack fits).
 
     Parameters
     ----------
@@ -1301,8 +1459,9 @@ def radial_layers_effective(Blanket_choice: str, b: float, Delta_TF: float = 0.0
     concept    = material_blanket(Blanket_choice)
     fixed_sum  = sum(layer['width'] for layer in concept['radial_layers']
                      if layer['width'] is not None)
-    delta_ib   = max(b - fixed_sum, 0.0)
-    delta_ob   = max(b + Delta_TF - fixed_sum, 0.0)
+    scale      = min(1.0, b / fixed_sum) if fixed_sum > 0 else 1.0
+    delta_ib   = max(b - scale * fixed_sum, 0.0)
+    delta_ob   = max(b + Delta_TF - scale * fixed_sum, 0.0)
 
     layers = []
     for layer in concept['radial_layers']:
@@ -1311,7 +1470,8 @@ def radial_layers_effective(Blanket_choice: str, b: float, Delta_TF: float = 0.0
             entry['delta_ib'] = delta_ib
             entry['delta_ob'] = delta_ob
         else:
-            entry['delta_ib'] = entry['width']
-            entry['delta_ob'] = entry['width']
+            entry['delta_ib'] = scale * entry['width']
+            entry['delta_ob'] = scale * entry['width']
+        entry['stack_scale'] = scale
         layers.append(entry)
     return layers
