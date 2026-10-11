@@ -5,13 +5,13 @@
 :::{admonition} Source
 :class: thesis-source
 
-Adapted from T. Auclair, PhD thesis, Aix-Marseille Université (2026), Section 2.2.2. The thesis describes D0FUS v2.7.0. Where the code has changed since, the {doc}`API reference </api/index>`, generated from the current sources, is authoritative.
+Adapted from T. Auclair, PhD thesis, Aix-Marseille Université (2026), Section 2.2.2, which describes D0FUS v2.7.0, and updated to the code of October 2026. Where the code has changed since, the {doc}`API reference </api/index>`, generated from the current sources, is authoritative.
 :::
 
 
 ITER is the natural pinnacle of this validation: it is the best documented tokamak design in existence {footcite:p}`shimada2007progress`. In contrast with the EU-DEMO exercise, where matching the 2017 PROCESS baseline required falling back on the Academic options, this benchmark runs D0FUS at its highest fidelity throughout: Miller flux-surface geometry, self-consistent $q(\rho)$ profile, Sauter-Redl bootstrap current, profile-integrated neoclassical resistivity, multi-source current drive, and the Refined radial build model. The corresponding input deck is listed in {ref}`D0FUS ITER benchmark inputs <appendixinput_iter>`.
 
-D0FUS receives the quantities that the ITER design itself fixes: the geometry ($R_0 = 6.2$ m, $a = 2.0$ m), the inboard stack thickness $\Delta_B = 1.10$ m taken from the published radial build {footcite:p}`sborchia2008design,mitchell2011iter,libeyre2009detailed`, the fusion power $P_\mathrm{fus} = 500$ MW with 50 MW of auxiliary power (Q = 10), a 450 s burn, the IPB98(y,2) scaling at $H = 1$, the ITER pedestal width and height taken from CORSICA simulations {footcite:p}`kim2018iter` shown in {numref}`Fig. %s <fig:chap2_iter_profiles>`, and a tungsten plus neon impurity mix consistent with $Z_\mathrm{eff} = 1.65$. The helium confinement ratio $C_\alpha = 5.7$ is calibrated rather than predicted, so that the impurity-diluted ash balance returns the helium fraction of about $4.5\,\%$ expected for ITER {footcite:p}`shimada2007progress`.
+D0FUS receives the quantities that the ITER design itself fixes: the geometry ($R_0 = 6.2$ m, $a = 2.0$ m), the inboard stack thickness $\Delta_B = 1.10$ m taken from the published radial build {footcite:p}`sborchia2008design,mitchell2011iter,libeyre2009detailed`, the fusion power $P_\mathrm{fus} = 500$ MW with 50 MW of auxiliary power (Q = 10), a 400 s burn, the IPB98(y,2) scaling at $H = 1$, the ITER pedestal width and height taken from CORSICA simulations {footcite:p}`kim2018iter` shown in {numref}`Fig. %s <fig:chap2_iter_profiles>`, and a tungsten plus neon impurity mix consistent with $Z_\mathrm{eff} = 1.65$. The helium confinement ratio $C_\alpha = 5.7$ is calibrated rather than predicted, so that the impurity-diluted ash balance returns a helium fraction close to the one expected for ITER {footcite:p}`shimada2007progress`.
 
 :::{figure} /figures/thesis/chap2_iter_profiles.png
 :name: fig:chap2_iter_profiles
@@ -21,7 +21,7 @@ D0FUS receives the quantities that the ITER design itself fixes: the geometry ($
 Density and temperature D0FUS profiles for the ITER benchmark run.
 :::
 
-{numref}`Table %s <tab:chap2_iter_benchmark>` compares the solved design point to the published scenario. The confinement time, on-axis field, plasma current and line density, safety factor, stored energy and plasma volume all agree with the reference within a few percent.
+{numref}`Table %s <tab:chap2_iter_benchmark>` compares the solved design point to the published scenario. The confinement time, on-axis field, plasma current and line density, safety factor, stored energy and plasma volume all agree with the reference within $6\,\%$.
 
 :::{table} Full-device benchmark on the ITER Q = 10 inductive scenario. D0FUS receives the geometry, $\Delta_B$, $B_\mathrm{max}$ (conductor convention), $P_\mathrm{fus}$, $P_\mathrm{aux}$, the burn length and $\bar n/n_\mathrm{GW} = 0.85$. All listed quantities are solved for. The full input set is given in {ref}`D0FUS ITER benchmark inputs <appendixinput_iter>`. Reference values from {footcite:p}`shimada2007progress`.
 :name: tab:chap2_iter_benchmark
@@ -30,14 +30,14 @@ Density and temperature D0FUS profiles for the ITER benchmark run.
 | Parameter                                | Symbol          | D0FUS | ITER | $\Delta$ (%) |
 |:-----------------------------------------|:----------------|:------|:-----|:-------------|
 | On-axis field \[T\]                      | $B_0$           | 5.62  | 5.3  | $+6.0$       |
-| Plasma current \[MA\]                    | $I_p$           | 15.69 | 15.0 | $+4.6$       |
-| Line-avg. density \[$10^{20}$ m$^{-3}$\] | $\bar n_l$      | 1.06  | 1.01 | $+5.1$       |
-| Thermal energy \[MJ\]                    | $W_\mathrm{th}$ | 351   | 350  | $+0.3$       |
+| Plasma current \[MA\]                    | $I_p$           | 15.59 | 15.0 | $+3.9$       |
+| Line-avg. density \[$10^{20}$ m$^{-3}$\] | $\bar n_l$      | 1.05  | 1.01 | $+4.4$       |
+| Thermal energy \[MJ\]                    | $W_\mathrm{th}$ | 348   | 350  | $-0.5$       |
 | Plasma volume \[m$^3$\]                  | $V_p$           | 848   | 831  | $+2.0$       |
-| Normalised beta                          | $\beta_N$       | 1.52  | 1.8  | $-16$        |
-| Confinement time \[s\]                   | $\tau_E$        | 3.71  | 3.7  | $+0.3$       |
-| Safety factor                            | $q_{95}$        | 3.02  | 3.0  | $+0.5$       |
-| Helium ash fraction \[%\]                | $f_\mathrm{He}$ | 4.29  | 4.4  | $-2.5$       |
+| Normalised beta                          | $\beta_N$       | 1.57  | 1.8  | $-13$        |
+| Confinement time \[s\]                   | $\tau_E$        | 3.66  | 3.7  | $-1.2$       |
+| Safety factor                            | $q_{95}$        | 3.04  | 3.0  | $+1.2$       |
+| Helium ash fraction \[%\]                | $f_\mathrm{He}$ | 4.27  | 4.4  | $-2.9$       |
 :::
 
 On the engineering side, the self-consistent chain reproduces the ITER coil set closely, as {numref}`Table %s <tab:chap2_iter_engineering>` shows.
@@ -49,8 +49,8 @@ On the engineering side, the self-consistent chain reproduces the ITER coil set 
 | Quantity                       | Symbol               | D0FUS | ITER | $\Delta$ (%) |
 |:-------------------------------|:---------------------|:------|:-----|:-------------|
 | TF inboard leg thickness \[m\] | $c_\mathrm{TF}$      | 0.94  | 0.90 | $+4$         |
-| CS radial thickness \[m\]      | $\Delta_\mathrm{CS}$ | 0.69  | 0.80 | $-14$        |
-| CS peak field \[T\]            | $B_\mathrm{CS}$      | 11.5  | 13.0 | $-12$        |
+| CS radial thickness \[m\]      | $\Delta_\mathrm{CS}$ | 0.73  | 0.80 | $-9$         |
+| CS peak field \[T\]            | $B_\mathrm{CS}$      | 12.0  | 13.0 | $-8$         |
 :::
 
 The inboard TF leg thickness lands within a few percent of the reference. The only larger residual is on the CS thickness and peak field. This is expected: the solenoid sits at the meeting point of the physics, through its flux demand, and the engineering, through its bore and its own electro-mechanical sizing.

@@ -43,7 +43,7 @@ if __name__ != "__main__":
         f_Kappa, f_Kappa_95, f_Delta_95,
         kappa_profile, delta_profile, miller_RZ,
         f_first_wall_surface,
-        f_nprof, f_Tprof,
+        f_nprof, f_Tprof, rho_of_rho_V,
         f_nbar_line,
         get_Lz,
         f_He_fraction,
@@ -78,7 +78,7 @@ else:
         f_Kappa, f_Kappa_95, f_Delta_95,
         kappa_profile, delta_profile, miller_RZ,
         f_first_wall_surface,
-        f_nprof, f_Tprof,
+        f_nprof, f_Tprof, rho_of_rho_V,
         f_nbar_line,
         get_Lz,
         f_He_fraction,
@@ -821,7 +821,7 @@ def plot_nT_profiles(
     ):
         ax.axhline(1.0, color="gray", lw=0.9, ls=":", alpha=0.6,
                    label=f"Volume average = {xbar}")
-        ax.set_xlabel(r"$\rho = r/a$", fontsize=16)
+        ax.set_xlabel(r"$\rho_V = \sqrt{V/V_{tot}}$", fontsize=16)
         ax.set_ylabel(sym, fontsize=16)
         ax.tick_params(labelsize=13)
         ax.set_xlim(0, 1)
@@ -994,12 +994,12 @@ def plot_Lz_cooling(
     Te_min_keV: float = 0.05,
     Te_max_keV: float = 100.0,
     n_points: int = 500,
-    smoothing_width: int = 15,
     save_dir: str | None = None,
 ) -> None:
     """
     Plot the coronal radiative cooling coefficient L_z(T_e) for the main
-    impurity species of interest in tokamak plasmas.
+    impurity species of interest in tokamak plasmas, as returned by get_Lz
+    (the values used by the physics chain).
 
     The three plasma zones (edge, pedestal, core) are highlighted with a
     colour band in the background.
@@ -1008,7 +1008,6 @@ def plot_Lz_cooling(
     ----------
     Te_min_keV, Te_max_keV : float  Electron temperature scan range [keV].
     n_points               : int    Number of temperature grid points.
-    smoothing_width        : int    Convolution window for log-space smoothing.
     save_dir               : str or None
 
     References
@@ -1032,11 +1031,8 @@ def plot_Lz_cooling(
     ax.set_box_aspect(1)
 
     for imp, label, color in species:
-        Lz     = np.array([get_Lz(imp, T) for T in Te_arr])
-        Lz_sm  = np.exp(np.convolve(np.log(Lz),
-                                     np.ones(smoothing_width) / smoothing_width,
-                                     mode="same"))
-        ax.plot(Te_arr, Lz_sm, color=color, lw=2.0, label=label)
+        Lz = np.array([get_Lz(imp, T) for T in Te_arr])
+        ax.plot(Te_arr, Lz, color=color, lw=2.0, label=label)
 
     # Plasma zone shading
     ax.axvspan(0.1, 0.3,   alpha=0.07, color="steelblue")
@@ -1741,9 +1737,8 @@ def plot_CS_thickness_vs_flux(
         f_Cu/NonCu = 0.85 ?               (Pit Viper like)
         → J_wost = j_Cu × f_void × f_In_cable × f_Cu = 85 MA/m²
 
-      H_CS = 17.92 m forced via cfg.H_CS override (baseline 2018 allocation,
-        Sec. II-A).  The default formula H = 2(κa + b + 1) gives 14.6 m,
-        which underestimates the actual CS height by 20%.
+      H_CS = 17.92 m imposed (baseline 2018 allocation, Sec. II-A), together
+        with f_swing_usable = 1.0, on a local copy of cfg.
 
     Parameters
     ----------
@@ -1766,24 +1761,18 @@ def plot_CS_thickness_vs_flux(
     Sarasola et al., IEEE Trans. Appl. Supercond. 33(5), 4201205 (2023)
       — EU-DEMO CS parametric studies (extended analysis).
     """
-    if cfg is None:
-        cfg = DEFAULT_CONFIG
-
-    # Force CS height to baseline 2018 value (Sarasola 2020, Sec. II-A).
-    # The default formula H = 2(κa + b + 1) gives 14.6 m, which is 19%
-    # below the actual 17.92 m allocation and would bias the comparison.
-    cfg.H_CS = 17.92
-
-    # Benchmark convention: f_swing_usable = 1.0 (no control reserve
-    # subtracted). The MADE reference data published by Sarasola et al.
-    # corresponds to the CS hardware design output at full bipolar swing
-    # (the curve is parameterised on the total volt-second capacity of
-    # the coil, not on the plasma inductive demand). To compare the refined model to
-    # MADE on the same footing, we feed the full-bipolar abscissa to the
-    # solver and disable the additional 1/f_swing_usable rescaling. The
-    # design-mode default (0.75 = 25% control reserve) is restored
-    # automatically outside this benchmark function.
-    cfg.f_swing_usable = 1.0
+    # Benchmark settings, applied to a local copy (dataclasses.replace) so
+    # that the caller's configuration, DEFAULT_CONFIG by default, is left
+    # untouched:
+    #   H_CS = 17.92 m       EU-DEMO baseline 2018 CS allocation
+    #                        (Sarasola 2020, Sec. II-A).
+    #   f_swing_usable = 1.0 no control reserve. The MADE reference data of
+    #                        Sarasola et al. are the CS hardware output at full
+    #                        bipolar swing: the curve is parameterised on the
+    #                        total volt-second capacity of the coil, not on the
+    #                        plasma inductive demand.
+    cfg = replace(DEFAULT_CONFIG if cfg is None else cfg,
+                  H_CS=17.92, f_swing_usable=1.0)
 
     # MADE reference data — Sarasola et al. (2020), IEEE TAS 30(4), Fig. 2
     # HTS uniform-current-density CS, R_o = 2.7 m, σ_h ≈ 300 MPa curve.
@@ -1934,10 +1923,11 @@ def plot_resistivity_models(
 #   n_ped_frac       : float   n_ped / nbar [-]
 #   T_ped_frac       : float   T_ped / Tbar [-]
 #   tau_i_e          : float   T_i / T_e ratio [-] (pressure closure, default 1)
+#   n_ion_frac       : float   n_i / n_e from quasi-neutrality [-] (default 1)
 #   q95              : float   Safety factor at ρ₉₅ [-]
 #   Z_eff            : float   Effective ion charge [-]
-# Impurities (optional — absent or None → species not plotted)
-#   f_W, f_Ne, f_Ar  : float   Species concentration n_imp / n_e [-]
+# Impurities (optional, absent or empty: no line radiation plotted)
+#   impurities       : dict    {species: n_imp / n_e [-]}, every seeded species
 # =============================================================================
 
 
@@ -2005,7 +1995,7 @@ def _radiation_emissivity(
 
     Parameters
     ----------
-    rho              : ndarray  Normalised radial grid.
+    rho              : ndarray  Miller label grid (midplane r/a).
     nbar, Tbar       : float    Volume-averaged density [10²⁰ m⁻³] and temperature [keV].
     nu_n, nu_T       : float    Peaking exponents.
     rho_ped          : float    Pedestal radius.
@@ -2013,9 +2003,9 @@ def _radiation_emissivity(
     T_ped_frac       : float    T_ped / Tbar.
     impurities       : dict     {species: f_imp}, e.g. {'W': 5e-5, 'Ne': 3e-3}.
     Vprime_data      : tuple or None
-        Flux-surface volume data of the run (precompute_Vprime). The profiles
-        are normalised with the same volume weight as run(): Miller V'/V in
-        refined mode, cylindrical 2 rho when None (Academic mode).
+        Flux-surface volume data of the run (precompute_Vprime), for the map
+        of rho to the volume label rho_V of the profiles. None: Academic
+        geometry, rho_V = rho.
 
     Returns
     -------
@@ -2078,20 +2068,24 @@ def plot_run_nTp(
 
     Notes
     -----
-    The profiles are normalised with the volume weight of run() (Miller V'/V
-    in refined mode, cylindrical 2 rho in Academic mode), so that n_e(0),
-    T_e(0) and p(ρ) are those used by the physics chain. The pressure follows
-    f_pbar: p = (1 + τ_ie) n_e T_e (n_i ≈ n_e, T_i = τ_ie T_e).
+    The profiles are plotted against their radial coordinate, the volume
+    label ρ_V, with the Vprime_data of the run, so that n_e(0), T_e(0) and
+    p(ρ) are those used by the physics chain. The pressure follows
+    f_pbar: p = (1 + f_i τ_ie) n_e T_e, with f_i = n_i/n_e from
+    quasi-neutrality (run key 'n_ion_frac') and T_i = τ_ie T_e.
     """
     nbar, Tbar, nu_n, nu_T, rho_ped, n_ped_frac, T_ped_frac = _resolve_kinetics(run)
     tau_i_e = float(run.get("tau_i_e", 1.0))
+    n_ion_frac = float(run.get("n_ion_frac", 1.0))   # n_i / n_e
     Vprime_data = run.get("Vprime_data", None)
-    rho   = np.linspace(0.0, 1.0, n_rho)
+    rho   = np.linspace(0.0, 1.0, n_rho)            # volume label rho_V
+    rho_M = rho_of_rho_V(rho, Vprime_data)          # Miller label of each surface
 
-    n_prof = f_nprof(nbar, nu_n, rho, rho_ped, n_ped_frac, Vprime_data)   # [10²⁰ m⁻³]
-    T_prof = f_Tprof(Tbar, nu_T, rho, rho_ped, T_ped_frac, Vprime_data)   # [keV]
-    # Total pressure [kPa], same closure as f_pbar: p = (1 + tau_i_e) n_e T_e
-    p_prof = (n_prof * 1e20) * (1.0 + tau_i_e) * (T_prof * 1e3) * E_ELEM / 1e3
+    n_prof = f_nprof(nbar, nu_n, rho_M, rho_ped, n_ped_frac, Vprime_data)   # [10²⁰ m⁻³]
+    T_prof = f_Tprof(Tbar, nu_T, rho_M, rho_ped, T_ped_frac, Vprime_data)   # [keV]
+    # Total pressure [kPa], same closure as f_pbar: p = (1 + f_i tau_i_e) n_e T_e
+    p_prof = ((n_prof * 1e20) * (1.0 + n_ion_frac * tau_i_e)
+              * (T_prof * 1e3) * E_ELEM / 1e3)
 
     fig, axes = plt.subplots(1, 3, figsize=(16, 5))
 
@@ -2140,7 +2134,7 @@ def plot_run_nTp(
     ax.grid(True, alpha=0.3)
 
     for ax in axes:
-        ax.set_xlabel(r"$\rho = r/a$", fontsize=12)
+        ax.set_xlabel(r"$\rho_V = \sqrt{V/V_{tot}}$", fontsize=12)
         ax.set_xlim(0, 1)
 
     plt.suptitle(
@@ -2455,8 +2449,8 @@ def plot_radiation_profile(
 
     Parameters
     ----------
-    run      : dict   D0FUS run output. Impurity fractions read from keys
-                      'f_W', 'f_Ne', 'f_Ar' (all optional).
+    run      : dict   D0FUS run output. Impurity concentrations are read
+                      from 'impurities' {species: n_imp / n_e} (optional).
     n_rho    : int    Number of radial grid points.
     save_dir : str or None
 
@@ -2468,22 +2462,23 @@ def plot_radiation_profile(
     nbar, Tbar, nu_n, nu_T, rho_ped, n_ped_frac, T_ped_frac = _resolve_kinetics(run)
     R0 = run.get("R0", "?")
 
-    # Collect impurity concentrations
-    imp_map = {k: run.get(k, None) for k in ("f_W", "f_Ne", "f_Ar")}
-    # Key mapping: strip 'f_' prefix to get species symbol
-    impurities = {k[2:]: v for k, v in imp_map.items()
-                  if v is not None and v > 0.0}
+    # Impurity concentrations {species: n_imp / n_e}, every seeded species
+    impurities = {sp: c for sp, c in (run.get("impurities") or {}).items()
+                  if c is not None and c > 0.0}
 
-    rho = np.linspace(0.0, 1.0, n_rho)
+    rho = np.linspace(0.0, 1.0, n_rho)            # volume label rho_V
+    Vprime_data = run.get("Vprime_data", None)
     rad = _radiation_emissivity(
-        rho, nbar, Tbar, nu_n, nu_T,
+        rho_of_rho_V(rho, Vprime_data), nbar, Tbar, nu_n, nu_T,
         rho_ped, n_ped_frac, T_ped_frac,
         impurities,
-        Vprime_data=run.get("Vprime_data", None),
+        Vprime_data=Vprime_data,
     )
 
-    line_colors = {"W": "tab:red",    "Ne": "tab:cyan",   "Ar": "tab:purple"}
-    line_styles = {"W": "-",          "Ne": "-.",          "Ar": "--"}
+    line_colors = {"W": "tab:red", "Ne": "tab:cyan", "Ar": "tab:purple",
+                   "Kr": "tab:brown", "Xe": "tab:olive", "N": "tab:orange",
+                   "C": "tab:gray"}
+    line_styles = {"W": "-", "Ne": "-.", "Ar": "--", "Kr": ":", "Xe": "-"}
 
     fig, ax1 = plt.subplots(figsize=(7, 5))
 
@@ -2495,7 +2490,7 @@ def plot_radiation_profile(
                      ls=line_styles.get(species, "-"),
                      lw=2.0, label=f"Line  {species}  (f={impurities[species]:.1e})")
 
-    ax1.set_xlabel(r"$\rho = r/a$", fontsize=12)
+    ax1.set_xlabel(r"$\rho_V = \sqrt{V/V_{tot}}$", fontsize=12)
     ax1.set_ylabel(r"Line radiation $\varepsilon_{\rm line}$ [MW/m³]", fontsize=12)
 
     # Right axis: normalised shape profiles
@@ -2574,7 +2569,9 @@ def plot_divertor_two_point(
     p_u        = 2.0 * n_sep * E_ELEM * T_eu
 
     f_c  = np.linspace(0.0, 0.995, n_pts)
-    T_et = np.array([min(_two_point_core(q_par_u_SI, p_u, fc, f_m_op, 7.0, M_F_DT)[0],
+    m_f  = div.get("m_f", M_F_DT)    # fuel-ion mass of the run [kg]
+    # gamma_sheath = 7, the f_heat_two_point default used by run()
+    T_et = np.array([min(_two_point_core(q_par_u_SI, p_u, fc, f_m_op, 7.0, m_f)[0],
                          T_eu) for fc in f_c])
 
     fig, ax = plt.subplots(figsize=(7, 4.5))
@@ -2632,7 +2629,8 @@ def plot_divertor_two_point(
 # Reference machine database — used by plot_cross_section_comparison()
 _MACHINE_DB = {
     "JET":     {"R0": 2.96, "a": 1.25, "kappa": 1.70, "delta": 0.40, "color": "#4477AA"},
-    "ITER":    {"R0": 6.20, "a": 2.00, "kappa": 1.85, "delta": 0.33, "color": "#EE6677"},
+    # ITER: separatrix values (kappa_x = 1.85, delta_x = 0.48). delta_95 = 0.33.
+    "ITER":    {"R0": 6.20, "a": 2.00, "kappa": 1.85, "delta": 0.48, "color": "#EE6677"},
     "EU-DEMO": {"R0": 9.00, "a": 2.90, "kappa": 1.65, "delta": 0.33, "color": "#228833"},
     "STEP":    {"R0": 4.30, "a": 2.40, "kappa": 3.00, "delta": 0.55, "color": "#CCBB44"},
     "ARC":     {"R0": 3.30, "a": 1.10, "kappa": 1.84, "delta": 0.33, "color": "#AA3377"},
@@ -2653,13 +2651,13 @@ _LAYER_COLORS = {
 def _lcfs_RZ(R0: float, a: float, kappa: float, delta: float,
              n_theta: int = 500) -> tuple:
     """
-    Compute LCFS contour using the Shafranov–Miller parametrisation.
+    Compute LCFS contour using the Miller parametrisation.
 
-    R(θ) = R₀ + a cos(θ + δ sin θ)
+    R(θ) = R₀ + a cos(θ + arcsin(δ) sin θ)
     Z(θ) = a κ sin θ
 
-    This is the standard single-contour form used in Cross_Section.py and
-    consistent with the θ = 0 convention of Miller et al. (1998).
+    Same form as miller_RZ in D0FUS_physical_functions, so that the drawn
+    triangularity is exactly δ (Miller et al. 1998).
 
     Parameters
     ----------
@@ -2673,7 +2671,7 @@ def _lcfs_RZ(R0: float, a: float, kappa: float, delta: float,
     R, Z : ndarray  Poloidal contour arrays.
     """
     theta = np.linspace(0.0, 2.0 * np.pi, n_theta)
-    R = R0 + a * np.cos(theta + delta * np.sin(theta))
+    R = R0 + a * np.cos(theta + np.arcsin(delta) * np.sin(theta))
     Z = a * kappa * np.sin(theta)
     return R, Z
 
@@ -2684,7 +2682,6 @@ def _resolve_build(run: dict) -> dict:
 
     Returns a flat dict with keys: b, c_TF, c_CS, N_TF, Gap, H_TF,
     R_TF_in, R_TF_out, R_CS_ext, R_CS_int,
-    e_fw, e_blanket, e_shield, e_gap,
     Blanket_choice, f_kappa_SOL, f_div_area_fraction.
     """
     R0         = float(run["R0"])
@@ -2719,12 +2716,6 @@ def _resolve_build(run: dict) -> dict:
     # TF coil full height — envelope of the D-shape (factor 1.15 above κ*(a+b))
     H_TF       = 2.0 * kappa_edge * (a + b) * 1.15  # Total height [m]
 
-    # Optional inboard layer breakdown (fallback: equal split of b)
-    e_fw       = float(run.get("e_fw",      0.05))
-    e_blanket  = float(run.get("e_blanket", max(b * 0.38, 0.3)))
-    e_shield   = float(run.get("e_shield",  max(b * 0.38, 0.3)))
-    e_gap      = max(b - e_fw - e_blanket - e_shield, 0.0)
-
     # Concept-specific radial-build parameters (see f_radial_build_layers)
     Blanket_choice      = run.get("Blanket_choice", "HCPB")
     f_kappa_SOL         = float(run.get("f_kappa_SOL", 0.25))
@@ -2735,7 +2726,6 @@ def _resolve_build(run: dict) -> dict:
         H_TF=H_TF,
         R_TF_in=R_TF_in, R_TF_out=R_TF_out,
         R_CS_ext=R_CS_ext, R_CS_int=R_CS_int,
-        e_fw=e_fw, e_blanket=e_blanket, e_shield=e_shield, e_gap=e_gap,
         Blanket_choice=Blanket_choice, f_kappa_SOL=f_kappa_SOL,
         f_div_area_fraction=f_div_area_fraction,
     )
@@ -3256,8 +3246,8 @@ def plot_assembly_side_view(run, save_dir=None, n_cs_modules=None):
     dims = [
         (r"$\Delta_{\mathrm{CS}}$"     + f" = {c_CS:.2f} m",         R_CS_int,     R_CS_ext,    -h_cs, -h_cs),
         (r"$\Delta_{\mathrm{TF}}$"     + f" = {c_TF:.2f} m",         R_bore,       R_TF_in_face, -h_tf, -h_tf),
-        (r"$\Delta_{\mathrm{BB,in}}$"  + f" = {b:.2f} m",            R_TF_in_face, R_pl_ib,     -h_tf, -h_tf),
-        (r"$\Delta_{\mathrm{BB,out}}$" + f" = {b + Delta_TF:.2f} m", R_pl_ob,      R_blkt_ob,   -h_tf, -h_tf),
+        (r"$b$"                         + f" = {b:.2f} m",            R_TF_in_face, R_pl_ib,     -h_tf, -h_tf),
+        (r"$b + \Delta_{\mathrm{TF}}$"  + f" = {b + Delta_TF:.2f} m", R_pl_ob,      R_blkt_ob,   -h_tf, -h_tf),
     ]
     dz = 0.95
     z_first = z_bot - 0.85
@@ -4253,32 +4243,36 @@ def plot_all(
 def plot_run(
     run: dict,
     save_dir: str | None = None,
+    view_3d: bool = True,
 ) -> None:
     """
-    Render the run-specific figure set (17 figures).
+    Render the run-specific figure set (16 figures, 15 without the 3D view).
 
     This is the subset called after each D0FUS run.  It contains only the
     figures that depend on the current run configuration and results —
     no validation curves, no benchmarks, no scaling-law surveys.
 
     Figures produced:
-      [ 1/17]  Tokamak LCFS comparison (with D0FUS overlay)
-      [ 2/17]  Miller flux surfaces (run geometry)
-      [ 3/17]  Shaping profiles κ(ρ), δ(ρ)
-      [ 4/17]  Kinetic profiles n(ρ), T(ρ), p(ρ)
-      [ 5/17]  Safety factor q(ρ) and current decomposition
-      [ 6/17]  Radiation profiles
-      [ 7/17]  Divertor two-point model (detachment vs SOL dissipation)
-      [ 8/17]  Radial build assembly (CS / TF / blanket)
-      [ 9/17]  Breeding-blanket concept comparison
-      [10/17]  TF coil side view
-      [11/17]  CICC TF conductor
-      [12/17]  CS cross-section
-      [13/17]  CICC CS conductor
-      [14/17]  Cost breakdown (Sheffield 2016, CapEx / OpEx / COE)
-      [15/17]  Plasma temperature map T(rho)
-      [16/17]  Plasma density map n(rho)
-      [17/17]  3D machine view (PyVista; skipped if PyVista is missing)
+      [ 1/16]  Tokamak LCFS comparison (with D0FUS overlay)
+      [ 2/16]  Miller flux surfaces (run geometry)
+      [ 3/16]  Shaping profiles κ(ρ), δ(ρ)
+      [ 4/16]  Kinetic profiles n(ρ), T(ρ), p(ρ)
+      [ 5/16]  Safety factor q(ρ) and current decomposition
+      [ 6/16]  Radiation profiles
+      [ 7/16]  Divertor two-point model (detachment vs SOL dissipation)
+      [ 8/16]  Radial build assembly (CS / TF / blanket)
+      [ 9/16]  TF coil side view
+      [10/16]  CICC TF conductor
+      [11/16]  CS cross-section
+      [12/16]  CICC CS conductor
+      [13/16]  Cost breakdown (Sheffield 2016, CapEx / OpEx / COE)
+      [14/16]  Plasma temperature map T(rho)
+      [15/16]  Plasma density map n(rho)
+      [16/16]  3D machine view (PyVista; skipped if PyVista is missing,
+               or with view_3d=False)
+
+    The breeding-blanket concept comparison does not depend on the run: it
+    is drawn by plot_blanket_concepts_comparison, outside this set.
 
     Parameters
     ----------
@@ -4286,8 +4280,10 @@ def plot_run(
     save_dir : str or None
         If provided, figures are saved as PNG files.
         Pass ``None`` to display interactively.
+    view_3d  : bool
+        False skips the 3D machine view (command-line option --no-3d).
     """
-    N = 17
+    N = 16 if view_3d else 15
 
     # When saving, prefix each PNG with its order index so that the files sort
     # in the logical reading order: geometry (Miller), profiles, physics detail,
@@ -4298,14 +4294,21 @@ def plot_run(
 
     def _emit(i, label, thunk):
         print(f"  [{i:2d}/{N}] {label}")
+        before = set(_os.listdir(save_dir)) if save_dir is not None else set()
+        try:
+            thunk()
+        except Exception as exc:
+            # A figure that cannot be drawn (failed design, missing data) is
+            # skipped, so that the following figures are still produced.
+            print(f"         [skip] {type(exc).__name__}: {exc}")
+            plt.close("all")
         if save_dir is None:
-            thunk(); return
-        before = set(_os.listdir(save_dir))
-        thunk()
+            return
         for f in sorted(set(_os.listdir(save_dir)) - before):
             if f.lower().endswith(".png") and not _already.match(f):
-                _os.rename(_os.path.join(save_dir, f),
-                           _os.path.join(save_dir, f"{i:02d}_{f}"))
+                # os.replace overwrites an existing file, also on Windows
+                _os.replace(_os.path.join(save_dir, f),
+                            _os.path.join(save_dir, f"{i:02d}_{f}"))
 
     print("D0FUS_figures — generating run figures...")
 
@@ -4332,24 +4335,22 @@ def plot_run(
     # ── Radial build & coils ──────────────────────────────────────────
     _emit(8, "Radial build assembly (CS / TF / blanket)",
           lambda: plot_assembly_side_view(run, save_dir=save_dir))
-    _emit(9, "Breeding-blanket concept comparison",
-          lambda: plot_blanket_concepts_comparison(save_dir=save_dir))
-    _emit(10, "TF coil side view",
+    _emit(9, "TF coil side view",
           lambda: plot_TF_side_view(run, save_dir=save_dir))
-    _emit(11, "CICC TF conductor",
+    _emit(10, "CICC TF conductor",
           lambda: plot_CICC_cross_section(build_conductor_from_run(run, coil="TF"), save_dir=save_dir))
-    _emit(12, "CS cross-section",
+    _emit(11, "CS cross-section",
           lambda: plot_CS_cross_section(run, save_dir=save_dir))
-    _emit(13, "CICC CS conductor",
+    _emit(12, "CICC CS conductor",
           lambda: plot_CICC_cross_section(build_conductor_from_run(run, coil="CS"), save_dir=save_dir))
 
     # ── Techno-economic synthesis ─────────────────────────────────────
-    _emit(14, "Cost breakdown (Sheffield 2016)",
+    _emit(13, "Cost breakdown (Sheffield 2016)",
           lambda: plot_cost_breakdown(run, save_dir=save_dir))
 
     # ── Plasma field maps ────────────────────────────────────
-    _emit(15, "Plasma temperature map", lambda: plot_temperature_map(run, save_dir=save_dir))
-    _emit(16, "Plasma density map", lambda: plot_density_map(run, save_dir=save_dir))
+    _emit(14, "Plasma temperature map", lambda: plot_temperature_map(run, save_dir=save_dir))
+    _emit(15, "Plasma density map", lambda: plot_density_map(run, save_dir=save_dir))
 
     # ── 3D machine view (optional PyVista dependency) ─────────────────
     # plot_tokamak_3D guards its own import and any render failure, so a
@@ -4360,7 +4361,8 @@ def plot_run(
         except Exception as _e:
             print(f"  [warn] 3D machine view failed ({type(_e).__name__}: "
                   f"{_e}) — skipped.")
-    _emit(17, "3D machine view (PyVista)", _fig_3d)
+    if view_3d:
+        _emit(16, "3D machine view (PyVista)", _fig_3d)
 
     print("Done.")
 
@@ -4736,19 +4738,17 @@ def plot_TF_benchmark_table(cfg=None, save_dir=None) -> None:
                 "c [m]":     _clean(res),
             })
 
-        df = pd.DataFrame(rows, columns=cols)
-
         fig, ax = plt.subplots(figsize=(11, 2.8))
         ax.axis("off")
-        tbl = ax.table(cellText=df.values, colLabels=df.columns,
-                       cellLoc="center", loc="center")
+        tbl = ax.table(cellText=[[row[c] for c in cols] for row in rows],
+                       colLabels=cols, cellLoc="center", loc="center")
         tbl.auto_set_font_size(False)
         tbl.set_fontsize(9)
         tbl.scale(1.2, 1.6)
         for j in range(len(cols)):
             tbl[(0, j)].set_facecolor(header_color)
             tbl[(0, j)].set_text_props(weight="bold", color="white")
-        for i in range(1, len(df) + 1):
+        for i in range(1, len(rows) + 1):
             for j in range(len(cols)):
                 if i % 2 == 0:
                     tbl[(i, j)].set_facecolor("#f0f0f0")
@@ -4766,8 +4766,6 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
     """
     Display a CS coil benchmark table (Academic, D0FUS, CIRCE models) for
     ITER, EU-DEMO, JT-60SA, EAST, ARC, and SPARC.
-
-    IMPORTANT: cfg.cs_axial_stress must be True for meaningful results.
 
     Parameters
     ----------
@@ -4824,9 +4822,6 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
     # -----------------------------------------------------------------
     # CS machine parameters — sourced March 2026
     #
-    # NOTE: cs_axial_stress MUST be True (cfg.cs_axial_stress = True)
-    # for the CS benchmark to produce meaningful results.
-    #
     # ── Flux convention ──
     # Ψplateau is fed to the solvers as the CS hardware capacity demand
     # at full bipolar swing (-I_max → +I_max), consistent with the
@@ -4837,12 +4832,11 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
     # capacity (volt-second budget of the coil itself), as reported in
     # the design papers cited per machine.
     #
-    # The benchmark function overrides cfg.f_swing_usable = 1.0 (set
-    # below) because the published values already correspond to the
-    # hardware capacity, with no additional 1/f_swing_usable rescaling.
-    # The design-mode default (0.75 = 25% control reserve for vertical
-    # stability, error-field correction and shape feedback) is restored
-    # automatically outside this benchmark function.
+    # The benchmark uses f_swing_usable = 1.0 (set below on a local copy of
+    # cfg) because the published values already correspond to the hardware
+    # capacity, with no additional 1/f_swing_usable rescaling. The caller's
+    # value (design default 0.75 = 25% control reserve for vertical
+    # stability, error-field correction and shape feedback) is not modified.
     #
     # ── Stress convention ──
     # σ_CS = 2/3 × Sy (monotonic yield at 4K). D0FUS applies
@@ -4965,9 +4959,10 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
     #   Config: Plug (demountable joint).
     # -----------------------------------------------------------------
 
-    # Force benchmark convention (full hardware capacity at full bipolar
-    # swing, no control reserve subtracted from the published values).
-    cfg.f_swing_usable = 1.0
+    # Benchmark convention (full hardware capacity at full bipolar swing, no
+    # control reserve subtracted from the published values), applied to a
+    # local copy so that the caller's configuration is left untouched.
+    cfg = replace(cfg, f_swing_usable=1.0)
 
     machines = {
         # August 2026 audit. Delta_TF aligned on the TF thicknesses verified in
@@ -5075,38 +5070,36 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
             # "Supra_Choice" key absent in dict → always "Manual" (consistent with original)
             Supra = p.get("Supra_Choice", "Manual")
 
-            # Override Gap, H_CS and the conductor shape factor per machine
-            cfg.Gap = p.get("Gap", 0.10)
-            cfg.H_CS = p.get("H_CS", None)
-            cfg.n_shape_CS = p.get("n_shape_CS", 1.0)
+            # Gap, H_CS and the conductor shape factor of this machine
+            cfg_machine = replace(cfg, Gap=p.get("Gap", 0.10),
+                                  H_CS=p.get("H_CS", None),
+                                  n_shape_CS=p.get("n_shape_CS", 1.0))
 
             res = model_func(0, 0, psi, 0, a, b, c, R0, B_TF, 25, sigma,
-                             Supra, J_cs, T_He, conf, kap, 6, 5, cfg)
+                             Supra, J_cs, T_He, conf, kap, 6, 5, cfg_machine)
 
             rows.append({
                 "Machine":   name,
                 "SC":        p["SupraChoice"],
                 "Config":    conf,
-                "Ψ [Wb]":    psi,
+                "Ψ [Wb]":    float(psi),
                 "σ [MPa]":   int(sigma / 1e6),
                 "Width [m]": _clean(res[0]),
                 "B_CS [T]":  _clean(res[5]),
                 "J [MA/m²]": round(J_cs / 1e6, 1),
             })
 
-        df = pd.DataFrame(rows, columns=cols)
-
         fig, ax = plt.subplots(figsize=(11, 2.8))
         ax.axis("off")
-        tbl = ax.table(cellText=df.values, colLabels=df.columns,
-                       cellLoc="center", loc="center")
+        tbl = ax.table(cellText=[[row[c] for c in cols] for row in rows],
+                       colLabels=cols, cellLoc="center", loc="center")
         tbl.auto_set_font_size(False)
         tbl.set_fontsize(9)
         tbl.scale(1.2, 1.6)
         for j in range(len(cols)):
             tbl[(0, j)].set_facecolor(header_color)
             tbl[(0, j)].set_text_props(weight="bold", color="white")
-        for i in range(1, len(df) + 1):
+        for i in range(1, len(rows) + 1):
             for j in range(len(cols)):
                 if i % 2 == 0:
                     tbl[(i, j)].set_facecolor("#f0f0f0")
@@ -5396,7 +5389,7 @@ def plot_cost_breakdown(run: dict, save_dir: str | None = None) -> None:
     Techno-economic cost breakdown (Sheffield & Milora 2016 model).
 
     Left panel : CapEx by component (TF + CS coils, breeding blanket,
-                 shield + gaps, divertor targets, heating plant, balance of
+                 shield + gaps, divertor targets, heat transfer system, balance of
                  plant, auxiliary heating, buildings & other, indirect) as
                  horizontal bars sorted by magnitude. The bars sum to the
                  constructed capital cost reported in the title.
@@ -5419,7 +5412,7 @@ def plot_cost_breakdown(run: dict, save_dir: str | None = None) -> None:
     capex = cb.get("capex", {})
     opex  = cb.get("opex", {})
     if not capex:
-        print("    (cost breakdown unavailable — cost_model off; figure skipped)")
+        print("    (cost breakdown unavailable: cost_model off or design not closed. Figure skipped)")
         return
 
     cur   = cb.get("currency", "M EUR")
@@ -5472,7 +5465,9 @@ def plot_cost_breakdown(run: dict, save_dir: str | None = None) -> None:
     else:
         ax2.axis("off")
 
-    fig.suptitle(f"Cost breakdown (Sheffield 2016)   |   COE = {coe:.0f} {coe_u}",
+    coe_txt = (f"COE = {coe:.0f} {coe_u}" if np.isfinite(coe)
+               else "COE undefined (no net electric output)")
+    fig.suptitle(f"Cost breakdown (Sheffield 2016)   |   {coe_txt}",
                  fontsize=13, fontweight="bold")
     plt.tight_layout()
     _save_or_show(fig, save_dir, "cost_breakdown")
@@ -5734,11 +5729,13 @@ def plot_CICC_cross_section(
     xs, ys, is_sc = _place_strands_circular(
         R_cable, d_s, n_sc, n_cu, rng, exclude_radius=R_He)
 
+    # One collection for all strands: add_patch per strand updates the axes
+    # limits each time, about 1 ms per strand.
     r_s = d_s / 2.0
-    for x, y, sc in zip(xs, ys, is_sc):
-        col = col_sc if sc else _CICC_COLORS["strand_cu"]
-        ax.add_patch(Circle((x, y), r_s, fc=col, ec="none",
-                             alpha=0.9, zorder=4))
+    ax.add_collection(PatchCollection(
+        [Circle((x, y), r_s) for x, y in zip(xs, ys)],
+        facecolors=[col_sc if sc else _CICC_COLORS["strand_cu"] for sc in is_sc],
+        edgecolors="none", alpha=0.9, zorder=4))
 
     # ---- Dimension lines ----------------------------------------------------
     y_dim = -h_j / 2 - 3.0
@@ -5779,8 +5776,8 @@ def plot_CICC_cross_section(
     ax.set_title(
         f"{conductor['name']}  —  CICC equivalent model"
         + (f"  ({sc_type})" if sc_type else "") +
-        f"\nSteel={f_steel*100:.0f}%   SC={f_SC*100:.1f}%   Cu={f_Cu*100:.1f}%   "
-        f"He pipe={f_He_pipe*100:.1f}%   He void={f_void_val*100:.1f}%",
+        f"\nSteel {f_steel*100:.0f}% of the conductor.   Cable space: SC {f_SC*100:.1f}%, "
+        f"Cu {f_Cu*100:.1f}%, He pipe {f_He_pipe*100:.1f}%, He void {f_void_val*100:.1f}%",
         fontsize=9, fontweight="bold",
     )
     ax.grid(False)
@@ -6012,9 +6009,7 @@ def demo_run_dict():
         "P_aux":       50.0,
         "Q":           10.0,
         # Impurities
-        "f_W":         5e-5,
-        "f_Ne":        3e-3,
-        "f_Ar":        None,
+        "impurities":  {"W": 5e-5, "Ne": 3e-3},
         # Radial build
         #   c_TF includes full inboard leg (WP + structural case)
         #   MHI/QST: ITER TF coil ≈ 16.5 m high (with casing), 9 m wide, 300 t
@@ -6025,15 +6020,12 @@ def demo_run_dict():
         "c_CS":        0.70,
         "N_TF":        18,
         "Gap":         0.02,
-        "e_fw":        0.05,
-        "e_blanket":   0.45,
-        "e_shield":    0.50,
         # Refined two-point divertor solution (representative ITER values), so
         # plot_divertor_two_point renders in the stand-alone smoke test.
         "divertor": {
             "lambda_q": 9.12e-4, "q_pol_omp": 1503.05, "pitch_B_over_Bpol": 4.835,
             "f_outer_target": 0.65, "q_par_u": 7266.72, "T_eu": 343.66, "T_et": 343.66,
-            "n_et": 8.015e16, "Gamma_et": 1.4728e23, "q_dep_t": 2.492,
+            "n_et": np.nan, "Gamma_et": np.nan, "q_dep_t": np.nan,
             "f_pwr_loss_req": 0.9842, "regime": "sheath-limited", "detached": False,
             "sputtering_safe": False, "n_sep": 2.052e19, "f_cooling": 0.0, "f_mom": 0.0,
             "theta_deg": 2.5, "q_dep_limit": 5.0, "q_par0_attached": 7266.72,
@@ -6045,10 +6037,12 @@ def demo_run_dict():
             "currency": "M EUR (2025)", "coe_unit": "EUR/MWh",
             "capex": {"TF + CS coils": 4002.90, "Breeding blanket": 1951.65,
                       "Shield + gaps": 1476.53, "Divertor targets": 12.27,
-                      "Heating plant": 101.20, "Balance of plant": 450.60,
+                      "Heat transfer system": 101.20, "Balance of plant": 450.60,
                       "Aux. heating": 378.05, "Buildings & other": 2253.02,
-                      "Indirect": 11675.58},
-            "opex": {"O&M": 43.05, "Fuel / consumables": 180.19, "Waste": 6.52},
+                      "Indirect, interest, contingency": 11675.58},
+            "opex": {"O&M": 43.05, "Fuel / consumables": 180.19,
+                     "Waste disposal": 3.2},
+            "coe_waste": 6.52,
         },
     }
 
@@ -6370,9 +6364,15 @@ def _lab_col(hexcol):
 
 
 def _save(fig, save_dir, fname):
+    """
+    Save fig to save_dir/fname.png and close it, so that a study does not
+    accumulate open figures. Without save_dir the figure stays open and is
+    returned for interactive use.
+    """
     if save_dir:
         os.makedirs(save_dir, exist_ok=True)
         fig.savefig(os.path.join(save_dir, f"{fname}.png"), dpi=150, bbox_inches='tight')
+        plt.close(fig)
     return fig
 
 
@@ -6479,6 +6479,8 @@ def fig_robustness(results, save_dir=None):
     p_feas = 100.0 * n_feas / n
     verdict = ("largely feasible" if p_feas >= 85 else
                "marginal" if p_feas >= 60 else "at risk")
+    from D0FUS_EXE.D0FUS_uncertainty import wilson_interval
+    ci_lo, ci_hi = wilson_interval(n_feas, len(all_rows))
 
     fig, ax = plt.subplots(figsize=(11.0, 2.7))
     left = 0.0
@@ -6496,7 +6498,8 @@ def fig_robustness(results, save_dir=None):
     for s in ("left", "right", "top"):
         ax.spines[s].set_visible(False)
     ax.spines["bottom"].set_color(_MUTED)
-    ax.set_title(f"Design robustness: {p_feas:.0f}% feasible  ({verdict}, N={n})",
+    ax.set_title(f"Design robustness: {p_feas:.0f}% feasible  "
+                 f"(95% CI {100 * ci_lo:.0f}-{100 * ci_hi:.0f}%, {verdict}, N={n})",
                  fontsize=12.5, fontweight="bold", color=_INK, loc="left", pad=10)
     ax.legend(handles=[Patch(facecolor=c, edgecolor="none", label=l) for l, _, c in seg],
               fontsize=8.5, ncol=min(5, len(seg)), loc="upper center",
@@ -6572,13 +6575,21 @@ def scan_feasibility(uq_file, scan_specs, n_samples=200, n_jobs=-1, combo=None,
     evaluated in ONE parallel pass over all (parameter, point, sample) tasks,
     which avoids opening a separate worker pool at every scan point.
 
+    The share is AS DESIGNED: no Tbar retuning and no CS flux relief (the
+    Tbar panel scans the operating temperature itself). The model-form
+    envelopes are cycled over the samples (sample i takes combination
+    i mod n_combos), so that the share estimates the same mixture of models
+    as the main study at no extra cost. A fixed `combo` overrides the cycling.
+
     scan_specs : {param: (lo, hi, n_points)}
-    Returns    : {param: (x_values, P_feasible[%], design_value)}
+    Returns    : {param: (x_values, P_feasible[%], design_value, n_samples)}
     """
+    from dataclasses import asdict
     from D0FUS_EXE import D0FUS_uncertainty as UQ
 
-    base, spec, envelope, controls, deck_path = UQ.parse_uq_file(uq_file)
-    combo = combo or {}
+    base, spec, envelope, controls = UQ.parse_uq_file(uq_file)
+    base_dict = asdict(base)
+    combos = [combo] if combo else UQ.model_combos(envelope)
 
     grids, tasks = {}, []
     for p, (lo, hi, npts) in scan_specs.items():
@@ -6590,7 +6601,8 @@ def scan_feasibility(uq_file, scan_specs, n_samples=200, n_jobs=-1, combo=None,
         grids[p] = (xs, float(getattr(base, p)))
         for x in xs:
             for i in range(n_samples):
-                tasks.append((deck_path, names, X[i], {**combo, p: x}))
+                tasks.append((base_dict, names, X[i],
+                              {**combos[i % len(combos)], p: x}))
 
     # Single tqdm bar in place of joblib's per-batch log lines. return_as
     # 'generator' keeps submission order so the per-parameter slicing below holds.
@@ -6605,9 +6617,9 @@ def scan_feasibility(uq_file, scan_specs, n_samples=200, n_jobs=-1, combo=None,
         for _ in xs:
             chunk = rows[idx:idx + n_samples]
             idx += n_samples
-            feas = [r for r in chunk if r.get('converged') and r.get('feasible')]
-            pf.append(100.0 * len(feas) / n_samples)           # over all samples
-        out[p] = (xs, np.array(pf), nom)
+            (share, _, _), _ = UQ.feasible_share(chunk, 'as_designed')
+            pf.append(share)                                    # over all samples
+        out[p] = (xs, np.array(pf), nom, n_samples)
     return out
 
 
@@ -6615,9 +6627,13 @@ def scan_feasibility(uq_file, scan_specs, n_samples=200, n_jobs=-1, combo=None,
 # Figure 3 -- one-parameter feasibility scan
 # =============================================================================
 @_uq_style
-def fig_scan(scan_results, save_dir=None):
-    """Feasible fraction vs each design parameter. Single safe-zone reference
-    (>= 85%) instead of a three-band traffic light; the design value is marked."""
+def fig_scan(scan_results, save_dir=None, reference=None):
+    """Feasible fraction AS DESIGNED vs each design parameter, with its 95 %
+    Wilson band. Single safe-zone reference (>= 85%) instead of a three-band
+    traffic light; the design value is marked. `reference` = (share, lo, hi)
+    [%] of the main study at the same level (as designed) is drawn at the
+    design value for comparison."""
+    from D0FUS_EXE.D0FUS_uncertainty import wilson_interval
     params = list(scan_results)
     ncols = 2
     nrows = int(np.ceil(len(params) / ncols))
@@ -6625,9 +6641,11 @@ def fig_scan(scan_results, save_dir=None):
     axes = np.atleast_1d(axes).ravel()
 
     for ax, p in zip(axes, params):
-        xs, pf, nom = scan_results[p]
+        xs, pf, nom, n_s = scan_results[p]
+        ci = np.array([wilson_interval(int(round(v * n_s / 100.0)), n_s) for v in pf]) * 100
         ax.axhspan(85, 100, color=_GOOD, alpha=0.07, zorder=0)
         ax.axhline(85, color=_GOOD, lw=1.0, ls=(0, (4, 3)), alpha=0.7, zorder=1)
+        ax.fill_between(xs, ci[:, 0], ci[:, 1], color=_BLUE, alpha=0.15, lw=0, zorder=2)
         ax.plot(xs, pf, "-", color=_BLUE, lw=2.2, zorder=3)
         ax.plot(xs, pf, "o", color=_BLUE, ms=4, zorder=4,
                 markeredgecolor=_SURF, markeredgewidth=0.8)
@@ -6635,21 +6653,29 @@ def fig_scan(scan_results, save_dir=None):
         ax.annotate("design", xy=(nom, 8), fontsize=8, color=_INK2, ha="center",
                     rotation=90,
                     bbox=dict(boxstyle="round,pad=0.15", fc=_SURF, ec=_GRIDC, alpha=0.9))
+        if reference is not None:
+            r, r_lo, r_hi = reference
+            ax.errorbar([nom], [r], yerr=[[r - r_lo], [r_hi - r]], fmt="D",
+                        color=_INK, ms=5, capsize=3, lw=1.2, zorder=5)
         ax.set_xlabel(f"{_NICE.get(p, p)}  {_UNIT.get(p, '')}", fontsize=10)
         ax.set_ylim(0, 100)
         ax.set_xlim(xs.min(), xs.max())
         ax.grid(axis="y", alpha=0.7)
         ax.set_axisbelow(True)
-    axes[0].set_ylabel("feasible fraction  [%]", fontsize=10)
+    axes[0].set_ylabel("feasible as designed  [%]", fontsize=10)
     if len(axes) > 2:
-        axes[2].set_ylabel("feasible fraction  [%]", fontsize=10)
+        axes[2].set_ylabel("feasible as designed  [%]", fontsize=10)
     for ax in axes[len(params):]:
         ax.axis("off")
 
     fig.suptitle("How feasibility responds to each design choice",
                  fontsize=13, fontweight="bold", color=_INK, x=0.5)
-    fig.text(0.5, 0.005, "shaded band = safe zone (>= 85% feasible);  "
-             "dashed line = design value", ha="center", fontsize=9, color=_MUTED)
+    note = ("as designed: no Tbar retuning, no CS flux relief;  band = 95% interval "
+            f"({scan_results[params[0]][3]} samples per point);  "
+            "shaded zone = >= 85% feasible;  dashed line = design value")
+    if reference is not None:
+        note += ";  diamond = main study"
+    fig.text(0.5, 0.005, note, ha="center", fontsize=8.5, color=_MUTED)
     fig.tight_layout(rect=(0, 0.03, 1, 0.96))
     return _save(fig, save_dir, "uq_scan_feasibility")
 

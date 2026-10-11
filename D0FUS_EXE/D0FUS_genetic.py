@@ -30,30 +30,33 @@ for scale invariance:
                    available.
   - 'nelder-mead'  scipy.optimize.minimize with method 'Nelder-Mead'
                    and bound support. Derivative-free simplex, robust
-                   to the step discontinuities introduced by the
-                   stability penalties.
+                   to the step of the fitness at the constraint
+                   boundaries (feasibility band).
 
 Constraints
 -----------
-Stability and engineering constraints are enforced multiplicatively on
-the fitness through compute_stability_penalty and check_radial_build:
-  - Density limit (model-selectable)    nbar_line < nG
+Feasibility follows the shared RUN rule (D0FUS_run.evaluate_feasibility),
+so a design ranked feasible here is reported FEASIBLE by RUN:
+  - Density limit (model-selectable)    nbar_line / nG             <= 1
     where nG is the effective cap of config.density_limit_model
     ('greenwald' | 'giacomin' | 'zanca') scaled by Greenwald_limit
-  - Normalised beta limit               betaT     < betaN
-  - Kink safety factor                  q_kink    > q_limit  (q* or q95)
-  - Sheffield capital-cost ceiling      C_invest  < C_invest_max
-  - Positive innermost radial build     r_d       > 0
-  - Finite TF / CS thicknesses          c_TF, d_CS > 1 mm
-The step + quadratic penalty form keeps marginal violations expensive
-while bounding penalty growth so the GA can still extract useful
-genetic material from severely violated designs.
+  - Troyon beta limit                   betaN_total / betaN_limit  <= 1
+  - Kink safety factor                  q_limit / q_kink           <= 1
+    (q_kink = q* or q95 according to config.kink_parameter)
+  - Plasma-current ceiling (optional)   Ip / Ip_limit              <= 1
+  - Radial build closure                r_d > 0, c_TF and d_CS > 1 mm
+A design whose radial build does not close receives the PENALTY_VALUE
+sentinel. The other designs are ranked feasible first, on the objective,
+then infeasible ones by their total violation (Deb's rules, see
+compute_feasibility_fitness). The capital-cost ceiling C_invest_max is
+soft: the objective is multiplied by 1 + 3 x^2, x being the relative
+overshoot of C_invest.
 
 Fitness objectives
 ------------------
 Selected via 'fitness_objective' in the input file:
-  - 'COE'       cost of electricity (Sheffield 2016, EUR/MWh) under a
-                hard C_invest_max ceiling. Default.
+  - 'COE'       cost of electricity (Sheffield 2016, EUR/MWh) under the
+                soft C_invest_max ceiling. Default.
   - 'volume'    machine-volume proxy (V_BB + V_TF + V_CS) / P_fus.
   - 'C_invest'  total capital cost (Sheffield 2016, M EUR).
   - 'P_elec'    net electric power (maximised).
@@ -158,13 +161,17 @@ except ModuleNotFoundError:
 # Project-specific D0FUS imports (kept here because they describe this
 # module's direct dependencies inside the D0FUS source tree). DEAP is already
 # provided by the centralised D0FUS_import wildcard above, so it is not
-# re-imported here. Cost and radial-build closure come from the shared RUN
-# evaluators (evaluate_costs, radial_build_check), identical in every mode.
-from D0FUS_BIB.D0FUS_parameterization import GlobalConfig, DEFAULT_CONFIG, coerce_input_value, resolve_deprecated_key
+# re-imported here. Feasibility (plasma limits and radial-build closure) and
+# cost come from the shared RUN evaluators (evaluate_feasibility,
+# evaluate_costs), identical in every mode.
+from D0FUS_BIB.D0FUS_parameterization import (GlobalConfig, DEFAULT_CONFIG, coerce_input_value,
+                                               resolve_deprecated_key, LEGACY_SPLIT_KEYS,
+                                               apply_legacy_split_keys)
 from D0FUS_BIB.D0FUS_cost_data import *
 from D0FUS_EXE.D0FUS_run import (run, save_run_output, resolve_operating_point,
                                   core_plasma_values, evaluate_costs,
-                                  radial_build_check as check_radial_build)
+                                  evaluate_feasibility, new_output_dir,
+                                  default_output_root)
 
 # Backwards-compatible alias: some legacy parts of the file may still use
 # the `dc_replace` name (and the docstring references it).
@@ -186,15 +193,12 @@ dc_replace = replace
 VALID_FITNESS_OBJECTIVES = ('COE', 'volume', 'C_invest', 'P_elec', 'R0')
 
 # =============================================================================
-# run() return-tuple index map  (v3 — 93 outputs)
+# run() return-tuple index map (indices 0-148 of the 165 outputs)
 #
-# This dictionary is the SINGLE SOURCE OF TRUTH for mapping symbolic names
-# to positional indices in the tuple returned by run().  Both
-# evaluate_individual() and debug_single_run() reference it so that a
-# change in run()'s return ordering only requires an update here.
-#
-# Indices 0–80  : physics outputs (unchanged from v2)
-# Indices 81–92 : cable-level conductor fractions (TF then CS)
+# This dictionary maps symbolic names to positional indices in the tuple
+# returned by run(). debug_single_run() and the final report of
+# run_genetic_optimization() use it. The feasibility and cost of a design
+# come from the shared RUN evaluators (evaluate_feasibility, evaluate_costs).
 # =============================================================================
 _IDX = {
     # ── Fields and plasma ──────────────────────────────────────────────────
@@ -226,7 +230,7 @@ _IDX = {
     'eta_CD':     24,
     'P_elec':     25,
     'P_wallplug': 26,
-    'cost':       27,   # Machine volume proxy [m³]
+    'cost':       27,   # Machine volume proxy (V_BB + V_TF + V_CS) / P_fus [m³/MW]
     'P_Brem':     28,
     'P_syn':      29,
     'P_line':     30,
@@ -378,7 +382,7 @@ current_run_directory = None
 PENALTY_VALUE = 1e6
 
 # ---------------------------------------------------------------------------
-# Feasibility-first (epsilon-relaxed Deb) ranking parameters.
+# Feasibility-first (Deb) ranking parameters.
 #
 # With a purely multiplicative penalty a cheap but constraint-violating design
 # can outrank an expensive but feasible one (a large enough cost advantage
@@ -391,9 +395,9 @@ PENALTY_VALUE = 1e6
 # a flat PENALTY_VALUE wall: near-boundary "bridge" designs are preserved.
 #
 #   EPSILON : aggregate relative violation tolerated inside the acceptable band
-#             [-]. A design is pushed into the rejected band only once it
-#             exceeds a limit by MORE than this margin, so it is not rejected
-#             for an infinitesimal overshoot. Set to 0.0 for strict Deb.
+#             [-]. Default 0.0 (strict Deb): a design ranked acceptable is
+#             FEASIBLE for RUN. A positive value lets the optimum sit up to
+#             EPSILON beyond a limit, which RUN then reports as infeasible.
 #   FLOOR   : fitness threshold (in objective units) at which the infeasible
 #             band starts. It must sit above the largest objective value any
 #             feasible design can take and below PENALTY_VALUE. The default,
@@ -401,9 +405,95 @@ PENALTY_VALUE = 1e6
 #             objectives with a wide margin while staying below the sentinel.
 #   GAIN    : slope of the violation gradient inside the infeasible band [-].
 # ---------------------------------------------------------------------------
-DEFAULT_FEASIBILITY_EPSILON   = 0.02                 # tolerated aggregate violation [-]
+DEFAULT_FEASIBILITY_EPSILON   = 0.0                  # tolerated aggregate violation [-]
 DEFAULT_INFEASIBLE_FLOOR      = 0.1 * PENALTY_VALUE  # infeasible band threshold (obj. units)
 DEFAULT_FEASIBILITY_BAND_GAIN = 1.0                  # in-band violation gradient slope [-]
+
+# ---------------------------------------------------------------------------
+# Deck settings that are not GlobalConfig fields: name -> (default, type).
+# Precedence: explicit argument of run_genetic_optimization (or CLI option),
+# then the deck, then the default below.
+#
+# GA_SETTINGS are read by the driver. FITNESS_SETTINGS are read by
+# evaluate_individual and therefore stay in static_inputs, which travels to
+# the parallel workers with the design inputs.
+# ---------------------------------------------------------------------------
+GA_SETTINGS = {
+    'population_size':           (200,   int),
+    'generations':               (50,    int),
+    'crossover_rate':            (0.7,   float),
+    'mutation_rate':             (0.3,   float),
+    'patience':                  (20,    int),    # generations without improvement before stopping
+    'seed':                      (None,  int),    # None: drawn at random, then recorded
+    'n_workers':                 (1,     int),
+    'local_refine_method':       (None,  str),    # 'gradient', 'lbfgsb', 'nelder-mead' or none
+    'local_refine_top_k':        (3,     int),
+    'local_refine_every':        (0,     int),
+    'diversity_inject_fraction': (0.30,  float),
+    'cloud_refinement_min_dist': (0.05,  float),
+    'make_gif':                  (False, bool),
+    'gif_var_x':                 ('a',   str),
+    'gif_var_y':                 ('R0',  str),
+    'gif_resolution':            (30,    int),
+    'gif_log_scale':             (True,  bool),
+    'gif_fps':                   (8,     int),
+}
+FITNESS_SETTINGS = {
+    'fitness_objective':         ('COE', str),
+    'feasibility_epsilon':       (DEFAULT_FEASIBILITY_EPSILON,   float),
+    'infeasible_floor':          (DEFAULT_INFEASIBLE_FLOOR,      float),
+    'feasibility_band_gain':     (DEFAULT_FEASIBILITY_BAND_GAIN, float),
+    'density_violation_weight':  (1.0,   float),
+    'beta_violation_weight':     (1.0,   float),
+    'q_kink_violation_weight':   (1.0,   float),
+    'Ip_violation_weight':       (1.0,   float),
+    'Ip_soft_start':             (None,  float),
+    'Ip_soft_penalty':           (None,  float),
+}
+# Local optimiser knobs, written local_refine_<name> in the deck
+REFINE_KNOBS = {
+    'max_iters': int, 'max_backtrack': int,
+    'h': float, 'step_init': float, 'c1': float, 'tol_grad': float,
+    'tol_step': float, 'ftol': float, 'gtol': float, 'eps': float,
+    'xatol': float, 'fatol': float, 'initial_simplex_scale': float,
+}
+VALID_REFINE_METHODS = ('gradient', 'lbfgsb', 'nelder-mead')
+
+
+def _parse_setting(name, value, kind):
+    """
+    Convert a deck or argument value to the type of a GA setting.
+
+    Integers written as floats (1e3, 200.0) are accepted when they are
+    whole numbers. 'none' maps to None. A malformed value raises a
+    ValueError naming the setting, at parsing time rather than after the GA.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip().lower() in ('none', 'off', ''):
+        return None
+    try:
+        if kind is bool:
+            if isinstance(value, (bool, np.bool_)):
+                return bool(value)
+            low = str(value).strip().lower()
+            if low in ('1', 'true', 'yes', 'on'):
+                return True
+            if low in ('0', 'false', 'no', 'off'):
+                return False
+            raise ValueError
+        if kind is int:
+            v = float(value)
+            if not v.is_integer():
+                raise ValueError
+            return int(v)
+        if kind is float:
+            return float(value)
+        return str(value).strip()
+    except (TypeError, ValueError):
+        raise ValueError(f"GA setting '{name}': cannot read {value!r} "
+                         f"as {kind.__name__}.") from None
+
 
 #%% DEAP Setup
 if not hasattr(creator, "FitnessMin"):
@@ -486,8 +576,8 @@ def _opt_float(value):
     Input-file values for keys that are not ``GlobalConfig`` fields can reach the
     optimiser as plain strings (the parser only type-coerces known dataclass
     fields). This maps a *set* value to ``float`` and leaves an *unset* value
-    (``None``) untouched, so the caller's strengthened default is used. Any value
-    that cannot be parsed as a real number degrades gracefully to ``None``.
+    (``None``) untouched, so the caller's default is used. Any value that cannot
+    be parsed as a real number degrades gracefully to ``None``.
     """
     if value is None:
         return None
@@ -495,188 +585,6 @@ def _opt_float(value):
         return float(value)
     except (TypeError, ValueError):
         return None
-
-
-def compute_stability_penalty(nbar_line, nG, betaT, betaN, q_kink,
-                               q_min=DEFAULT_CONFIG.q_limit,
-                               betaN_limit=DEFAULT_CONFIG.betaN_limit,
-                               Ip=None, Ip_limit=None,
-                               penalty_step=2.0,
-                               penalty_lin=10.0,
-                               penalty_slope=20.0,
-                               margin_width=0.05,
-                               margin_amplitude=0.15,
-                               # Ip-specific (strengthened) penalty knobs. Left None here;
-                               # resolved to a strengthened multiple of the shared
-                               # coefficients in the body, and overridable per input deck.
-                               Ip_penalty_step=None,
-                               Ip_penalty_lin=None,
-                               Ip_penalty_slope=None,
-                               Ip_margin_width=None,
-                               Ip_margin_amplitude=None):
-    """
-    Step + quadratic penalty for stability violations.
-
-    Plasma-current overshoot (Ip > Ip_limit) is penalised with its OWN,
-    stronger coefficients (Ip_penalty_step / Ip_penalty_lin / Ip_penalty_slope,
-    defaulting to about 2 to 2.5 times the shared coefficients), so the GA
-    stops favouring slightly over-current designs and instead consolidates the
-    rare Ip-feasible ones. The penalty keeps the same smooth, finite,
-    gradient-preserving step+quadratic shape (it is never a hard kill), so
-    near-boundary infeasible designs survive in the gene pool as bridges toward
-    the feasible region. All five Ip knobs are overridable from the input deck
-    (e.g. ``Ip_penalty_step = 6.0``); calibrate them against a given machine's
-    cost-versus-current leverage with ``test_Ip_penalty.py``.
-
-    Design philosophy
-    -----------------
-    Two requirements must be satisfied simultaneously:
-
-    1. NO MARGINAL CHEATING — crossing a stability boundary must always
-       cost more than any COE gain.  This is achieved by a *step*
-       penalty at the boundary: fitness is immediately ×3 worse.
-
-    2. BOUNDED GROWTH — even severely violated designs must stay below
-       PENALTY_VALUE / 2 so the GA keeps them in the gene pool and can
-       extract useful genetic material.  A quadratic (not exponential)
-       growth guarantees this.
-
-    3. GENTLE MARGIN PREFERENCE — the margin zone provides a *small*
-       nudge toward designs with more headroom, but must NOT create a
-       wall that prevents the GA from exploring near-limit designs.
-       Good tokamak designs (ITER, DEMO) operate within 5–10% of
-       stability limits — this is a feature, not a bug.
-
-       margin_amplitude = 0.15 → at the boundary (0% margin), the
-       fitness is multiplied by 1.15 (a 15% cost surcharge).
-       At 5% margin, penalty → 0 (no surcharge).
-
-    penalty_per_constraint (violation)  = penalty_step + penalty_lin × excess + penalty_slope × excess²
-    penalty_per_constraint (margin zone) = margin_amplitude × (1 − margin)³
-
-    Examples (per constraint, violation side):
-      At boundary (ε → 0⁺):  2.0             → multiplier ≈ 3.0
-      At 10% excess:         2.0 + 1.0 + 0.2 = 3.2 → multiplier ≈ 4.2
-
-    Examples (per constraint, margin zone):
-      At 0% margin (just feasible):  0.15     → multiplier ≈ 1.15
-      At 2% margin:                  0.054    → multiplier ≈ 1.054
-      At 5% margin:                  0.0      → multiplier = 1.0
-
-    Parameters
-    ----------
-    nbar_line : float
-        Line-averaged density [10²⁰ m⁻³].
-    nG : float
-        Greenwald density limit [10²⁰ m⁻³].
-    betaT : float
-        Toroidal beta (fraction; multiply by 100 for %).
-    betaN : float
-        Normalized beta limit [% m T / MA].
-    q_kink : float
-        Kink safety factor — either q* or q95 depending on
-        config.kink_parameter (selected upstream by the caller).
-    q_min : float
-        Minimum safety factor threshold (must match the convention
-        used for q_kink: ~2–2.5 for q*, ~3–3.5 for q95).
-    penalty_step : float
-        Discontinuity cost at the stability boundary.  A value of 2.0
-        means the fitness is multiplied by ≥ 3 for any violation.
-    penalty_lin : float
-        Linear growth coefficient beyond the boundary.  Provides a non-zero
-        slope AT the boundary so a barely-infeasible design is pulled back to
-        the limit; must exceed ~3x the cost elasticity to remove the infeasible
-        local minimum.
-    penalty_slope : float
-        Quadratic growth coefficient beyond the boundary.
-    margin_width : float
-        Width of the margin zone as a fraction of the limit (default 0.05 = 5%).
-    margin_amplitude : float
-        Maximum penalty in the margin zone (default 0.15 → ×1.15 at boundary).
-    """
-    violations = {}
-    penalty_terms = []
-
-    # Resolve the Ip-specific coefficients. When not provided explicitly they
-    # fall back to a strengthened multiple of the shared coefficients, which
-    # keeps a single tuning origin while making the current ceiling markedly
-    # harder to cross than the density, beta and kink limits.
-    Ip_penalty_step     = (2.0 * penalty_step)  if Ip_penalty_step     is None else Ip_penalty_step
-    Ip_penalty_lin      = (2.5 * penalty_lin)   if Ip_penalty_lin      is None else Ip_penalty_lin
-    Ip_penalty_slope    = (2.5 * penalty_slope) if Ip_penalty_slope    is None else Ip_penalty_slope
-    Ip_margin_width     = margin_width          if Ip_margin_width     is None else Ip_margin_width
-    Ip_margin_amplitude = margin_amplitude      if Ip_margin_amplitude is None else Ip_margin_amplitude
-    
-    # Density limit: nbar_line < nG
-    if nG > 0:
-        density_ratio = nbar_line / nG
-        if density_ratio > 1.0:
-            excess = density_ratio - 1.0
-            penalty = penalty_step + penalty_lin * excess + penalty_slope * excess ** 2
-            penalty_terms.append(penalty)
-            violations['density'] = {
-                'value': float(nbar_line), 'limit': float(nG),
-                'ratio': float(density_ratio)
-            }
-        elif density_ratio > (1.0 - margin_width):
-            margin_used = (density_ratio - (1.0 - margin_width)) / margin_width
-            penalty_terms.append(margin_amplitude * margin_used ** 3)
-    
-    # Troyon beta limit: normalised beta_N must stay below betaN_limit
-    if betaN_limit > 0:
-        beta_ratio = betaN / betaN_limit
-        if beta_ratio > 1.0:
-            excess = beta_ratio - 1.0
-            penalty = penalty_step + penalty_lin * excess + penalty_slope * excess ** 2
-            penalty_terms.append(penalty)
-            violations['beta'] = {
-                'value': float(betaN), 'limit': float(betaN_limit),
-                'ratio': float(beta_ratio)
-            }
-        elif beta_ratio > (1.0 - margin_width):
-            margin_used = (beta_ratio - (1.0 - margin_width)) / margin_width
-            penalty_terms.append(margin_amplitude * margin_used ** 3)
-    
-    # Plasma-current ceiling: Ip must stay below Ip_limit (disruption headroom).
-    # Uses the STRONGER Ip-specific coefficients resolved above. The guard now
-    # also accepts NumPy scalar types and rejects non-finite limits, so a limit
-    # read as np.float64 / np.int64 is not silently treated as "no limit"
-    # (which would disable the penalty entirely).
-    if (Ip is not None
-            and isinstance(Ip_limit, (int, float, np.integer, np.floating))
-            and np.isfinite(Ip_limit) and Ip_limit > 0):
-        ip_ratio = Ip / Ip_limit
-        if ip_ratio > 1.0:
-            excess = ip_ratio - 1.0
-            penalty = (Ip_penalty_step
-                       + Ip_penalty_lin * excess
-                       + Ip_penalty_slope * excess ** 2)
-            penalty_terms.append(penalty)
-            violations['Ip'] = {
-                'value': float(Ip), 'limit': float(Ip_limit),
-                'ratio': float(ip_ratio)
-            }
-        elif ip_ratio > (1.0 - Ip_margin_width):
-            margin_used = (ip_ratio - (1.0 - Ip_margin_width)) / Ip_margin_width
-            penalty_terms.append(Ip_margin_amplitude * margin_used ** 3)
-    
-    # Kink safety factor: q_kink > q_min  (q_kink = q* or q95)
-    if q_kink < q_min:
-        deficit = (q_min - q_kink) / q_min
-        penalty = penalty_step + penalty_lin * deficit + penalty_slope * deficit ** 2
-        penalty_terms.append(penalty)
-        violations['q_kink'] = {
-            'value': float(q_kink), 'limit': float(q_min),
-            'ratio': float(q_kink / q_min)
-        }
-    elif q_kink < q_min * (1.0 + margin_width):
-        margin = (q_kink - q_min) / (q_min * margin_width)
-        penalty_terms.append(margin_amplitude * (1 - margin) ** 3)
-    
-    total_penalty = 1.0 + sum(penalty_terms)
-    is_stable = len(violations) == 0
-    
-    return is_stable, total_penalty, violations
 
 
 def compute_Ip_soft_multiplier(Ip, Ip_soft_start, Ip_limit, Ip_soft_penalty):
@@ -728,15 +636,12 @@ def compute_Ip_soft_multiplier(Ip, Ip_soft_start, Ip_limit, Ip_soft_penalty):
 
 def _safe_real(value):
     """
-    Coerce a scalar to a real float, returning NaN for complex / non-finite.
+    Real part of a scalar as a float, NaN when it is not finite.
 
-    Some physics functions produce complex128 when a square root receives a
-    negative argument (unphysical parameter combination).  Rather than
-    letting the TypeError propagate, we silently map these to NaN so the
-    radial-build validity check rejects the design cleanly.
+    Same convention as RUN (evaluate_feasibility, evaluate_costs), which
+    read float(np.real(x)), so that the GA and RUN judge a design on the
+    same numbers.
     """
-    if isinstance(value, (complex, np.complexfloating)):
-        return np.nan
     try:
         v = float(np.real(value))
         return v if np.isfinite(v) else np.nan
@@ -744,46 +649,41 @@ def _safe_real(value):
         return np.nan
 
 
-def _total_relative_violation(violations, weights=None):
-    """
-    Aggregate constraint violations into a single dimensionless measure.
+# Feasibility ratio of evaluate_feasibility -> deck key of its weight
+_VIOLATION_WEIGHT_KEYS = {
+    'density': 'density_violation_weight',
+    'beta':    'beta_violation_weight',
+    'q':       'q_kink_violation_weight',
+    'Ip':      'Ip_violation_weight',
+}
 
-    Each violated constraint contributes the magnitude of its relative
-    departure from the limit, ``|ratio - 1|``. For the upper limits (density,
-    beta, Ip) ``ratio`` is value / limit, so an overshoot gives ratio > 1; for
-    the lower q limit ``ratio`` is q_kink / q_min, so a deficit gives
-    ratio < 1. Taking the absolute value makes every violation contribute
-    positively. The contributions are summed (optionally weighted per
-    constraint), yielding a scalar that is exactly 0 for a strictly feasible
-    design and grows with the severity of the violation.
+
+def _feasibility_violation(ratios, weights=None):
+    """
+    Total relative violation of the RUN feasibility ratios.
+
+    Each ratio of evaluate_feasibility must stay <= 1 (density, beta, q
+    written q_limit / q_kink, and Ip when Ip_limit is set). A ratio r
+    contributes w * max(0, r - 1). The sum is exactly 0 for a design that
+    RUN reports FEASIBLE (radial build apart) and grows with the violation.
 
     Parameters
     ----------
-    violations : dict
-        The mapping returned by ``compute_stability_penalty``. Keys are
-        constraint names ('density', 'beta', 'Ip', 'q_kink'); each value holds
-        at least a 'ratio' entry.
-    weights : dict or None
-        Optional per-constraint weights (default 1.0 each). Increasing a weight
-        makes that constraint's violation count more heavily, i.e. the search
-        is pushed to cure it first. A weight of 0.0 removes that constraint
-        from the feasibility measure entirely (use with care).
+    ratios  : dict  evaluate_feasibility(...)['ratios'].
+    weights : dict or None  Weight per ratio name (default 1.0). A larger
+              weight makes the search cure that violation first.
 
     Returns
     -------
-    float
-        Total (weighted) relative violation, >= 0.0.
+    float  Total weighted violation >= 0, or NaN if a ratio is not finite.
     """
-    if not violations:
-        return 0.0
     total = 0.0
-    for name, info in violations.items():
-        try:
-            ratio = float(info.get('ratio', 1.0))
-        except (TypeError, ValueError, AttributeError):
-            ratio = 1.0
+    for name, r in ratios.items():
+        r = _safe_real(r)
+        if not np.isfinite(r):
+            return np.nan
         w = 1.0 if weights is None else float(weights.get(name, 1.0))
-        total += w * abs(ratio - 1.0)
+        total += w * max(0.0, r - 1.0)
     return total
 
 
@@ -794,20 +694,21 @@ def compute_feasibility_fitness(raw_fitness, total_violation, objective,
                                 band_gain=DEFAULT_FEASIBILITY_BAND_GAIN):
     """
     Map (objective value, aggregate violation) to a single MINIMISED fitness
-    enforcing epsilon-relaxed feasibility-first ranking.
+    enforcing feasibility-first ranking (Deb 2000).
 
     The DEAP fitness is minimised (weights = (-1.0,)), so 'smaller is better'.
     Two bands are produced.
 
     Acceptable band (total_violation <= epsilon)
-        ``fitness = raw objective`` times the soft budget multiplier. The
-        design is ranked purely on objective merit. This band contains strictly
-        feasible designs (violation 0) and designs that exceed a limit by no
-        more than epsilon, so a design is not rejected for an infinitesimal
-        overshoot (epsilon is the breathing room; epsilon = 0 recovers strict
-        Deb). A clamp keeps the value strictly below ``infeasible_floor`` so an
-        acceptable design can never enter the infeasible band, even if
-        ``infeasible_floor`` were mis-set below the objective scale.
+        The raw objective, penalised by the soft budget multiplier m >= 1:
+        ``fitness = raw + |raw| (m - 1)``. This equals raw * m for a positive
+        objective and moves a negative one (-P_elec) towards zero, so a
+        budget overshoot always worsens the fitness. With epsilon = 0 (the
+        default) this band holds exactly the designs that RUN reports
+        feasible. A clamp keeps the value strictly below
+        ``infeasible_floor`` so an acceptable design can never enter the
+        infeasible band, even if ``infeasible_floor`` were mis-set below the
+        objective scale.
 
     Infeasible band (total_violation > epsilon)
         ``fitness = infeasible_floor * (1 + band_gain * (total_violation - epsilon))``.
@@ -818,11 +719,6 @@ def compute_feasibility_fitness(raw_fitness, total_violation, objective,
         toward the boundary; this is a slope, not a wall. The value is capped
         just below PENALTY_VALUE so structurally invalid designs (returned as
         PENALTY_VALUE elsewhere) remain the worst of all.
-
-    For the maximisation objective 'P_elec' (stored as raw_fitness = -P_elec,
-    a negative number) the acceptable-band value divides by the budget
-    multiplier and needs no clamp, a negative value being always below the
-    positive floor.
 
     Notes
     -----
@@ -841,9 +737,7 @@ def compute_feasibility_fitness(raw_fitness, total_violation, objective,
         infeasible_floor = DEFAULT_INFEASIBLE_FLOOR
 
     if total_violation <= epsilon:
-        if objective == 'P_elec':
-            return raw_fitness / budget_multiplier
-        fitness = raw_fitness * budget_multiplier
+        fitness = raw_fitness + abs(raw_fitness) * (budget_multiplier - 1.0)
         # An acceptable design must never reach the infeasible band.
         return min(fitness, infeasible_floor * (1.0 - 1e-9))
 
@@ -858,11 +752,16 @@ def evaluate_individual(individual, verbose=False):
     """
     Evaluate the fitness of a single individual.
 
-    Uses the centralised ``_IDX`` map for all tuple indexing so that any
-    change in run()'s return ordering is automatically propagated.
+    The design is run with run(), then judged with the shared RUN
+    evaluators: evaluate_feasibility for the constraints and
+    evaluate_costs for the Sheffield cost. The objective is read from
+    static_inputs['fitness_objective'] (see VALID_FITNESS_OBJECTIVES).
 
-    The fitness objective is read from ``static_inputs['fitness_objective']``
-    (default: 'volume').  See VALID_FITNESS_OBJECTIVES for options.
+    Returns
+    -------
+    tuple  (fitness,), minimised. PENALTY_VALUE when run() fails, the
+           radial build does not close, a constraint ratio or the objective
+           is not finite.
     """
     try:
         param_dict = {k: individual[i] for i, k in enumerate(param_keys)}
@@ -876,111 +775,54 @@ def evaluate_individual(individual, verbose=False):
             warnings.simplefilter('ignore')
             output = run(config, verbose=0)
 
-        # ── Guard against any residual non-finite output ─────────────────
-        cost      = _safe_real(output[_IDX['cost']])
-        nbar_line = _safe_real(output[_IDX['nbar_line']])
-        nG        = _safe_real(output[_IDX['nG']])
-        betaN       = _safe_real(output[_IDX['betaN']])
-        betaN_total = _safe_real(output[_IDX['betaN_total']])
-        betaT       = _safe_real(output[_IDX['betaT']])
-        qstar     = _safe_real(output[_IDX['qstar']])
-        q95       = _safe_real(output[_IDX['q95']])
-        R0_abcd   = _safe_real(output[_IDX['r_d']])
-        c_TF      = _safe_real(output[_IDX['c']])
-        d_CS      = _safe_real(output[_IDX['d']])
-        Ip        = _safe_real(output[_IDX['Ip']])
-
-        # Select kink parameter (q* or q95) for stability checks.
-        _kink_param = static_inputs.get('kink_parameter', DEFAULT_CONFIG.kink_parameter)
-        q_kink = q95 if _kink_param == 'q95' else qstar
-
-        # ── Radial build validity check ──────────────────────────────────
-        is_valid, reason = check_radial_build(
-            cost, R0_abcd, c_TF, d_CS, q_kink, betaT, nbar_line)
-        if not is_valid:
+        # ── Feasibility: same rule as the RUN verdict ────────────────────
+        fz = evaluate_feasibility(config, output)
+        if not fz['build_ok']:
             if verbose:
-                print(f"  [PENALTY] radial build: {reason}")
-                print(f"    cost={cost:.4g}  r_d={R0_abcd:.4g}  "
-                      f"c_TF={c_TF:.4g}  d_CS={d_CS:.4g}")
+                print(f"  [PENALTY] radial build: {fz['build_reason']}")
+            return (PENALTY_VALUE,)
+        weights = {name: _opt_float(static_inputs.get(key)) for name, key
+                   in _VIOLATION_WEIGHT_KEYS.items()}
+        weights = {k: (1.0 if v is None else v) for k, v in weights.items()}
+        total_violation = _feasibility_violation(fz['ratios'], weights)
+        if not np.isfinite(total_violation):
+            if verbose:
+                print(f"  [PENALTY] non-finite constraint ratio: {fz['ratios']}")
             return (PENALTY_VALUE,)
 
-        # ── Stability penalty ────────────────────────────────────────────
-        q_lim = static_inputs.get('q_limit', DEFAULT_CONFIG.q_limit)
-        # Troyon check uses the toroidal beta_N incl. fast alphas (betaN_total).
-        is_stable, penalty_multiplier, violations = compute_stability_penalty(
-            nbar_line, nG, betaT, betaN_total, q_kink,
-            q_min=q_lim,
-            betaN_limit=static_inputs.get('betaN_limit', DEFAULT_CONFIG.betaN_limit),
-            Ip=Ip, Ip_limit=static_inputs.get('Ip_limit', DEFAULT_CONFIG.Ip_limit),
-            # Optional per-deck overrides of the strengthened Ip penalty. Unset
-            # values arrive as None, so compute_stability_penalty applies its own
-            # strengthened Ip defaults. Calibrate with test_Ip_penalty.py.
-            Ip_penalty_step=_opt_float(static_inputs.get('Ip_penalty_step')),
-            Ip_penalty_lin=_opt_float(static_inputs.get('Ip_penalty_lin')),
-            Ip_penalty_slope=_opt_float(static_inputs.get('Ip_penalty_slope')),
-            Ip_margin_width=_opt_float(static_inputs.get('Ip_margin_width')),
-            Ip_margin_amplitude=_opt_float(static_inputs.get('Ip_margin_amplitude')),
-        )
-
-        # ── Compute fitness value based on selected objective ────────────
+        # ── Objective ────────────────────────────────────────────────────
         objective = static_inputs.get('fitness_objective', 'COE')
-
-        # Capital cost (Sheffield), computed for COE / C_invest / P_elec
-        # objectives.  Used both as a fitness metric and for the budget
-        # ceiling constraint.  Remains NaN for the 'volume' legacy proxy.
-        _C_inv = np.nan
+        # Sheffield cost (shared RUN evaluator, exact RUN volumes). Needed by
+        # the cost objectives and by the C_invest_max budget of 'P_elec'.
+        _cres = (evaluate_costs(config, output)
+                 if objective in ('COE', 'C_invest', 'P_elec') else {})
+        _C_inv = _safe_real(_cres.get('C_invest', np.nan))
 
         if objective == 'volume':
-            # Legacy cost proxy: (V_blanket + V_TF_one*N_TF + V_CS_geom) / P_fus [m^3/MW]
-            raw_fitness = cost
-
+            # (V_BB + V_TF + V_CS) / P_fus [m^3/MW]
+            raw_fitness = _safe_real(output[_IDX['cost']])
         elif objective == 'R0':
-            # Compact-machine objective: minimise the major radius [m].
-            # R0 is a design variable (config.R0), so the GA drives the
-            # design toward the smallest major radius that still satisfies
-            # every physics and engineering constraint. The stability and
-            # radial-build penalties below inflate R0 for infeasible
-            # designs, keeping the search inside the feasible region.
-            # The C_invest_max ceiling is intentionally left inactive
-            # here (as for 'volume'), since _C_inv stays NaN.
+            # Most compact machine satisfying every constraint [m]
             raw_fitness = _safe_real(config.R0)
-
-        elif objective in ('COE', 'C_invest', 'P_elec'):
-            # Sheffield (2016) cost, shared RUN evaluator (exact RUN volumes)
-            P_elec = _safe_real(output[_IDX['P_elec']])
-            _cres = evaluate_costs(config, output)
-            if not _cres:
-                if verbose:
-                    print("  [PENALTY] non-finite cost inputs")
-                return (PENALTY_VALUE,)
-            _COE   = _safe_real(_cres['COE'])        # COE [EUR/MWh]
-            _C_inv = _safe_real(_cres['C_invest'])   # C_invest [M EUR]
-
-            if objective == 'COE':
-                raw_fitness = _COE
-            elif objective == 'C_invest':
-                raw_fitness = _C_inv
-            else:  # P_elec
-                raw_fitness = -P_elec if np.isfinite(P_elec) else PENALTY_VALUE
-
-        else:
-            # Fallback to volume proxy
-            raw_fitness = cost
+        elif objective == 'COE':
+            raw_fitness = _safe_real(_cres.get('COE', np.nan))
+        elif objective == 'C_invest':
+            raw_fitness = _C_inv
+        else:  # 'P_elec', maximised
+            raw_fitness = -_safe_real(output[_IDX['P_elec']])
 
         if not np.isfinite(raw_fitness) or (raw_fitness <= 0 and objective != 'P_elec'):
+            if verbose:
+                print(f"  [PENALTY] objective '{objective}' not finite or <= 0")
             return (PENALTY_VALUE,)
 
         # ── Capital cost ceiling: soft quadratic penalty ─────────────────
-        # Applied as a multiplicative factor (like the stability penalty)
-        # so it scales naturally regardless of the fitness objective.
-        #
         # penalty_budget = 1 + k * (excess)^2      k = 3.0
         #   excess = 0.04 (26 vs 25 B) → ×1.005   (barely noticeable)
         #   excess = 0.5                → ×1.75    (moderate pressure)
         #   excess = 1.0               → ×4.0     (strong, but survives)
-        #
-        # Skipped when C_invest is not available (volume objective)
-        # or when the user directly minimises C_invest (redundant).
+        # Skipped when C_invest is not available ('volume', 'R0') or when
+        # the user directly minimises C_invest (redundant).
         budget_multiplier = 1.0
         C_max = config.C_invest_max
         if (objective != 'C_invest'
@@ -995,36 +837,12 @@ def evaluate_individual(individual, verbose=False):
         # rides on the budget multiplier, so it acts inside the acceptable
         # band only and leaves the feasibility-first ranking untouched.
         budget_multiplier *= compute_Ip_soft_multiplier(
-            Ip,
+            _safe_real(output[_IDX['Ip']]),
             _opt_float(static_inputs.get('Ip_soft_start')),
-            _opt_float(static_inputs.get('Ip_limit', DEFAULT_CONFIG.Ip_limit)),
+            _opt_float(config.Ip_limit),
             _opt_float(static_inputs.get('Ip_soft_penalty')))
 
-        # ── Feasibility-first (epsilon-relaxed Deb) fitness ──────────────
-        # The multiplicative stability penalty above is superseded here for
-        # RANKING: it is kept only to produce the `violations` map (and for
-        # backward-compatible diagnostics). Ranking now uses the banded scheme
-        # of compute_feasibility_fitness, so any design within the epsilon
-        # tolerance outranks any design outside it, while infeasible designs
-        # stay ordered by total relative violation (a smooth gradient, not a
-        # flat wall, so the rare near-boundary designs survive).
-        #
-        # NOTE: because ranking is banded, the Ip_penalty_step/lin/slope knobs
-        # no longer influence selection (they only shaped the now-superseded
-        # multiplier). To make a given limit count more heavily, weight its
-        # violation instead, e.g. `Ip_violation_weight = 2.0` in the deck.
-        def _wt(key):
-            v = _opt_float(static_inputs.get(key))
-            return 1.0 if v is None else v
-
-        _vw = {
-            'density': _wt('density_violation_weight'),
-            'beta':    _wt('beta_violation_weight'),
-            'Ip':      _wt('Ip_violation_weight'),
-            'q_kink':  _wt('q_kink_violation_weight'),
-        }
-        total_violation = _total_relative_violation(violations, weights=_vw)
-
+        # ── Feasibility-first (Deb) fitness ──────────────────────────────
         _eps   = _opt_float(static_inputs.get('feasibility_epsilon'))
         _floor = _opt_float(static_inputs.get('infeasible_floor'))
         _gain  = _opt_float(static_inputs.get('feasibility_band_gain'))
@@ -1047,19 +865,30 @@ def evaluate_individual(individual, verbose=False):
 
 #%% I/O Management
 
-def initialize_run_directory(base_directory="D0FUS_OUTPUTS/genetic"):
-    """Initialize run directory"""
+def initialize_run_directory(base_directory=None):
+    """
+    Create the run directory base_directory/Genetic_D0FUS_<time>.
+    Default base_directory: the genetic/ folder of default_output_root().
+    """
     global current_run_directory
-    timestamp = datetime.now().strftime("Genetic_D0FUS_%Y%m%d_%H%M%S")
-    current_run_directory = os.path.join(base_directory, timestamp)
-    os.makedirs(current_run_directory, exist_ok=True)
+    if base_directory is None:
+        base_directory = os.path.join(default_output_root(), "genetic")
+    current_run_directory, _ = new_output_dir(base_directory, "Genetic_D0FUS")
     print(f"\n Output directory: {current_run_directory}")
     return current_run_directory
 
 #%% Input File Parsing
 
 def load_input_file(input_file):
-    """Load and parse input file"""
+    """
+    Load and parse a GENETIC input file.
+
+    Scalar lines become static inputs (GlobalConfig fields and GA
+    settings). Lines with a bracket pair, written 'key = [lo, hi]' or
+    'key : [lo, hi]', become GA-optimised parameters. Each optimised key
+    must be a numeric GlobalConfig field (deprecated aliases are resolved)
+    with lo < hi, otherwise a ValueError is raised before any evaluation.
+    """
     global opt_ranges, static_inputs, param_keys
     
     opt_ranges = {}
@@ -1070,15 +899,9 @@ def load_input_file(input_file):
 
     # Keys consumed by the GA driver itself (not GlobalConfig fields). Used to
     # suppress false warnings when checking deck keys against GlobalConfig.
-    _GA_SETTING_KEYS = {
-        'population_size', 'generations', 'crossover_rate', 'mutation_rate',
-        'n_workers', 'fitness_objective', 'C_invest_max', 'local_refine_method',
-        'local_refine_top_k', 'local_refine_every', 'local_refine_max_iters',
-        'local_refine_initial_simplex_scale', 'local_refine_kwargs',
-        'diversity_inject_fraction', 'cloud_refinement_min_dist', 'make_gif',
-        'gif_var_x', 'gif_var_y', 'gif_resolution', 'gif_log_scale', 'gif_fps',
-        'feasibility_epsilon', 'Ip_soft_start', 'Ip_soft_penalty',
-    }
+    _GA_SETTING_KEYS = (set(GA_SETTINGS) | set(FITNESS_SETTINGS)
+                        | {f'local_refine_{k}' for k in REFINE_KNOBS}
+                        | {'local_refine_kwargs'})
     
     with open(input_file, "r", encoding='utf-8') as f:
         for line_num, line in enumerate(f, 1):
@@ -1095,23 +918,40 @@ def load_input_file(input_file):
                 continue
             
             if '[' in value and ']' in value:
-                bracket_start = value.index('[')
-                bracket_end = value.index(']')
-                values_str = value[bracket_start+1:bracket_end].strip()
-                values = [v.strip() for v in values_str.replace(';', ',').split(',') if v.strip()]
-                
-                if len(values) == 2:
-                    try:
-                        min_val, max_val = float(values[0]), float(values[1])
-                        opt_ranges[key] = (min_val, max_val)
-                        # Remove from static_inputs if a scalar line was
-                        # parsed earlier for the same key — prevents the GA
-                        # value from being silently overwritten at merge time.
-                        static_inputs.pop(key, None)
-                        print(f"  {key} = [{min_val}, {max_val}] (optimize)")
-                    except ValueError:
-                        pass
+                key = resolve_deprecated_key(key)
+                values_str = value[value.index('[') + 1:value.index(']')].strip()
+                values = [v.strip() for v in values_str.replace(';', ',').split(',')
+                          if v.strip()]
+                where = f"{input_file}, line {line_num}"
+                if len(values) != 2:
+                    raise ValueError(f"{where}: '{key}' needs a range [min, max] "
+                                     f"for the GA, got [{values_str}].")
+                if key not in default_dict:
+                    import difflib
+                    _close = difflib.get_close_matches(key, default_dict.keys(),
+                                                       n=3, cutoff=0.6)
+                    raise ValueError(f"{where}: '{key}' is not a GlobalConfig "
+                                     f"field and cannot be optimised. "
+                                     f"Closest fields: {_close}")
+                if isinstance(default_dict[key], (bool, str)):
+                    raise ValueError(f"{where}: '{key}' is not numeric and "
+                                     "cannot be optimised.")
+                try:
+                    min_val, max_val = float(values[0]), float(values[1])
+                except ValueError:
+                    raise ValueError(f"{where}: '{key}' range [{values_str}] "
+                                     "is not numeric.") from None
+                if not min_val < max_val:
+                    raise ValueError(f"{where}: '{key}' range needs min < max, "
+                                     f"got [{min_val}, {max_val}].")
+                opt_ranges[key] = (min_val, max_val)
+                # Remove from static_inputs if a scalar line was
+                # parsed earlier for the same key — prevents the GA
+                # value from being silently overwritten at merge time.
+                static_inputs.pop(key, None)
+                print(f"  {key} = [{min_val}, {max_val}] (optimize)")
             else:
+                key = resolve_deprecated_key(key)
                 # Skip scalar lines for keys already declared as GA ranges
                 # (e.g. a user might have 'a = 3.0' before 'a = [2, 4]').
                 if key in opt_ranges:
@@ -1123,7 +963,8 @@ def load_input_file(input_file):
                 # falls back to its default. This is the single most common
                 # cause of an apparently healthy deck producing all-infeasible
                 # designs (e.g. a dropped TF field collapses the radial build).
-                if key not in default_dict and key not in _GA_SETTING_KEYS:
+                if (key not in default_dict and key not in _GA_SETTING_KEYS
+                        and key not in LEGACY_SPLIT_KEYS):
                     import difflib
                     _close = difflib.get_close_matches(key, default_dict.keys(),
                                                        n=3, cutoff=0.6)
@@ -1133,8 +974,19 @@ def load_input_file(input_file):
                 # a boolean such as "False" is not silently kept as the
                 # truthy string "False", and optional fields decode "None"
                 # to the Python None.
-                key = resolve_deprecated_key(key)
                 static_inputs[key] = coerce_input_value(key, value)
+
+    # Old single keys split per coil system (Chosen_Steel, σ_manual)
+    static_inputs = apply_legacy_split_keys(static_inputs)
+
+    # A Greenwald closure solves its own unknown: a gene on it would be
+    # overwritten by the solve (Tbar) or reduced to an initial guess (P_fus).
+    for gene, mode_key in (('Tbar', 'Tbar_mode'), ('P_fus', 'P_fus_mode')):
+        mode = str(static_inputs.get(mode_key, getattr(DEFAULT_CONFIG, mode_key)))
+        if gene in opt_ranges and mode.lower() == 'greenwald':
+            raise ValueError(f"'{gene}' cannot be optimised with {mode_key} = "
+                             f"greenwald: the closure solves {gene}. Set "
+                             f"{mode_key} = manual or remove the range.")
 
     # Fill defaults from GlobalConfig dataclass fields
     for field_name, default_val in default_dict.items():
@@ -1158,24 +1010,37 @@ def load_input_file(input_file):
 
 #%% Genetic Algorithm with Enhanced Exploration
 
+def _lhs_individuals(n, opt_ranges, param_keys):
+    """
+    n individuals drawn by Latin hypercube sampling over the GA box.
+
+    Each parameter range is cut into n equal strata and every stratum holds
+    exactly one individual, which covers the box more evenly than n i.i.d.
+    uniform draws. The sampler seed is drawn from the random module, so the
+    population is reproducible under the run seed.
+    """
+    sampler = qmc.LatinHypercube(d=len(param_keys), seed=random.getrandbits(32))
+    u = sampler.random(n)
+    lo = np.array([opt_ranges[k][0] for k in param_keys])
+    hi = np.array([opt_ranges[k][1] for k in param_keys])
+    return [creator.Individual([float(v) for v in lo + ui * (hi - lo)])
+            for ui in u]
+
+
 def setup_toolbox(opt_ranges, param_keys, n_generations):
     """Setup DEAP toolbox with exploration-focused operators"""
     global toolbox, n_total_generations
     n_total_generations = n_generations
     
-    # Latin Hypercube-like initialization for better coverage
-    def create_individual_lhs():
-        """Create individual with better space coverage"""
-        ind = []
-        for k in param_keys:
-            lo, hi = opt_ranges[k]
-            # Add small random perturbation to avoid grid patterns
-            val = lo + random.random() * (hi - lo)
-            ind.append(val)
-        return creator.Individual(ind)
+    # Single random individual (uniform in the box)
+    def create_individual():
+        return creator.Individual([random.uniform(*opt_ranges[k])
+                                   for k in param_keys])
     
-    toolbox.register("individual", create_individual_lhs)
-    toolbox.register("population", tools.initRepeat, list, toolbox.individual)
+    toolbox.register("individual", create_individual)
+    # Initial population: Latin hypercube over the box
+    toolbox.register("population", _lhs_individuals,
+                     opt_ranges=opt_ranges, param_keys=param_keys)
     toolbox.register("evaluate", evaluate_individual)
     
     # Crossover: blend with wider alpha for more exploration
@@ -1204,19 +1069,15 @@ def setup_toolbox(opt_ranges, param_keys, n_generations):
                     # EXPLORATION: Jump to random location in range
                     individual[i] = lo + random.random() * (hi - lo)
                 else:
-                    # EXPLOITATION: Polynomial mutation with adaptive eta
-                    eta = 5 + 25 * progress  # Start wide (5), cap at 30
-                    x = individual[i]
-                    delta = hi - lo
-                    
-                    u = random.random()
-                    if u < 0.5:
-                        delta_q = (2 * u) ** (1 / (eta + 1)) - 1
-                    else:
-                        delta_q = 1 - (2 * (1 - u)) ** (1 / (eta + 1))
-                    
-                    individual[i] = x + delta_q * delta
-                    individual[i] = max(lo, min(hi, individual[i]))
+                    # EXPLOITATION: bounded polynomial mutation (Deb), with
+                    # an eta that grows from 5 (wide) to 30 (narrow). The
+                    # bounded form keeps the gene inside [lo, hi] without
+                    # piling mutants onto the bounds.
+                    eta = 5 + 25 * progress
+                    gene = [individual[i]]
+                    tools.mutPolynomialBounded(gene, eta=eta, low=lo, up=hi,
+                                               indpb=1.0)
+                    individual[i] = gene[0]
         
         return (individual,)
     
@@ -1225,15 +1086,13 @@ def setup_toolbox(opt_ranges, param_keys, n_generations):
 
 
 def inject_diverse_individuals(pop, n_inject, opt_ranges, param_keys):
-    """Inject random individuals to maintain diversity (UNCONDITIONAL).
+    """Inject new individuals to maintain diversity (UNCONDITIONAL).
 
-    Previous version only replaced the worst individual if the random
-    newcomer was better — once the population converges, this condition
-    is almost never met, making injection a no-op.
-
-    Now: always replace the n_inject worst individuals, regardless of
-    the newcomer's fitness.  This forces the GA to re-explore even if
-    the new point is initially poor.
+    n_inject newcomers are drawn by Latin hypercube sampling, evaluated
+    together through toolbox.map (in parallel when n_workers > 1), and
+    replace the n_inject worst members of the population, whatever their
+    own fitness. This forces the GA to re-explore even once the population
+    has converged to one basin.
 
     Returns
     -------
@@ -1244,24 +1103,21 @@ def inject_diverse_individuals(pop, n_inject, opt_ranges, param_keys):
         already populated. The caller may use this list to log the
         evaluation events (e.g. for the GA exploration cloud).
     """
-    injected = []
-    for _ in range(n_inject):
-        new_ind = creator.Individual([
-            random.uniform(opt_ranges[k][0], opt_ranges[k][1])
-            for k in param_keys
-        ])
-        new_ind.fitness.values = toolbox.evaluate(new_ind)
-        injected.append(new_ind)
+    n_inject = min(int(n_inject), len(pop))
+    if n_inject < 1:
+        return pop, []
+    injected = _lhs_individuals(n_inject, opt_ranges, param_keys)
+    for ind, fit in zip(injected, toolbox.map(toolbox.evaluate, injected)):
+        ind.fitness.values = fit
 
-        # Find worst individual (only among those with valid fitness)
-        valid_indices = [i for i in range(len(pop)) 
-                        if pop[i].fitness.valid and len(pop[i].fitness.values) > 0]
-        
-        if valid_indices:
-            worst_idx = max(valid_indices, key=lambda i: pop[i].fitness.values[0])
-            pop[worst_idx] = new_ind
-        else:
-            pop[0] = new_ind
+    # Worst members first (an invalid fitness counts as the worst), ranked
+    # once so that each newcomer takes a different slot.
+    def _badness(i):
+        f = pop[i].fitness
+        return f.values[0] if f.valid and len(f.values) > 0 else np.inf
+    worst = sorted(range(len(pop)), key=_badness, reverse=True)[:n_inject]
+    for slot, new_ind in zip(worst, injected):
+        pop[slot] = new_ind
     
     return pop, injected
 
@@ -1349,17 +1205,21 @@ def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
     Parameters
     ----------
     pop_size, n_generations, cxpb, mutpb, patience, verbose : see caller.
+    patience : int
+        Early stop after this many generations without improvement of the
+        best fitness found so far.
     n_workers : int
         Number of parallel worker processes for fitness evaluation.
-        1 (default) -> sequential map (original behaviour).
-        N > 1       -> multiprocessing.Pool with N workers.
-        Works on Linux (fork) and macOS/Windows (spawn) alike, because
-        _pool_initializer re-populates the required globals in each worker.
-    local_refine_method : {None, 'gradient', 'lbfgsb'}
+        1 (default) -> sequential map.
+        N > 1       -> joblib/loky with N workers, used by toolbox.map for
+                       the initial population, the offspring and the
+                       diversity injections.
+    local_refine_method : {None, 'gradient', 'lbfgsb', 'nelder-mead'}
         If not None, apply local refinement (see refine_individual) to the
         top-k Hall-of-Fame members at the end of the GA. 'gradient' is the
-        hand-rolled projected gradient descent; 'lbfgsb' uses scipy's
-        L-BFGS-B. None disables local refinement.
+        hand-rolled projected gradient descent, 'lbfgsb' uses scipy's
+        L-BFGS-B and 'nelder-mead' the scipy simplex. None disables local
+        refinement.
     local_refine_top_k : int
         Number of top HoF members to refine at the end of the GA.
     local_refine_every : int
@@ -1480,9 +1340,9 @@ def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
     # can break down the contribution per phase.
     refinement_log = []
 
-    # Initial evaluation
+    # Initial evaluation (toolbox.map: parallel when n_workers > 1)
     current_generation = 0
-    fitnesses = list(map(toolbox.evaluate, pop))
+    fitnesses = list(toolbox.map(toolbox.evaluate, pop))
     for ind, fit in zip(pop, fitnesses):
         ind.fitness.values = fit
         _append_to_cloud(ind, 0)
@@ -1524,7 +1384,13 @@ def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
     lambda_ = int(pop_size * 1.5)  # More offspring for diversity
     
     best_fitness_history = []
+    # Two counters: stagnation of the population best triggers a diversity
+    # injection (and is reset by it), while the number of generations
+    # without improvement of the best design found so far drives the early
+    # stop against `patience`.
     stagnation_counter = 0
+    no_improve_counter = 0
+    best_so_far = hof[0].fitness.values[0] if len(hof) > 0 else np.inf
 
     # ── History trackers for post-run analytics and visualization ──────────
     # `hof_history` records the cumulative-best individual at the end of
@@ -1558,9 +1424,9 @@ def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
                 toolbox.mutate(mutant)
                 del mutant.fitness.values
         
-        # Evaluate
+        # Evaluate (toolbox.map: parallel when n_workers > 1)
         invalid_ind = [ind for ind in offspring if not ind.fitness.valid]
-        fitnesses = list(map(toolbox.evaluate, invalid_ind))
+        fitnesses = list(toolbox.map(toolbox.evaluate, invalid_ind))
         for ind, fit in zip(invalid_ind, fitnesses):
             ind.fitness.values = fit
             _append_to_cloud(ind, gen)
@@ -1593,7 +1459,7 @@ def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
         if verbose:
             print(logbook.stream)
         
-        # Track stagnation
+        # Track stagnation of the population best (diversity trigger)
         current_best = record['min']
         best_fitness_history.append(current_best)
         
@@ -1602,6 +1468,14 @@ def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
                 stagnation_counter += 1
             else:
                 stagnation_counter = 0
+
+        # Track improvement of the best design found so far (early stop)
+        hof_best = hof[0].fitness.values[0] if len(hof) > 0 else np.inf
+        if hof_best < best_so_far - 1e-9 * max(1.0, abs(best_so_far)):
+            best_so_far = hof_best
+            no_improve_counter = 0
+        else:
+            no_improve_counter += 1
         
         # Inject diversity if stagnating or periodically.
         # The injection fraction is controlled by `diversity_inject_fraction`
@@ -1612,6 +1486,7 @@ def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
             n_inject = max(5, int(pop_size * diversity_inject_fraction))
             pop, _injected = inject_diverse_individuals(
                 pop, n_inject, opt_ranges, param_keys)
+            hof.update(_injected)   # a better newcomer is kept even if not selected later
             for ind in _injected:
                 _append_to_cloud(ind, gen)
             if stagnation_counter >= 3:
@@ -1626,13 +1501,19 @@ def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
                 and local_refine_every > 0
                 and gen % local_refine_every == 0
                 and len(hof) > 0):
-            _periodic_info = refine_topk(
-                hof, k=1,
-                method=local_refine_method,
-                pool=_pool,
-                verbose=verbose,
-                **(local_refine_kwargs or {})
-            )
+            try:
+                _periodic_info = refine_topk(
+                    hof, k=1,
+                    method=local_refine_method,
+                    pool=_pool,
+                    verbose=verbose,
+                    **(local_refine_kwargs or {})
+                )
+            except Exception as _exc:
+                # A failed refinement must not stop the GA
+                print(f"    [refine] memetic refinement failed at generation "
+                      f"{gen}: {type(_exc).__name__}: {_exc}")
+                _periodic_info = []
             # Tag the info with the generation tag so we can identify
             # memetic events in the JSON output later.
             for _refind, _info in _periodic_info:
@@ -1651,9 +1532,11 @@ def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
                 'fitness': float(hof[0].fitness.values[0]),
             }
 
-        # Early stopping
-        if stagnation_counter >= patience:
-            print(f"\n Converged at generation {gen}")
+        # Early stopping: no improvement of the best design for `patience`
+        # generations
+        if patience and no_improve_counter >= patience:
+            print(f"\n Converged at generation {gen} (no improvement for "
+                  f"{patience} generations)")
             break
 
     # ── Final local refinement on diverse starters from the GA cloud ─────────
@@ -1687,13 +1570,27 @@ def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
                 ind.fitness.values = (float(d['fitness']),)
                 refine_hof.update([ind])
 
-        _final_info = refine_topk(
-            refine_hof, k=n_eff,
-            method=local_refine_method,
-            pool=_pool,
-            verbose=verbose,
-            **(local_refine_kwargs or {})
-        )
+        # Checkpoint of the GA result before the refinement, so that a
+        # failure or an interruption during the refinement loses nothing.
+        if current_run_directory is not None:
+            _ckpt = os.path.join(current_run_directory, "hall_of_fame_ga.json")
+            with open(_ckpt, "w", encoding="utf-8") as _fh:
+                json.dump([{"fitness": to_serializable(ind.fitness.values[0]),
+                            "params": {k_: float(ind[j]) for j, k_
+                                       in enumerate(param_keys)}}
+                           for ind in hof], _fh, indent=2)
+        try:
+            _final_info = refine_topk(
+                refine_hof, k=n_eff,
+                method=local_refine_method,
+                pool=_pool,
+                verbose=verbose,
+                **(local_refine_kwargs or {})
+            )
+        except Exception as _exc:
+            print(f"    [refine] final refinement failed, GA result kept: "
+                  f"{type(_exc).__name__}: {_exc}")
+            _final_info = []
         for _refind, _info in _final_info:
             _info['phase'] = 'final'
             # Propagate any refined point that beats the main HoF
@@ -1739,8 +1636,8 @@ def run_genetic_algorithm(pop_size, n_generations, cxpb, mutpb,
 #
 # Caveats
 # -------
-# The step penalties in compute_stability_penalty() introduce non-smoothness
-# at the constraint boundaries. The local search assumes the starting point
+# The feasibility band of compute_feasibility_fitness() puts a step in the
+# fitness at the constraint boundaries. The local search assumes the starting point
 # is feasible (top of HoF), which keeps it inside the smooth interior most
 # of the time. A moderate h (1e-3 in unit coordinates) further smooths
 # residual micro-discontinuities.
@@ -2001,8 +1898,8 @@ def nelder_mead_unit(u0, opt_ranges, param_keys,
     Nelder-Mead simplex refinement in unit-cube coordinates.
 
     Derivative-free, robust to non-smooth and noisy objectives. Good
-    fallback when the step penalties in compute_stability_penalty create
-    discontinuities that throw off gradient-based methods.
+    fallback when the step of the fitness at the constraint boundaries
+    (feasibility band) throws off gradient-based methods.
 
     Bounds are respected via scipy.optimize.minimize's native bounds
     support (requires scipy >= 1.7). The `adaptive` flag enables the
@@ -2087,8 +1984,7 @@ def refine_individual(individual, opt_ranges_loc, param_keys_loc,
         Pass the module-level objects explicitly so the function is
         unit-testable without relying on globals.
     method : {'gradient', 'lbfgsb', 'nelder-mead' or 'nm'}
-        Local optimiser. If a scipy-based method is requested but scipy is
-        unavailable, falls back to 'gradient'.
+        Local optimiser. Any other name raises a ValueError.
     pool : multiprocessing.Pool or None
         Forwarded to the underlying optimiser. Used by 'gradient' and
         'lbfgsb' for parallel gradient evaluation; ignored by 'nelder-mead'.
@@ -2112,6 +2008,9 @@ def refine_individual(individual, opt_ranges_loc, param_keys_loc,
     method_norm = str(method).lower().strip()
     if method_norm in ('nm', 'nelder-mead', 'neldermead'):
         method_norm = 'nelder-mead'
+    if method_norm not in VALID_REFINE_METHODS:
+        raise ValueError(f"Unknown local refinement method '{method}'. "
+                         f"Valid: {', '.join(VALID_REFINE_METHODS)}.")
 
     method_used = method_norm
     result = None
@@ -2324,48 +2223,52 @@ def refine_topk(hof, k=3, method='gradient', pool=None,
 #%% Plotting
 
 def plot_convergence(logbook, save_path):
-    """Single convergence plot in log scale"""
-    plt.rcParams.update({
-        'font.size': 11,
-        'axes.labelsize': 12,
-        'axes.titlesize': 14,
-    })
-    
-    fig, ax = plt.subplots(figsize=(10, 6))
-    
-    gens = [record['gen'] for record in logbook]
-    mins = [record['min'] for record in logbook]
-    n_valid = [record['n_valid'] for record in logbook]
-    
-    # Main convergence curve
-    ax.semilogy(gens, mins, 'o-', color='#2ecc71', linewidth=2.5, 
+    """
+    Convergence plot: best fitness per generation and number of feasible
+    designs. Log scale when every best fitness is positive, linear scale
+    otherwise (objective 'P_elec' is stored as -P_elec). The style is local
+    to this figure (rc_context), the global rcParams are not changed.
+    """
+    with plt.rc_context({'font.size': 11, 'axes.labelsize': 12,
+                         'axes.titlesize': 14}):
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+        gens = [record['gen'] for record in logbook]
+        mins = [record['min'] for record in logbook]
+        n_valid = [record['n_valid'] for record in logbook]
+        log_scale = all(m > 0 for m in mins)
+
+        # Main convergence curve
+        ax.plot(gens, mins, 'o-', color='#2ecc71', linewidth=2.5,
                 markersize=5, label='Best fitness')
-    ax.fill_between(gens, mins, alpha=0.2, color='#2ecc71')
-    
-    ax.set_xlabel('Generation')
-    ax.set_ylabel('Best Fitness (log scale)')
-    ax.set_title('D0FUS Genetic Algorithm - Convergence', fontweight='bold')
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc='upper right')
-    
-    # Annotate final value
-    final_fitness = mins[-1]
-    ax.annotate(f'Final: {final_fitness:.4f}', 
-                xy=(gens[-1], final_fitness),
-                xytext=(0.7, 0.9), textcoords='axes fraction',
-                fontsize=12, fontweight='bold',
-                bbox=dict(boxstyle='round,pad=0.4', facecolor='white', edgecolor='green'),
-                arrowprops=dict(arrowstyle='->', color='gray'))
-    
-    # Add valid count on secondary axis
-    ax2 = ax.twinx()
-    ax2.bar(gens, n_valid, alpha=0.3, color='blue', width=0.8)
-    ax2.set_ylabel('Valid designs per generation', color='blue')
-    ax2.tick_params(axis='y', labelcolor='blue')
-    
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=150, bbox_inches='tight', facecolor='white')
-    plt.close()
+        if log_scale:
+            ax.set_yscale('log')
+            ax.fill_between(gens, mins, alpha=0.2, color='#2ecc71')
+
+        ax.set_xlabel('Generation')
+        ax.set_ylabel('Best fitness (log scale)' if log_scale else 'Best fitness')
+        ax.set_title('D0FUS Genetic Algorithm - Convergence', fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc='upper right')
+
+        # Annotate final value
+        final_fitness = mins[-1]
+        ax.annotate(f'Final: {final_fitness:.4f}',
+                    xy=(gens[-1], final_fitness),
+                    xytext=(0.7, 0.9), textcoords='axes fraction',
+                    fontsize=12, fontweight='bold',
+                    bbox=dict(boxstyle='round,pad=0.4', facecolor='white', edgecolor='green'),
+                    arrowprops=dict(arrowstyle='->', color='gray'))
+
+        # Add valid count on secondary axis
+        ax2 = ax.twinx()
+        ax2.bar(gens, n_valid, alpha=0.3, color='blue', width=0.8)
+        ax2.set_ylabel('Feasible designs per generation', color='blue')
+        ax2.tick_params(axis='y', labelcolor='blue')
+
+        fig.tight_layout()
+        fig.savefig(save_path, dpi=150, bbox_inches='tight', facecolor='white')
+        plt.close(fig)
     
     print(f" Convergence plot saved: {save_path}")
 
@@ -2717,29 +2620,107 @@ def animate_ga_trajectory(XX, YY, Z, hof_history, save_path,
 
 #%% Main Interface
 
-def run_genetic_optimization(input_file, 
-                             population_size=200,
-                             generations=50,
-                             crossover_rate=0.7,
-                             mutation_rate=0.3,
-                             patience=20,
+def resolve_ga_settings(static_inputs, overrides):
+    """
+    GA settings with the precedence argument > deck > default.
+
+    Parameters
+    ----------
+    static_inputs : dict  Parsed deck. The GA_SETTINGS and local_refine_*
+                          keys are removed from it (they are not design
+                          inputs). The FITNESS_SETTINGS keys are typed and
+                          kept, evaluate_individual reads them there.
+    overrides     : dict  Arguments of run_genetic_optimization or CLI
+                          options. None means "not given".
+
+    Returns
+    -------
+    settings      : dict  Value of every GA_SETTINGS and FITNESS_SETTINGS key.
+    sources       : dict  'argument', 'deck' or 'default' for each key.
+    refine_kwargs : dict  Local optimiser knobs (local_refine_<knob>).
+    """
+    settings, sources = {}, {}
+    for name, (default, kind) in {**GA_SETTINGS, **FITNESS_SETTINGS}.items():
+        in_deck = name in static_inputs
+        deck_value = (static_inputs[name] if name in FITNESS_SETTINGS
+                      else static_inputs.pop(name, None)) if in_deck else None
+        if overrides.get(name) is not None:
+            value, src = _parse_setting(name, overrides[name], kind), 'argument'
+        elif in_deck:
+            value, src = _parse_setting(name, deck_value, kind), 'deck'
+        else:
+            value, src = default, 'default'
+        settings[name], sources[name] = value, src
+        if name in FITNESS_SETTINGS and value is not None:
+            static_inputs[name] = value
+
+    # Local refinement method: one of VALID_REFINE_METHODS or None
+    m = settings['local_refine_method']
+    if m is not None:
+        m = m.lower()
+        m = 'nelder-mead' if m in ('nm', 'neldermead') else m
+        if m not in VALID_REFINE_METHODS:
+            raise ValueError(f"local_refine_method = {settings['local_refine_method']!r}: "
+                             f"valid values are {', '.join(VALID_REFINE_METHODS)} or none.")
+        settings['local_refine_method'] = m
+
+    # Optimiser knobs: deck keys local_refine_<knob>, then explicit kwargs
+    refine_kwargs = {}
+    for knob, kind in REFINE_KNOBS.items():
+        key = f'local_refine_{knob}'
+        if key in static_inputs:
+            refine_kwargs[knob] = _parse_setting(key, static_inputs.pop(key), kind)
+    static_inputs.pop('local_refine_kwargs', None)
+    for knob, v in (overrides.get('local_refine_kwargs') or {}).items():
+        refine_kwargs[knob] = _parse_setting(f'local_refine_{knob}', v,
+                                             REFINE_KNOBS.get(knob, float))
+
+    # Range checks
+    for name in ('population_size', 'generations', 'n_workers', 'gif_resolution',
+                 'gif_fps', 'local_refine_top_k'):
+        if settings[name] < 1:
+            raise ValueError(f"{name} = {settings[name]}: must be >= 1.")
+    for name in ('crossover_rate', 'mutation_rate', 'diversity_inject_fraction'):
+        if not 0.0 <= settings[name] <= 1.0:
+            raise ValueError(f"{name} = {settings[name]}: must lie in [0, 1].")
+    if settings['fitness_objective'] not in VALID_FITNESS_OBJECTIVES:
+        raise ValueError(f"fitness_objective = {settings['fitness_objective']!r}: "
+                         f"valid values are {', '.join(VALID_FITNESS_OBJECTIVES)}.")
+    return settings, sources, refine_kwargs
+
+
+def run_genetic_optimization(input_file,
+                             population_size=None,
+                             generations=None,
+                             crossover_rate=None,
+                             mutation_rate=None,
+                             patience=None,
                              seed=None,
                              verbose=True,
-                             n_workers=1,
+                             n_workers=None,
                              local_refine_method=None,
-                             local_refine_top_k=3,
-                             local_refine_every=0,
+                             local_refine_top_k=None,
+                             local_refine_every=None,
                              local_refine_kwargs=None,
-                             diversity_inject_fraction=0.30,
-                             cloud_refinement_min_dist=0.05,
-                             make_gif=False,
-                             gif_var_x='a',
-                             gif_var_y='R0',
-                             gif_resolution=30,
-                             gif_log_scale=True,
-                             gif_fps=8):
+                             diversity_inject_fraction=None,
+                             cloud_refinement_min_dist=None,
+                             make_gif=None,
+                             gif_var_x=None,
+                             gif_var_y=None,
+                             gif_resolution=None,
+                             gif_log_scale=None,
+                             gif_fps=None,
+                             output_dir=None,
+                             save_figures=True):
     """
     Main optimization function.
+
+    Every GA setting left at None takes the value of the deck, or else
+    the default of GA_SETTINGS (population 200, 50 generations, crossover
+    0.7, mutation 0.3, patience 20, sequential). An argument given here
+    overrides the deck. The seed, when given neither here nor in the deck,
+    is drawn at random, printed and recorded in optimization_summary.json,
+    so that every run can be reproduced.
 
     Local refinement options
     ------------------------
@@ -2747,14 +2728,15 @@ def run_genetic_optimization(input_file,
         Activate memetic refinement at the end of the GA (and optionally
         periodically). 'gradient' = hand-rolled projected gradient descent;
         'lbfgsb' = scipy L-BFGS-B with bounds; 'nelder-mead' = derivative-free
-        simplex (robust to step penalties). None disables the feature.
+        simplex (robust to the step of the fitness at the constraint
+        boundaries). None or 'none' disables the feature.
     local_refine_top_k : int
-        Number of top HoF members to refine after the GA (default: 3).
+        Number of diverse starters refined after the GA (default: 3).
     local_refine_every : int
         Period (in generations) for periodic memetic refinement. 0 disables.
     local_refine_kwargs : dict or None
         Forwarded to the underlying optimiser (max_iters, h, step_init,
-        ftol, gtol, eps, ...).
+        ftol, gtol, eps, ...). Deck keys local_refine_<knob> do the same.
 
     Visualization options
     ---------------------
@@ -2772,50 +2754,54 @@ def run_genetic_optimization(input_file,
         Plot log10(fitness) so penalty-dominated regions remain readable.
     gif_fps : int
         Animation frame rate.
+
+    Output options
+    --------------
+    output_dir : str or None
+        Parent folder of the genetic/ result folders. Default:
+        default_output_root() of D0FUS_run.
+    save_figures : bool
+        If False, neither convergence.png nor the trajectory GIF is made.
     """
     global current_run_directory
-    
-    if seed is not None:
-        random.seed(seed)
-        np.random.seed(seed)
-        print(f"Random seed: {seed}")
     
     print("="*80)
     print("D0FUS GENETIC ALGORITHM OPTIMIZATION")
     print("="*80)
     
     # Initialize
-    initialize_run_directory()
+    initialize_run_directory(os.path.join(output_dir or default_output_root(),
+                                          "genetic"))
     opt_ranges, static_inputs, param_keys = load_input_file(input_file)
+    if len(param_keys) < 1:
+        raise ValueError("The GENETIC mode needs at least one optimised "
+                         "parameter written 'key = [min, max]'.")
 
-    # Override GA hyperparameters with values parsed from the input file.
-    # These keys are removed from static_inputs so they are not passed to
-    # GlobalConfig as physics parameters.
-    if 'population_size' in static_inputs:
-        population_size = int(static_inputs.pop('population_size'))
-        print(f"  [input file] population_size = {population_size}")
-    if 'generations' in static_inputs:
-        generations = int(static_inputs.pop('generations'))
-        print(f"  [input file] generations     = {generations}")
-    if 'crossover_rate' in static_inputs:
-        crossover_rate = float(static_inputs.pop('crossover_rate'))
-        print(f"  [input file] crossover_rate  = {crossover_rate}")
-    if 'mutation_rate' in static_inputs:
-        mutation_rate = float(static_inputs.pop('mutation_rate'))
-        print(f"  [input file] mutation_rate   = {mutation_rate}")
+    # ── Settings: argument > deck > default ──────────────────────────────────
+    _args = dict(population_size=population_size, generations=generations,
+                 crossover_rate=crossover_rate, mutation_rate=mutation_rate,
+                 patience=patience, seed=seed, n_workers=n_workers,
+                 local_refine_method=local_refine_method,
+                 local_refine_top_k=local_refine_top_k,
+                 local_refine_every=local_refine_every,
+                 local_refine_kwargs=local_refine_kwargs,
+                 diversity_inject_fraction=diversity_inject_fraction,
+                 cloud_refinement_min_dist=cloud_refinement_min_dist,
+                 make_gif=make_gif, gif_var_x=gif_var_x, gif_var_y=gif_var_y,
+                 gif_resolution=gif_resolution, gif_log_scale=gif_log_scale,
+                 gif_fps=gif_fps)
+    S, sources, refine_kwargs = resolve_ga_settings(static_inputs, _args)
+    if S['seed'] is None:
+        S['seed'], sources['seed'] = random.SystemRandom().randrange(2**31), 'drawn'
+    random.seed(S['seed'])
+    np.random.seed(S['seed'])
 
-    # Fitness objective: kept in static_inputs (read by evaluate_individual)
-    # but validated here.  Default: 'COE' with C_invest_max budget constraint.
-    _obj = static_inputs.get('fitness_objective', 'COE')
-    if _obj not in VALID_FITNESS_OBJECTIVES:
-        print(f"  [warn] Unknown fitness_objective '{_obj}' — defaulting to 'COE'")
-        static_inputs['fitness_objective'] = 'COE'
-        _obj = 'COE'
-    print(f"  [input file] fitness_objective = {_obj}")
-    if _obj == 'COE':
-        _budget = static_inputs.get('C_invest_max', DEFAULT_CONFIG.C_invest_max)
-        print(f"  [input file] C_invest_max      = {float(_budget)*1e-3:.1f} B EUR (budget ceiling)")
-    if _obj == 'R0' and 'R0' not in param_keys:
+    objective = S['fitness_objective']
+    _cost_model = static_inputs.get('cost_model', DEFAULT_CONFIG.cost_model)
+    if objective in ('COE', 'C_invest') and _cost_model == 'None':
+        raise ValueError(f"fitness_objective = {objective} needs a cost model: "
+                         f"cost_model = None in the deck.")
+    if objective == 'R0' and 'R0' not in param_keys:
         # Degenerate case: minimising a fixed major radius gives a constant
         # fitness, so the GA would only search the remaining design space
         # for any feasible point. Warn the user to bracket R0.
@@ -2823,91 +2809,34 @@ def run_genetic_optimization(input_file,
               "parameter; declare it as a range (e.g. 'R0 = [4.0, 9.0]') "
               "to actually minimise the major radius.")
 
-    if len(param_keys) < 1:
-        print("\n ERROR: Need at least 1 optimization parameter")
-        sys.exit(1)
-    
-    setup_toolbox(opt_ranges, param_keys, generations)
-    
-    # Run optimization
-    # Override n_workers from input file if provided
-    if 'n_workers' in static_inputs:
-        n_workers = max(1, int(static_inputs.pop('n_workers')))
-        print(f"  [input file] n_workers           = {n_workers}")
+    print("\n GA settings (source):")
+    for name in list(GA_SETTINGS) + list(FITNESS_SETTINGS):
+        if sources[name] != 'default' or name in (
+                'population_size', 'generations', 'crossover_rate',
+                'mutation_rate', 'patience', 'seed', 'n_workers',
+                'fitness_objective', 'feasibility_epsilon'):
+            print(f"    {name:<26s} = {S[name]!s:<14s} ({sources[name]})")
+    if objective == 'COE':
+        print(f"    {'C_invest_max':<26s} = "
+              f"{float(static_inputs.get('C_invest_max', DEFAULT_CONFIG.C_invest_max))*1e-3:.1f} "
+              f"B EUR (soft budget ceiling)")
+    if refine_kwargs:
+        print(f"    local_refine_kwargs        = {refine_kwargs}")
 
-    # ── Local refinement options (override from input file if present) ───────
-    # Recognised keys:
-    #   local_refine_method  : 'gradient', 'lbfgsb', 'none'
-    #   local_refine_top_k   : int
-    #   local_refine_every   : int  (0 disables periodic memetic)
-    #   local_refine_max_iters, local_refine_h, local_refine_step_init,
-    #   local_refine_ftol, local_refine_gtol, local_refine_eps : optimiser knobs
-    if 'local_refine_method' in static_inputs:
-        m = str(static_inputs.pop('local_refine_method')).strip().lower()
-        local_refine_method = None if m in ('none', '', 'off', 'disabled') else m
-        print(f"  [input file] local_refine_method = {local_refine_method}")
-    if 'local_refine_top_k' in static_inputs:
-        local_refine_top_k = int(static_inputs.pop('local_refine_top_k'))
-        print(f"  [input file] local_refine_top_k  = {local_refine_top_k}")
-    if 'local_refine_every' in static_inputs:
-        local_refine_every = int(static_inputs.pop('local_refine_every'))
-        print(f"  [input file] local_refine_every  = {local_refine_every}")
-    if 'diversity_inject_fraction' in static_inputs:
-        diversity_inject_fraction = float(
-            static_inputs.pop('diversity_inject_fraction'))
-        print(f"  [input file] diversity_inject_fraction = {diversity_inject_fraction}")
-    if 'cloud_refinement_min_dist' in static_inputs:
-        cloud_refinement_min_dist = float(
-            static_inputs.pop('cloud_refinement_min_dist'))
-        print(f"  [input file] cloud_refinement_min_dist = {cloud_refinement_min_dist}")
+    # Copy of the deck next to the results
+    shutil.copy2(input_file, os.path.join(current_run_directory, "input_parameters.txt"))
 
-    # Collect optimiser-specific knobs into local_refine_kwargs
-    if local_refine_kwargs is None:
-        local_refine_kwargs = {}
-    _refine_knobs = ('max_iters', 'h', 'step_init', 'ftol', 'gtol', 'eps',
-                     'tol_grad', 'tol_step', 'c1', 'max_backtrack',
-                     'initial_simplex_scale')
-    for knob in _refine_knobs:
-        key = f'local_refine_{knob}'
-        if key in static_inputs:
-            local_refine_kwargs[knob] = float(static_inputs.pop(key))
-            print(f"  [input file] {key:<25s} = {local_refine_kwargs[knob]}")
-    if local_refine_method is not None:
-        print(f"  [input file] local_refine_kwargs  = {local_refine_kwargs}")
-
-    # ── GIF / visualization options ──────────────────────────────────────────
-    if 'make_gif' in static_inputs:
-        _v = static_inputs.pop('make_gif')
-        make_gif = bool(_v) if isinstance(_v, bool) else (
-            str(_v).strip().lower() in ('1', 'true', 'yes', 'on'))
-        print(f"  [input file] make_gif            = {make_gif}")
-    if 'gif_var_x' in static_inputs:
-        gif_var_x = str(static_inputs.pop('gif_var_x')).strip()
-        print(f"  [input file] gif_var_x           = {gif_var_x}")
-    if 'gif_var_y' in static_inputs:
-        gif_var_y = str(static_inputs.pop('gif_var_y')).strip()
-        print(f"  [input file] gif_var_y           = {gif_var_y}")
-    if 'gif_resolution' in static_inputs:
-        gif_resolution = int(static_inputs.pop('gif_resolution'))
-        print(f"  [input file] gif_resolution      = {gif_resolution}")
-    if 'gif_log_scale' in static_inputs:
-        _v = static_inputs.pop('gif_log_scale')
-        gif_log_scale = bool(_v) if isinstance(_v, bool) else (
-            str(_v).strip().lower() in ('1', 'true', 'yes', 'on'))
-        print(f"  [input file] gif_log_scale       = {gif_log_scale}")
-    if 'gif_fps' in static_inputs:
-        gif_fps = int(static_inputs.pop('gif_fps'))
-        print(f"  [input file] gif_fps             = {gif_fps}")
+    setup_toolbox(opt_ranges, param_keys, S['generations'])
 
     best, logbook, hof, hof_history, refinement_log, ga_cloud = run_genetic_algorithm(
-        population_size, generations, crossover_rate, mutation_rate,
-        patience, verbose, n_workers=n_workers,
-        local_refine_method=local_refine_method,
-        local_refine_top_k=local_refine_top_k,
-        local_refine_every=local_refine_every,
-        local_refine_kwargs=local_refine_kwargs,
-        diversity_inject_fraction=diversity_inject_fraction,
-        cloud_refinement_min_dist=cloud_refinement_min_dist,
+        S['population_size'], S['generations'], S['crossover_rate'],
+        S['mutation_rate'], S['patience'], verbose, n_workers=S['n_workers'],
+        local_refine_method=S['local_refine_method'],
+        local_refine_top_k=S['local_refine_top_k'],
+        local_refine_every=S['local_refine_every'],
+        local_refine_kwargs=refine_kwargs,
+        diversity_inject_fraction=S['diversity_inject_fraction'],
+        cloud_refinement_min_dist=S['cloud_refinement_min_dist'],
     )
     
     # Results
@@ -2931,36 +2860,25 @@ def run_genetic_optimization(input_file,
     final_output = run(config, verbose=0)
     
     # Extract key metrics via centralised index map
-    nbar_line = final_output[_IDX['nbar_line']]
-    nG        = final_output[_IDX['nG']]
-    betaN       = final_output[_IDX['betaN']]
-    betaN_total = final_output[_IDX['betaN_total']]
-    betaT       = final_output[_IDX['betaT']]
-    qstar     = final_output[_IDX['qstar']]
-    q95_val   = final_output[_IDX['q95']]
-    cost      = final_output[_IDX['cost']]
-    Q         = final_output[_IDX['Q']]
-    P_elec    = final_output[_IDX['P_elec']]
-    c_TF      = final_output[_IDX['c']]
-    d_CS      = final_output[_IDX['d']]
-    r_d       = final_output[_IDX['r_d']]
-    Ip        = final_output[_IDX['Ip']]
-    B0        = final_output[_IDX['B0']]
+    nbar_line = _safe_real(final_output[_IDX['nbar_line']])
+    nG        = _safe_real(final_output[_IDX['nG']])
+    betaN_total = _safe_real(final_output[_IDX['betaN_total']])
+    cost      = _safe_real(final_output[_IDX['cost']])
+    Q         = _safe_real(final_output[_IDX['Q']])
+    P_elec    = _safe_real(final_output[_IDX['P_elec']])
+    c_TF      = _safe_real(final_output[_IDX['c']])
+    d_CS      = _safe_real(final_output[_IDX['d']])
+    r_d       = _safe_real(final_output[_IDX['r_d']])
+    Ip        = _safe_real(final_output[_IDX['Ip']])
+    B0        = _safe_real(final_output[_IDX['B0']])
     _core     = core_plasma_values(config, final_output)
 
-    # Select kink parameter for final reporting (consistent with GA evaluation)
-    _kink_param = static_inputs.get('kink_parameter',
-                                     DEFAULT_CONFIG.kink_parameter)
-    q_kink = q95_val if _kink_param == 'q95' else qstar
+    # Final check with the RUN rule (same verdict as the RUN report)
+    _fz = evaluate_feasibility(config, final_output)
+    q_kink = _fz['q_kink']
+    _kink_param = config.kink_parameter
     _q_label = 'q95' if _kink_param == 'q95' else 'q*'
-
-    # Check stability (using line-averaged density for Greenwald comparison)
-    q_lim = static_inputs.get('q_limit', DEFAULT_CONFIG.q_limit)
-    betaN_lim = static_inputs.get('betaN_limit', DEFAULT_CONFIG.betaN_limit)
-    Ip_lim = static_inputs.get('Ip_limit', DEFAULT_CONFIG.Ip_limit)
-    is_stable, _, violations = compute_stability_penalty(
-        nbar_line, nG, betaT, betaN_total, q_kink, q_min=q_lim, betaN_limit=betaN_lim,
-        Ip=Ip, Ip_limit=Ip_lim)
+    q_lim, betaN_lim, Ip_lim = config.q_limit, config.betaN_limit, config.Ip_limit
 
     # Compute Sheffield COE for the best design (regardless of objective)
     _COE_best = np.nan
@@ -2970,7 +2888,6 @@ def run_genetic_optimization(input_file,
         _COE_best      = _cres_best['COE']
         _C_invest_best = _cres_best['C_invest'] * 1e-3  # M EUR -> B EUR
 
-    objective = static_inputs.get('fitness_objective', 'COE')
     print(f"\n Fitness objective: {objective}")
     if objective == 'COE':
         _budget = config.C_invest_max
@@ -3002,8 +2919,8 @@ def run_genetic_optimization(input_file,
         print(f"    {label:<26s}{value:10.3f}{limit:10.3f}{margin*100:+9.1f} %  {note}")
 
     _nG_GW   = Ip / (np.pi * config.a**2)                 # Greenwald density Ip/(pi a^2)
-    _dl_mod  = static_inputs.get('density_limit_model', DEFAULT_CONFIG.density_limit_model)
-    _dl_fac  = static_inputs.get('Greenwald_limit', DEFAULT_CONFIG.Greenwald_limit)
+    _dl_mod  = config.density_limit_model
+    _dl_fac  = config.Greenwald_limit
     _Ip_lim  = (float(Ip_lim) if isinstance(Ip_lim, (int, float, np.integer, np.floating))
                 else None)
     print(f"\n {'Operational limits':<29s}{'value':>10s}{'limit':>10s}{'margin':>11s}")
@@ -3016,34 +2933,33 @@ def run_genetic_optimization(input_file,
     _lim_row(f"{_q_label} / q_limit", q_kink, q_lim, upper=False)
     _lim_row("Ip / Ip_limit    [MA]", Ip, _Ip_lim,
              note="" if _Ip_lim is not None else "(no ceiling)")
-    _Ip_soft = _opt_float(static_inputs.get('Ip_soft_start'))
-    _Ip_k    = _opt_float(static_inputs.get('Ip_soft_penalty'))
+    _Ip_soft = _opt_float(S['Ip_soft_start'])
+    _Ip_k    = _opt_float(S['Ip_soft_penalty'])
     _Ip_mult = compute_Ip_soft_multiplier(Ip, _Ip_soft, _Ip_lim, _Ip_k)
     if _Ip_soft is not None and _Ip_k:
         print(f"    {'Ip soft zone     [MA]':<26s}{Ip:10.3f}{_Ip_soft:10.3f}"
               f"  fitness surcharge {(_Ip_mult - 1.0) * 100:+.1f} %"
               f"  (+{_Ip_k * 100:g} % at Ip_limit)")
 
-    # Radial build sanity check on final design
-    _rb_ok, _rb_reason = check_radial_build(
-        cost, r_d, c_TF, d_CS, q_kink, betaT, nbar_line)
-    if not _rb_ok:
-        print(f"\n  WARNING: Best design fails radial build check: {_rb_reason}")
-    
-    if is_stable and _rb_ok:
-        print("\n STABLE + BUILDABLE design found!")
-    elif is_stable:
-        print("\n STABLE but NOT BUILDABLE design")
+    # Verdict of the RUN rule on the final design
+    if _fz['feasible']:
+        print("\n FEASIBLE design (RUN rule: plasma limits and radial build).")
+    elif not _fz['build_ok']:
+        print(f"\n WARNING: best design is NOT FEASIBLE, the radial build does "
+              f"not close ({_fz['build_reason']}).")
     else:
-        print("\n WARNING: Design violates constraints:")
-        for name, details in violations.items():
-            print(f"      {name}: {details['value']:.3f} vs limit {details['limit']:.3f}")
+        _viol = {k: v for k, v in _fz['ratios'].items() if not v <= 1.0}
+        print("\n WARNING: no feasible design found. The best design is the "
+              "least violating one:")
+        for name, ratio in _viol.items():
+            print(f"      {name}: ratio {ratio:.4f} (limit 1)")
     
     # === Save outputs ===
     
     # 1. Convergence plot
-    plot_path = os.path.join(current_run_directory, "convergence.png")
-    plot_convergence(logbook, plot_path)
+    if save_figures:
+        plot_path = os.path.join(current_run_directory, "convergence.png")
+        plot_convergence(logbook, plot_path)
     
     # 2. Use D0FUS save_run_output for complete design documentation
     save_run_output(config, final_output, current_run_directory, None)
@@ -3051,7 +2967,10 @@ def run_genetic_optimization(input_file,
     # 2b. Optional: 2D scan + animated GIF of the GA trajectory
     gif_path = None
     scan_data = None
-    if make_gif:
+    gif_var_x, gif_var_y = S['gif_var_x'], S['gif_var_y']
+    if S['make_gif'] and not save_figures:
+        print("\n  [gif] Skipped: figures are disabled.")
+    elif S['make_gif']:
         try:
             if gif_var_x not in param_keys or gif_var_y not in param_keys:
                 print(f"\n  [gif] WARNING: gif_var_x={gif_var_x!r} or "
@@ -3064,8 +2983,8 @@ def run_genetic_optimization(input_file,
                     best_individual=list(best),
                     opt_ranges=opt_ranges, param_keys=param_keys,
                     var_x=gif_var_x, var_y=gif_var_y,
-                    n_x=gif_resolution, n_y=gif_resolution,
-                    n_workers=n_workers, verbose=verbose,
+                    n_x=S['gif_resolution'], n_y=S['gif_resolution'],
+                    n_workers=S['n_workers'], verbose=verbose,
                 )
                 scan_data = (XX, YY, Z)
                 gif_path = os.path.join(
@@ -3074,7 +2993,7 @@ def run_genetic_optimization(input_file,
                 animate_ga_trajectory(
                     XX, YY, Z, hof_history, gif_path,
                     var_x=gif_var_x, var_y=gif_var_y,
-                    log_scale=gif_log_scale, fps=gif_fps,
+                    log_scale=S['gif_log_scale'], fps=S['gif_fps'],
                     ga_cloud=ga_cloud,
                     verbose=verbose,
                 )
@@ -3105,20 +3024,14 @@ def run_genetic_optimization(input_file,
     # 3. Save optimization summary JSON (enriched with refinement & trajectory)
     summary = {
         "timestamp": datetime.now().isoformat(),
-        "seed": seed,
+        "input_file": os.path.abspath(input_file),
+        "seed": S['seed'],
         "fitness_objective": objective,
         "C_invest_max_MEUR": to_serializable(config.C_invest_max),
-        "settings": {
-            "population_size": population_size,
-            "generations": generations,
-            "crossover_rate": crossover_rate,
-            "mutation_rate": mutation_rate,
-            "local_refine_method": local_refine_method,
-            "local_refine_top_k": local_refine_top_k,
-            "local_refine_every": local_refine_every,
-            "local_refine_kwargs": {k: to_serializable(v)
-                                    for k, v in (local_refine_kwargs or {}).items()},
-        },
+        "settings": {k: to_serializable(v) for k, v in S.items()},
+        "settings_source": dict(sources),
+        "local_refine_kwargs": {k: to_serializable(v)
+                                for k, v in refine_kwargs.items()},
         "optimized_parameters": {k: to_serializable(v) for k, v in best_params.items()},
         "best_fitness": to_serializable(best.fitness.values[0]),
         "cost_metrics": {
@@ -3127,14 +3040,17 @@ def run_genetic_optimization(input_file,
             "C_invest_BEUR": to_serializable(_C_invest_best),
             "P_elec_MW": to_serializable(P_elec),
         },
-        "is_stable": is_stable,
-        "is_buildable": _rb_ok,
+        # Verdict of the RUN rule (evaluate_feasibility) on the final design
+        "feasible": bool(_fz['feasible']),
+        "is_buildable": bool(_fz['build_ok']),
+        "binding_constraint": _fz['binding'],
+        "feasibility_ratios": {k: to_serializable(v) for k, v in _fz['ratios'].items()},
         "stability_margins": {
-            "n_line_over_nG": to_serializable(nbar_line/nG),
-            "q_kink_over_qlim": to_serializable(q_kink/q_lim),
+            "n_line_over_nG": to_serializable(nbar_line / nG),
+            "q_kink_over_qlim": to_serializable(q_kink / q_lim),
             "kink_parameter": _kink_param,
-            "betaN_over_betaN_limit": to_serializable(betaN_total/betaN_lim) if betaN_lim > 0 else None,
-            "Ip_over_Ip_limit": to_serializable(Ip/Ip_lim) if Ip_lim is not None else None,
+            "betaN_over_betaN_limit": to_serializable(betaN_total / betaN_lim) if betaN_lim > 0 else None,
+            "Ip_over_Ip_limit": to_serializable(Ip / _Ip_lim) if _Ip_lim else None,
             "Ip_soft_multiplier": to_serializable(_Ip_mult),
         },
         "radial_build": {
@@ -3188,7 +3104,7 @@ def run_genetic_optimization(input_file,
     }
     
     summary_path = os.path.join(current_run_directory, "optimization_summary.json")
-    with open(summary_path, "w") as f:
+    with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
     
     print(f"\n All outputs saved to: {current_run_directory}/")
@@ -3234,17 +3150,23 @@ def debug_single_run(a=2.0, R0=6.0, Bmax_TF=12.0, Tbar=15.0):
 #%% Command Line Interface
 
 def main():
-    """Command line interface"""
+    """
+    Command line interface. An option given here overrides the deck. A
+    setting given neither here nor in the deck takes the GA_SETTINGS
+    default.
+    """
     if len(sys.argv) < 2:
         print("Usage: python D0FUS_genetic.py <input_file> [options]")
-        print("\nOptions:")
+        print("\nOptions (override the deck):")
         print("  --pop N           Population size (default: 200)")
         print("  --gen N           Max generations (default: 50)")
         print("  --mut F           Mutation rate (default: 0.3)")
-        print("  --seed N          Random seed for reproducibility")
+        print("  --patience N      Generations without improvement before stopping (default: 20)")
+        print("  --workers N       Parallel worker processes (default: 1)")
+        print("  --seed N          Random seed (default: drawn and recorded)")
         print("  --refine METHOD   Local refinement: 'gradient', 'lbfgsb', "
               "'nelder-mead', or 'none' (default: none)")
-        print("  --refine-topk N   Refine top-N HoF members at the end (default: 3)")
+        print("  --refine-topk N   Refine N diverse starters at the end (default: 3)")
         print("  --refine-every N  Memetic period in generations (0 = off, default: 0)")
         print("  --gif             Generate the trajectory GIF after the GA")
         print("  --gif-vars X,Y    Parameter axes for the GIF (default: a,R0)")
@@ -3259,71 +3181,35 @@ def main():
         print(f"Error: Input file not found: {input_file}")
         sys.exit(1)
     
-    # Parse arguments
-    pop_size = 200
-    n_gen = 50
-    mut_rate = 0.3
-    seed = None
-    refine_method = None
-    refine_topk_val = 3
-    refine_every_val = 0
-    make_gif_flag = False
-    gif_vx, gif_vy = 'a', 'R0'
-    gif_res = 30
-    gif_fps_val = 8
-    gif_log_flag = True
-    
+    # Options left at None take the deck value, or else the default
+    opts = {}
+    flags = {'--pop': ('population_size', int), '--gen': ('generations', int),
+             '--mut': ('mutation_rate', float), '--patience': ('patience', int),
+             '--workers': ('n_workers', int), '--seed': ('seed', int),
+             '--refine': ('local_refine_method', str),
+             '--refine-topk': ('local_refine_top_k', int),
+             '--refine-every': ('local_refine_every', int),
+             '--gif-res': ('gif_resolution', int), '--gif-fps': ('gif_fps', int)}
     i = 2
     while i < len(sys.argv):
-        if sys.argv[i] == "--pop" and i + 1 < len(sys.argv):
-            pop_size = int(sys.argv[i + 1]); i += 2
-        elif sys.argv[i] == "--gen" and i + 1 < len(sys.argv):
-            n_gen = int(sys.argv[i + 1]); i += 2
-        elif sys.argv[i] == "--mut" and i + 1 < len(sys.argv):
-            mut_rate = float(sys.argv[i + 1]); i += 2
-        elif sys.argv[i] == "--seed" and i + 1 < len(sys.argv):
-            seed = int(sys.argv[i + 1]); i += 2
-        elif sys.argv[i] == "--refine" and i + 1 < len(sys.argv):
-            m = sys.argv[i + 1].strip().lower()
-            refine_method = None if m in ('none', 'off') else m
-            i += 2
-        elif sys.argv[i] == "--refine-topk" and i + 1 < len(sys.argv):
-            refine_topk_val = int(sys.argv[i + 1]); i += 2
-        elif sys.argv[i] == "--refine-every" and i + 1 < len(sys.argv):
-            refine_every_val = int(sys.argv[i + 1]); i += 2
-        elif sys.argv[i] == "--gif":
-            make_gif_flag = True; i += 1
-        elif sys.argv[i] == "--gif-vars" and i + 1 < len(sys.argv):
+        arg = sys.argv[i]
+        if arg in flags and i + 1 < len(sys.argv):
+            name, kind = flags[arg]
+            opts[name] = kind(sys.argv[i + 1]); i += 2
+        elif arg == "--gif":
+            opts['make_gif'] = True; i += 1
+        elif arg == "--gif-linear":
+            opts['gif_log_scale'] = False; i += 1
+        elif arg == "--gif-vars" and i + 1 < len(sys.argv):
             parts = sys.argv[i + 1].split(',')
             if len(parts) == 2:
-                gif_vx, gif_vy = parts[0].strip(), parts[1].strip()
+                opts['gif_var_x'], opts['gif_var_y'] = (p.strip() for p in parts)
             i += 2
-        elif sys.argv[i] == "--gif-res" and i + 1 < len(sys.argv):
-            gif_res = int(sys.argv[i + 1]); i += 2
-        elif sys.argv[i] == "--gif-fps" and i + 1 < len(sys.argv):
-            gif_fps_val = int(sys.argv[i + 1]); i += 2
-        elif sys.argv[i] == "--gif-linear":
-            gif_log_flag = False; i += 1
         else:
+            print(f"  [warn] unknown option ignored: {arg}")
             i += 1
     
-    run_genetic_optimization(
-        input_file,
-        population_size=pop_size,
-        generations=n_gen,
-        mutation_rate=mut_rate,
-        seed=seed,
-        verbose=True,
-        local_refine_method=refine_method,
-        local_refine_top_k=refine_topk_val,
-        local_refine_every=refine_every_val,
-        make_gif=make_gif_flag,
-        gif_var_x=gif_vx,
-        gif_var_y=gif_vy,
-        gif_resolution=gif_res,
-        gif_log_scale=gif_log_flag,
-        gif_fps=gif_fps_val,
-    )
+    run_genetic_optimization(input_file, verbose=True, **opts)
 
 
 if __name__ == "__main__":

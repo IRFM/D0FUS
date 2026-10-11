@@ -6,7 +6,7 @@
 :::{admonition} Source
 :class: thesis-source
 
-Adapted from T. Auclair, PhD thesis, Aix-Marseille Université (2026), Appendix D.2. The thesis describes D0FUS v2.7.0. Where the code has changed since, the {doc}`API reference </api/index>`, generated from the current sources, is authoritative.
+Adapted from T. Auclair, PhD thesis, Aix-Marseille Université (2026), Appendix D.2, which describes D0FUS v2.7.0, and updated to the code of October 2026. Where the code has changed since, the {doc}`API reference </api/index>`, generated from the current sources, is authoritative.
 :::
 
 
@@ -30,9 +30,9 @@ This page lists the six modules of the library and the domain each one covers, i
 | `genetic`                  | 1 300 | —         | Design optimisation |
 :::
 
-All third-party dependencies are centralised in a single file (`D0FUS_import.py`), which every other module imports. The library relies on a deliberately limited set of packages from the standard scientific Python ecosystem: NumPy and SciPy for numerical computation (integration, interpolation, root-finding, optimisation), Matplotlib for visualisation, Pandas for tabular data handling, and DEAP for the genetic algorithm. No domain-specific or in-house framework is required, so that the code can be installed and run on any machine with a standard scientific Python distribution (e.g. Anaconda). Python 3.10 or later is required.
+All third-party dependencies are centralised in a single file (`D0FUS_import.py`), which every other module imports. The library relies on a deliberately limited set of packages from the standard scientific Python ecosystem: NumPy and SciPy for numerical computation (integration, interpolation, root-finding, optimisation), Matplotlib for visualisation and DEAP for the genetic algorithm. No domain-specific or in-house framework is required, so that the code can be installed and run on any machine with a standard scientific Python distribution (e.g. Anaconda). Python 3.10 or later is required.
 
-The parameterization module defines the interface between the user and the code. Every user-adjustable parameter in D0FUS is gathered into a single Python object called {py:obj}`GlobalConfig <D0FUS_BIB.D0FUS_parameterization.GlobalConfig>`, which contains 145 typed fields grouped into 15 categories. The complete list of fields, with their physical meaning, units and default values, is given in {ref}`GlobalConfig fields <chap:globalconfig>`. Every field carries a physically motivated default value inspired by ITER and EU-DEMO, so that a user who wants to evaluate, say, an ITER-like configuration only needs to specify the handful of parameters that differ from the defaults:
+The parameterization module defines the interface between the user and the code. Every user-adjustable parameter in D0FUS is gathered into a single Python object called {py:obj}`GlobalConfig <D0FUS_BIB.D0FUS_parameterization.GlobalConfig>`, which contains 165 typed fields grouped into 17 categories. The complete list of fields, with their physical meaning, units and default values, is given in {ref}`GlobalConfig fields <chap:globalconfig>`. Every field carries a physically motivated default value inspired by ITER and EU-DEMO, so that a user who wants to evaluate, say, an ITER-like configuration only needs to specify the handful of parameters that differ from the defaults:
 
         R0 = 6.2
         a  = 2.0

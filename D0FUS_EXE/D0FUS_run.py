@@ -23,8 +23,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 # D0FUS modules
 from D0FUS_BIB.D0FUS_parameterization import (
     GlobalConfig, DEFAULT_CONFIG, coerce_input_value, resolve_deprecated_key,
-    material_rho,
-    M_blanket_effective, eta_T_effective)
+    LEGACY_SPLIT_KEYS, apply_legacy_split_keys, plant_conversion)
 from D0FUS_BIB.D0FUS_radial_build_functions import *
 from D0FUS_BIB.D0FUS_physical_functions import *
 from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
@@ -63,9 +62,97 @@ _PROFILE_PRESETS = {
 # (legacy-value remap layer removed; see loader comment)
 
 
+def load_config_from_lines(lines,
+                           base: GlobalConfig = None,
+                           verbose: int = 0,
+                           ignore_keys=()) -> GlobalConfig:
+    """
+    Build a GlobalConfig from the lines of a D0FUS deck.
+
+    Same rules as load_config_from_file, for a deck already held in memory
+    (for instance the design section of a POPCON or UNCERTAINTY deck), so
+    that no temporary file is needed.
+
+    Parameters
+    ----------
+    lines : iterable of str
+        Deck lines. Each non-empty, non-comment line must follow the pattern
+        ``key = value``. Lines whose value is a bracketed list
+        (e.g. ``R0 = [8, 9, 10]``) are treated as scan declarations and are
+        skipped: the field keeps its default value.
+    base, verbose, ignore_keys : see load_config_from_file.
+
+    Returns
+    -------
+    GlobalConfig
+        New immutable configuration with the deck overrides applied.
+    """
+    if base is None:
+        base = DEFAULT_CONFIG
+
+    overrides = {}
+
+    for raw_line in lines:
+        # Strip inline comments and surrounding whitespace
+        line = raw_line.split("#")[0].strip()
+        if not line or "=" not in line:
+            continue
+
+        key, _, raw_val = line.partition("=")
+        key     = key.strip()
+        raw_val = raw_val.strip()
+
+        # Skip scan parameters (bracketed lists)
+        if raw_val.startswith("[") and raw_val.endswith("]"):
+            if verbose >= 2:
+                print(f"  [scan]   {key} = {raw_val}  →  skipped (kept at default)")
+            continue
+
+        # Coerce the raw token to the correct Python type for this
+        # GlobalConfig field via the shared helper (single source of
+        # truth across the run, genetic and scan loaders). A boolean
+        # field written as "False" therefore decodes to the bool False
+        # rather than the truthy string "False", and an optional field
+        # written as "None" decodes to the Python None.
+        # Resolve deprecated deck keys (f_In -> f_In_cable, f_gap ->
+        # f_In_WP) before typing and before the GlobalConfig membership
+        # check, so an old deck warns instead of silently falling back to
+        # the field default.
+        key = resolve_deprecated_key(key)
+        if key in ignore_keys:
+            continue
+        val = coerce_input_value(key, raw_val)
+
+        # Old single keys split per coil system: expanded after the loop,
+        # so that a TF or CS key set anywhere in the deck takes precedence.
+        if key in LEGACY_SPLIT_KEYS:
+            overrides[key] = val
+            continue
+
+        # Only accept keys that exist in GlobalConfig
+        if key not in GlobalConfig.__dataclass_fields__:
+            # Always surface unknown keys: a stale deck silently
+            # falling back to defaults is exactly the hidden-
+            # assumption failure mode D0FUS aims to avoid.
+            print(f"  [warn]   '{key}' is not a recognised GlobalConfig field — ignored")
+            continue
+
+        # Legacy-value remapping removed by design: an unrecognised
+        # option value must fail loudly in the downstream validator
+        # (which lists the valid options) rather than being silently
+        # translated. Unknown KEYS still warn and fall back to the
+        # documented defaults.
+        overrides[key] = val
+        if verbose >= 2:
+            print(f"  [input]  {key} = {overrides[key]}")
+
+    return dc_replace(base, **apply_legacy_split_keys(overrides))
+
+
 def load_config_from_file(filepath: str,
                           base: GlobalConfig = None,
-                          verbose: int = 0) -> GlobalConfig:
+                          verbose: int = 0,
+                          ignore_keys=()) -> GlobalConfig:
     """
     Parse a D0FUS input file and return a GlobalConfig with overridden fields.
 
@@ -80,66 +167,190 @@ def load_config_from_file(filepath: str,
         Starting configuration.  If None, DEFAULT_CONFIG is used.
     verbose : int, optional
         Verbosity level: 0 = silent, 1 = warnings only, 2 = full trace.
-        Default: 2 (backward-compatible).
+        Default: 0.
+    ignore_keys : iterable of str, optional
+        Deck keys read by the calling mode itself (for instance the SCAN
+        plot settings). They are skipped without the unknown-key warning.
 
     Returns
     -------
     GlobalConfig
         New immutable configuration with the file overrides applied.
     """
-    if base is None:
-        base = DEFAULT_CONFIG
-
-    overrides = {}
-
     with open(filepath, "r", encoding="utf-8") as fh:
-        for raw_line in fh:
-            # Strip inline comments and surrounding whitespace
-            line = raw_line.split("#")[0].strip()
-            if not line or "=" not in line:
-                continue
+        return load_config_from_lines(fh, base=base, verbose=verbose,
+                                      ignore_keys=ignore_keys)
 
-            key, _, raw_val = line.partition("=")
-            key     = key.strip()
-            raw_val = raw_val.strip()
 
-            # Skip scan parameters (bracketed lists)
-            if raw_val.startswith("[") and raw_val.endswith("]"):
-                if verbose >= 2:
-                    print(f"  [scan]   {key} = {raw_val}  →  skipped (kept at default)")
-                continue
+#%% Deck content and execution mode
+# ---------------------------------------------------------------------------
+# The execution mode follows from the content of the deck, never from a
+# section title. tri(), norm(), unif() or envelope() values make an
+# UNCERTAINTY study. Two [min, max, n_points] axes nbar_line and Tbar make a
+# POPCON map, two other [min, max, n_points] axes a SCAN. [min, max] ranges
+# make a GENETIC optimisation. A deck with none of them is a RUN. Section
+# titles such as [POPCON] are accepted and ignored. D0FUS.py and the mode
+# parsers use the same functions, so they cannot disagree on a deck.
+# ---------------------------------------------------------------------------
 
-            # Coerce the raw token to the correct Python type for this
-            # GlobalConfig field via the shared helper (single source of
-            # truth across the run, genetic and scan loaders). A boolean
-            # field written as "False" therefore decodes to the bool False
-            # rather than the truthy string "False", and an optional field
-            # written as "None" decodes to the Python None.
-            # Resolve deprecated deck keys (f_In -> f_In_cable, f_gap ->
-            # f_In_WP) before typing and before the GlobalConfig membership
-            # check, so an old deck warns instead of silently falling back to
-            # the field default.
-            key = resolve_deprecated_key(key)
-            val = coerce_input_value(key, raw_val)
+# Grid axes of a POPCON map. nbar_line is not a design input, so a
+# [min, max, n_points] axis on it can only belong to a POPCON map.
+POPCON_AXES = ('nbar_line', 'Tbar')
 
-            # Only accept keys that exist in GlobalConfig
-            if key not in GlobalConfig.__dataclass_fields__:
-                # Always surface unknown keys: a stale deck silently
-                # falling back to defaults is exactly the hidden-
-                # assumption failure mode D0FUS aims to avoid.
-                print(f"  [warn]   '{key}' is not a recognised GlobalConfig field — ignored")
-                continue
+_UNCERTAIN_RE = re.compile(r'^(tri|norm|unif|envelope)\s*\(', re.IGNORECASE)
 
-            # Legacy-value remapping removed by design: an unrecognised
-            # option value must fail loudly in the downstream validator
-            # (which lists the valid options) rather than being silently
-            # translated. Unknown KEYS still warn and fall back to the
-            # documented defaults.
-            overrides[key] = val
-            if verbose >= 2:
-                print(f"  [input]  {key} = {overrides[key]}")
 
-    return dc_replace(base, **overrides)
+def deck_entries(lines):
+    """
+    Entries of a D0FUS deck, in file order.
+
+    Comments (text after #) are removed. Each 'key = value' line, and each
+    'key : [...]' line, gives a tuple (key, kind, value) with kind
+      'grid'       value [min, max, n_points]
+      'range'      value [min, max]
+      'uncertain'  value tri(...), norm(...), unif(...) or envelope(...)
+      'scalar'     any other value
+    Lines without an entry (blank lines, section titles such as [POPCON])
+    are skipped.
+
+    Raises
+    ------
+    ValueError : bracketed value with neither 2 nor 3 items.
+    """
+    entries = []
+    for raw in lines:
+        line = raw.split('#', 1)[0].strip()
+        if '=' in line:
+            key, _, value = line.partition('=')
+        elif ':' in line and line.partition(':')[2].strip().startswith('['):
+            key, _, value = line.partition(':')
+        else:
+            continue
+        key, value = key.strip(), value.strip()
+        if value.startswith('[') and value.endswith(']'):
+            items = [v for v in re.split(r'[,;]', value[1:-1]) if v.strip()]
+            if len(items) not in (2, 3):
+                raise ValueError(
+                    f"\n Invalid bracket format for {key}: {value}\n"
+                    f"Expected:\n"
+                    f"  - [min, max] for optimization\n"
+                    f"  - [min, max, n_points] for scan\n")
+            kind = 'range' if len(items) == 2 else 'grid'
+        elif _UNCERTAIN_RE.match(value):
+            kind = 'uncertain'
+        else:
+            kind = 'scalar'
+        entries.append((key, kind, value))
+    return entries
+
+
+def _bracket_numbers(key, value):
+    """Numbers of a bracketed deck value, with an explicit error message."""
+    items = [v.strip() for v in re.split(r'[,;]', value[1:-1]) if v.strip()]
+    form = "[min, max]" if len(items) == 2 else "[min, max, n_points]"
+    try:
+        return [float(v) for v in items]
+    except ValueError as e:
+        raise ValueError(f"\n Invalid values for parameter {key}: {value}\n"
+                         f"Values must be numeric: {form}\n"
+                         f"Error: {e}") from None
+
+
+def detect_mode_from_lines(lines):
+    """
+    Execution mode of a deck, read from its content (see deck_entries).
+
+    Returns
+    -------
+    (mode, details) with
+      'uncertainty'  : number of uncertain entries
+      'popcon'       : {'nbar_line': (min, max, n), 'Tbar': (min, max, n)}
+      'scan'         : [(name, min, max, n_points), (name, min, max, n_points)]
+      'optimization' : {name: (min, max)}
+      'run'          : []
+
+    Raises
+    ------
+    ValueError : forms mixed in one deck, a key bracketed twice, or a wrong
+                 number of axes or ranges.
+    """
+    entries = deck_entries(lines)
+    uncertain = [k for k, kind, _ in entries if kind == 'uncertain']
+    grids, ranges = {}, {}
+    for key, kind, value in entries:
+        if kind not in ('grid', 'range'):
+            continue
+        if key in grids or key in ranges:
+            raise ValueError(f"\n '{key}' is given twice as a bracketed range.\n")
+        nums = _bracket_numbers(key, value)
+        if kind == 'grid':
+            grids[key] = (nums[0], nums[1], int(nums[2]))
+        else:
+            ranges[key] = (nums[0], nums[1])
+
+    if uncertain:
+        if grids or ranges:
+            raise ValueError(
+                f"\n Invalid input file: uncertain entries and bracketed ranges "
+                f"in the same file.\n"
+                f"  - uncertain : {', '.join(uncertain)}\n"
+                f"  - bracketed : {', '.join(list(grids) + list(ranges))}\n"
+                f"An UNCERTAINTY study varies its inputs with tri(), norm(), "
+                f"unif() or envelope() only.\n")
+        return 'uncertainty', len(uncertain)
+
+    if grids and ranges:
+        raise ValueError(
+            f"\n Invalid input file: Mixed parameter formats detected.\n"
+            f"  - {len(ranges)} optimization parameter(s) with [min, max]\n"
+            f"  - {len(grids)} scan parameter(s) with [min, max, n_points]\n"
+            f"\n"
+            f"Please choose ONE mode:\n"
+            f"  - OPTIMIZATION: Use [min, max] for all variable parameters\n"
+            f"  - SCAN: Use [min, max, n_points] for exactly 2 parameters\n"
+            f"  - RUN: Remove all brackets for fixed values\n")
+
+    if grids:
+        if set(grids) == set(POPCON_AXES):
+            return 'popcon', {k: grids[k] for k in POPCON_AXES}
+        if 'nbar_line' in grids:
+            raise ValueError(
+                f"\n nbar_line is not a design input. An axis "
+                f"nbar_line = [min, max, n_points] makes a POPCON map,\n"
+                f"together with Tbar = [min, max, n_points] and no other axis "
+                f"(found: {', '.join(grids)}).\n")
+        if len(grids) == 1:
+            param_name = list(grids)[0]
+            raise ValueError(
+                f"\n Invalid scan: Found only 1 parameter ({param_name}).\n"
+                f"\n"
+                f"SCAN mode requires exactly 2 parameters with [min, max, n_points].\n"
+                f"\n"
+                f"Example:\n"
+                f"  R0 = [3, 9, 25]\n"
+                f"  a = [1, 3, 25]\n")
+        if len(grids) > 2:
+            raise ValueError(
+                f"\n Invalid scan: Found {len(grids)} parameters: {', '.join(grids)}.\n"
+                f"\n"
+                f"SCAN mode requires exactly 2 parameters.\n")
+        return 'scan', [(k, lo, hi, n) for k, (lo, hi, n) in grids.items()]
+
+    if ranges:
+        if len(ranges) < 2:
+            param_name = list(ranges)[0]
+            raise ValueError(
+                f"\n Invalid optimization: Found only 1 parameter ({param_name}).\n"
+                f"\n"
+                f"OPTIMIZATION mode requires at least 2 parameters with [min, max].\n"
+                f"\n"
+                f"Example:\n"
+                f"  R0 = [3, 9]\n"
+                f"  a = [1, 3]\n"
+                f"  Bmax_TF = [10, 16]\n")
+        return 'optimization', ranges
+
+    return 'run', []
 
 
 #%% Core calculation
@@ -163,6 +374,10 @@ def _parse_impurity_inventory(config):
     (species, concentrations) : (list[str], list[float])
         Only entries with a strictly positive concentration n_imp/n_e are kept.
         Empty / 'None' inventory returns ([], []).
+
+    Raises
+    ------
+    ValueError  When the two lists do not have the same length.
     """
     sp_raw = getattr(config, 'impurity_species', '')
     fc_raw = getattr(config, 'f_imp_core', '')
@@ -173,6 +388,10 @@ def _parse_impurity_inventory(config):
         conc = [float(fc_raw)]
     else:
         conc = [float(c.strip()) for c in str(fc_raw).split(',') if c.strip()]
+    if len(conc) != len(species):
+        raise ValueError(
+            f"impurity_species = {sp_raw!r} lists {len(species)} species but "
+            f"f_imp_core = {fc_raw!r} gives {len(conc)} concentrations.")
     paired = [(s, c) for s, c in zip(species, conc) if c > 0]
     return [p[0] for p in paired], [p[1] for p in paired]
 
@@ -227,42 +446,201 @@ def _ion_density_fraction(config, f_alpha):
     return 1.0 - float(f_alpha) - Z1 + float(sum(conc))
 
 
-def _profile_params(config):
+def _profile_params(config, Vprime_data=None):
     """
     Profile parameters (nu_n, nu_T, rho_ped, n_ped_frac, T_ped_frac) of the
     deck, from the Manual inputs or the _PROFILE_PRESETS table.
+
+    The deck and the presets give rho_ped in rho_tor. It is returned as the
+    volume label rho_V of the design geometry (Vprime_data, None in Academic
+    geometry where rho_V = rho_tor), the coordinate of the profiles.
     """
     if config.Plasma_profiles == 'Manual':
-        return (config.nu_n_manual, config.nu_T_manual, config.rho_ped,
-                config.n_ped_frac, config.T_ped_frac)
-    p = _PROFILE_PRESETS[config.Plasma_profiles]
-    return p['nu_n'], p['nu_T'], p['rho_ped'], p['n_ped_frac'], p['T_ped_frac']
+        p = dict(nu_n=config.nu_n_manual, nu_T=config.nu_T_manual,
+                 rho_ped=config.rho_ped, n_ped_frac=config.n_ped_frac,
+                 T_ped_frac=config.T_ped_frac)
+    else:
+        p = _PROFILE_PRESETS[config.Plasma_profiles]
+    return (p['nu_n'], p['nu_T'],
+            float(rho_V_of_rho_tor(p['rho_ped'], Vprime_data)),
+            p['n_ped_frac'], p['T_ped_frac'])
 
 
-def fuel_power_split(config):
+def new_output_dir(parent, prefix):
+    """
+    Create a new output folder parent/<prefix>_<YYYYmmdd_HHMMSS>.
+
+    Two runs started within the same second get distinct folders, the
+    second one with the suffix _2, the third with _3, and so on.
+
+    Returns
+    -------
+    (path, timestamp) : (str, str)
+    """
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path, k = os.path.join(parent, f"{prefix}_{stamp}"), 1
+    while True:
+        try:
+            os.makedirs(path)
+            return path, stamp
+        except FileExistsError:
+            k += 1
+            path = os.path.join(parent, f"{prefix}_{stamp}_{k}")
+
+
+def default_output_root():
+    """
+    Default parent folder of the result folders of every mode.
+
+    In a source checkout (pyproject.toml at the root of the code, editable
+    installs included) it is D0FUS_OUTPUTS at that root, whatever the
+    working directory. For an installed package it is D0FUS_OUTPUTS in the
+    working directory, so that no result is written into site-packages.
+
+    Returns
+    -------
+    str : absolute path of the folder (not created here).
+    """
+    code_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if os.path.isfile(os.path.join(code_root, "pyproject.toml")):
+        return os.path.join(code_root, "D0FUS_OUTPUTS")
+    return os.path.join(os.getcwd(), "D0FUS_OUTPUTS")
+
+
+def _cd_deposition(CD_source, I_LH, I_EC, I_NBI, rho_EC, rho_NBI):
+    """
+    Centre and width (rho_CD, delta_CD) of the Gaussian current-drive
+    deposition of the converged q profile, shared by run() and the figures.
+
+    ECCD (rho_EC, 0.05) and NBCD (rho_NBI, 0.15) use their input radius.
+    Multi with a non-zero driven current takes the current-weighted average
+    of the LH (0.5, 0.20), EC and NBI depositions. LHCD, Academic and Multi
+    without driven current use a broad central deposition (0.5, 0.20).
+
+    Parameters
+    ----------
+    CD_source           : str    Current-drive scheme.
+    I_LH, I_EC, I_NBI   : float  Driven currents of each source [MA].
+    rho_EC, rho_NBI     : float  Input deposition radii [-].
+
+    Returns
+    -------
+    (rho_CD, delta_CD) : (float, float)
+    """
+    I_sources = np.abs([I_LH, I_EC, I_NBI])
+    if CD_source == 'Multi' and np.sum(I_sources) > 0:
+        w = I_sources / np.sum(I_sources)
+        return (float(np.dot(w, [0.5, rho_EC, rho_NBI])),
+                float(np.dot(w, [0.20, 0.05, 0.15])))
+    if CD_source == 'ECCD':
+        return rho_EC, 0.05
+    if CD_source == 'NBCD':
+        return rho_NBI, 0.15
+    return 0.5, 0.20
+
+
+def fuel_power_split(config, Vprime_data=None):
     """
     (f_charged, f_neutron) of config.Fuel at the deck Tbar and profiles.
 
-    Post-processing helper (reports, cost blocks). It uses the Academic
-    volume weight, whereas run() uses the Miller weight in refined mode.
-    For D-T the split is exact either way. For D-D only the branch
-    weighting changes: 0.1 to 0.2 % on f_neutron for an H-mode profile
-    at 2-10 keV (KSTAR-like shape).
+    Post-processing helper (reports, cost blocks). The profiles are
+    functions of the volume label rho_V, so the volume integrals do not
+    depend on the geometry: the Academic weight gives the split of run().
+    Vprime_data (the design geometry) only converts the pedestal label of
+    the deck from rho_tor to rho_V.
     """
-    nu_n, nu_T, rho_ped, n_ped_frac, T_ped_frac = _profile_params(config)
+    nu_n, nu_T, rho_ped, n_ped_frac, T_ped_frac = _profile_params(
+        config, Vprime_data)
     return f_fuel_power_split(config.Fuel, config.Tbar, nu_T, nu_n,
                               rho_ped=rho_ped, n_ped_frac=n_ped_frac,
                               T_ped_frac=T_ped_frac, Vprime_data=None,
                               tau_i_e=config.tau_i_e)
 
 
-def thermal_multiplier(config):
+def house_load_breakdown(config, R_TF_out, R_TF_in, c, H_TF, Z_TF_bore_half,
+                         N_TF, E_TF_J, P_cryo_cool_kW):
     """
-    P_th / P_fus: neutron power multiplied by the blanket factor,
-    charged-product power collected as is.
+    House load of the plant, PROCESS model (f_house_load): facilities on the
+    effective floor area of the plant buildings, tritium plant (D-T fuel
+    only), vacuum pumps and TF power supplies.
+
+    D0FUS has no PF coils: the cryostat radius is the TF outer radius plus
+    dr_TF_cryostat. The shield sector spans the TF bore: width at the
+    midplane, height of the inner contour.
+
+    Returns
+    -------
+    dict  P_house, P_facilities, P_tritium, P_vacuum, P_TF_supplies [MWe],
+          A_floor [m2], V_buildings [m3].
     """
-    f_n = fuel_power_split(config)[1]
-    return f_n * M_blanket_effective(config.Blanket_choice) + 1.0 - f_n
+    P_TF, V_TF = f_tf_power_supplies(config.I_cond, config.R0, N_TF,
+                                     config.V_max, E_TF_J)
+    bld = f_plant_buildings(
+        R_cryostat=R_TF_out + config.dr_TF_cryostat, R_TF_out=R_TF_out,
+        R_TF_in=R_TF_in, H_TF=H_TF, W_shield=R_TF_out - R_TF_in - 2.0 * c,
+        H_shield=2.0 * Z_TF_bore_half, P_cryo_W=1.0e3 * P_cryo_cool_kW,
+        V_TF_supplies=V_TF, pulsed=(config.Operation_mode == 'Pulsed'))
+    P_trit = config.P_tritium_plant if config.Fuel == 'DT' else 0.0
+    P_fac, P_house = f_house_load(bld['A_floor'], P_TF, config.P_plant_base,
+                                  config.pflux_plant_floor, P_trit,
+                                  config.P_vacuum_pumps)
+    return dict(P_house=P_house, P_facilities=P_fac, P_tritium=P_trit,
+                P_vacuum=config.P_vacuum_pumps, P_TF_supplies=P_TF,
+                A_floor=bld['A_floor'], V_buildings=bld['V_total'])
+
+
+def _design_Vprime(config, results):
+    """
+    Miller V'(rho) of a converged design on the run() grid (N_rho = 500,
+    N_theta = 200), so that post-processing integrals match the physics
+    chain. None in Academic geometry or when the shaping is not finite.
+    """
+    kappa_edge, kappa_95, delta_edge, delta_95 = (
+        float(np.real(x)) for x in results[62:66])
+    if not (config.Plasma_geometry == 'refined'
+            and np.isfinite(kappa_edge) and np.isfinite(delta_edge)):
+        return None
+    return precompute_Vprime(config.R0, config.a, kappa_edge, delta_edge,
+                             geometry_model='refined', kappa_95=kappa_95,
+                             delta_95=delta_95, N_rho=500, N_theta=200)
+
+
+def runaway_indicators(config, results, Vprime_data=None):
+    """
+    Runaway-electron indicators of a converged design.
+
+    compute_RE_indicators is called with the profiles, shaping, l_i and
+    Z_eff of the design and with the deck disruption settings (tau_TQ,
+    Te_final_eV, pellet_dilution, pellet_dilution_cools). The RUN report
+    and the SCAN maps both use this function, so that one design gives the
+    same indicators in both modes.
+
+    Parameters
+    ----------
+    config      : GlobalConfig   Resolved configuration of the design.
+    results     : tuple          Return value of run(config).
+    Vprime_data : tuple or None  Miller V'(rho) of the design. Built with
+                                 _design_Vprime when None.
+
+    Returns
+    -------
+    dict  Output of compute_RE_indicators.
+    """
+    if Vprime_data is None:
+        Vprime_data = _design_Vprime(config, results)
+    nu_n, nu_T, rho_ped, n_ped_frac, T_ped_frac = _profile_params(
+        config, Vprime_data)
+    g = {k: float(np.real(results[i])) for k, i in
+         dict(Volume=6, Ip=8, nbar=12, f_He=40, kappa=62, li=72).items()}
+    return compute_RE_indicators(
+        Ip=g['Ip'], nbar=g['nbar'], Tbar=config.Tbar,
+        a=config.a, R0=config.R0, κ=g['kappa'],
+        Z_eff=_compute_Zeff_effective(config, g['f_He']), li=g['li'],
+        nu_n=nu_n, nu_T=nu_T, rho_ped=rho_ped, n_ped_frac=n_ped_frac,
+        T_ped_frac=T_ped_frac, Te_final_eV=config.Te_final_eV,
+        tau_TQ=config.tau_TQ, Vprime_data=Vprime_data, V=g['Volume'],
+        pellet_dilution=config.pellet_dilution,
+        pellet_dilution_cools=config.pellet_dilution_cools)
 
 
 def core_plasma_values(config, results):
@@ -283,19 +661,12 @@ def core_plasma_values(config, results):
     -------
     dict  Te0, Ti0 [keV], ne0, ni0 [1e20 m^-3]. NaN on failed designs.
     """
-    nu_n, nu_T, rho_ped, n_ped_frac, T_ped_frac = _profile_params(config)
     nbar, f_He = float(results[12]), float(results[40])
-    kappa_edge, kappa_95, delta_edge, delta_95 = (float(x) for x in results[62:66])
     if not (np.isfinite(nbar) and np.isfinite(f_He)):
         return dict(Te0=np.nan, Ti0=np.nan, ne0=np.nan, ni0=np.nan)
-    Vprime_data = None
-    if (config.Plasma_geometry == 'refined'
-            and np.isfinite(kappa_edge) and np.isfinite(delta_edge)):
-        # Same grid as run(), so the profile normalisation is identical
-        Vprime_data = precompute_Vprime(
-            config.R0, config.a, kappa_edge, delta_edge,
-            geometry_model='refined', kappa_95=kappa_95, delta_95=delta_95,
-            N_rho=500, N_theta=200)
+    Vprime_data = _design_Vprime(config, results)
+    nu_n, nu_T, rho_ped, n_ped_frac, T_ped_frac = _profile_params(
+        config, Vprime_data)
     Te0 = float(f_Tprof(config.Tbar, nu_T, 0.0, rho_ped=rho_ped,
                         T_ped_frac=T_ped_frac, Vprime_data=Vprime_data))
     ne0 = float(f_nprof(nbar, nu_n, 0.0, rho_ped=rho_ped,
@@ -316,8 +687,9 @@ def core_plasma_values(config, results):
 _RI = dict(Surface=7, Ip=8, nbar_line=13, nG=14, betaT=17, qstar=19, q95=20,
            P_CD=21, P_elec=25, cost=27, Gamma_n=39, c=44, d=51, r_d=61,
            kappa=62, betaN_total=96, V_TF_one=99, V_CS_geom=100,
-           V_blanket=127, t_life_bl_yr=130, t_life_div_yr=131,
-           T_op_limit=132, CF=135, V_rb_BB=138, P_th=150)
+           t_life_bl_yr=130, t_life_div_yr=131,
+           T_op_limit=132, CF=135, V_rb_BB=138, V_rb_shield=139, V_rb_VV=140,
+           V_rb_gap_TF=141, P_th=150)
 
 
 def evaluate_costs(config, results):
@@ -326,23 +698,30 @@ def evaluate_costs(config, results):
 
     Volumes are the exact ones computed by run(): TF on the conductor
     centreline (V_TF_one x N_TF), CS with the resolved height (V_CS_geom),
-    blanket from the Miller / Princeton-D contours (V_blanket, V_rb_BB), and
-    the fusion-island cylinder of height H_TF from the Princeton-D solve.
+    breeding blanket (V_bl = V_rb_BB) and shield and gaps (V_sg = shield +
+    vacuum vessel + gap layers) from the radial build layers, and the
+    fusion-island cylinder of height H_TF from the Princeton-D solve. The
+    divertor target area is f_div_area_fraction x plasma surface.
     P_th is read from the results tuple, so it carries the P_fus resolved by
     run() (P_fus_mode = 'greenwald') rather than the deck placeholder.
+
+    A plant without net electric output (P_elec <= 0) has no COE: it is NaN
+    and 'net_electric' is False. Its capital cost is still given, with the
+    balance of plant taken at P_e = 0.
 
     Returns
     -------
     dict  All f_costs_Sheffield outputs (C_invest [M EUR], COE [EUR/MWh],
-          component costs) plus the geometric inputs. Empty dict when
+          component costs), the inputs and 'net_electric'. Empty dict when
           cost_model = 'None' or when an input is non-finite.
     """
     if getattr(config, 'cost_model', 'None') == 'None':
         return {}
     g = {k: float(np.real(results[i])) for k, i in _RI.items()}
     need = ('Surface', 'P_CD', 'P_elec', 'Gamma_n', 'c', 'd', 'kappa',
-            'V_TF_one', 'V_CS_geom', 'V_blanket', 't_life_bl_yr',
-            't_life_div_yr', 'T_op_limit', 'CF', 'V_rb_BB', 'P_th')
+            'V_TF_one', 'V_CS_geom', 't_life_bl_yr', 't_life_div_yr',
+            'T_op_limit', 'CF', 'V_rb_BB', 'V_rb_shield', 'V_rb_VV',
+            'V_rb_gap_TF', 'P_th')
     if not all(np.isfinite(g[k]) for k in need):
         return {}
     try:
@@ -355,11 +734,13 @@ def evaluate_costs(config, results):
                               g['kappa'], Delta_TF, H_TF)[3])
     except Exception:
         return {}
-    inputs = dict(P_t=g['P_th'], P_e=max(g['P_elec'], 1.0), P_aux=g['P_CD'],
+    V_sg = g['V_rb_shield'] + g['V_rb_VV'] + g['V_rb_gap_TF']
+    inputs = dict(P_t=g['P_th'], P_e=max(g['P_elec'], 0.0), P_aux=g['P_CD'],
                   Gamma_n=g['Gamma_n'], T_op_limit=g['T_op_limit'], CF=g['CF'],
                   t_life_bl_yr=g['t_life_bl_yr'], t_life_div_yr=g['t_life_div_yr'],
                   V_FI=V_FI, V_pc=g['V_TF_one'] * N_TF + g['V_CS_geom'],
-                  V_sg=g['V_blanket'], V_bl=g['V_rb_BB'], S_tt=0.1 * g['Surface'])
+                  V_sg=V_sg, V_bl=g['V_rb_BB'],
+                  S_tt=config.f_div_area_fraction * g['Surface'])
     out = f_costs_Sheffield(
         discount_rate=config.discount_rate, contingency=config.contingency,
         T_life=config.T_life, T_build=config.T_build,
@@ -368,7 +749,12 @@ def evaluate_costs(config, results):
             'C_Op_OM', 'C_Op_F', 'C_syst_other', 'C_syst_BOP', 'C_syst_heat',
             'C_syst_aux', 'C_reac_tt', 'C_reac_bl', 'C_reac_sg', 'C_reac_pc')
     res = {k: float(v) for k, v in zip(keys, out)}
-    res.update(inputs, N_TF=N_TF, Delta_TF=Delta_TF, H_TF=H_TF)
+    res.update(inputs, N_TF=N_TF, Delta_TF=Delta_TF, H_TF=H_TF,
+               net_electric=bool(g['P_elec'] > 0.0))
+    # C_Op_waste is a cost per unit of energy [EUR/MWh], added to the COE.
+    # Its annual value [M EUR/yr] is shown with the other operating costs.
+    res['C_Op_waste_annual'] = (res['C_Op_waste'] * 8760.0 * res['CF']
+                                * res['P_e'] * 1e-6)
     return res
 
 
@@ -448,11 +834,13 @@ def resolve_Tbar(config: GlobalConfig, verbose: int = 0) -> GlobalConfig:
     'manual'    : returns the configuration unchanged.
     'greenwald' : solves Tbar with brentq so that the converged design sits
         at the requested Greenwald fraction
-            g(Tbar) = nbar_line(Tbar) / (Ip(Tbar) / pi a^2) - f_GW_target = 0
-        over the bracket [Tbar_min, Tbar_max]. Each iteration is one full
-        run() at Tbar_mode='manual' (typically ~10 iterations). If the
-        bracket does not enclose a sign change, a coarse pre-scan looks for
-        an enclosing sub-bracket and a clear error is raised otherwise.
+            g(Tbar) = nbar_line(Tbar) / (Ip(Tbar) / pi a^2) - f_GW_target = 0.
+        The deck Tbar is the initial guess: the bracket is searched around
+        it with steps of 0.5 keV, doubled, inside [Tbar_min, Tbar_max].  If
+        no sign change is found there, the whole interval and then a coarse
+        pre-scan are tried, and a clear error is raised otherwise.  Each
+        evaluation is one full run() at Tbar_mode='manual' (5 for the ITER
+        deck).
 
     Returns the configuration with the solved Tbar and Tbar_mode='manual',
     so that downstream consumers (run, printing, figures, the other
@@ -471,33 +859,65 @@ def resolve_Tbar(config: GlobalConfig, verbose: int = 0) -> GlobalConfig:
         # physics RuntimeWarnings are suppressed for the probes only.
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', RuntimeWarning)
-            res = run(dc_replace(config, Tbar=float(T), Tbar_mode='manual'),
-                      verbose=0)
+            try:
+                res = run(dc_replace(config, Tbar=float(T), Tbar_mode='manual'),
+                          verbose=0)
+            except (ValueError, RuntimeError, ZeroDivisionError):
+                return np.nan
         nbl, Ip = float(res[13]), float(res[8])
         if not (np.isfinite(nbl) and np.isfinite(Ip) and Ip > 0):
             return np.nan
         return nbl / f_nG(Ip, config.a) - target
 
-    g_lo, g_hi = g(T_lo), g(T_hi)
-    if not (np.isfinite(g_lo) and np.isfinite(g_hi) and g_lo * g_hi < 0):
-        # Coarse pre-scan for an enclosing sub-bracket (handles solver
-        # failures at the bracket edges and non-monotonic corners).
-        Ts = np.linspace(T_lo, T_hi, 13)
-        gs = np.array([g(T) for T in Ts])
-        ok = np.isfinite(gs)
-        sub = None
-        for k in range(len(Ts) - 1):
-            if ok[k] and ok[k + 1] and gs[k] * gs[k + 1] < 0:
-                sub = (Ts[k], Ts[k + 1])
+    # Memoised evaluations: brentq re-evaluates the bracket ends.
+    _g = {}
+    def g_cached(T):
+        if T not in _g:
+            _g[T] = g(T)
+        return _g[T]
+
+    # Bracket around the deck Tbar: steps of 0.5 keV, doubled, first on the
+    # side of the root given by the sign of g (f_GW falls as Tbar rises at
+    # fixed P_fus), then on the other side.
+    bracket = None
+    T0 = min(max(float(config.Tbar), T_lo), T_hi)
+    g0 = g_cached(T0)
+    if np.isfinite(g0):
+        for side in ((1.0, -1.0) if g0 > 0 else (-1.0, 1.0)):
+            T_a, g_a, step = T0, g0, 0.5
+            while bracket is None:
+                T_b = min(max(T_a + side * step, T_lo), T_hi)
+                g_b = g_cached(T_b) if T_b != T_a else np.nan
+                if not np.isfinite(g_b):
+                    break
+                if g_a * g_b <= 0:
+                    bracket = (min(T_a, T_b), max(T_a, T_b))
+                else:
+                    T_a, g_a, step = T_b, g_b, 2.0 * step
+            if bracket is not None:
                 break
-        if sub is None:
-            raise ValueError(
-                f"resolve_Tbar: no Tbar in [{T_lo}, {T_hi}] keV reaches "
-                f"f_GW = {target} (g spans "
-                f"[{np.nanmin(gs):+.3f}, {np.nanmax(gs):+.3f}]). "
-                f"Adjust f_GW_target or the [Tbar_min, Tbar_max] bracket.")
-        T_lo, T_hi = sub
-    T_star = brentq(g, T_lo, T_hi, xtol=1e-3, rtol=1e-5)
+
+    if bracket is None:
+        g_lo, g_hi = g_cached(T_lo), g_cached(T_hi)
+        if np.isfinite(g_lo) and np.isfinite(g_hi) and g_lo * g_hi < 0:
+            bracket = (T_lo, T_hi)
+        else:
+            # Coarse pre-scan for an enclosing sub-bracket (handles solver
+            # failures at the bracket edges and non-monotonic corners).
+            Ts = np.linspace(T_lo, T_hi, 13)
+            gs = np.array([g_cached(T) for T in Ts])
+            ok = np.isfinite(gs)
+            for k in range(len(Ts) - 1):
+                if ok[k] and ok[k + 1] and gs[k] * gs[k + 1] < 0:
+                    bracket = (Ts[k], Ts[k + 1])
+                    break
+            if bracket is None:
+                raise ValueError(
+                    f"resolve_Tbar: no Tbar in [{T_lo}, {T_hi}] keV reaches "
+                    f"f_GW = {target} (g spans "
+                    f"[{np.nanmin(gs):+.3f}, {np.nanmax(gs):+.3f}]). "
+                    f"Adjust f_GW_target or the [Tbar_min, Tbar_max] bracket.")
+    T_star = brentq(g_cached, *bracket, xtol=1e-3, rtol=1e-5)
     if verbose:
         print(f"resolve_Tbar: f_GW = {target} reached at "
               f"Tbar = {T_star:.3f} keV")
@@ -574,7 +994,7 @@ def resolve_P_fus(config: GlobalConfig, verbose: int = 0) -> GlobalConfig:
             f"resolve_P_fus: no P_fus in [{10**(x0-6):.3g}, {10**(x0+6):.3g}]"
             f" MW reaches f_GW = {target} at Tbar = {config.Tbar} keV. "
             "Adjust f_GW_target, Tbar or H.")
-    x_star = brentq(g, *bracket, xtol=1e-5, rtol=1e-8)
+    x_star = brentq(g_cached, *bracket, xtol=1e-5, rtol=1e-8)
     P_star = float(10.0 ** x_star)
     if verbose:
         print(f"resolve_P_fus: f_GW = {target} reached at "
@@ -637,11 +1057,11 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             results = run(cfg)
     verbose : int, optional
         Verbosity level: 0 = silent, 1 = convergence summary, 2 = full debug.
-        Default: 2 (backward-compatible).
+        Default: 0.
 
     Returns
     -------
-    tuple of 93 scalars
+    tuple of 165 entries, scalars except one array and one dict
         Ordered outputs.  All entries are np.nan if the self-consistent solver
         fails to converge.
 
@@ -723,7 +1143,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     C_Alpha                   = config.C_Alpha
     Ce                        = config.Ce
     eta_model                 = config.eta_model
-    Chosen_Steel              = config.Chosen_Steel
+    Chosen_Steel_TF           = config.Chosen_Steel_TF
+    Chosen_Steel_CS           = config.Chosen_Steel_CS
     # NOTE: nu_Steel, Young_modul_Steel, Young_modul_GF are accessed directly
     # from the config object inside f_CS_refined / f_CS_CIRCE — no local alias needed.
     fatigue_CS                = config.fatigue_CS
@@ -752,13 +1173,17 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     Eps                       = config.Eps
     Tet                       = config.Tet
     I_cond                    = config.I_cond
+    # CS conductor current, the TF one when the deck does not give it
+    I_cond_CS = config.I_cond_CS if config.I_cond_CS is not None else I_cond
     V_max                     = config.V_max
     tau_h_LTS                 = config.tau_h_LTS
     tau_h_HTS                 = config.tau_h_HTS
     T_hotspot                 = config.T_hotspot
     RRR                       = config.RRR
     Dump_resistor_subdivision = config.Dump_resistor_subdivision
-    eta_T                     = eta_T_effective(config.Blanket_choice)
+    # Blanket multiplication, gross conversion efficiency and coolant
+    # pumping fraction: deck values, or the blanket concept values
+    M_blanket, eta_T, f_pump  = plant_conversion(config)
     eta_WP                    = config.eta_WP_acad if config.CD_source == 'Academic' else config.eta_RF
     theta_deg                 = config.theta_deg
     f_n_sep                   = config.f_n_sep
@@ -783,7 +1208,6 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     A_beam                    = config.A_beam
     E_beam_keV                = config.E_beam_keV
     Plasma_geometry           = config.Plasma_geometry
-    M_blanket                 = M_blanket_effective(config.Blanket_choice)
 
     # Core/edge radiation boundary for P_loss convention.
     # Radiation emitted inside ρ < rho_rad_core is subtracted from P_heat
@@ -808,9 +1232,10 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # 2) CD_source='Academic' + q_profile_mode='refined'
     #    The academic CD model returns a scalar I_CD with no deposition
     #    information.  In refined mode this current is deposited via a
-    #    fallback Gaussian centred at rho_CD = 0.4, delta_CD = 0.15 (broad,
-    #    safe default).  Mechanically fine but the location is arbitrary; the
-    #    user is informed so they can pick a physical CD source if desired.
+    #    fallback Gaussian centred at rho_CD = 0.5, delta_CD = 0.20 (broad,
+    #    safe default, _cd_deposition).  Mechanically fine but the location
+    #    is arbitrary; the user is informed so they can pick a physical CD
+    #    source if desired.
     if (config.Bootstrap_choice == 'Segal'
             and config.q_profile_mode == 'refined' and verbose >= 1):
         print("[warn] Bootstrap_choice='Segal' with q_profile_mode='refined': "
@@ -822,8 +1247,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             and config.q_profile_mode == 'refined' and verbose >= 1):
         print("[warn] CD_source='Academic' with q_profile_mode='refined': "
               "the academic gamma_CD model gives a scalar I_CD only; the "
-              "refined solver deposits it on a fallback Gaussian at rho=0.4, "
-              "delta=0.15.  Set CD_source to LHCD/ECCD/NBCD/Multi for a "
+              "refined solver deposits it on a fallback Gaussian at rho=0.5, "
+              "delta=0.20.  Set CD_source to LHCD/ECCD/NBCD/Multi for a "
               "physically motivated deposition profile.")
 
     # ── Verbose summary of the configuration choices ──────────────────────────
@@ -840,31 +1265,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             f"eta_model={config.eta_model!r}")
 
     # ── Multi-impurity parsing ────────────────────────────────────────────────
-    def _parse_impurity_list(species_raw, conc_raw):
-        if species_raw is None or str(species_raw).strip() in ('', 'None', 'none'):
-            return [], []
-        sp_list = [s.strip() for s in str(species_raw).split(',') if s.strip()]
-        if not sp_list:
-            return [], []
-        if isinstance(conc_raw, (int, float)):
-            c_list = [float(conc_raw)]
-        elif isinstance(conc_raw, str):
-            c_str = [s.strip() for s in conc_raw.split(',') if s.strip()]
-            c_list = [float(c) for c in c_str] if c_str else []
-        else:
-            c_list = []
-        if len(sp_list) != len(c_list):
-            raise ValueError(
-                f"Impurity species/concentration mismatch: "
-                f"{len(sp_list)} species ({sp_list}) vs "
-                f"{len(c_list)} concentrations ({c_list}).")
-        paired = [(s, c) for s, c in zip(sp_list, c_list) if c > 0]
-        if not paired:
-            return [], []
-        return [p[0] for p in paired], [p[1] for p in paired]
-
-    imp_species_list, imp_conc_list = _parse_impurity_list(
-        config.impurity_species, config.f_imp_core)
+    imp_species_list, imp_conc_list = _parse_impurity_inventory(config)
 
     # Temperature-dependent coronal mean charges <Z>(Tbar) — Mavrin (2018)
     # fits (get_Z_mean), consistent with the get_Lz radiation tables and
@@ -931,8 +1332,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             )
 
     # ── Steel stress allowables ───────────────────────────────────────────────
-    σ_TF = Steel(Chosen_Steel, config.σ_manual)
-    σ_CS = Steel(Chosen_Steel, config.σ_manual)   # Unfatigued allowable [Pa]
+    σ_TF = Steel(Chosen_Steel_TF, config.σ_manual_TF)
+    σ_CS = Steel(Chosen_Steel_CS, config.σ_manual_CS)   # Unfatigued allowable [Pa]
     # NOTE: CS fatigue knockdown (config.fatigue_CS) is applied entirely inside
     # the CS solver (f_CS_ACAD / f_CS_refined / f_CS_CIRCE), within the stress
     # residual / f_sigma_diff closure. The effective allowable σ_eff is reduced
@@ -1011,6 +1412,17 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     else:
         Vprime_data = None
 
+    # ── Radial labels of the deck: rho_tor -> rho_V ───────────────────────────
+    # The deck gives the pedestal top, the deposition radii and the core
+    # radiation boundary in the toroidal-flux label rho_tor, the coordinate
+    # of transport codes and published profile fits. The profiles are
+    # written in the volume label rho_V: the labels are converted once here,
+    # every function below receives rho_V. Academic geometry: rho_V = rho_tor.
+    rho_ped      = float(rho_V_of_rho_tor(rho_ped, Vprime_data))
+    rho_EC       = float(rho_V_of_rho_tor(rho_EC, Vprime_data))
+    rho_NBI      = float(rho_V_of_rho_tor(rho_NBI, Vprime_data))
+    rho_rad_core = float(rho_V_of_rho_tor(rho_rad_core, Vprime_data))
+
     Volume_solution  = f_plasma_volume(R0, a, κ, δ, Vprime_data=Vprime_data)
     Surface_solution = f_first_wall_surface(R0, a, κ, δ,
                                             geometry_model=Plasma_geometry)
@@ -1039,42 +1451,23 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             P_total += _Pt
         return P_core, P_total
 
-    # ── Area elongation for confinement scaling laws ──────────────────────────
-    # The IPB98(y,2), DS03, ITER89-P, and L-mode scaling laws were fitted using
-    # the "area elongation" κ_a ≡ V_p / (2π²R₀a²), which is the elongation of
-    # the equivalent ellipse with the same cross-sectional area as the actual
-    # shaped plasma (ITER Physics Basis, NF 39, 1999, Table 5; Kovari et al.,
-    # Fusion Eng. Des. 89, 2014, §2.2 — PROCESS convention).
+    # ── Elongation of the confinement scaling law ─────────────────────────────
+    # Each law is evaluated with the elongation of its own fit, stored in the
+    # registry (f_Get_kappa_convention). Most laws use the area elongation
+    # κ_a ≡ V_p / (2π²R₀a²), the elongation of the ellipse with the same
+    # cross-section as the shaped plasma: IPB98(y,2), ITPA20 and ITPA20-IL
+    # (Verdoolaege et al., NF 61 (2021) 076006, §2.2.1). ITER89-P uses the
+    # LCFS elongation.
     #
     # For a shaped plasma with triangularity, κ_a < κ_edge because D-shaping
-    # reduces the cross-sectional area.  Numerically κ_a ≈ κ_95 ≈ κ_edge/1.12
-    # for ITER-class shaping (the agreement is fortuitous but robust within
-    # ~2% across the ITER/EU-DEMO parameter space).
-    #
-    # In contrast, the ITPA20 scaling (Verdoolaege et al., NF 61, 2021) was
-    # fitted with the LCFS elongation and triangularity (κ_edge, δ_edge).
+    # reduces the cross-sectional area.
     #
     # MHD quantities (q*, β_P, etc.) continue to use κ_edge as they describe
     # the actual LCFS geometry, not the scaling-law convention.
     κ_a = Volume_solution / (2.0 * np.pi**2 * R0 * a**2)
-
-    _KAPPA_AREA_LAWS = {'IPB98(y,2)', 'DS03', 'L-mode', 'L-mode OK', 'ITER89-P',
-                        'Auclair2026', 'Auclair2026-fGW'}
-    _KAPPA_EDGE_LAWS = {'ITPA20', 'ITPA20-IL'}
-    if Scaling_Law in _KAPPA_AREA_LAWS:
-        κ_SL = κ_a
-    elif Scaling_Law in _KAPPA_EDGE_LAWS:
-        κ_SL = κ
-    else:
-        # Unknown convention: fall back to area elongation (conservative)
-        κ_SL = κ_a
+    κ_SL = κ_a if f_Get_kappa_convention(Scaling_Law) == 'area' else κ
 
     # ── TF coil current density (cable-level sizing) ──────────────────────────
-    H_TF       = 2 * (κ * a + b + 1)
-    r_in_TF    = R0 - a - b
-    r_out_TF   = R0 + a + b
-    E_mag_TF   = calculate_E_mag_TF(Bmax_TF, r_in_TF, r_out_TF, H_TF)
-
     tau_h = tau_h_HTS if Supra_choice == 'REBCO' else tau_h_LTS
 
     # ── Auto-select f_void based on conductor technology ──────────────────────
@@ -1083,7 +1476,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # If the user explicitly sets f_void in GlobalConfig, that value is used;
     # if left at the default sentinel (None), auto-select based on Supra_choice.
     if f_void is None:
-        f_void = 0.00 if 'REBCO' in Supra_choice else 0.33
+        f_void = default_f_void(Supra_choice)
         # Update config so downstream functions (f_CS_refined, _unpack_CS_config)
         # that read config.f_void directly also see the resolved value.
         config = dc_replace(config, f_void=f_void)
@@ -1098,23 +1491,23 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # with the ripple model (r2 = R0 + a + b + Delta_TF) rather than R0 + a + b alone.
     N_sub = int(N_TF) // Dump_resistor_subdivision
 
-    result_J_TF = calculate_cable_current_density(
-        sc_type=Supra_choice, B_peak=Bmax_TF, T_op=T_helium, E_mag=E_mag_TF,
-        I_cond=I_cond, V_max=V_max, N_sub=N_sub, tau_h=tau_h,
-        f_He_pipe=f_He_pipe, f_void=f_void, f_In_cable=f_In_cable, f_In_WP=f_In_WP,
-        T_hotspot=T_hotspot, RRR=RRR, Marge_T_He=Marge_T_He,
-        Marge_T_Nb3Sn=Marge_T_Nb3Sn, Marge_T_NbTi=Marge_T_NbTi,
-        Marge_T_REBCO=Marge_T_REBCO, Eps=Eps, Tet=Tet,
-        J_wost_Manual=J_wost_Manual if Supra_choice == 'Manual' else None)
-    J_max_TF_conducteur = result_J_TF['J_wost']
+    def _tf_cable(E_mag):
+        """TF cable current density and fractions for a stored energy E_mag [J]."""
+        return calculate_cable_current_density(
+            sc_type=Supra_choice, B_peak=Bmax_TF, T_op=T_helium, E_mag=E_mag,
+            I_cond=I_cond, V_max=V_max, N_sub=N_sub, tau_h=tau_h,
+            f_He_pipe=f_He_pipe, f_void=f_void, f_In_cable=f_In_cable, f_In_WP=f_In_WP,
+            T_hotspot=T_hotspot, RRR=RRR, Marge_T_He=Marge_T_He,
+            Marge_T_Nb3Sn=Marge_T_Nb3Sn, Marge_T_NbTi=Marge_T_NbTi,
+            Marge_T_REBCO=Marge_T_REBCO, Eps=Eps, Tet=Tet,
+            J_wost_Manual=J_wost_Manual if Supra_choice == 'Manual' else None)
 
-    # ── Cable-level fractions (wost = without steel) ─────────────────────────
-    f_sc_TF      = result_J_TF['f_sc']
-    f_cu_TF      = result_J_TF['f_cu']
-    f_He_pipe_TF = result_J_TF['f_He_pipe']
-    f_void_TF    = result_J_TF['f_void']
-    f_He_TF      = result_J_TF['f_He']
-    f_In_TF      = result_J_TF['f_In_cable']
+    # Stored energy in the Princeton-D bore. The bore depends on the coil
+    # thickness c, unknown here: thin-coil estimate (c = 0), refined by the
+    # fixed point of the TF sizing below.
+    E_mag_TF            = calculate_E_mag_TF(Bmax_TF, a, b, R0, 0.0, Delta_TF)
+    result_J_TF         = _tf_cable(E_mag_TF)
+    J_max_TF_conducteur = result_J_TF['J_wost']
 
     # ── On-axis magnetic field and alpha power ────────────────────────────────
     B0_solution = f_B0(Bmax_TF, a, b, R0, b_cover=c_BP)
@@ -1138,13 +1531,19 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     #
     #    In Steady-State mode, P_aux = P_fus / Q, so Q is genuinely a free
     #    variable.  A 2-D solver on (f_alpha, Q) is used, with proper
-    #    variable scaling and analytical Jacobian.
+    #    variable scaling and a finite-difference Jacobian.
     #
     #    Both branches use:
     #      • Absolute residuals (not percentages) for scipy compatibility
     #      • Variable scaling to ~O(1) for well-conditioned Jacobians
     #      • Anderson acceleration (via scipy) as a robust fallback
     #      • Per-method debug counter reset for clear diagnostics
+    #      • A q(ρ) profile frozen during the solve, so that the residuals
+    #        are pure functions of the unknowns, and an outer fixed point
+    #        that updates q(ρ) at each converged solution
+    #        (_solve_with_q_loop)
+    #      • The chain re-evaluated at the retained solution, stored for
+    #        the post-convergence outputs
     # =========================================================================
 
     # ── Dilution ceiling (shared by all solvers) ──────────────────────────────
@@ -1154,24 +1553,30 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     _dbg_counter = [0]
     _dbg_limit   = [5]   # mutable: how many calls to print per solver stage
 
-    # ── Converged chain cache ─────────────────────────────────────────────────
-    # Stores the full physics-chain dict from the last converged solver
-    # evaluation so that post-convergence code can read expensive profile-
-    # integrated quantities (nbar, pbar, Ib, radiation, ...) without
+    # ── Converged chain ───────────────────────────────────────────────────────
+    # Physics-chain dict re-evaluated at the retained solution by each
+    # solver, so that post-convergence code reads the profile-integrated
+    # quantities of that solution (nbar, pbar, Ib, radiation, ...) without
     # recomputing them.
     _converged_chain = [None]
 
-    # ── q,j profile cache (lagged evaluation, mode-aware dispatcher) ──────
-    # Stores the q(ρ) dict from f_q_profile_academic or f_q_profile_refined
-    # (selected by config.q_profile_mode) computed with the previous
-    # iteration's (Ip, I_CD).  Passed to f_Sauter_Redl_Ib so the bootstrap
-    # coefficients see a realistic q(ρ) instead of the constant q_95 fallback.
-    # Updated lazily: only recomputed when I_Ohm or Ip changes by more than 8 %.
-    # The 'refined' branch supports warm starts via the q_init argument,
-    # which collapses subsequent iterations to a single Picard pass.
+    # ── Solver tolerances ─────────────────────────────────────────────────────
+    _P_OHM_ATOL  = 1e-6   # Pulsed inner loop: |P_Ohm(P) - P| [MW]
+    _SS_FA_ATOL  = 1e-7   # Steady-State acceptance: |new_f_alpha - f_alpha| [-]
+    _SS_Q_RTOL   = 1e-6   # Steady-State acceptance: |Q_phys - Q| / Q [-]
+    _Q_LOOP_RTOL = 1e-3   # outer q(ρ) loop: relative change of I_bs [-]
+    _Q_LOOP_MAX  = 8      # outer q(ρ) loop: maximum number of inner solves
+
+    # ── q,j profile of the bootstrap ──────────────────────────────────────
+    # q(ρ) dict from f_q_profile_academic or f_q_profile_refined (selected
+    # by config.q_profile_mode), passed to f_Sauter_Redl_Ib so that the
+    # bootstrap sees a realistic q(ρ) instead of the parabolic fallback.
+    # The physics chain only reads it: q(ρ) is frozen during the inner
+    # (f_alpha[, Q]) solve, whose residuals are then pure functions of the
+    # unknowns. The outer fixed point of the solver dispatch updates it at
+    # each converged inner solution.
     _q_profile_cache = [None]
-    _q_cache_Ip      = [0.0]     # Ip [MA] at last cache update
-    _q_cache_I_Ohm   = [0.0]     # I_Ohm [MA] at last cache update
+    _q_failures      = []        # q-profile solver errors, reported after convergence
 
     def _solve_q_profile(Ip_loc, I_CD_loc, q95_loc, B0_loc, nbar_loc,
                          rho_CD_loc, delta_CD_loc,
@@ -1218,6 +1623,87 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 f"Unknown q_profile_mode: '{q_profile_mode}'. "
                 f"Valid options: 'academic', 'refined'.")
 
+    def _bootstrap_current(nbar_loc, Ip_loc, q95_loc, Zeff_loc,
+                           n_ion_frac_loc, q_profile):
+        """
+        Bootstrap current [MA] of the physics chain.
+
+        Sauter-Redl reads the q(ρ) profile given as argument (None: parabolic
+        fallback): q enters the collisionality nu*_e and the poloidal-flux
+        derivative psi' ~ 1/q of j_bs. Segal does not depend on q(ρ).
+        """
+        if Bootstrap_choice == 'Sauter-Redl':
+            return f_Sauter_Redl_Ib(
+                R0, a, κ, B0_solution, nbar_loc, Tbar,
+                q95_loc, Zeff_loc, nu_n, nu_T,
+                rho_ped=rho_ped, n_ped_frac=n_ped_frac,
+                T_ped_frac=T_ped_frac,
+                Vprime_data=Vprime_data, kappa_95=κ_95,
+                q_profile=q_profile,
+                trapped_fraction_model=trapped_fraction_model, tau_i_e=tau_i_e,
+                n_ion_frac=n_ion_frac_loc)
+        if Bootstrap_choice == 'Segal':
+            return f_Segal_Ib(
+                nu_n, nu_T, a / R0, κ, nbar_loc, Tbar, R0, Ip_loc,
+                rho_ped=rho_ped, n_ped_frac=n_ped_frac,
+                T_ped_frac=T_ped_frac, Vprime_data=Vprime_data)
+        raise ValueError(
+            f"Unknown Bootstrap_choice: '{Bootstrap_choice}'. "
+            f"Valid options: 'Segal', 'Sauter-Redl'.")
+
+    def _cd_efficiencies(nbar_loc, Zeff_loc, fa_loc):
+        """CD figures of merit (LH, EC, NBI) [MA/(MW m²)] at a chain point."""
+        eta_LH_loc  = f_etaCD_LH_physics(Tbar, Zeff_loc)
+        eta_EC_loc  = f_etaCD_EC_physics(
+            a, R0, Tbar, nbar_loc, Zeff_loc, nu_T, nu_n, rho_EC,
+            theta_EC_pol_deg=config.theta_EC_pol_deg,
+            rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
+            Vprime_data=Vprime_data)
+        eta_NBI_loc = f_etaCD_NBI_physics(
+            A_beam, E_beam_keV, a, R0, Tbar, nbar_loc, Zeff_loc, nu_T, nu_n,
+            rho_NBI, f_alpha=fa_loc, angle_NBI_deg=config.angle_NBI_deg,
+            rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
+            fuel=Fuel, Vprime_data=Vprime_data)
+        return eta_LH_loc, eta_EC_loc, eta_NBI_loc
+
+    def _cd_split(P_CD_loc, nbar_loc, eta_LH_loc, eta_EC_loc, eta_NBI_loc):
+        """
+        Power [MW] and driven current [MA] of each source. Pulsed Multi: the
+        input source powers. Single source or Steady-State: the heating
+        fractions of P_CD (f_CD_breakdown).
+        """
+        if Operation_mode == 'Pulsed' and CD_source == 'Multi':
+            denom = R0 * nbar_loc
+            return {'P_LH': P_LH, 'P_EC': P_ECRH, 'P_NBI': P_NBI, 'P_ICR': P_ICRH,
+                    'I_LH':  eta_LH_loc  * P_LH   / denom if denom > 0 else 0.0,
+                    'I_EC':  eta_EC_loc  * P_ECRH / denom if denom > 0 else 0.0,
+                    'I_NBI': eta_NBI_loc * P_NBI  / denom if denom > 0 else 0.0}
+        return f_CD_breakdown(config, P_CD_loc, R0, nbar_loc,
+                              eta_LH_loc, eta_EC_loc, eta_NBI_loc)
+
+    def _q_at_solution(res, fa_loc, q_init):
+        """
+        q,j profile at a converged chain point res of helium fraction fa_loc.
+
+        Converged Ip, I_CD, q95 and nbar of the chain, Z_eff and ion fraction
+        of fa_loc, and the Gaussian CD deposition of the per-source driven
+        currents of the report (_cd_deposition).  Moderate resolution
+        (n_rho = 80, max_iter = 20): l_i, q_0 and the j decomposition differ
+        by less than 0.5 % from n_rho = 200 for smooth current profiles.  The
+        figures use the same settings.  In academic mode the CD deposition,
+        max_iter and tol are ignored (single deterministic pass).
+        """
+        Zeff_loc = _compute_Zeff_effective(config, fa_loc)
+        bd = _cd_split(res['P_CD'], res['nbar'],
+                       *_cd_efficiencies(res['nbar'], Zeff_loc, fa_loc))
+        rho_CD_loc, delta_CD_loc = _cd_deposition(
+            CD_source, bd['I_LH'], bd['I_EC'], bd['I_NBI'], rho_EC, rho_NBI)
+        return _solve_q_profile(
+            res['Ip'], res['I_CD'], res['q95'], B0_solution, res['nbar'],
+            rho_CD_loc=rho_CD_loc, delta_CD_loc=delta_CD_loc,
+            n_rho=80, max_iter=20, tol=1e-3, damping=0.5,
+            q_init=q_init, Zeff_loc=Zeff_loc,
+            n_ion_frac_loc=1.0 - fa_loc - f_imp_dilution + sum(imp_conc_list))
 
     def _reset_dbg(limit=5):
         """Reset debug call counter for a new solver stage."""
@@ -1258,14 +1744,11 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         _dbg_counter[0] += 1
         _dbg = (verbose >= 2 and _dbg_counter[0] <= _dbg_limit[0])
 
-        # Expose f_alpha to the CD dispatcher (used by f_etaCD_NBI_physics)
-        config._f_alpha = f_alpha
-
         # Total ion density over n_e (quasi-neutrality with He ash and impurities)
         n_ion_frac_loc = 1.0 - f_alpha - f_imp_dilution + sum(imp_conc_list)
 
         # Volume-averaged density and pressure
-        nbar_loc = f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, κ,
+        nbar_loc = f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, κ, δ,
                           rho_ped=rho_ped, n_ped_frac=n_ped_frac,
                           T_ped_frac=T_ped_frac,
                           Vprime_data=Vprime_data, f_imp=f_imp_dilution,
@@ -1371,25 +1854,10 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         q95_loc = f_q95(B0_solution, Ip_loc, R0, a, κ, δ, κ_95, δ_95,
                         Option_q95=Option_q95)
 
-        if Bootstrap_choice == 'Sauter-Redl':
-            Ib_loc = f_Sauter_Redl_Ib(
-                R0, a, κ, B0_solution, nbar_loc, Tbar,
-                q95_loc, Zeff, nu_n, nu_T,
-                rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-                T_ped_frac=T_ped_frac,
-                Vprime_data=Vprime_data, kappa_95=κ_95,
-                q_profile=_q_profile_cache[0],
-                trapped_fraction_model=trapped_fraction_model, tau_i_e=tau_i_e,
-                n_ion_frac=n_ion_frac_loc)
-        elif Bootstrap_choice == 'Segal':
-            Ib_loc = f_Segal_Ib(
-                nu_n, nu_T, a / R0, κ, nbar_loc, Tbar, R0, Ip_loc,
-                rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-                T_ped_frac=T_ped_frac, Vprime_data=Vprime_data)
-        else:
-            raise ValueError(
-                f"Unknown Bootstrap_choice: '{Bootstrap_choice}'. "
-                f"Valid options: 'Segal', 'Sauter-Redl'.")
+        # The q(ρ) profile is frozen during the inner solve (outer fixed
+        # point in _solve_with_q_loop).
+        Ib_loc = _bootstrap_current(nbar_loc, Ip_loc, q95_loc, Zeff,
+                                    n_ion_frac_loc, _q_profile_cache[0])
 
         # Current drive — different logic for Pulsed vs Steady-State
         if ss_mode:
@@ -1397,10 +1865,10 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             # P_CD is derived from the required I_CD and the CD efficiency.
             eta_CD_loc = f_etaCD_effective(
                 config, a, R0, B0_solution, nbar_loc, Tbar, nu_n, nu_T,
-                Zeff,
+                Zeff, f_alpha=f_alpha,
                 rho_ped=rho_ped, n_ped_frac=n_ped_frac,
                 T_ped_frac=T_ped_frac,
-                    Vprime_data=Vprime_data)
+                    Vprime_data=Vprime_data, rho_EC=rho_EC, rho_NBI=rho_NBI)
             I_Ohm_loc = 0.0
             I_CD_loc  = f_ICD(Ip_loc, Ib_loc, I_Ohm_loc)
             P_CD_loc  = f_PCD(R0, nbar_loc, I_CD_loc, eta_CD_loc)
@@ -1409,24 +1877,9 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         else:
             # Pulsed mode: P_CD is fixed by the input source powers.
             if CD_source == 'Multi':
-                P_CD_loc    = P_LH + P_ECRH + P_NBI + P_ICRH
-                eta_LH_loc  = f_etaCD_LH_physics(Tbar, Zeff)
-                eta_EC_loc  = f_etaCD_EC_physics(
-                    a, R0, Tbar, nbar_loc, Zeff, nu_T, nu_n,
-                    rho_EC,
-                    theta_EC_pol_deg=config.theta_EC_pol_deg,
-                    rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-                    T_ped_frac=T_ped_frac,
-                    Vprime_data=Vprime_data)
-                eta_NBI_loc = f_etaCD_NBI_physics(
-                    A_beam, E_beam_keV,
-                    a, R0, Tbar, nbar_loc, Zeff, nu_T, nu_n,
-                    rho_NBI,
-                    f_alpha=f_alpha,
-                    angle_NBI_deg=config.angle_NBI_deg,
-                    rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-                    T_ped_frac=T_ped_frac, fuel=Fuel,
-                    Vprime_data=Vprime_data)
+                P_CD_loc = P_LH + P_ECRH + P_NBI + P_ICRH
+                eta_LH_loc, eta_EC_loc, eta_NBI_loc = _cd_efficiencies(
+                    nbar_loc, Zeff, f_alpha)
                 I_CD_loc = (f_I_CD(R0, nbar_loc, eta_LH_loc,  P_LH)
                           + f_I_CD(R0, nbar_loc, eta_EC_loc,  P_ECRH)
                           + f_I_CD(R0, nbar_loc, eta_NBI_loc, P_NBI))
@@ -1434,10 +1887,10 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 P_CD_loc   = P_aux_input
                 eta_CD_loc = f_etaCD_effective(
                     config, a, R0, B0_solution, nbar_loc, Tbar, nu_n, nu_T,
-                    Zeff,
+                    Zeff, f_alpha=f_alpha,
                     rho_ped=rho_ped, n_ped_frac=n_ped_frac,
                     T_ped_frac=T_ped_frac,
-                    Vprime_data=Vprime_data)
+                    Vprime_data=Vprime_data, rho_EC=rho_EC, rho_NBI=rho_NBI)
                 I_CD_loc   = f_I_CD(R0, nbar_loc, eta_CD_loc, P_CD_loc)
 
             I_Ohm_loc = f_I_Ohm(Ip_loc, Ib_loc, I_CD_loc)
@@ -1448,88 +1901,9 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 I_Ohm_loc, a, κ, R0, Tbar, nbar_loc, Zeff, q95_loc, nu_T, nu_n,
                 eta_model=eta_model,
                 rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
-                Vprime_data=Vprime_data)
+                Vprime_data=Vprime_data,
+                trapped_fraction_model=trapped_fraction_model)
             Q_loc     = f_Q(P_fus, P_CD_loc, P_Ohm_loc)
-
-        # ── q,j profile cache for bootstrap collisionality ───────────────
-        #
-        # WHY: The Sauter-Redl bootstrap coefficients L31, L32, L34 depend
-        #   on the electron collisionality nu*_e ~ q(rho).  Using a
-        #   constant q = q_95 overestimates nu* at mid-radius by a factor
-        #   2 to 3, reducing I_bs by roughly 20 %.  A radial q(rho) solves
-        #   this; the dispatcher routes between the two modes.
-        #
-        # HOW: Lagged solve with lazy update via _solve_q_profile().
-        #   - 'academic' mode : single deterministic pass, j ~ (1-rho^2)^alpha_J,
-        #                       q(rho) analytic from cylindrical Ampere.
-        #                       Cached q(rho) is still passed to the global
-        #                       Sauter-Redl call so that the global I_bs
-        #                       sees a realistic collisionality profile.
-        #   - 'refined'  mode : Picard iteration on q(rho) from the composite
-        #                       j_Ohm + j_CD + j_bs (5 to 10 iterations cold,
-        #                       1 to 2 with warm start from the cache).
-        #   - The cache is refreshed when the current decomposition changes
-        #     by more than 8 % in either I_Ohm or Ip.
-        #   - On first call (cache=None), the bootstrap functions use a
-        #     parabolic fallback q_0 + (q_95 - q_0) rho^2 internally.
-        #
-        # COST: with vectorised eta_redl/eta_sauter, ~5 to 10 ms per
-        #   solve in refined mode (cold), ~2 ms warm; ~5 ms in academic.
-        #   Total impact on a 1000-point scan: ~10 to 30 s.
-        #
-        # ROBUSTNESS: the one-iteration lag is benign because q(rho) is a
-        #   slow function of the current decomposition.  If the solve fails
-        #   (pathological geometry, non-convergence), the previous cache or
-        #   the parabolic fallback is used and the outer solver sees no error.
-
-        _do_q_update = False
-        if np.isfinite(Ip_loc) and np.isfinite(I_Ohm_loc):
-            if _q_profile_cache[0] is None:
-                # First call: always compute to escape the parabolic fallback.
-                _do_q_update = True
-            elif (abs(I_Ohm_loc - _q_cache_I_Ohm[0])
-                      > 0.08 * max(abs(_q_cache_I_Ohm[0]), 0.5)
-                  or abs(Ip_loc - _q_cache_Ip[0])
-                      > 0.08 * max(abs(_q_cache_Ip[0]), 1.0)):
-                # Current decomposition has shifted by >8% in either
-                # I_Ohm (pulsed) or Ip (steady-state where I_Ohm ≡ 0).
-                # Threshold raised from 5% to 8%: q(ρ) shape is a slow
-                # function of the current decomposition, so the extra lag
-                # has negligible effect on I_bs accuracy.
-                _do_q_update = True
-
-        if _do_q_update:
-            # Select CD deposition parameters from the active source.
-            # The values below are used only by q_profile_mode='refined' to
-            # build j_CD(rho); academic mode ignores them (j_CD = 0).
-            #   ECCD  : narrow Gaussian at rho_EC (input)
-            #   NBCD  : medium Gaussian at rho_NBI (input)
-            #   LHCD  : broad Gaussian centred at rho = 0.5
-            #   Multi : broad fallback (current-weighted average is computed
-            #           more accurately at the post-convergence call site)
-            #   Academic / unknown : same broad fallback as Multi.  Triggers
-            #           the warning printed at the top of run() when paired
-            #           with q_profile_mode='refined'.
-            if CD_source == 'ECCD':
-                _rho_CD_q, _delta_CD_q = rho_EC, 0.10
-            elif CD_source == 'NBCD':
-                _rho_CD_q, _delta_CD_q = rho_NBI, 0.15
-            elif CD_source == 'LHCD':
-                _rho_CD_q, _delta_CD_q = 0.5, 0.20
-            else:  # Multi / Academic / unknown
-                _rho_CD_q, _delta_CD_q = 0.4, 0.15
-
-            try:
-                _q_profile_cache[0] = _solve_q_profile(
-                    Ip_loc, I_CD_loc, q95_loc, B0_solution, nbar_loc,
-                    rho_CD_loc=_rho_CD_q, delta_CD_loc=_delta_CD_q,
-                    n_rho=60, max_iter=10, tol=5e-3, damping=0.5,
-                    q_init=_q_profile_cache[0], Zeff_loc=Zeff,
-                    n_ion_frac_loc=n_ion_frac_loc)
-                _q_cache_I_Ohm[0] = I_Ohm_loc
-                _q_cache_Ip[0]    = Ip_loc
-            except Exception:
-                pass  # keep previous cache (or None -> parabolic fallback)
 
         if _dbg:
             print(f"    Ib={Ib_loc:.2f}, I_CD={I_CD_loc:.2f}, "
@@ -1588,18 +1962,22 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     #  PULSED-MODE SOLVER — 1-D on f_alpha with inner P_Ohm loop
     # =========================================================================
 
-    def _solve_pulsed():
+    def _solve_pulsed(fa_hint=None):
         """
-        Solve for f_alpha in Pulsed mode.
+        Solve for f_alpha in Pulsed mode, with the q(ρ) profile frozen.
 
         In Pulsed mode, P_aux is fixed (user input).  The only self-consistent
         unknown is f_alpha.  Q is derived from Q = P_fus / (P_CD + P_Ohm).
         An inner loop on P_Ohm ensures Ohmic power consistency.
 
-        Strategy:
-          1. Anderson mixing on f_alpha (fast, robust)
-          2. Newton with finite-difference Jacobian (fallback)
-          3. Bisection on the f_alpha residual (guaranteed convergence)
+        Strategy: Brent's method on r(fa) = new_fa(fa) - fa.  The bracket is
+        searched near fa_hint when given, else by a scan of [0, fa_max].  The
+        chain evaluated at the root is stored in _converged_chain.
+
+        Parameters
+        ----------
+        fa_hint : float or None
+            Root of the previous q(ρ) iteration.
 
         Returns
         -------
@@ -1612,23 +1990,27 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             P_Aux_fixed = abs(P_aux_input)
 
         # Mutable closure for P_Ohm warm-start: stores the converged Ohmic
-        # power from the previous outer residual evaluation.  Instead of
-        # starting the inner P_Ohm loop from 0 (which needs 3–10 iterations),
-        # we start from the previous value (which is close to the new one
-        # since fa changes slowly between brentq steps).  This typically
-        # converges in 1–2 inner iterations instead of 3–10.
+        # power from the previous outer residual evaluation, close to the new
+        # one since fa changes slowly between brentq steps.
         #
-        # IMPORTANT: the inner loop is kept (not eliminated) so that
-        # _pulsed_residual remains a pure function of fa — no hidden state
-        # leaks into the residual, which is required by brentq.
+        # IMPORTANT: the inner loop converges to _P_OHM_ATOL, so that the
+        # warm start has no visible effect and _pulsed_residual remains a pure
+        # function of fa, as required by brentq.
         _P_Ohm_warmstart = [0.0]
+
+        # Results of _pulsed_fixed_point by fa.  The map is pure for the
+        # frozen q(ρ), so that brentq's first two calls (bracket ends) and
+        # the final evaluation at the root reuse earlier evaluations.
+        _fp_memo = {}
 
         def _pulsed_fixed_point(fa):
             """
-            Fixed-point map: fa → new_fa, with warm-started inner P_Ohm loop.
+            Fixed-point map: fa → new_fa, with the inner P_Ohm loop.
 
-            The inner loop converges P_Ohm self-consistently starting from
-            the previous call's converged value.  Typically 1–2 iterations.
+            The Ohmic power entering τ_E and Ip must equal the Ohmic power of
+            the chain output.  The inner loop solves h(P) = P_Ohm(P) - P = 0
+            from the warm start, with one substitution step and then secant
+            steps, to _P_OHM_ATOL.  Typically 1 to 3 chain evaluations.
 
             Parameters
             ----------
@@ -1641,39 +2023,42 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 Updated helium ash fraction from the physics chain.
             Q_out  : float
                 Derived energy gain factor.
+            res    : dict
+                Physics-chain dict at the converged Ohmic power.
             """
             fa = max(0.0, min(fa, _fa_max))
+            if fa in _fp_memo:
+                return _fp_memo[fa]
 
-            # Inner P_Ohm loop: warm-started from previous converged value.
-            # Fall back to 0 if the warmstart was corrupted by a NaN from an
-            # unphysical scan point (e.g. fa near fa_max where DT dilution
-            # kills the reaction and the chain returns NaN).
-            P_Ohm_inner = _P_Ohm_warmstart[0] if np.isfinite(_P_Ohm_warmstart[0]) else 0.0
-            for _inner in range(4):
-                res = _evaluate_physics_chain(fa, P_Aux_fixed, P_Ohm_inner)
-                P_Ohm_new = res['P_Ohm']
-
-                # If the chain returned NaN, abort the inner loop early
-                if not np.isfinite(P_Ohm_new):
+            # Warm start, or 0 if a NaN from an unphysical scan point (e.g.
+            # fa near fa_max where DT dilution kills the reaction and the
+            # chain returns NaN) corrupted it.
+            P_in = _P_Ohm_warmstart[0] if np.isfinite(_P_Ohm_warmstart[0]) else 0.0
+            res = _evaluate_physics_chain(fa, P_Aux_fixed, P_in)
+            P_prev = h_prev = None
+            for _inner in range(12):
+                h = res['P_Ohm'] - P_in
+                # Converged, or NaN from the chain
+                if not np.isfinite(h) or abs(h) <= _P_OHM_ATOL:
                     break
-
-                # Check inner convergence (absolute tolerance 10 kW)
-                if abs(P_Ohm_new - P_Ohm_inner) < 0.01:
-                    break
-                # Damped update to avoid oscillation
-                P_Ohm_inner = 0.5 * P_Ohm_inner + 0.5 * P_Ohm_new
+                if h_prev is None or h == h_prev:
+                    P_next = res['P_Ohm']                               # substitution
+                else:
+                    P_next = P_in - h * (P_in - P_prev) / (h - h_prev)  # secant
+                P_prev, h_prev = P_in, h
+                P_in = P_next if P_next >= 0.0 else 0.5 * P_prev
+                res = _evaluate_physics_chain(fa, P_Aux_fixed, P_in)
 
             # Update warm-start for the next outer call — guard against NaN
             if np.isfinite(res['P_Ohm']):
                 _P_Ohm_warmstart[0] = res['P_Ohm']
 
-            # Cache the chain dict for post-convergence reuse
-            _converged_chain[0] = res
-            return res['new_f_alpha'], res['Q']
+            _fp_memo[fa] = (res['new_f_alpha'], res['Q'], res)
+            return _fp_memo[fa]
 
         def _pulsed_residual(fa):
             """Scalar residual r(fa) = new_fa - fa (absolute, not %)."""
-            new_fa, _ = _pulsed_fixed_point(fa)
+            new_fa, _, _ = _pulsed_fixed_point(fa)
             return new_fa - fa
 
         # ── Brent's method on f_alpha residual ─────────────────────────────────
@@ -1695,50 +2080,75 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 return np.nan
 
         # -- Find a valid bracket [fa_lo, fa_hi] where r changes sign -----------
-        # Strategy: evaluate points incrementally and stop as soon as a sign
-        # change is detected.  This avoids wasting chain evaluations on the
-        # full scan when the bracket is found early (typically at the 2nd–3rd
-        # point for reactor-class tokamaks where fa ~ 0.02).
+        bracket_found = False
+        fa_lo = fa_hi = r_lo = r_hi = np.nan
+
+        # Near the root of the previous q(ρ) iteration, which moves little
+        # when only q(ρ) changes: steps of 2 %, 4 %, 8 %, ... of fa_hint in
+        # the direction of the root, until r changes sign.
+        if fa_hint is not None and np.isfinite(fa_hint) and fa_hint > 1e-4:
+            _fa_a = fa_hint
+            _r_a  = _safe_residual(_fa_a)
+            _step = (0.02 if _r_a > 0 else -0.02) * fa_hint
+            for _ in range(8):
+                if not np.isfinite(_r_a):
+                    break
+                _fa_b = min(max(_fa_a + _step, 1e-4), _fa_max)
+                _r_b  = _safe_residual(_fa_b)
+                if np.isfinite(_r_b) and _r_a * _r_b <= 0 and _fa_b != _fa_a:
+                    (fa_lo, r_lo), (fa_hi, r_hi) = sorted(
+                        [(_fa_a, _r_a), (_fa_b, _r_b)])
+                    bracket_found = True
+                    break
+                if _fa_b in (1e-4, _fa_max):
+                    break
+                _fa_a, _r_a = _fa_b, _r_b
+                _step *= 2.0
+
+        # Otherwise scan [0, fa_max]: evaluate points incrementally and stop
+        # as soon as a sign change is detected.  This avoids wasting chain
+        # evaluations on the full scan when the bracket is found early
+        # (typically at the 2nd–3rd point for reactor-class tokamaks where
+        # fa ~ 0.02).
         _scan_pts = np.unique(np.concatenate([
             [1e-4],
             np.linspace(0.01, min(0.20, _fa_max), 10),
             [_fa_max],
         ]))
 
-        bracket_found = False
-        fa_lo = fa_hi = r_lo = r_hi = np.nan
-        _prev_fa = None
-        _prev_r  = None
+        if not bracket_found:
+            _prev_fa = None
+            _prev_r  = None
 
-        for _sfa in _scan_pts:
-            _sr = _safe_residual(_sfa)
-            if verbose >= 2:
-                _sr_str = f"{_sr:+.3e}" if np.isfinite(_sr) else "NaN"
-                print(f"  [bracket scan] fa={_sfa:.5f}  r={_sr_str}")
+            for _sfa in _scan_pts:
+                _sr = _safe_residual(_sfa)
+                if verbose >= 2:
+                    _sr_str = f"{_sr:+.3e}" if np.isfinite(_sr) else "NaN"
+                    print(f"  [bracket scan] fa={_sfa:.5f}  r={_sr_str}")
 
-            # Ash fraction below the first scan point (D-D devices, or D-T at
-            # very low fusion power): the root lies in [0, 1e-4], where
-            # r(0) = new_fa(0) > 0 by construction.
-            if _sfa == _scan_pts[0] and np.isfinite(_sr) and _sr < 0:
-                _r0 = _safe_residual(0.0)
-                if np.isfinite(_r0) and _r0 > 0:
-                    fa_lo, r_lo = 0.0, _r0
-                    fa_hi, r_hi = _sfa, _sr
-                    bracket_found = True
-                    break
+                # Ash fraction below the first scan point (D-D devices, or D-T at
+                # very low fusion power): the root lies in [0, 1e-4], where
+                # r(0) = new_fa(0) > 0 by construction.
+                if _sfa == _scan_pts[0] and np.isfinite(_sr) and _sr < 0:
+                    _r0 = _safe_residual(0.0)
+                    if np.isfinite(_r0) and _r0 > 0:
+                        fa_lo, r_lo = 0.0, _r0
+                        fa_hi, r_hi = _sfa, _sr
+                        bracket_found = True
+                        break
 
-            # Check for sign change with previous finite point
-            if np.isfinite(_sr) and _prev_r is not None and np.isfinite(_prev_r):
-                if _sr * _prev_r < 0:
-                    fa_lo, r_lo = _prev_fa, _prev_r
-                    fa_hi, r_hi = _sfa,     _sr
-                    bracket_found = True
-                    break
+                # Check for sign change with previous finite point
+                if np.isfinite(_sr) and _prev_r is not None and np.isfinite(_prev_r):
+                    if _sr * _prev_r < 0:
+                        fa_lo, r_lo = _prev_fa, _prev_r
+                        fa_hi, r_hi = _sfa,     _sr
+                        bracket_found = True
+                        break
 
-            # Update previous finite point
-            if np.isfinite(_sr):
-                _prev_fa = _sfa
-                _prev_r  = _sr
+                # Update previous finite point
+                if np.isfinite(_sr):
+                    _prev_fa = _sfa
+                    _prev_r  = _sr
 
         if not bracket_found:
             # No root exists in the physical range — return failure
@@ -1780,10 +2190,11 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 print(f"[SOLVER-Pulsed] brentq failed: {_brentq_err}")
             return np.nan, np.nan
 
-        # Final evaluation to populate _converged_chain and get Q.
-        # The inner P_Ohm loop in _pulsed_fixed_point already guarantees
-        # self-consistency, so a single call is sufficient.
-        _, Q_out = _pulsed_fixed_point(fa_sol)
+        # Final evaluation at the root: the chain of the retained solution is
+        # stored for the post-convergence outputs.  The inner P_Ohm loop in
+        # _pulsed_fixed_point already guarantees self-consistency, so a
+        # single call is sufficient.
+        _, Q_out, _converged_chain[0] = _pulsed_fixed_point(fa_sol)
 
         if verbose >= 1:
             print(f"[SOLVER-Pulsed] Brent converged in {_eval_count[0]} evaluations: "
@@ -1795,9 +2206,10 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     #  STEADY-STATE SOLVER — 2-D on (f_alpha, Q) with scaled variables
     # =========================================================================
 
-    def _solve_steady_state():
+    def _solve_steady_state(x_hint=None):
         """
-        Solve the coupled (f_alpha, Q) system for Steady-State operation.
+        Solve the coupled (f_alpha, Q) system for Steady-State operation,
+        with the q(ρ) profile frozen.
 
         In SS mode, P_aux = P_fus / Q, so Q is a genuine free variable.
         The 2-D system is:
@@ -1807,10 +2219,19 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         Variables are scaled to ~O(1) for well-conditioned Jacobians:
           x = [fa / fa_scale, Q / Q_scale]
 
-        Strategy:
-          1. hybr with analytical Jacobian estimate
-          2. Anderson mixing (2-D fixed-point)
-          3. Picard with damped relaxation
+        Strategy, the first accepted solution is returned:
+          1. hybr with a finite-difference Jacobian, from x_hint then from
+             default guesses
+          2. Levenberg-Marquardt from the same guesses
+          3. Anderson mixing (2-D fixed-point)
+        A solution is accepted when the chain re-evaluated at (fa, Q) closes
+        both equations within _SS_FA_ATOL and _SS_Q_RTOL.  That chain is
+        stored in _converged_chain.
+
+        Parameters
+        ----------
+        x_hint : tuple (f_alpha, Q) or None
+            Solution of the previous q(ρ) iteration.
 
         Returns
         -------
@@ -1848,9 +2269,6 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             if not (np.isfinite(res['new_f_alpha']) and np.isfinite(res['Q'])):
                 return np.array([1e6, 1e6])
 
-            # Cache for post-convergence reuse
-            _converged_chain[0] = res
-
             # Absolute residuals, normalised by the same scales
             R_fa = (res['new_f_alpha'] - fa) / fa_scale
             R_Q  = (res['Q'] - Q)            / Q_scale
@@ -1859,16 +2277,16 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
 
         def _ss_jacobian_scaled(x_scaled):
             """
-            Approximate analytical Jacobian in scaled coordinates.
+            Forward-difference Jacobian in scaled coordinates.
 
             The Jacobian is nearly diagonal because f_alpha and Q are weakly
             coupled (f_alpha affects Q only through fuel dilution, and Q
-            affects f_alpha only through the slight change in P_aux → τ_E).
+            affects f_alpha only through the slight change in P_aux → τ_E):
 
             J ≈ [[-1,   0 ],    (dominant: ∂R_fa/∂fa ≈ -1)
                  [ 0,  -1 ]]    (dominant: ∂R_Q/∂Q   ≈ -1)
 
-            We refine the diagonal with finite differences at modest cost.
+            A diagonal element below 0.1 in magnitude is replaced by -1.
             """
             r0 = _ss_residual_scaled(x_scaled)
 
@@ -1887,10 +2305,26 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
 
             return J
 
-        # ── Step 1: scipy root with Jacobian ──────────────────────────────────
-        _reset_dbg(5)
-        if verbose >= 2:
-            print("[SOLVER-SS] Step 1: Newton with analytical Jacobian estimate")
+        def _accept(fa, Q):
+            """
+            Re-evaluate the chain at (fa, Q).  If both equations close within
+            the tolerances, store the chain and return True.
+            """
+            if not (np.isfinite(fa) and np.isfinite(Q)
+                    and 0.0 < fa < _fa_max and Q > 0.0):
+                return False
+            try:
+                res = _evaluate_physics_chain(fa, abs(P_fus / Q), 0.0,
+                                              ss_mode=True)
+            except Exception:
+                return False
+            if not (np.isfinite(res['new_f_alpha']) and np.isfinite(res['Q'])):
+                return False
+            if (abs(res['new_f_alpha'] - fa) <= _SS_FA_ATOL
+                    and abs(res['Q'] - Q) <= _SS_Q_RTOL * Q):
+                _converged_chain[0] = res
+                return True
+            return False
 
         initial_guesses_scaled = [
             np.array([0.05 / fa_scale, 50.0 / Q_scale]),
@@ -1898,9 +2332,14 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             np.array([0.05 / fa_scale, 100.0 / Q_scale]),
             np.array([0.10 / fa_scale, 50.0 / Q_scale]),
         ]
+        if x_hint is not None:
+            initial_guesses_scaled.insert(
+                0, np.array([x_hint[0] / fa_scale, x_hint[1] / Q_scale]))
 
-        best_sol = None
-        best_rnorm = np.inf
+        # ── Step 1: hybr with the finite-difference Jacobian ──────────────────
+        _reset_dbg(5)
+        if verbose >= 2:
+            print("[SOLVER-SS] Step 1: hybr with finite-difference Jacobian")
 
         for guess in initial_guesses_scaled:
             _reset_dbg(3)
@@ -1909,23 +2348,15 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                               method='hybr', jac=_ss_jacobian_scaled,
                               tol=1e-8,
                               options={'maxfev': 300})
-                fa_sol = result.x[0] * fa_scale
-                Q_sol  = result.x[1] * Q_scale
-                r_final = _ss_residual_scaled(result.x)
-                rnorm = np.sqrt(r_final[0]**2 + r_final[1]**2)
-
-                if (0 < fa_sol < _fa_max and Q_sol > 0 and rnorm < 1e-3):
-                    if rnorm < best_rnorm:
-                        best_sol   = (fa_sol, Q_sol)
-                        best_rnorm = rnorm
             except Exception:
                 continue
-
-        if best_sol is not None:
-            if verbose >= 1:
-                print(f"[SOLVER-SS] Converged (hybr+jac): f_alpha={best_sol[0]:.5f}, "
-                      f"Q={best_sol[1]:.2f}, |r|={best_rnorm:.2e}")
-            return best_sol
+            fa_sol = result.x[0] * fa_scale
+            Q_sol  = result.x[1] * Q_scale
+            if _accept(fa_sol, Q_sol):
+                if verbose >= 1:
+                    print(f"[SOLVER-SS] Converged (hybr+jac): f_alpha={fa_sol:.5f}, "
+                          f"Q={Q_sol:.2f}")
+                return fa_sol, Q_sol
 
         # ── Step 2: lm solver (no Jacobian needed) ────────────────────────────
         _reset_dbg(3)
@@ -1937,23 +2368,15 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             try:
                 result = root(_ss_residual_scaled, guess,
                               method='lm', tol=1e-8)
-                fa_sol = result.x[0] * fa_scale
-                Q_sol  = result.x[1] * Q_scale
-                r_final = _ss_residual_scaled(result.x)
-                rnorm = np.sqrt(r_final[0]**2 + r_final[1]**2)
-
-                if (0 < fa_sol < _fa_max and Q_sol > 0 and rnorm < 1e-3):
-                    if rnorm < best_rnorm:
-                        best_sol   = (fa_sol, Q_sol)
-                        best_rnorm = rnorm
             except Exception:
                 continue
-
-        if best_sol is not None:
-            if verbose >= 1:
-                print(f"[SOLVER-SS] Converged (lm): f_alpha={best_sol[0]:.5f}, "
-                      f"Q={best_sol[1]:.2f}, |r|={best_rnorm:.2e}")
-            return best_sol
+            fa_sol = result.x[0] * fa_scale
+            Q_sol  = result.x[1] * Q_scale
+            if _accept(fa_sol, Q_sol):
+                if verbose >= 1:
+                    print(f"[SOLVER-SS] Converged (lm): f_alpha={fa_sol:.5f}, "
+                          f"Q={Q_sol:.2f}")
+                return fa_sol, Q_sol
 
         # ── Step 3: Anderson-accelerated 2-D fixed-point ──────────────────────
         _reset_dbg(3)
@@ -1971,11 +2394,15 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             try:
                 res = _evaluate_physics_chain(fa, P_Aux_ss, 0.0, ss_mode=True)
             except Exception:
-                fa *= 0.8
+                res = None
+            if res is None or not (np.isfinite(res['new_f_alpha'])
+                                   and np.isfinite(res['Q'])):
+                # Failed or non-finite evaluation: smaller ash fraction and
+                # new mixing history.
+                fa = max(1e-4, 0.8 * fa)
+                x_hist.clear()
+                g_hist.clear()
                 continue
-
-            # Cache for post-convergence reuse
-            _converged_chain[0] = res
 
             new_fa = res['new_f_alpha']
             new_Q  = res['Q']
@@ -1987,11 +2414,12 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 print(f"  [Anderson-2D {k:3d}] fa={fa:.6f}, Q={Q_fp:.2f}  "
                       f"r_fa={r_fa:+.2e}, r_Q={r_Q:+.2e}")
 
-            if abs(r_fa) < 1e-5 and abs(r_Q) < 0.01:
+            if abs(r_fa) <= _SS_FA_ATOL and abs(r_Q) <= _SS_Q_RTOL * Q_fp:
+                _converged_chain[0] = res
                 if verbose >= 1:
                     print(f"[SOLVER-SS] Anderson-2D converged after {k+1} iter: "
-                          f"f_alpha={new_fa:.6f}, Q={new_Q:.2f}")
-                return new_fa, new_Q
+                          f"f_alpha={fa:.6f}, Q={Q_fp:.2f}")
+                return fa, Q_fp
 
             # Anderson mixing in 2-D
             x_vec = np.array([fa, Q_fp])
@@ -2025,13 +2453,6 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 fa   = max(1e-4, min(0.7 * fa + 0.3 * new_fa, _fa_max))
                 Q_fp = max(1.0, 0.7 * Q_fp + 0.3 * new_Q)
 
-        # Accept approximate solution if residuals are small enough
-        if abs(r_fa) < 1e-3 and abs(r_Q) < 1.0:
-            if verbose >= 1:
-                print(f"[SOLVER-SS] Accepting approximate solution: "
-                      f"f_alpha={fa:.6f}, Q={Q_fp:.2f}")
-            return fa, Q_fp
-
         # ── Diagnostic ────────────────────────────────────────────────────────
         if verbose >= 1:
             print("[SOLVER-SS] All methods failed. Diagnostic:")
@@ -2046,6 +2467,67 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                         print(f"  fa={_fa:.3f}, Q={_Q:.0f} → ERROR: {e}")
 
         return np.nan, np.nan
+
+    # =========================================================================
+    #  OUTER FIXED POINT ON q(ρ)
+    # =========================================================================
+
+    def _solve_with_q_loop(solve):
+        """
+        Outer fixed point on the q(ρ) profile of the bootstrap.
+
+        The inner solver finds the operating point with q(ρ) frozen.  q(ρ) is
+        then solved at the converged currents (_q_at_solution), warm-started
+        from the frozen profile.  The loop stops when the bootstrap of the
+        converged chain, re-evaluated on the new profile, changes by less
+        than _Q_LOOP_RTOL: the reported chain and the reported profile (l_i)
+        then describe the same plasma.  Otherwise the new profile is frozen
+        and the operating point solved again, from the previous solution.
+
+        Parameters
+        ----------
+        solve : callable
+            Inner solver, solve(hint) -> (f_alpha, Q), with hint the
+            (f_alpha, Q) of the previous iteration or None.
+
+        Returns
+        -------
+        (f_alpha, Q, q_dict), q_dict being the q(ρ) solved at the retained
+        solution, or (nan, nan, None) when the inner solver fails.
+        """
+        hint = None
+        for k in range(1, _Q_LOOP_MAX + 1):
+            fa_k, Q_k = solve(hint)
+            if not (np.isfinite(fa_k) and np.isfinite(Q_k)):
+                return np.nan, np.nan, None
+            res = _converged_chain[0]
+            q_new = _q_at_solution(res, fa_k, _q_profile_cache[0])
+            if not np.all(np.isfinite(q_new['q_arr'])):
+                if verbose >= 1:
+                    print("[warn] non-finite q(ρ) at the converged solution: "
+                          "the bootstrap keeps the previous profile.")
+                return fa_k, Q_k, q_new
+            Ib_new = _bootstrap_current(
+                res['nbar'], res['Ip'], res['q95'],
+                _compute_Zeff_effective(config, fa_k),
+                1.0 - fa_k - f_imp_dilution + sum(imp_conc_list), q_new)
+            dIb = abs(Ib_new - res['Ib'])
+            if verbose >= 2:
+                print(f"[SOLVER] q(ρ) iteration {k}: I_bs = {res['Ib']:.4f} MA, "
+                      f"{Ib_new:.4f} MA on the new profile")
+            if dIb <= _Q_LOOP_RTOL * abs(res['Ib']) + 1e-6:
+                if verbose >= 1:
+                    print(f"[SOLVER] q(ρ) profile converged after {k} "
+                          f"inner solve(s)")
+                return fa_k, Q_k, q_new
+            if k < _Q_LOOP_MAX:
+                _q_profile_cache[0] = q_new
+                hint = (fa_k, Q_k)
+        if verbose >= 1:
+            print(f"[warn] q(ρ) outer loop not converged after {_Q_LOOP_MAX} "
+                  f"inner solves (last relative change of I_bs "
+                  f"{dIb / max(abs(res['Ib']), 1e-6):.1e}).")
+        return fa_k, Q_k, q_new
 
     # =========================================================================
     #  MAIN SOLVER DISPATCH
@@ -2072,7 +2554,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 "Fix this error before running D0FUS."
             ) from _pre_exc
 
-        f_alpha_solution, Q_solution = _solve_pulsed()
+        def _solve_inner(hint):
+            return _solve_pulsed(None if hint is None else hint[0])
 
     elif Operation_mode == 'Steady-State':
         try:
@@ -2093,13 +2576,25 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 "Fix this error before running D0FUS."
             ) from _pre_exc
 
-        f_alpha_solution, Q_solution = _solve_steady_state()
+        _solve_inner = _solve_steady_state
 
     else:
         raise ValueError(
             f"Unknown Operation_mode: '{Operation_mode}'. "
             "Valid options: 'Pulsed', 'Steady-State'."
         )
+
+    # Starting q(ρ) of the outer fixed point, solved at the pre-check point.
+    # On failure the bootstrap uses the parabolic fallback.
+    if all(np.isfinite(_pre_res[k]) for k in ('Ip', 'I_CD', 'q95', 'nbar')):
+        try:
+            _q_start = _q_at_solution(_pre_res, 0.05, None)
+            if np.all(np.isfinite(_q_start['q_arr'])):
+                _q_profile_cache[0] = _q_start
+        except Exception as exc:
+            _q_failures.append(f"{type(exc).__name__}: {exc}")
+
+    f_alpha_solution, Q_solution, _q_solution = _solve_with_q_loop(_solve_inner)
 
     # ── Return nan tuple on convergence failure ───────────────────────────────
     _nan = np.nan
@@ -2243,29 +2738,16 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
 
     # Current drive and power balance
     # ── Individual CD efficiencies (computed once, reused in breakdown) ────────
-    eta_LH_solution  = f_etaCD_LH_physics(Tbar, Zeff)
-    eta_EC_solution  = f_etaCD_EC_physics(a, R0, Tbar, nbar_solution, Zeff, nu_T, nu_n,
-                                   rho_EC,
-                                   theta_EC_pol_deg=config.theta_EC_pol_deg,
-                                   rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-                                   T_ped_frac=T_ped_frac,
-                    Vprime_data=Vprime_data)
-    eta_NBI_solution = f_etaCD_NBI_physics(
-        A_beam, E_beam_keV,
-        a, R0, Tbar, nbar_solution, Zeff, nu_T, nu_n,
-        rho_NBI,
-        f_alpha=f_alpha_solution,
-        angle_NBI_deg=config.angle_NBI_deg,
-        rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-        T_ped_frac=T_ped_frac, fuel=Fuel,
-                    Vprime_data=Vprime_data)
+    eta_LH_solution, eta_EC_solution, eta_NBI_solution = _cd_efficiencies(
+        nbar_solution, Zeff, f_alpha_solution)
 
     if Operation_mode == 'Steady-State':
         # Steady-State: γ_eff is needed to invert I_CD → P_CD.
         eta_CD_solution = f_etaCD_effective(
             config, a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T, Zeff,
+            f_alpha=f_alpha_solution,
             rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
-                    Vprime_data=Vprime_data)
+                    Vprime_data=Vprime_data, rho_EC=rho_EC, rho_NBI=rho_NBI)
         I_Ohm_solution  = 0
         P_Ohm_solution  = 0
         I_CD_solution   = f_ICD(Ip_solution, Ib_solution, I_Ohm_solution)
@@ -2283,8 +2765,9 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             P_CD_solution = P_aux_input
             eta_CD_solution = f_etaCD_effective(
                 config, a, R0, B0_solution, nbar_solution, Tbar, nu_n, nu_T, Zeff,
+                f_alpha=f_alpha_solution,
                 rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
-                    Vprime_data=Vprime_data)
+                    Vprime_data=Vprime_data, rho_EC=rho_EC, rho_NBI=rho_NBI)
             I_CD_solution = f_I_CD(R0, nbar_solution, eta_CD_solution, P_CD_solution)
         I_Ohm_solution = f_I_Ohm(Ip_solution, Ib_solution, I_CD_solution)
         # Ohmic power from the profile-integrated neoclassical resistance
@@ -2294,7 +2777,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             I_Ohm_solution, a, κ, R0, Tbar, nbar_solution, Zeff, q95_solution,
             nu_T, nu_n, eta_model=eta_model,
             rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
-            Vprime_data=Vprime_data)
+            Vprime_data=Vprime_data,
+            trapped_fraction_model=trapped_fraction_model)
         # Effective γ computed a posteriori for reporting only:
         # γ_eff = I_CD · R₀ · n̄ / P_CD_non_ICRH  (ICRH denominator excluded since it
         # drives no current — using P_CD_total would artifically dilute the figure of merit)
@@ -2307,27 +2791,17 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             print("Choose a valid operation mode")
 
     # ── Per-source breakdown (post-convergence) ────────────────────────────────
-    if Operation_mode == 'Pulsed' and CD_source == 'Multi':
-        # Pulsed Multi: powers are user-specified inputs, not derived from fractions
-        P_LH_solution  = P_LH
-        P_EC_solution  = P_ECRH
-        P_NBI_solution = P_NBI
-        P_ICR_solution = P_ICRH
-        denom_cd = R0 * nbar_solution
-        I_LH_solution  = eta_LH_solution  * P_LH   / denom_cd if denom_cd > 0 else 0.0
-        I_EC_solution  = eta_EC_solution  * P_ECRH  / denom_cd if denom_cd > 0 else 0.0
-        I_NBI_solution = eta_NBI_solution * P_NBI   / denom_cd if denom_cd > 0 else 0.0
-    else:
-        # Single-source or Steady-State: fraction-based breakdown is appropriate
-        cd_bd = f_CD_breakdown(config, P_CD_solution, R0, nbar_solution,
-                               eta_LH_solution, eta_EC_solution, eta_NBI_solution)
-        P_LH_solution  = cd_bd['P_LH']
-        P_EC_solution  = cd_bd['P_EC']
-        P_NBI_solution = cd_bd['P_NBI']
-        P_ICR_solution = cd_bd['P_ICR']
-        I_LH_solution  = cd_bd['I_LH']
-        I_EC_solution  = cd_bd['I_EC']
-        I_NBI_solution = cd_bd['I_NBI']
+    # Pulsed Multi: the input source powers. Single source or Steady-State:
+    # the heating fractions of P_CD (f_CD_breakdown).
+    cd_bd = _cd_split(P_CD_solution, nbar_solution,
+                      eta_LH_solution, eta_EC_solution, eta_NBI_solution)
+    P_LH_solution  = cd_bd['P_LH']
+    P_EC_solution  = cd_bd['P_EC']
+    P_NBI_solution = cd_bd['P_NBI']
+    P_ICR_solution = cd_bd['P_ICR']
+    I_LH_solution  = cd_bd['I_LH']
+    I_EC_solution  = cd_bd['I_EC']
+    I_NBI_solution = cd_bd['I_NBI']
 
     # Separatrix power: P_sep = P_α + P_CD − P_rad_total (thesis Eq. P_sep).
     # The whole of the radiated power is subtracted: wherever inside the
@@ -2343,8 +2817,11 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     heat_refined_solution = f_heat_refined(R0, P_sep_solution)
     heat_par_solution   = f_heat_par(R0, B0_solution, P_sep_solution)
     heat_pol_solution   = f_heat_pol(R0, B0_solution, P_sep_solution, a, q95_solution)
+    # The Eich width uses the outer-midplane separatrix B_pol, not the
+    # perimeter average B_pol_solution (reported, consistent with beta_P).
+    B_pol_omp_solution = f_Bpol_omp(Ip_solution, a, κ)
     lambda_q_Eich_m, q_parallel0_Eich, q_target_Eich = f_heat_PFU_Eich(
-        P_sep_solution, B_pol_solution, R0, a / R0, theta_deg,
+        P_sep_solution, B_pol_omp_solution, R0, a / R0, theta_deg,
         B0=B0_solution)
 
     # ── Refined divertor exhaust: two-point model (Stangeby 2018) ─────────────
@@ -2357,82 +2834,49 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     n_sep_solution = f_n_sep * nbar_solution * 1e20        # [m^-3]
 
     divertor_solution = f_heat_two_point(
-        P_sep_solution, B_pol_solution, R0, a / R0, q95_solution,
+        P_sep_solution, B_pol_omp_solution, R0, a / R0, q95_solution,
         n_sep_solution, theta_deg,
         B0=B0_solution,
         f_cooling=f_cooling_div, f_mom=f_mom_div,
         q_dep_limit=q_dep_limit, flux_expansion=flux_expansion,
         m_f=Atomic_mass * 1.67e-27)   # fuel-ion mass, same u as M_F_DT
     divertor_solution['n_sep']            = n_sep_solution
+    divertor_solution['B_pol_omp']        = B_pol_omp_solution
     divertor_solution['f_cooling']        = f_cooling_div     # operating point
     divertor_solution['f_mom']            = f_mom_div         # operating point
     divertor_solution['theta_deg']        = theta_deg
     divertor_solution['q_dep_limit']      = q_dep_limit
     divertor_solution['q_par0_attached']  = q_parallel0_Eich  # Academic peak flux
+    divertor_solution['m_f']              = Atomic_mass * 1.67e-27  # fuel-ion mass [kg]
     # First-wall load: radiative power distributed over the plasma surface
     P_1rst_wall_rad    = f_P_wall(P_rad_total_solution, Surface_solution)
     # Exhaust power density: P_div / S (useful divertor figure of merit)
     P_1rst_wall_div   = P_sep_solution / Surface_solution if Surface_solution > 0 else 0.0
     P_wallplug_solution = P_CD_solution / eta_WP   # Wall-plug power consumed by heating/CD [MW]
-    P_elec_solution   = f_P_elec(P_fus, P_CD_solution, eta_T, M_blanket, eta_WP,
-                                 f_neutron=f_neutron)
-    # P_elec_solution is overwritten by the plant electrical balance at the
-    # end of run(); this value only feeds the magnet-failure early return.
 
     # ── Loop voltage ──────────────────────────────────────────────────────────
     # V_loop is now computed inside Magnetic_flux (returned as 5th element)
     # to avoid redundant neoclassical conductance integration.
 
     # ── q,j profile on the converged global quantities ───────────────────
-    # The dispatcher routes to f_q_profile_academic or f_q_profile_refined
-    # according to config.q_profile_mode.  In academic mode this is a single
-    # deterministic pass on the parametric ansatz; in refined mode this is a
-    # final Picard pass at moderate resolution that returns li, q0, q(rho_95)
-    # and the full j-decomposition consistent with the converged Ip, I_CD.
+    # Profile solved by the outer fixed point at the retained solution
+    # (_q_at_solution): converged Ip and I_CD, CD deposition of the
+    # per-source currents above.  The bootstrap of the chain was evaluated on
+    # the previous profile, within _Q_LOOP_RTOL of this one.
+    if _q_failures and verbose >= 1:
+        print(f"[warn] q-profile solve at the starting point failed "
+              f"({_q_failures[0]}). The first inner solve used the parabolic "
+              "q(ρ) fallback.")
+    li_solution      = _q_solution['li']
 
-    # CD deposition (rho_CD, delta_CD) selection.  These values are passed
-    # to the dispatcher and used only by the refined branch to build the
-    # j_CD(rho) Gaussian.  Academic q-profile mode ignores them (j_CD=0).
-    if CD_source == 'Multi' and I_CD_solution > 0:
-        _I_sources = np.array([abs(I_LH_solution), abs(I_EC_solution), abs(I_NBI_solution)])
-        _rho_sources = np.array([0.5, rho_EC, rho_NBI])
-        _delta_sources = np.array([0.20, 0.05, 0.15])
-        _w = _I_sources / max(np.sum(_I_sources), 1e-10)
-        _rho_CD_eff  = float(np.dot(_w, _rho_sources))
-        _delta_CD_eff = float(np.dot(_w, _delta_sources))
-    elif CD_source == 'ECCD':
-        _rho_CD_eff, _delta_CD_eff = rho_EC, 0.05
-    elif CD_source == 'NBCD':
-        _rho_CD_eff, _delta_CD_eff = rho_NBI, 0.15
-    else:  # LHCD, Academic, or unknown — broad central deposition fallback
-        _rho_CD_eff, _delta_CD_eff = 0.5, 0.20
-
-    # Post-convergence pass at moderate resolution (n_rho=80, max_iter=20).
-    # The solver cache already provides a near-converged starting point in
-    # refined mode, so full defaults (n_rho=200, max_iter=50) are
-    # unnecessarily expensive here.  The quantities extracted (li, q0, j
-    # profiles) converge at < 0.5 % error between n_rho=80 and n_rho=200 for
-    # smooth tokamak current profiles.  In academic mode max_iter and tol
-    # are ignored (deterministic single pass).
-    _q_sc = _solve_q_profile(
-        Ip_solution, I_CD_solution, q95_solution,
-        B0_solution, nbar_solution,
-        rho_CD_loc=_rho_CD_eff, delta_CD_loc=_delta_CD_eff,
-        n_rho=80, max_iter=20, tol=1e-3, damping=0.5,
-        q_init=_q_profile_cache[0], Zeff_loc=Zeff,
-        n_ion_frac_loc=1.0 - f_alpha_solution - f_imp_dilution + sum(imp_conc_list))
-    li_solution      = _q_sc['li']
-
-    # L-H power threshold — all Martin/Delabie scalings were fitted with line-averaged density
-    if L_H_Scaling_choice == 'Martin':
-        P_Thresh = P_Thresh_Martin(nbar_line_solution, B0_solution, a, R0, κ, Atomic_mass)
-    elif L_H_Scaling_choice == 'New_S':
-        P_Thresh = P_Thresh_New_S(nbar_line_solution, B0_solution, a, R0, κ, Atomic_mass)
-    elif L_H_Scaling_choice == 'New_Ip':
-        P_Thresh = P_Thresh_New_Ip(nbar_line_solution, B0_solution, a, R0, κ, Ip_solution, Atomic_mass)
-    else:
-        if verbose >= 1:
-            print('Choose a valid scaling for the L-H transition')
+    # L-H power threshold. All scalings were fitted with the line-averaged
+    # density and the area of the last closed flux surface, here the area of
+    # the plasma geometry model (Miller contour in refined mode). The TC-26
+    # scalings take the nominal divertor factor D = 1; the report gives the
+    # upper bound D = TC26_D_VT (Delabie et al., NF 66 (2026) 036016).
+    P_Thresh = f_P_thresh(nbar_line_solution, B0_solution, Surface_solution,
+                          Atomic_mass, Ip=Ip_solution, R0=R0,
+                          Option_PLH=L_H_Scaling_choice)
 
     # ==============================================================================
     #    TOROIDAL FIELD (TF) COIL RADIAL BUILD
@@ -2443,23 +2887,47 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # legacy behaviour; realistic engineering value ≈ 1.5 covers the unfilled
     # WP envelope, stress concentrations, weld efficiency and manufacturing
     # tolerances not represented in the idealised CICC area model.
-    if Radial_build_model == "academic":
-        (c, c_WP_TF, c_Nose_TF,
-         σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF) = f_TF_academic(
-            a, b, R0, σ_TF, J_max_TF_conducteur, Bmax_TF, Choice_Buck_Wedg,
-            coef_inboard_tension, F_CClamp, SF_TF=config.SF_TF)
+    # The quench protection sizes J_TF from the stored energy, and the
+    # Princeton-D bore holding that energy grows with c: fixed point on c,
+    # 2 to 4 sizings. delta_port = Delta_TF puts the outboard leg where the
+    # ripple and port-access sizing placed it, in the vertical force.
+    for _ in range(10):
+        if Radial_build_model == "academic":
+            (c, c_WP_TF, c_Nose_TF,
+             σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF) = f_TF_academic(
+                a, b, R0, σ_TF, J_max_TF_conducteur, Bmax_TF, Choice_Buck_Wedg,
+                coef_inboard_tension, F_CClamp, delta_port=Delta_TF,
+                SF_TF=config.SF_TF)
 
-    elif Radial_build_model in ("refined", "CIRCE"):
-        (c, c_WP_TF, c_Nose_TF,
-         σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF) = f_TF_refined(
-            a, b, R0, σ_TF, J_max_TF_conducteur, Bmax_TF, Choice_Buck_Wedg, omega_TF, n_shape_TF,
-            c_BP, coef_inboard_tension, F_CClamp, TF_grading, SF_TF=config.SF_TF)
+        elif Radial_build_model in ("refined", "CIRCE"):
+            (c, c_WP_TF, c_Nose_TF,
+             σ_z_TF, σ_theta_TF, σ_r_TF, Steel_fraction_TF) = f_TF_refined(
+                a, b, R0, σ_TF, J_max_TF_conducteur, Bmax_TF, Choice_Buck_Wedg, omega_TF, n_shape_TF,
+                c_BP, coef_inboard_tension, F_CClamp, TF_grading,
+                delta_port=Delta_TF, SF_TF=config.SF_TF)
 
-    else:
-        raise ValueError(
-            f"Unknown radial build model: '{Radial_build_model}'. "
-            "Valid options: 'academic', 'refined', 'CIRCE'."
-        )
+        else:
+            raise ValueError(
+                f"Unknown radial build model: '{Radial_build_model}'. "
+                "Valid options: 'academic', 'refined', 'CIRCE'."
+            )
+
+        if not np.isfinite(c):
+            break
+        E_mag_c = calculate_E_mag_TF(Bmax_TF, a, b, R0, c, Delta_TF)
+        if abs(E_mag_c - E_mag_TF) <= 1e-3 * E_mag_TF:
+            break
+        E_mag_TF            = E_mag_c
+        result_J_TF         = _tf_cable(E_mag_TF)
+        J_max_TF_conducteur = result_J_TF['J_wost']
+
+    # ── TF cable-level fractions (wost = without steel) ──────────────────────
+    f_sc_TF      = result_J_TF['f_sc']
+    f_cu_TF      = result_J_TF['f_cu']
+    f_He_pipe_TF = result_J_TF['f_He_pipe']
+    f_void_TF    = result_J_TF['f_void']
+    f_He_TF      = result_J_TF['f_He']
+    f_In_TF      = result_J_TF['f_In_cable']
 
     # ── TF radial build failed: keep the converged plasma, blank only the
     #    magnet / engineering quantities ────────────────────────────────────────
@@ -2487,7 +2955,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 betaN_solution,  betaT_solution,  betaP_solution,
                 qstar_solution,  q95_solution,
                 P_CD_solution,  P_sep_solution,  P_Thresh,  eta_CD_solution,
-                P_elec_solution,  P_wallplug_solution,
+                _nan,  P_wallplug_solution,    # P_elec(nan): plant balance needs the coils
                 _nan,  P_Brem_solution,  P_syn_solution,  P_line_solution,  # cost(nan)
                 P_line_core_solution,
                 heat_refined_solution,  heat_par_solution,  heat_pol_solution,
@@ -2546,7 +3014,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     config.E_BD, betaP_solution,
     nbar_solution, Tbar, Zeff, q95_solution, nu_T, nu_n, eta_model,
     rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
-    Vprime_data=Vprime_data,
+    Vprime_data=Vprime_data, trapped_fraction_model=trapped_fraction_model,
     )
     # Non-inductive current drive during ramp-up reduces the CS volt-second
     # requirement proportionally: both the inductive (Ψ_ind ∝ Ip) and resistive
@@ -2598,8 +3066,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # ── CS coil current density (cable-level fractions) ──────────────────────
     # The CS solver computes J_wost and Steel_fraction internally, but does not
     # expose the sub-fractions (SC, Cu, He pipe, void, insulation).
-    # We call calculate_cable_current_density with B_CS to recover them.
-    # The LRU cache makes this essentially free (same call was made inside solver).
+    # We call calculate_cable_current_density with B_CS to recover them, with
+    # the same stored energy as inside the solver (same radii, same H_CS).
 
     if np.isfinite(B_CS) and B_CS > 0:
         Supra_choice_CS = config.Supra_choice   # Same SC for TF and CS
@@ -2607,11 +3075,11 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             B_CS,
             R0 - a - b - c - _gap_eff - d,   # CS inner bore [m]
             R0 - a - b - c - _gap_eff,         # CS outer face [m]
-            2 * (κ * a + b + 1))
+            H_CS)
         result_J_CS = calculate_cable_current_density(
             sc_type=Supra_choice_CS, B_peak=B_CS, T_op=T_helium,
             E_mag=E_mag_CS_post,
-            I_cond=I_cond, V_max=V_max, N_sub=N_sub_CS, tau_h=tau_h,
+            I_cond=I_cond_CS, V_max=V_max, N_sub=N_sub_CS, tau_h=tau_h,
             f_He_pipe=f_He_pipe, f_void=f_void, f_In_cable=f_In_cable, f_In_WP=f_In_WP,
             T_hotspot=T_hotspot, RRR=RRR, Marge_T_He=Marge_T_He,
             Marge_T_Nb3Sn=Marge_T_Nb3Sn, Marge_T_NbTi=Marge_T_NbTi,
@@ -2636,8 +3104,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # The native Greenwald density Ip/(pi a^2) remains available as nG_raw.
     _f_n_sep_line = f_n_sep * (nbar_solution / nbar_line_solution)  # n_sep/n̄_line
     # Giacomin near-separatrix anchoring: n(rho=0.9)/n̄_line from the profile
-    _f_n_edge_line = (f_n_edge_ratio(nu_n, rho_ped, n_ped_frac,
-                                         Vprime_data=Vprime_data)
+    _f_n_edge_line = (f_n_edge_ratio(nu_n, rho_ped, n_ped_frac)
                       * (nbar_solution / nbar_line_solution))
     _P_tot_heat   = P_Alpha + P_Aux_solution + P_Ohm_solution       # [MW]
     n_DL_line, n_DL_native, n_DL_convention = f_density_limit(
@@ -2657,7 +3124,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # f_V_TF(a,b,R0,c,N_TF,Delta_TF) = A_cross * 2π * R_bore / N_TF but it would
     # call f_TF_cross_section a second time (ODE solve). Use pre-computed values.
     V_TF_one  = _A_cross_TF * 2.0 * np.pi * R_bore_TF / float(N_TF)
-    V_CS_geom = f_V_CS(a, b, c, d, R0, κ, Gap, Choice_Buck_Wedg, H_CS=H_CS)
+    V_CS_geom = f_V_CS(a, b, c, d, R0, Gap, Choice_Buck_Wedg, H_CS)
 
     # ── Radial build layer volumes ────────────────────────────────────────────
     # All boundaries are real 3D contours; volumes via exact _moment_area integrals.
@@ -2676,6 +3143,13 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         Z_tf_in=_Z_in,
         Blanket_choice=config.Blanket_choice,
     )
+    # A concept multiplication falls where the breeder is thin: it is
+    # averaged over the breeder surface with the local breeder thickness.
+    # A deck value is used as given.
+    if config.M_blanket is None:
+        M_blanket = f_blanket_multiplication(M_blanket, _rb['delta_BB_local'],
+                                             config.Blanket_choice,
+                                             _rb['w_BB_local'])
     _BB_ROLES     = ('breeder', 'structure', 'multiplier')
     _SHIELD_ROLES = ('shield_HT', 'shield_LT')
 
@@ -2698,14 +3172,23 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     cost_solution = (V_rb_BB + V_TF_one * N_TF + V_CS_geom) / P_fus   # legacy cost proxy [m^3/MW]
 
     # ── Material volumes (TF: total = V_TF_one × N_TF; CS: full solenoid) ─────
+    # Steel share of the whole TF inboard leg. The refined models return the
+    # winding-pack value (conductor jacket), while the nose and the backplate
+    # are all steel. The academic model already returns the share of the
+    # whole leg (c_Nose / c).
+    if Radial_build_model == "academic":
+        steel_fraction_leg_TF = Steel_fraction_TF
+    else:
+        steel_fraction_leg_TF = 1.0 - (c_WP_TF / c) * (1.0 - Steel_fraction_TF)
     (V_steel_TF, V_sc_TF, V_cu_TF, V_He_TF, V_In_TF,
      V_steel_CS, V_sc_CS, V_cu_CS, V_He_CS, V_In_CS) = f_coil_material_volumes(
         V_TF_one, int(N_TF),
-        Steel_fraction_TF,
+        steel_fraction_leg_TF,
         f_sc_TF, f_cu_TF, f_He_TF, f_In_TF,
         V_CS_geom,
         Steel_fraction_CS,
-        f_sc_CS, f_cu_CS, f_He_CS, f_In_CS)
+        f_sc_CS, f_cu_CS, f_He_CS, f_In_CS,
+        f_In_WP)
 
     # ── Cable conductor lengths ───────────────────────────────────────────────
     R_CS_ext_val = R0 - a - b - c - _gap_eff
@@ -2715,14 +3198,15 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
      _Nturns_TF, _Nturns_CS) = f_cable_length(
         int(N_TF), L_turn_TF, Bmax_TF, _R_TF_in,
         I_cond,
-        N_sub_CS, L_turn_CS, B_CS, H_CS)   # CS Ampere law uses the resolved H_CS
+        N_sub_CS, L_turn_CS, B_CS, H_CS,   # CS Ampere law uses the resolved H_CS
+        I_cond_CS)
 
     # ── Material masses ───────────────────────────────────────────────────────
     (M_steel_TF, M_sc_TF, M_cu_TF, M_In_TF, M_total_TF,
      M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS) = f_coil_masses(
         V_steel_TF, V_sc_TF, V_cu_TF, V_In_TF,
         V_steel_CS, V_sc_CS, V_cu_CS, V_In_CS,
-        Chosen_Steel, Supra_choice, f_TF_steel_mass)
+        Chosen_Steel_TF, Supra_choice, f_TF_steel_mass, Chosen_Steel_CS)
 
     # ── SC strand counts and total SC strand lengths ───────────────────────────
     (n_sc_TF, n_sc_CS,
@@ -2750,11 +3234,15 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         config.Util_factor, config.Dwell_factor)
 
     # ── Plant electrical balance and pulsed thermal storage ──────────────────
-    # Simplified recirculating-power model (M. Fletcher). Loads other than
-    # heating/CD are scaled on EU-DEMO reference values (config.*_DEMO_ref):
-    # cryogenics on the TF + CS cold mass, house load on P_fus, BoP on P_th.
+    # Simplified recirculating-power model (M. Fletcher). Cryogenics scaled on
+    # EU-DEMO reference values (config.*_DEMO_ref) with the TF + CS cold mass,
+    # coolant pumping on P_th, house load from the PROCESS model
+    # (house_load_breakdown).
     # Pulsed operation: a thermal store delivers a constant P_th_smoothed over
     # the full cycle (flat-top + dwell), so P_elec is a cycle-averaged value.
+    # The loads are averaged over the same cycle: heating/CD and coolant
+    # pumping run during the burn only, the CS energy is supplied once per
+    # cycle, cryogenics and house load run all the time.
     # The dwell is then carried by P_elec, and CF excludes it (CF = Av × Util)
     # to avoid counting it twice in COE = cost / (8760 CF P_elec). Component
     # calendar lifetimes and Av above keep the dwell (fluence per year).
@@ -2765,24 +3253,32 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         P_th_solution, config.Temps_Plateau_input, config.Dwell_factor,
         config.eta_store)
     P_e_gross_solution = eta_T * P_th_smoothed_solution
-    # CS recharge during the dwell (zero without dwell)
-    P_coil_CS_solution = (f_coil_power_supply(E_mag_CS_post, t_dwell_solution)
-                          if config.Dwell_factor < 1.0 else 0.0)
+    # Burn fraction of the cycle, Dwell_factor = t_flat-top / t_cycle
+    _burn = min(float(config.Dwell_factor), 1.0)
+    # CS recharge: E_mag_CS supplied during the dwell, averaged over the
+    # cycle (zero without dwell)
+    P_coil_CS_solution = (f_coil_power_supply(
+        E_mag_CS_post, config.Temps_Plateau_input + t_dwell_solution)
+        if config.Dwell_factor < 1.0 else 0.0)
     I_feeders_solution = f_feeder_current(
-        config.I_cond, config.I_cond, N_TF=N_TF, N_CS=config.N_sub_CS)
+        I_cond, I_cond_CS, N_TF=N_TF, N_CS=config.N_sub_CS)
     M_cold_solution = M_total_TF + M_total_CS   # magnet cold mass [kg]
     P_cryo_cool_solution = f_cryo_cooling_power(
         M_cold_solution, config.M_cold_DEMO_ref, config.P_cryo_cool_DEMO_ref)
     P_cryo_electric_solution = f_cryo_electric_power(
         M_cold_solution, config.M_cold_DEMO_ref, config.P_cryo_electric_DEMO_ref)
-    P_house_load_solution = f_house_load(
-        P_fus, config.P_fus_DEMO_ref, config.P_house_load_DEMO_ref)
-    P_BoP_solution = f_bop_power(P_th_solution, config.f_BoP)
-    # Heating/CD wall-plug power on P_CD, as in P_wallplug_solution
+    P_house_load_solution = house_load_breakdown(
+        config, _R_TF_out, R_bore_TF, c, _H_TF_D, Z_TF_bore_half, N_TF,
+        calculate_E_mag_TF(Bmax_TF, a, b, R0, c, Delta_TF),
+        P_cryo_cool_solution)['P_house']
+    # Coolant pumping on the heat extracted during the burn
+    P_BoP_solution = f_bop_power(P_th_solution * _burn, f_pump)
+    # Heating/CD wall-plug power on P_CD, as in P_wallplug_solution, during
+    # the burn
     (P_recirc_var_solution, P_recirc_fix_solution,
      P_recirculated_solution) = f_recirculated_power(
-        P_CD_solution, eta_WP, P_coil_CS_solution, P_cryo_electric_solution,
-        P_BoP_solution, P_house_load_solution)
+        P_CD_solution * _burn, eta_WP, P_coil_CS_solution,
+        P_cryo_electric_solution, P_BoP_solution, P_house_load_solution)
     P_elec_solution = P_e_gross_solution - P_recirculated_solution
 
     CF_solution = Av_solution * config.Util_factor
@@ -3024,74 +3520,36 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         _V_blanket = np.nan
         M_rb_FW = M_rb_BB = M_rb_shield = M_rb_VV = M_rb_divertor = M_rb_total = np.nan
 
-    # ── Profile peaking / pedestal parameters ─────────────────────────────────
-    # Use the module-level _PROFILE_PRESETS table (single source of truth).
-    if config.Plasma_profiles == 'Manual':
-        nu_n       = config.nu_n_manual
-        nu_T       = config.nu_T_manual
-        rho_ped    = config.rho_ped
-        n_ped_frac = config.n_ped_frac
-        T_ped_frac = config.T_ped_frac
-    else:
-        _p         = _PROFILE_PRESETS.get(config.Plasma_profiles, _PROFILE_PRESETS['H'])
-        nu_n       = _p['nu_n'];       nu_T       = _p['nu_T']
-        rho_ped    = _p['rho_ped'];    n_ped_frac = _p['n_ped_frac']
-        T_ped_frac = _p['T_ped_frac']
-
-    # ── Vprime_data (Miller geometry pre-computation, if applicable) ──────────
-    Vprime_data = None
-    if (config.Plasma_geometry == 'refined'
-            and np.isfinite(float(kappa_edge))
-            and np.isfinite(float(delta_edge))):
-        try:
-            # Same grid as run(), so figures normalise profiles identically
-            Vprime_data = precompute_Vprime(
-                config.R0, config.a,
-                float(kappa_edge), float(delta_edge),
-                geometry_model='refined',
-                kappa_95=float(kappa_95),
-                delta_95=float(delta_95),
-                N_rho=500, N_theta=200,
-            )
-        except Exception:
-            Vprime_data = None   # Non-critical — figures fall back gracefully
-
-    # ── Impurity fractions: map species list to f_W / f_Ne / f_Ar keys ───────
-    _sp_raw  = config.impurity_species
-    _fc_raw  = config.f_imp_core
-    _imp_out = {'W': None, 'Ne': None, 'Ar': None}
-    if _sp_raw and str(_sp_raw).strip() not in ('', 'None', 'none'):
-        _sp_list = [s.strip() for s in str(_sp_raw).split(',') if s.strip()]
-        if isinstance(_fc_raw, (int, float)):
-            _fc_list = [float(_fc_raw)]
-        else:
-            _fc_list = [float(c.strip()) for c in str(_fc_raw).split(',') if c.strip()]
-        for _sp, _fc in zip(_sp_list, _fc_list):
-            if _sp in _imp_out and _fc > 0:
-                _imp_out[_sp] = _fc
-
-    # ── TF coil count: recompute to stay consistent with run() ───────────────
+    # ── Profile peaking / pedestal parameters and Miller V'(rho) ─────────────
     try:
-        _N_TF, _ripple, Delta_TF = Number_TF_coils(
-            config.R0, config.a, config.b,
-            config.ripple_adm, config.L_min,
-        )
-        N_TF     = int(_N_TF)
-        # Delta_TF: extra outboard radial clearance required by port-access
-        # constraint [m]. Forwarded to _resolve_build() so that R_TF_out
-        # is consistent with the ripple model: r2 = R0 + a + b + Delta_TF.
-        Delta_TF = float(Delta_TF)
+        Vprime_data = _design_Vprime(config, results)
     except Exception:
-        N_TF     = 16                 # Conservative default: 16 TF coils
-        Delta_TF = 0.0                # Conservative default: no extra clearance
+        Vprime_data = None   # Non-critical: figures fall back gracefully
+    # rho_ped as the volume label of the profiles (deck value in rho_tor)
+    nu_n, nu_T, rho_ped, n_ped_frac, T_ped_frac = _profile_params(
+        config, Vprime_data)
 
-    # ── Safe float extraction (guard against NaN in radial build) ─────────────
-    def _f(x, fallback):
+    # ── Impurity inventory {species: n_imp / n_e}, every species of the deck ─
+    _impurities = dict(zip(*_parse_impurity_inventory(config)))
+
+    # ── TF coil count: same deterministic call as in run() ───────────────────
+    _N_TF, _ripple, Delta_TF = Number_TF_coils(
+        config.R0, config.a, config.b,
+        config.ripple_adm, config.L_min,
+    )
+    N_TF     = int(_N_TF)
+    # Delta_TF: extra outboard radial clearance required by port-access
+    # constraint [m]. Forwarded to _resolve_build() so that R_TF_out
+    # is consistent with the ripple model: r2 = R0 + a + b + Delta_TF.
+    Delta_TF = float(Delta_TF)
+
+    # ── Float extraction. A failed design keeps NaN, so that neither the
+    # figures nor the report show a made-up value.
+    def _f(x):
         try:
-            v = float(x)
-            return v if np.isfinite(v) else fallback
+            return float(np.real(x))
         except (TypeError, ValueError):
-            return fallback
+            return np.nan
 
     # ── TF Princeton-D contour and CS height (single resolution) ─────────────
     # Same rule as run(). Solved once and reused by the cost block below.
@@ -3121,14 +3579,17 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
                       "Breeding blanket":  _cr['C_reac_bl'],
                       "Shield + gaps":     _cr['C_reac_sg'],
                       "Divertor targets":  _cr['C_reac_tt'],
-                      "Heating plant":     _cr['C_syst_heat'],
+                      "Heat transfer system": _cr['C_syst_heat'],
                       "Balance of plant":  _cr['C_syst_BOP'],
                       "Aux. heating":      _cr['C_syst_aux'],
                       "Buildings & other": _cr['C_syst_other'],
-                      "Indirect":          _cr['C_ind']},
+                      "Indirect, interest, contingency": _cr['C_ind']},
+            # Annual operating costs [M EUR/yr]. The waste cost is defined
+            # per unit of energy (coe_waste, EUR/MWh) and converted here.
             "opex": {"O&M":               _cr['C_Op_OM'],
                      "Fuel / consumables": _cr['C_Op_F'],
-                     "Waste":              _cr['C_Op_waste']},
+                     "Waste disposal":     _cr['C_Op_waste_annual']},
+            "coe_waste": _cr['C_Op_waste'],
         }
 
     return {
@@ -3136,46 +3597,45 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         "R0":              config.R0,
         "a":               config.a,
         "Plasma_geometry": config.Plasma_geometry,
-        "kappa_edge":      _f(kappa_edge,  1.70),
-        "delta_edge":      _f(delta_edge,  0.33),
-        "kappa_95":        _f(kappa_95,    1.60),
-        "delta_95":        _f(delta_95,    0.25),
+        "kappa_edge":      _f(kappa_edge),
+        "delta_edge":      _f(delta_edge),
+        "kappa_95":        _f(kappa_95),
+        "delta_95":        _f(delta_95),
         "Vprime_data":     Vprime_data,
         # q,j profile philosophy (consumed by D0FUS_figures.plot_q_profile)
         "q_profile_mode":  config.q_profile_mode,
         "alpha_J":         config.alpha_J,
         # On-axis field and plasma current
-        "B0":          _f(B0, config.Bmax_TF),
+        "B0":          _f(B0),
         "B_max":       config.Bmax_TF,
-        "Ip":          _f(Ip, 15.0),
+        "Ip":          _f(Ip),
         # Volume-averaged kinetics
-        "nbar":        _f(nbar, 1.0),
+        "nbar":        _f(nbar),
         "Tbar":        config.Tbar,
         "tau_i_e":     config.tau_i_e,   # T_i/T_e, pressure closure of the figures
+        "n_ion_frac":  _ion_density_fraction(config, _f(_f_alpha)),   # n_i/n_e
         "nu_n":        nu_n,
         "nu_T":        nu_T,
         "rho_ped":     rho_ped,
         "n_ped_frac":  n_ped_frac,
         "T_ped_frac":  T_ped_frac,
         # MHD
-        "q95":         _f(q95, 3.0),
-        "Z_eff":       _compute_Zeff_effective(config, _f(_f_alpha, 0.0)),
-        "f_He":        _f(_f_alpha, 0.0),
+        "q95":         _f(q95),
+        "Z_eff":       _compute_Zeff_effective(config, _f(_f_alpha)),
+        "f_He":        _f(_f_alpha),
         # Power balance
         "P_fus":       config.P_fus,
         "P_aux":       config.P_aux_input,
-        "Q":           _f(Q, float('nan')),
+        "Q":           _f(Q),
         **_plant,
-        # Impurity seeding
-        "f_W":         _imp_out["W"],
-        "f_Ne":        _imp_out["Ne"],
-        "f_Ar":        _imp_out["Ar"],
+        # Impurity seeding {species: n_imp / n_e}
+        "impurities":  _impurities,
         # Radial build — inboard side [m]
         "b":           config.b,
-        "c_TF":        _f(c_TF,      0.56),
-        "c_WP":        _f(c_WP_TF,   0.36),
-        "c_nose":      _f(c_Nose_TF, 0.20),
-        "c_CS":        _f(c_CS,      0.70),
+        "c_TF":        _f(c_TF),
+        "c_WP":        _f(c_WP_TF),
+        "c_nose":      _f(c_Nose_TF),
+        "c_CS":        _f(c_CS),
         # CS vertical build [m] — resolved by f_H_CS, consumed by the report
         # and by the figures.
         "H_CS":            _H_CS_rd,
@@ -3190,68 +3650,64 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         # Mechanical configuration key — consumed by _resolve_build() in figures
         # to decide whether the TF-CS gap is applied to the CS outer radius.
         "Choice_Buck_Wedg": config.Choice_Buck_Wedg,
-        # First wall / blanket / shield (optional; ITER-like defaults)
-        "e_fw":        getattr(config, 'e_fw',      0.05),
-        "e_blanket":   getattr(config, 'e_blanket', 0.45),
-        "e_shield":    getattr(config, 'e_shield',  0.50),
         # Conductor cable fractions (wost = without steel) — TF
         # n_shape_TF, n_shape_CS: steel asymmetry parameter δ_S1/δ_S2 (1 = square jacket)
         "n_shape_TF":  config.n_shape_TF,
         "n_shape_CS":  config.n_shape_CS,
         "Supra_choice": config.Supra_choice,
-        "Steel_fraction_TF": _f(_sf_TF, 0.50),
-        "f_sc_TF":      _f(_f_sc_TF, np.nan),
-        "f_cu_TF":      _f(_f_cu_TF, np.nan),
-        "f_He_pipe_TF": _f(_f_He_pipe_TF, np.nan),
-        "f_void_TF":    _f(_f_void_TF, np.nan),
-        "f_He_TF":      _f(_f_He_TF, np.nan),
-        "f_In_TF":      _f(_f_In_TF, np.nan),
+        "Steel_fraction_TF": _f(_sf_TF),
+        "f_sc_TF":      _f(_f_sc_TF),
+        "f_cu_TF":      _f(_f_cu_TF),
+        "f_He_pipe_TF": _f(_f_He_pipe_TF),
+        "f_void_TF":    _f(_f_void_TF),
+        "f_He_TF":      _f(_f_He_TF),
+        "f_In_TF":      _f(_f_In_TF),
         # Conductor cable fractions (wost = without steel) — CS
-        "Steel_fraction_CS": _f(_sf_CS, 0.50),
-        "f_sc_CS":      _f(_f_sc_CS, np.nan),
-        "f_cu_CS":      _f(_f_cu_CS, np.nan),
-        "f_He_pipe_CS": _f(_f_He_pipe_CS, np.nan),
-        "f_void_CS":    _f(_f_void_CS, np.nan),
-        "f_He_CS":      _f(_f_He_CS, np.nan),
-        "f_In_CS":      _f(_f_In_CS, np.nan),
+        "Steel_fraction_CS": _f(_sf_CS),
+        "f_sc_CS":      _f(_f_sc_CS),
+        "f_cu_CS":      _f(_f_cu_CS),
+        "f_He_pipe_CS": _f(_f_He_pipe_CS),
+        "f_void_CS":    _f(_f_void_CS),
+        "f_He_CS":      _f(_f_He_CS),
+        "f_In_CS":      _f(_f_In_CS),
         # ── Coil volumes and cable inventory ─────────────────────────────────
-        "V_TF_one":        _f(_V_TF_one,       np.nan),   # Single TF coil [m³]
-        "V_CS_geom":       _f(_V_CS_geom,      np.nan),   # Total CS solenoid [m³]
-        "V_blanket":       _f(_V_blanket,      np.nan),   # Blanket torus [m³]
-        "V_steel_TF":      _f(_V_steel_TF,     np.nan),
-        "V_sc_TF":         _f(_V_sc_TF,        np.nan),
-        "V_cu_TF":         _f(_V_cu_TF,        np.nan),
-        "V_He_TF":         _f(_V_He_TF,        np.nan),
-        "V_In_TF":         _f(_V_In_TF,        np.nan),
-        "V_steel_CS":      _f(_V_steel_CS,     np.nan),
-        "V_sc_CS":         _f(_V_sc_CS,        np.nan),
-        "V_cu_CS":         _f(_V_cu_CS,        np.nan),
-        "V_He_CS":         _f(_V_He_CS,        np.nan),
-        "V_In_CS":         _f(_V_In_CS,        np.nan),
-        "L_cable_TF":      _f(_L_cable_TF,     np.nan),
-        "L_cable_CS":      _f(_L_cable_CS,     np.nan),
-        "n_sc_TF":         _f(_n_sc_TF,        np.nan),
-        "n_sc_CS":         _f(_n_sc_CS,        np.nan),
-        "L_sc_strand_TF":  _f(_L_sc_strand_TF, np.nan),
-        "L_sc_strand_CS":  _f(_L_sc_strand_CS, np.nan),
+        "V_TF_one":        _f(_V_TF_one),   # Single TF coil [m³]
+        "V_CS_geom":       _f(_V_CS_geom),   # Total CS solenoid [m³]
+        "V_blanket":       _f(_V_blanket),   # Blanket torus [m³]
+        "V_steel_TF":      _f(_V_steel_TF),
+        "V_sc_TF":         _f(_V_sc_TF),
+        "V_cu_TF":         _f(_V_cu_TF),
+        "V_He_TF":         _f(_V_He_TF),
+        "V_In_TF":         _f(_V_In_TF),
+        "V_steel_CS":      _f(_V_steel_CS),
+        "V_sc_CS":         _f(_V_sc_CS),
+        "V_cu_CS":         _f(_V_cu_CS),
+        "V_He_CS":         _f(_V_He_CS),
+        "V_In_CS":         _f(_V_In_CS),
+        "L_cable_TF":      _f(_L_cable_TF),
+        "L_cable_CS":      _f(_L_cable_CS),
+        "n_sc_TF":         _f(_n_sc_TF),
+        "n_sc_CS":         _f(_n_sc_CS),
+        "L_sc_strand_TF":  _f(_L_sc_strand_TF),
+        "L_sc_strand_CS":  _f(_L_sc_strand_CS),
         # ── Coil masses ─────────────────────────────────────────────────────
-        "M_steel_TF":  _f(_M_steel_TF,  np.nan),
-        "M_sc_TF":     _f(_M_sc_TF,     np.nan),
-        "M_cu_TF":     _f(_M_cu_TF,     np.nan),
-        "M_In_TF":     _f(_M_In_TF,     np.nan),
-        "M_total_TF":  _f(_M_total_TF,  np.nan),
-        "M_steel_CS":  _f(_M_steel_CS,  np.nan),
-        "M_sc_CS":     _f(_M_sc_CS,     np.nan),
-        "M_cu_CS":     _f(_M_cu_CS,     np.nan),
-        "M_In_CS":     _f(_M_In_CS,     np.nan),
-        "M_total_CS":  _f(_M_total_CS,  np.nan),
+        "M_steel_TF":  _f(_M_steel_TF),
+        "M_sc_TF":     _f(_M_sc_TF),
+        "M_cu_TF":     _f(_M_cu_TF),
+        "M_In_TF":     _f(_M_In_TF),
+        "M_total_TF":  _f(_M_total_TF),
+        "M_steel_CS":  _f(_M_steel_CS),
+        "M_sc_CS":     _f(_M_sc_CS),
+        "M_cu_CS":     _f(_M_cu_CS),
+        "M_In_CS":     _f(_M_In_CS),
+        "M_total_CS":  _f(_M_total_CS),
         # ── Radial build component masses ────────────────────────────────────
-        "M_rb_FW":       _f(M_rb_FW,       np.nan),
-        "M_rb_BB":       _f(M_rb_BB,       np.nan),
-        "M_rb_shield":   _f(M_rb_shield,   np.nan),
-        "M_rb_VV":       _f(M_rb_VV,       np.nan),
-        "M_rb_divertor": _f(M_rb_divertor, np.nan),
-        "M_rb_total":    _f(M_rb_total,    np.nan),
+        "M_rb_FW":       _f(M_rb_FW),
+        "M_rb_BB":       _f(M_rb_BB),
+        "M_rb_shield":   _f(M_rb_shield),
+        "M_rb_VV":       _f(M_rb_VV),
+        "M_rb_divertor": _f(M_rb_divertor),
+        "M_rb_total":    _f(M_rb_total),
         "divertor":     _divertor,
         "cost_breakdown": _cost_bd,
     }
@@ -3288,17 +3744,20 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
     import subprocess as _subprocess
     import dataclasses as _dc
 
-    # -- Code version: line-scan pyproject.toml (no tomllib dependency) -----
+    # -- Code version: pyproject.toml of the source tree, else the metadata
+    #    of the installed package (pip install without the source tree) ----
     def _code_version():
         pp = os.path.join(os.path.dirname(__file__), "..", "pyproject.toml")
-        try:
+        if os.path.exists(pp):
             for line in open(pp, encoding="utf-8"):
                 t = line.strip()
                 if t.startswith("version"):
                     return t.split("=", 1)[1].strip().strip('"').strip("'")
-        except Exception:
-            pass
-        return "unknown"
+        try:
+            from importlib.metadata import version, PackageNotFoundError
+            return version("d0fus")
+        except (ImportError, PackageNotFoundError):
+            return "unknown"
 
     def _git_commit():
         try:
@@ -3313,6 +3772,11 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
     def _fmt(v):
         if v is None:
             return "n/a"
+        # NumPy scalars and 0-d arrays are formatted as Python numbers
+        if isinstance(v, (np.generic, np.ndarray)) and np.ndim(v) == 0:
+            v = v.item()
+        if isinstance(v, complex):
+            v = v.real
         if isinstance(v, bool):
             return str(v)
         if isinstance(v, (int,)):
@@ -3328,6 +3792,7 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
 
     W = 80
     lines = []
+    notes = []   # problems met while gathering the outputs, shown under the header
 
     def H(title):
         lines.append("=" * W)
@@ -3341,8 +3806,9 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
     # -- Curated run dict (geometry, build, volumes, masses, divertor, cost) -
     try:
         rd = _build_run_dict(config, results)
-    except Exception:
+    except Exception as e:
         rd = {}
+        notes.append(f"  (run dict not available, part of the outputs is n/a: {e})")
 
     # -- Named unpack of the raw results tuple (physics scalars) -------------
     named = {}
@@ -3397,8 +3863,8 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
                                          config.R0 - config.a - config.b,
                                          c_TF)
         named["J_coil_CS"] = f_J_coil_CS(B_CS, c_CS)
-    except Exception:
-        pass
+    except Exception as e:
+        notes.append(f"  (results tuple not fully unpacked, part of the outputs is n/a: {e})")
 
     # Component lifetime / availability live at fixed absolute tuple indices.
     def _at(idx):
@@ -3406,10 +3872,18 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
             return results[idx]
         except Exception:
             return None
+    t_life_bl_fpy = _at(128)
+    t_life_div_fpy = _at(129)
     t_life_bl_yr = _at(130)
     t_life_div_yr = _at(131)
     T_op_limit = _at(132)
+    dt_rep_eff = _at(133)
+    Av = _at(134)
     CF = _at(135)
+    # Radial build layer volumes, results[136:143]
+    for _i, _k in enumerate(("V_rb_SOL", "V_rb_FW", "V_rb_BB", "V_rb_shield",
+                             "V_rb_VV", "V_rb_gap_TF", "V_rb_divertor")):
+        named[_k] = _at(136 + _i)
 
     def get(key):
         if key in named:
@@ -3440,18 +3914,29 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
     lines.append("  computed output. It complements input_parameters.txt (inputs as")
     lines.append("  given) and output_highlight.txt (human-readable summary).")
     lines.append("")
+    if notes:
+        lines.extend(notes + [""])
 
     # ===================================================================
     # 1. INPUTS  (complete GlobalConfig, including default values)
     # ===================================================================
-    H("1. INPUTS - complete GlobalConfig (including default values)")
-    try:
-        for fld in _dc.fields(config):
-            v = getattr(config, fld.name, None)
-            tname = getattr(fld.type, "__name__", str(fld.type))
-            lines.append(f"  {fld.name:<46}: {_fmt(v)}    [{tname}]")
-    except Exception as e:
-        lines.append(f"  (could not enumerate config fields: {e})")
+    # The configuration given to run() has its operating point resolved
+    # (Tbar_mode or P_fus_mode = 'greenwald' replaced by the solved value).
+    # Each field that differs from the deck is flagged with the deck value.
+    H("1. INPUTS - configuration used by run() (including default values)")
+    deck = None
+    if input_file_path and os.path.exists(input_file_path):
+        try:
+            deck = load_config_from_file(input_file_path, verbose=0)
+        except Exception as e:
+            lines.append(f"  (deck values not available for comparison: {e})")
+    for fld in _dc.fields(config):
+        v = getattr(config, fld.name, None)
+        tname = getattr(fld.type, "__name__", str(fld.type))
+        note = ""
+        if deck is not None and getattr(deck, fld.name) != v:
+            note = f"    (deck: {_fmt(getattr(deck, fld.name))})"
+        lines.append(f"  {fld.name:<46}: {_fmt(v)}    [{tname}]{note}")
     lines.append("")
 
     # ===================================================================
@@ -3478,10 +3963,10 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
         ("Triangularity delta_95", "delta_95", "-"),
         ("Plasma volume", "Volume", "m^3"),
         ("Plasma surface", "Surface", "m^2"),
-        ("Minor radius (LCFS) r_minor", "r_minor", "m"),
-        ("Separatrix radius r_sep", "r_sep", "m"),
-        ("r_c", "r_c", "m"),
-        ("r_d", "r_d", "m"),
+        ("Inboard LCFS radius r_minor = R0 - a", "r_minor", "m"),
+        ("TF leg plasma-side radius r_sep = R0-a-b", "r_sep", "m"),
+        ("CS outer radius r_c", "r_c", "m"),
+        ("CS bore radius r_d", "r_d", "m"),
     ])
 
     emit("3. OUTPUTS - Magnetic field & current", [
@@ -3490,9 +3975,9 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
         ("CS field B_CS", "B_CS", "T"),
         ("Poloidal field B_pol", "B_pol", "T"),
         ("Plasma current Ip", "Ip", "MA"),
-        ("Bootstrap current Ib", "Ib", "A"),
-        ("Current-drive current I_CD", "I_CD", "A"),
-        ("Ohmic current I_Ohm", "I_Ohm", "A"),
+        ("Bootstrap current Ib", "Ib", "MA"),
+        ("Current-drive current I_CD", "I_CD", "MA"),
+        ("Ohmic current I_Ohm", "I_Ohm", "MA"),
         ("Edge safety factor q95", "q95", "-"),
         ("Cylindrical safety factor q*", "qstar", "-"),
         ("Loop voltage Vloop", "Vloop", "V"),
@@ -3500,21 +3985,21 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
     ])
 
     emit("4. OUTPUTS - Density, temperature, pressure, beta", [
-        ("Volume-avg density nbar", "nbar", "m^-3"),
-        ("Line-avg density nbar_line", "nbar_line", "m^-3"),
-        ("Greenwald density nG", "nG", "m^-3"),
+        ("Volume-avg density nbar", "nbar", "1e20 m^-3"),
+        ("Line-avg density nbar_line", "nbar_line", "1e20 m^-3"),
+        ("Density limit used nG (model x margin)", "nG", "1e20 m^-3"),
         ("Volume-avg temperature Tbar", "Tbar", "keV"),
-        ("Volume-avg pressure pbar", "pbar", "Pa"),
+        ("Volume-avg pressure pbar", "pbar", "MPa"),
         ("Effective charge Z_eff", "Z_eff", "-"),
-        ("Helium fraction f_He", "f_He", "-"),
-        ("Normalised beta betaN", "betaN", "-"),
+        ("Helium ash fraction f_He = n_He/n_e", "f_He", "-"),
+        ("Normalised beta betaN (thermal)", "betaN", "% m T/MA"),
         ("Toroidal beta betaT", "betaT", "-"),
         ("Poloidal beta betaP", "betaP", "-"),
-        ("Total normalised beta betaN_total", "betaN_total", "-"),
+        ("Total normalised beta betaN_total", "betaN_total", "% m T/MA"),
         ("Fast-alpha beta beta_fast_alpha", "beta_fast_alpha", "-"),
-        ("Density peaking nu_n", "nu_n", "-"),
-        ("Temperature peaking nu_T", "nu_T", "-"),
-        ("Pedestal radius rho_ped", "rho_ped", "-"),
+        ("Density profile exponent nu_n", "nu_n", "-"),
+        ("Temperature profile exponent nu_T", "nu_T", "-"),
+        ("Pedestal radius rho_ped, volume label rho_V", "rho_ped", "-"),
         ("Pedestal density fraction n_ped_frac", "n_ped_frac", "-"),
         ("Pedestal temperature fraction T_ped_frac", "T_ped_frac", "-"),
     ])
@@ -3524,37 +4009,36 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
         ("Thermal stored energy W_th", "W_th", "J"),
         ("Fusion power P_fus", "P_fus", "MW"),
         ("Fusion gain Q", "Q", "-"),
-        ("Alpha heating fraction f_alpha", "f_alpha", "-"),
-        ("Alpha slowing-down time tau_alpha", "tau_alpha", "s"),
+        ("He ash confinement tau*_He = C_Alpha tauE", "tau_alpha", "s"),
         ("Fast-alpha slowing time tau_sd_alpha", "tau_sd_alpha", "s"),
-        ("Fast-alpha stored energy W_fast_alpha", "W_fast_alpha", "J"),
+        ("Fast-alpha stored energy W_fast_alpha", "W_fast_alpha", "MJ"),
     ])
 
     emit("6. OUTPUTS - Power balance", [
-        ("Auxiliary heating P_aux", "P_aux", "MW"),
-        ("Current-drive power P_CD", "P_CD", "MW"),
+        ("Auxiliary power input P_aux_input", "P_aux", "MW"),
+        ("Heating + CD power P_CD (incl. ICRH)", "P_CD", "MW"),
         ("Power across separatrix P_sep", "P_sep", "MW"),
         ("L-H threshold power P_Thresh", "P_Thresh", "MW"),
         ("Net electric power P_elec", "P_elec", "MWe"),
         ("Wall-plug power P_wallplug", "P_wallplug", "MW"),
-        ("CD efficiency eta_CD", "eta_CD", "A/W"),
+        ("CD figure of merit gamma_CD", "eta_CD", "1e20 A W^-1 m^-2"),
         ("Bremsstrahlung P_Brem", "P_Brem", "MW"),
         ("Synchrotron P_syn", "P_syn", "MW"),
-        ("Line radiation P_line", "P_line", "MW"),
-        ("Core line radiation P_line_core", "P_line_core", "MW"),
+        ("Impurity radiation P_line (Mavrin Lz)", "P_line", "MW"),
+        ("Impurity radiation, rho < rho_rad_core", "P_line_core", "MW"),
     ])
 
     emit("7. OUTPUTS - Current-drive breakdown", [
-        ("LH efficiency eta_LH", "eta_LH", "-"),
-        ("EC efficiency eta_EC", "eta_EC", "-"),
-        ("NBI efficiency eta_NBI", "eta_NBI", "-"),
+        ("LH figure of merit gamma_LH", "eta_LH", "1e20 A W^-1 m^-2"),
+        ("EC figure of merit gamma_EC", "eta_EC", "1e20 A W^-1 m^-2"),
+        ("NBI figure of merit gamma_NBI", "eta_NBI", "1e20 A W^-1 m^-2"),
         ("LH power P_LH", "P_LH", "MW"),
         ("EC power P_EC", "P_EC", "MW"),
         ("NBI power P_NBI", "P_NBI", "MW"),
         ("ICRH power P_ICR", "P_ICR", "MW"),
-        ("LH-driven current I_LH", "I_LH", "A"),
-        ("EC-driven current I_EC", "I_EC", "A"),
-        ("NBI-driven current I_NBI", "I_NBI", "A"),
+        ("LH-driven current I_LH", "I_LH", "MA"),
+        ("EC-driven current I_EC", "I_EC", "MA"),
+        ("NBI-driven current I_NBI", "I_NBI", "MA"),
     ])
 
     emit("8. OUTPUTS - Poloidal flux budget", [
@@ -3569,21 +4053,31 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
     H("9. OUTPUTS - Divertor & exhaust")
     for label, key, unit in [
         ("SOL elongation factor f_kappa_SOL", "f_kappa_SOL", "-"),
-        ("Divertor heat load (total) heat", "heat", "MW/m^2"),
-        ("Parallel heat flux heat_par", "heat_par", "MW/m^2"),
-        ("Poloidal heat flux heat_pol", "heat_pol", "MW/m^2"),
-        ("SOL power width lambda_q", "lambda_q", "m"),
-        ("Target heat flux q_target", "q_target", "MW/m^2"),
-        ("Wall radiated power P_wall_rad", "P_wall_rad", "MW"),
-        ("Divertor radiated power P_wall_div", "P_wall_div", "MW"),
+        ("Divertor heat scaling P_sep/R0", "heat", "MW/m"),
+        ("Parallel heat flux proxy P_sep B0/R0", "heat_par", "MW T/m"),
+        ("Poloidal proxy P_sep B0/(q95 R0 A)", "heat_pol", "MW T/m"),
+        ("SOL power width lambda_q (Eich #15)", "lambda_q", "m"),
+        ("Attached unmitigated target flux q_target", "q_target", "MW/m^2"),
+        ("Radiative wall load P_rad,tot/S", "P_wall_rad", "MW/m^2"),
+        ("Mean SOL exhaust flux P_sep/S", "P_wall_div", "MW/m^2"),
         ("Neutron wall load Gamma_n", "Gamma_n", "MW/m^2"),
     ]:
         row(label, get(key), unit)
+    # Two-point model dict (f_heat_two_point and the run() operating point).
+    # lambda_q is already listed above.
+    _div_units = dict(q_pol_omp="MW/m^2", pitch_B_over_Bpol="-",
+                      f_outer_target="-", q_par_u="MW/m^2", T_eu="eV",
+                      T_et="eV", n_et="m^-3", Gamma_et="m^-2 s^-1",
+                      q_dep_t="MW/m^2", f_pwr_loss_req="-", n_sep="m^-3",
+                      f_cooling="-", f_mom="-", theta_deg="deg",
+                      q_dep_limit="MW/m^2", q_par0_attached="MW/m^2", m_f="kg",
+                      B_pol_omp="T")
     _div = rd.get("divertor") or {}
     if _div:
-        lines.append("  Refined two-point divertor model:")
+        lines.append("  Refined two-point divertor model (NaN target values when sheath-limited):")
         for k in sorted(_div.keys()):
-            row("  " + str(k), _div[k])
+            if k != "lambda_q":
+                row("  " + str(k), _div[k], _div_units.get(k, ""))
     else:
         lines.append("  Refined two-point divertor model: (not computed)")
     lines.append("")
@@ -3594,7 +4088,7 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
         ("TF radial thickness c_TF", "c_TF", "m"),
         ("TF winding-pack thickness c_WP", "c_WP", "m"),
         ("TF nose thickness c_nose", "c_nose", "m"),
-        ("TF shape exponent n_shape_TF", "n_shape_TF", "-"),
+        ("TF conductor shape factor n_shape_TF", "n_shape_TF", "-"),
         ("Number of TF coils N_TF", "N_TF", "-"),
         ("TF steel fraction Steel_fraction_TF", "Steel_fraction_TF", "-"),
         ("TF axial stress sz_TF", "sz_TF", "Pa"),
@@ -3613,7 +4107,7 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
         ("TF insulator volume V_In_TF", "V_In_TF", "m^3"),
         ("Single-TF volume V_TF_one", "V_TF_one", "m^3"),
         ("TF cable length L_cable_TF", "L_cable_TF", "m"),
-        ("TF strand count n_sc_TF", "n_sc_TF", "-"),
+        ("TF equivalent SC strands per cable n_sc_TF", "n_sc_TF", "-"),
         ("TF strand length L_sc_strand_TF", "L_sc_strand_TF", "m"),
         ("TF steel mass M_steel_TF", "M_steel_TF", "kg"),
         ("TF SC mass M_sc_TF", "M_sc_TF", "kg"),
@@ -3625,13 +4119,11 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
     emit("11. OUTPUTS - CS coil (winding pack, composition, structure)", [
         ("CS current density J_wost_CS (no steel)", "J_wost_CS", "A/m^2"),
         ("CS current density J_coil_CS (steel incl.)", "J_coil_CS", "A/m^2"),
-        ("CS field (alt.) B_CS2", "B_CS2", "T"),
-        ("CS current density (alt.) J_CS2", "J_CS2", "A/m^2"),
         ("CS radial thickness c_CS", "c_CS", "m"),
         ("CS total height H_CS", "H_CS", "m"),
         ("CS module height H_CS_module", "H_CS_module", "m"),
         ("CS module count N_sub_CS", "N_sub_CS", "-"),
-        ("CS shape exponent n_shape_CS", "n_shape_CS", "-"),
+        ("CS conductor shape factor n_shape_CS", "n_shape_CS", "-"),
         ("CS steel fraction Steel_fraction_CS", "Steel_fraction_CS", "-"),
         ("CS axial stress sz_CS", "sz_CS", "Pa"),
         ("CS hoop stress st_CS", "st_CS", "Pa"),
@@ -3649,7 +4141,7 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
         ("CS insulator volume V_In_CS", "V_In_CS", "m^3"),
         ("CS solenoid volume V_CS_geom", "V_CS_geom", "m^3"),
         ("CS cable length L_cable_CS", "L_cable_CS", "m"),
-        ("CS strand count n_sc_CS", "n_sc_CS", "-"),
+        ("CS equivalent SC strands per cable n_sc_CS", "n_sc_CS", "-"),
         ("CS strand length L_sc_strand_CS", "L_sc_strand_CS", "m"),
         ("CS steel mass M_steel_CS", "M_steel_CS", "kg"),
         ("CS SC mass M_sc_CS", "M_sc_CS", "kg"),
@@ -3662,11 +4154,15 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
         ("Blanket+shield radial thickness b", "b", "m"),
         ("Outboard clearance Delta_TF", "Delta_TF", "m"),
         ("Assembly gap Gap", "Gap", "m"),
-        ("First-wall thickness e_fw", "e_fw", "m"),
-        ("Blanket thickness e_blanket", "e_blanket", "m"),
-        ("Shield thickness e_shield", "e_shield", "m"),
         ("Blanket concept Blanket_choice", "Blanket_choice", ""),
-        ("Blanket torus volume V_blanket", "V_blanket", "m^3"),
+        ("LCFS-to-TF shell volume V_blanket", "V_blanket", "m^3"),
+        ("Scrape-off layer volume V_rb_SOL", "V_rb_SOL", "m^3"),
+        ("First-wall volume V_rb_FW", "V_rb_FW", "m^3"),
+        ("Breeding-blanket volume V_rb_BB", "V_rb_BB", "m^3"),
+        ("Shield volume V_rb_shield", "V_rb_shield", "m^3"),
+        ("Vacuum-vessel volume V_rb_VV", "V_rb_VV", "m^3"),
+        ("Gaps and voids volume V_rb_gap_TF", "V_rb_gap_TF", "m^3"),
+        ("Divertor volume V_rb_divertor", "V_rb_divertor", "m^3"),
         ("First-wall mass M_rb_FW", "M_rb_FW", "kg"),
         ("Breeding-blanket mass M_rb_BB", "M_rb_BB", "kg"),
         ("Shield mass M_rb_shield", "M_rb_shield", "kg"),
@@ -3676,9 +4172,13 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
     ])
 
     H("13. OUTPUTS - Component lifetime & availability")
+    row("Blanket lifetime t_life_bl_fpy", t_life_bl_fpy, "fpy")
+    row("Divertor lifetime t_life_div_fpy", t_life_div_fpy, "fpy")
     row("Blanket calendar lifetime t_life_bl_yr", t_life_bl_yr, "yr")
     row("Divertor calendar lifetime t_life_div_yr", t_life_div_yr, "yr")
     row("Operation time per cycle T_op_limit", T_op_limit, "yr")
+    row("Effective replacement downtime dt_rep_eff", dt_rep_eff, "yr")
+    row("Plant availability Av", Av, "-")
     row("Capacity factor CF", CF, "-")
     lines.append("")
 
@@ -3687,12 +4187,12 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
     row("Smoothed thermal power P_th_smoothed", rd.get("P_th_smoothed"), "MWth")
     row("Stored thermal energy E_store_th", rd.get("E_store_th"), "MWhth")
     row("Gross electrical power P_e_gross", rd.get("P_e_gross"), "MWe")
-    row("CS coil power supply P_coil_CS", rd.get("P_coil_CS"), "MWe")
+    row("CS recharge, cycle average P_coil_CS", rd.get("P_coil_CS"), "MWe")
     row("Total TF + CS feeder current I_feeders", rd.get("I_feeders"), "MA")
     row("Refrigeration load at 4.5 K P_cryo_cool", rd.get("P_cryo_cool"), "kW")
     row("Cryogenic electrical consumption P_cryo_electric", rd.get("P_cryo_electric"), "MWe")
-    row("Fixed house load P_house_load", rd.get("P_house_load"), "MWe")
-    row("Balance-of-plant power P_BoP", rd.get("P_BoP"), "MWe")
+    row("House load P_house_load (PROCESS model)", rd.get("P_house_load"), "MWe")
+    row("Coolant pumping power P_BoP", rd.get("P_BoP"), "MWe")
     row("Variable recirculating power P_recirc_var", rd.get("P_recirc_var"), "MWe")
     row("Fixed recirculating power P_recirc_fix", rd.get("P_recirc_fix"), "MWe")
     row("Total recirculated power P_recirculated", rd.get("P_recirculated"), "MWe")
@@ -3713,6 +4213,8 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
         lines.append(f"  Annual OpEx [{cur}/yr]:")
         for k, v in (_cb.get("opex") or {}).items():
             row("  " + str(k), v)
+        row("Waste disposal cost (included in COE)", _cb.get("coe_waste"),
+            _cb.get("coe_unit", "EUR/MWh"))
     else:
         lines.append("  (cost model disabled or unavailable)")
     lines.append("")
@@ -3730,7 +4232,8 @@ def save_run_output(config: GlobalConfig,
                     output_dir: str,
                     input_file_path: str = None,
                     save_figures: bool = False,
-                    verbose: int = 0) -> str:
+                    verbose: int = 0,
+                    view_3d: bool = True) -> str:
     """
     Write a timestamped output directory containing:
       - a copy (or reconstruction) of the input parameters
@@ -3746,14 +4249,14 @@ def save_run_output(config: GlobalConfig,
     save_figures    : bool          If True, generate and save all run figures
                                     in a ``figures/`` sub-directory alongside
                                     the text report.
+    view_3d         : bool          False skips the 3D machine view.
 
     Returns
     -------
     str : absolute path to the created output directory.
     """
-    timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = os.path.join(output_dir, 'run', f"Run_D0FUS_{timestamp}")
-    os.makedirs(output_path, exist_ok=True)
+    output_path, timestamp = new_output_dir(os.path.join(output_dir, 'run'),
+                                            "Run_D0FUS")
     # Exhaustive machine-readable report (all inputs + all outputs).
     try:
         _write_full_report(config, results, output_path, timestamp, input_file_path)
@@ -3838,18 +4341,23 @@ def save_run_output(config: GlobalConfig,
          P_recirculated, E_recirculated, C_tritium) = (np.nan,) * 15
 
     # ── Recompute N_TF for display (not stored in results tuple) ──────────
-    try:
-        _N_TF_disp, _ripple_disp, _Delta_TF_disp = Number_TF_coils(
-            config.R0, config.a, config.b,
-            config.ripple_adm, config.L_min)
-        N_TF_disp    = int(_N_TF_disp)
-        Delta_TF_disp = float(_Delta_TF_disp)
-    except Exception:
-        N_TF_disp    = 16
-        Delta_TF_disp = 0.0
+    # Same deterministic call as in run().
+    _N_TF_disp, _ripple_disp, _Delta_TF_disp = Number_TF_coils(
+        config.R0, config.a, config.b, config.ripple_adm, config.L_min)
+    N_TF_disp     = int(_N_TF_disp)
+    Delta_TF_disp = float(_Delta_TF_disp)
+
+    # ── Deck as given, to tell solved operating-point values from inputs ──
+    # resolve_operating_point() replaces Tbar_mode / P_fus_mode = 'greenwald'
+    # by the solved value before run(). Those values are outputs [O].
+    _deck = (load_config_from_file(input_file_path, verbose=0)
+             if input_file_path and os.path.exists(input_file_path) else config)
+    _Tbar_io  = 'O' if _deck.Tbar_mode == 'greenwald' else 'I'
+    _P_fus_io = 'O' if _deck.P_fus_mode == 'greenwald' else 'I'
 
     # ── Blanket concept: TBR and radial-build layer breakdown (display only) ──
-    _, _, _, _, _, _, _, _R_in_disp, _Z_in_disp = f_TF_cross_section(
+    (_R_bore_disp, _R_TF_out_disp, _H_TF_disp, _, _, _, _,
+     _R_in_disp, _Z_in_disp) = f_TF_cross_section(
         config.a, config.b, config.R0, c, Delta_TF_disp)
     _rb_disp = f_radial_build_layers(
         a=config.a, b=config.b, κ=κ, δ=δ, R0=config.R0,
@@ -3859,20 +4367,35 @@ def save_run_output(config: GlobalConfig,
         R_tf_in=_R_in_disp, Z_tf_in=_Z_in_disp,
         Blanket_choice=config.Blanket_choice,
     )
-    _delta_BB_ib = _rb_disp['delta_BB_ib']
-    _delta_BB_ob = _rb_disp['delta_BB_ob']
+    _delta_BB_ib  = _rb_disp['delta_BB_ib']
+    _delta_BB_ob  = _rb_disp['delta_BB_ob']
+    _delta_BB_loc = _rb_disp['delta_BB_local']
+    _w_BB_loc     = _rb_disp['w_BB_local']
     _blanket_concept = material_blanket(config.Blanket_choice)
     _RB_layers        = _rb_disp['layers']
-    _TBR_achieved     = f_TBR(_delta_BB_ib, config.Blanket_choice)
-    _M_blanket        = M_blanket_effective(config.Blanket_choice)
-    _eta_T            = eta_T_effective(config.Blanket_choice)
+    _TBR_achieved     = f_TBR(_delta_BB_loc, config.Blanket_choice, _w_BB_loc)
+    # Conversion parameters as used in run(): [I] from the deck, [O] from the
+    # blanket concept (multiplication reduced for a thin breeder)
+    _M_blanket, _eta_T, _f_pump = plant_conversion(config)
+    if config.M_blanket is None:
+        _M_blanket = f_blanket_multiplication(_M_blanket, _delta_BB_loc,
+                                              config.Blanket_choice, _w_BB_loc)
+    _conv_src = {k: (('I', 'deck') if getattr(config, k) is not None
+                     else ('O', 'concept'))
+                 for k in ('M_blanket', 'eta_T', 'f_BoP')}
+    if config.M_blanket is None:
+        _conv_src['M_blanket'] = ('O', f"concept, {_blanket_concept['M_blanket']:.2f} "
+                                       "for a thick breeder")
 
     # ── Magnetic stored energy and ampere-turns (display only) ────────────
-    # TF bore geometry (same convention as run())
+    # Princeton-D bore of the sized coil, as in run()
     _r_in_TF  = config.R0 - config.a - config.b
-    _r_out_TF = config.R0 + config.a + config.b
-    _H_TF     = 2 * (κ * config.a + config.b + 1)
-    E_mag_TF_disp = calculate_E_mag_TF(config.Bmax_TF, _r_in_TF, _r_out_TF, _H_TF)
+    E_mag_TF_disp = calculate_E_mag_TF(config.Bmax_TF, config.a, config.b,
+                                       config.R0, c, Delta_TF_disp)
+    # House load breakdown, as in run()
+    _hl = house_load_breakdown(config, _R_TF_out_disp, _R_bore_disp, c,
+                               _H_TF_disp, float(np.max(_Z_in_disp)), N_TF_disp,
+                               E_mag_TF_disp, P_cryo_cool)
     # Ampere's law on toroidal path at inner bore: NI_total = B_max × 2π r_in / μ₀
     NI_TF_total = config.Bmax_TF * 2 * np.pi * _r_in_TF / μ0
     # Per-coil ampere-turns and winding turns
@@ -3896,7 +4419,9 @@ def save_run_output(config: GlobalConfig,
         # Per-module ampere-turns and winding turns
         _N_mod_CS = config.N_sub_CS if config.N_sub_CS > 0 else 1
         NI_CS_mod     = NI_CS_total / _N_mod_CS
-        Nturns_CS_mod = NI_CS_mod / config.I_cond if config.I_cond > 0 else np.nan
+        _I_cond_CS    = (config.I_cond_CS if config.I_cond_CS is not None
+                         else config.I_cond)
+        Nturns_CS_mod = NI_CS_mod / _I_cond_CS if _I_cond_CS > 0 else np.nan
     else:
         E_mag_CS_disp = np.nan
         NI_CS_total   = np.nan
@@ -3912,60 +4437,47 @@ def save_run_output(config: GlobalConfig,
     J_coil_TF = f_J_coil_TF(config.Bmax_TF, _r_in_TF, c)
     J_coil_CS = f_J_coil_CS(B_CS, d)
 
-    # Re-parse multi-impurity config for per-species display
-    _Z_CORONAL = {'Be': 4, 'C': 6, 'N': 7, 'Ne': 10, 'Ar': 18, 'Kr': 34, 'Xe': 44, 'W': 46}
-    _sp_raw = config.impurity_species
-    _fc_raw = config.f_imp_core
-    if _sp_raw is None or str(_sp_raw).strip() in ('', 'None', 'none'):
-        imp_species_list, imp_conc_list = [], []
-    else:
-        imp_species_list = [s.strip() for s in str(_sp_raw).split(',') if s.strip()]
-        if isinstance(_fc_raw, (int, float)):
-            imp_conc_list = [float(_fc_raw)]
-        else:
-            imp_conc_list = [float(c.strip()) for c in str(_fc_raw).split(',') if c.strip()]
-        paired = [(s, c) for s, c in zip(imp_species_list, imp_conc_list) if c > 0]
-        imp_species_list = [p[0] for p in paired]
-        imp_conc_list    = [p[1] for p in paired]
-    f_imp_dilution = sum(_Z_CORONAL.get(s, 10) * c
+    # Impurity inventory for the per-species display, with the same coronal
+    # <Z_j>(Tbar) as run() for the fuel dilution
+    imp_species_list, imp_conc_list = _parse_impurity_inventory(config)
+    f_imp_dilution = sum(get_Z_mean(s, config.Tbar) * c
                          for s, c in zip(imp_species_list, imp_conc_list))
 
-    # Reconstruct profile params and Vprime_data for per-species display.
-    # Use the module-level _PROFILE_PRESETS table (single source of truth).
-    if config.Plasma_profiles == 'Manual':
-        nu_n = config.nu_n_manual; nu_T = config.nu_T_manual
-        rho_ped = config.rho_ped; n_ped_frac = config.n_ped_frac; T_ped_frac = config.T_ped_frac
-    elif config.Plasma_profiles in _PROFILE_PRESETS:
-        p = _PROFILE_PRESETS[config.Plasma_profiles]
-        nu_n = p['nu_n']; nu_T = p['nu_T']; rho_ped = p['rho_ped']
-        n_ped_frac = p['n_ped_frac']; T_ped_frac = p['T_ped_frac']
-    else:
-        nu_n = 0; nu_T = 0; rho_ped = 1.0; n_ped_frac = 0; T_ped_frac = 0
-    Vprime_data = None
-    if config.Plasma_geometry == 'refined' and np.isfinite(κ) and np.isfinite(δ):
-        # Same grid as run(), so report integrals match the physics chain
-        Vprime_data = precompute_Vprime(config.R0, config.a, κ, δ,
-                                         geometry_model='refined',
-                                         kappa_95=κ_95, delta_95=δ_95,
-                                         N_rho=500, N_theta=200)
-    rho_rad_core = config.rho_rad_core
+    # Profile parameters and Miller V'(rho) for the per-species display,
+    # on the run() grid so that report integrals match the physics chain.
+    Vprime_data = _design_Vprime(config, results)
+    nu_n, nu_T, rho_ped, n_ped_frac, T_ped_frac = _profile_params(
+        config, Vprime_data)
+    rho_rad_core = config.rho_rad_core                                  # deck, rho_tor
+    rho_rad_core_V = float(rho_V_of_rho_tor(rho_rad_core, Vprime_data))  # profiles
 
     # ── Write results report (console + file) ─────────────────────────────────
     output_file = os.path.join(output_path, "output_highlight.txt")
     with open(output_file, "w", encoding="utf-8") as f:
 
         class DualWriter:
-            """Writes simultaneously to stdout and a file."""
-            def __init__(self, *files):
-                self._files = files
-            def write(self, data):
-                for ff in self._files:
-                    ff.write(data)
-            def flush(self):
-                for ff in self._files:
-                    ff.flush()
+            """
+            Writes to the UTF-8 report file, then to the console.
 
-        out = DualWriter(sys.stdout, f)
+            The file is written first, so that a console that cannot encode
+            a character (cp1252 terminal, pipe) never truncates the report.
+            Such characters are replaced on the console only.
+            """
+            def __init__(self, report_file, console):
+                self._file = report_file
+                self._console = console
+            def write(self, data):
+                self._file.write(data)
+                try:
+                    self._console.write(data)
+                except UnicodeEncodeError:
+                    enc = getattr(self._console, "encoding", None) or "ascii"
+                    self._console.write(data.encode(enc, "replace").decode(enc))
+            def flush(self):
+                self._file.flush()
+                self._console.flush()
+
+        out = DualWriter(f, sys.stdout)
 
         print("=========================================================================", file=out)
         print("=== D0FUS Calculation Results ===", file=out)
@@ -3985,14 +4497,15 @@ def save_run_output(config: GlobalConfig,
         print("-------------------------------------------------------------------------", file=out)
         print(f"[I] R0 (Major Radius)                               : {config.R0:.3f} [m]",   file=out)
         print(f"[I] a  (Minor Radius)                               : {config.a:.3f} [m]",    file=out)
-        print(f"[I] b  (BB & neutron shield thickness)              : {r_minor-r_sep:.3f} [m]", file=out)
+        print(f"[I] b  (BB & neutron shield thickness)              : {config.b:.3f} [m]", file=out)
         # c and d are read directly from results to avoid any gap-dependent ambiguity
         # when interpreting differences of the radii r_c / r_d.
         print(f"[O] c  (TF inboard leg thickness)                   : {c:.3f} [m]",   file=out)
         if config.Choice_Buck_Wedg == 'Wedging':
-            print(f"[O] Gap (TF inner bore -> CS outer face)            : {config.Gap:.3f} [m]", file=out)
+            print(f"[I] Gap (TF inner bore -> CS outer face)            : {config.Gap:.3f} [m]", file=out)
         print(f"[O] d  (CS winding-pack radial thickness)           : {d:.3f} [m]",     file=out)
-        print(f"{'[O] H_CS   (CS total height, ' + _H_CS_src + ')':<52}: {_H_CS:.3f} [m]", file=out)
+        _H_CS_io = 'I' if _H_CS_src == 'forced' else 'O'
+        print(f"{'[' + _H_CS_io + '] H_CS   (CS total height, ' + _H_CS_src + ')':<52}: {_H_CS:.3f} [m]", file=out)
         print(f"[O] H_CS/mod (CS module height)                     : {_H_CS_mod:.3f} [m]", file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[O] Kappa    (Plasma elongation)                    : {κ:.3f}",     file=out)
@@ -4017,7 +4530,9 @@ def save_run_output(config: GlobalConfig,
         print(f"[O]  └ J_coil-CS (CS pack, steel jacket included)   : {J_coil_CS/1e6:.3f} [MA/m²]", file=out)
         print(f"[O] E_mag_TF (TF stored magnetic energy)            : {E_mag_TF_disp/1e9:.3f} [GJ]", file=out)
         print(f"[O] E_mag_CS (CS stored magnetic energy)            : {E_mag_CS_disp/1e9:.3f} [GJ]", file=out)
-        print(f"[I] I_cond (Operating current per conductor)        : {config.I_cond/1e3:.1f} [kA]", file=out)
+        print(f"[I] I_cond (Operating current per TF conductor)     : {config.I_cond/1e3:.1f} [kA]", file=out)
+        if config.I_cond_CS is not None:
+            print(f"[I] I_cond_CS (Operating current per CS conductor)  : {config.I_cond_CS/1e3:.1f} [kA]", file=out)
         print(f"[O] NI_TF/coil  (Ampere-turns per TF coil)          : {NI_TF_coil/1e6:.3f} [MA·turns]", file=out)
         print(f"[O] N_turns_TF  (Winding turns per TF coil)         : {Nturns_TF_coil:.0f}", file=out)
         print(f"[O] NI_CS/mod   (Ampere-turns per CS module)        : {NI_CS_mod/1e6:.3f} [MA·turns]", file=out)
@@ -4076,14 +4591,13 @@ def save_run_output(config: GlobalConfig,
         print(f"[O]  ├ V_VV         (vacuum vessel, all around)     : {V_rb_VV:.1f} [m³]", file=out)
         print(f"[O]  └ V_gap        (gaps/voids, all around)        : {V_rb_gap_TF:.1f} [m³]", file=out)
         print("-------------------------------------------------------------------------", file=out)
-        _rho = material_rho(config.Chosen_Steel, config.Supra_choice)
-        print(f"[O] TF coil masses  (total all N_TF coils, {config.Chosen_Steel} / {config.Supra_choice})", file=out)
+        print(f"[O] TF coil masses  (total all N_TF coils, {config.Chosen_Steel_TF} / {config.Supra_choice})", file=out)
         print(f"[O]  ├ M_steel_TF                                   : {M_steel_TF/1e3:.1f} [t]", file=out)
         print(f"[O]  ├ M_sc_TF                                      : {M_sc_TF/1e3:.1f} [t]",    file=out)
         print(f"[O]  ├ M_cu_TF                                      : {M_cu_TF/1e3:.1f} [t]",    file=out)
         print(f"[O]  ├ M_In_TF                                      : {M_In_TF/1e3:.1f} [t]",    file=out)
         print(f"[O]  └ M_total_TF                                   : {M_total_TF/1e3:.1f} [t]",       file=out)
-        print(f"[O] CS coil masses  (total solenoid)", file=out)
+        print(f"[O] CS coil masses  (total solenoid, {config.Chosen_Steel_CS} / {config.Supra_choice})", file=out)
         print(f"[O]  ├ M_steel_CS                                   : {M_steel_CS/1e3:.1f} [t]", file=out)
         print(f"[O]  ├ M_sc_CS                                      : {M_sc_CS/1e3:.1f} [t]",   file=out)
         print(f"[O]  ├ M_cu_CS                                      : {M_cu_CS/1e3:.1f} [t]",   file=out)
@@ -4103,8 +4617,19 @@ def save_run_output(config: GlobalConfig,
         print(f"[I]  ├ 6Li enrichment        : {_blanket_concept['Li6_enrichment']}", file=out)
         print(f"[I]  ├ Magnet shielding      : {_blanket_concept['shield_quality']}", file=out)
         print(f"[I]  ├ VV feasible           : {_blanket_concept['VV_feasible']}", file=out)
-        print(f"[I]  └ M_blanket / eta_T     : {_M_blanket:.2f}  /  {_eta_T:.2f}  (eta_T_range = {_blanket_concept['eta_T_range']})", file=out)
-        print(f"[O] TBR_achieved  (delta_BB_ib = {_delta_BB_ib:.3f} m)        : {_TBR_achieved:.3f}  (TBR_max = {_blanket_concept['TBR_max']:.2f})", file=out)
+        _s = _conv_src['M_blanket']
+        print(f"[{_s[0]}]  ├ M_blanket             : {_M_blanket:.3f}  ({_s[1]})", file=out)
+        _s = _conv_src['eta_T']
+        print(f"[{_s[0]}]  ├ eta_T (gross)         : {_eta_T:.3f}  ({_s[1]})", file=out)
+        _s = _conv_src['f_BoP']
+        print(f"[{_s[0]}]  └ f_BoP (coolant pumps) : {_f_pump:.4f}  ({_s[1]})", file=out)
+        print(f"[O] TBR_achieved  (breeder {_delta_BB_loc.min():.2f} to {_delta_BB_loc.max():.2f} m, "
+              f"mean {_rb_disp['delta_BB_eff']:.2f} m) : {_TBR_achieved:.3f}  "
+              f"(TBR_max = {_blanket_concept['TBR_max']:.2f})", file=out)
+        if _rb_disp['stack_scale'] < 1.0:
+            print(f"[!] b = {config.b:.3f} m is thinner than the fixed layers of the "
+                  f"{config.Blanket_choice} stack: they are scaled by "
+                  f"{_rb_disp['stack_scale']:.2f} and the inboard breeder vanishes", file=out)
         print(f"[O] Radial build layers  (plasma → TF, delta_BB_ib = {_delta_BB_ib:.3f} m, delta_BB_ob = {_delta_BB_ob:.3f} m)", file=out)
         for _i, _layer in enumerate(_RB_layers):
             _last   = _i == len(_RB_layers) - 1
@@ -4131,17 +4656,23 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] Psi_PF      (External PF contribution)          : {ΨPF:.3f} [Wb]",      file=out)
         print(f"[O] Psi_CS      (CS flux requirement)               : {ΨCS_Total:.3f} [Wb]", file=out)
         print(f"[O] V_loop      (Steady-state loop voltage)         : {Vloop*1e3:.1f} [mV]", file=out)
+        if not np.isfinite(d):
+            print("[!] CS sizing failed: no thickness provides Psi_CS within the field and stress limits", file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[I] Fuel   (Fuel mix)                               : {config.Fuel}",  file=out)
-        print(f"[I] P_fus  (Fusion power)                           : {config.P_fus:.6g} [MW]",  file=out)
-        print(f"[O] P_CD   (Current drive power)                    : {P_CD:.3f} [MW]",           file=out)
-        print(f"[O]  \u251c gamma_LH  (LHCD efficiency)                  : {eta_LH:.4f} [MA/MW\u00b7m\u00b2]",  file=out)
-        print(f"[O]  \u251c gamma_EC  (ECCD efficiency)                  : {eta_EC:.4f} [MA/MW\u00b7m\u00b2]",  file=out)
-        print(f"[O]  \u2514 gamma_NBI (NBCD efficiency)                  : {eta_NBI:.4f} [MA/MW\u00b7m\u00b2]", file=out)
-        print(f"[O]  \u251c P_LH  / I_LH  (LHCD)                         : {P_LH_out:.2f} MW / {I_LH_out:.3f} MA",  file=out)
-        print(f"[O]  \u251c P_EC  / I_EC  (ECCD)                         : {P_EC_out:.2f} MW / {I_EC_out:.3f} MA",  file=out)
-        print(f"[O]  \u251c P_NBI / I_NBI (NBCD)                         : {P_NBI_out:.2f} MW / {I_NBI_out:.3f} MA", file=out)
-        print(f"[O]  \u2514 P_ICR        (ICRH, heating only)            : {P_ICR_out:.2f} MW",       file=out)
+        _pfus_label = f"[{_P_fus_io}] P_fus  (Fusion power{', solved' if _P_fus_io == 'O' else ''})"
+        print(f"{_pfus_label:<52}: {config.P_fus:.6g} [MW]",  file=out)
+        print(f"[O] P_CD   (Heating + current drive power)          : {P_CD:.3f} [MW]",           file=out)
+        if config.CD_source == 'Academic':
+            print(f"[I]  \u2514 gamma_CD_acad (no per-source breakdown)       : {config.gamma_CD_acad:.4f} [10\u00b2\u2070 A/(W\u00b7m\u00b2)]", file=out)
+        else:
+            print(f"[O]  \u251c gamma_LH  (LHCD figure of merit)             : {eta_LH:.4f} [10\u00b2\u2070 A/(W\u00b7m\u00b2)]",  file=out)
+            print(f"[O]  \u251c gamma_EC  (ECCD figure of merit)             : {eta_EC:.4f} [10\u00b2\u2070 A/(W\u00b7m\u00b2)]",  file=out)
+            print(f"[O]  \u251c gamma_NBI (NBCD figure of merit)             : {eta_NBI:.4f} [10\u00b2\u2070 A/(W\u00b7m\u00b2)]", file=out)
+            print(f"[O]  \u251c P_LH  / I_LH  (LHCD)                         : {P_LH_out:.2f} MW / {I_LH_out:.3f} MA",  file=out)
+            print(f"[O]  \u251c P_EC  / I_EC  (ECCD)                         : {P_EC_out:.2f} MW / {I_EC_out:.3f} MA",  file=out)
+            print(f"[O]  \u251c P_NBI / I_NBI (NBCD)                         : {P_NBI_out:.2f} MW / {I_NBI_out:.3f} MA", file=out)
+            print(f"[O]  \u2514 P_ICR        (ICRH, heating only)            : {P_ICR_out:.2f} MW",       file=out)
         print(f"[O] P_syn  (Synchrotron, Albajar-Fidone)            : {P_syn:.3f} [MW]",          file=out)
         print(f"[O] P_Brem (Fuel bremsstrahlung, D+T+He)            : {P_Brem:.3f} [MW]",         file=out)
         print(f"[O] P_imp  (Impurity radiation, Mavrin L_z)         : {P_line:.3f} [MW]",         file=out)
@@ -4150,34 +4681,40 @@ def save_run_output(config: GlobalConfig,
                 _Pc, _Pt = f_P_line_radiation_profile(
                     _sp, _fc, nbar, config.Tbar, nu_n, nu_T, Volume,
                     rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
-                    Vprime_data=Vprime_data, rho_core=rho_rad_core)
+                    Vprime_data=Vprime_data, rho_core=rho_rad_core_V)
                 print(f"[O]  \u251c P_imp_{_sp:<3s} (f={_fc:.1e}, brem+line+recomb)      : {_Pt:.3f} [MW] "
                       f"(core={_Pc:.3f}, edge={_Pt - _Pc:.3f})", file=out)
-            print(f"[O]  f_imp_dilution (\u03a3 Z_j\u00b7f_j)                     : {f_imp_dilution:.4f} [-]", file=out)
+            print(f"[O]  \u2514 f_imp_dilution (\u03a3 <Z_j> c_j, fuel dilution)  : {f_imp_dilution:.4f} [-]", file=out)
         _P_rad_total = P_syn + P_Brem + P_line
         _P_rad_core  = P_syn + P_Brem + P_line_core_solution
-        print(f"[O] P_rad_core  (core radiation, \u03c1<{rho_rad_core})            : {_P_rad_core:.3f} [MW]", file=out)
+        print(f"[O] P_rad_core  (core radiation, \u03c1_tor<{rho_rad_core})        : {_P_rad_core:.3f} [MW]", file=out)
         print(f"[O] P_rad_total (total radiated power)              : {_P_rad_total:.3f} [MW]", file=out)
-        print(f"[I] rho_rad_core (core/edge boundary)               : {rho_rad_core:.2f}", file=out)
-        print(f"[O] eta_CD (Current drive efficiency)               : {eta_CD:.3f} [MA/MW·m²]",   file=out)
+        print(f"[I] rho_rad_core (core/edge boundary, rho_tor)      : {rho_rad_core:.2f}", file=out)
+        print(f"[O] gamma_CD (CD figure of merit, effective)        : {eta_CD:.3f} [10²⁰ A/(W·m²)]", file=out)
         print(f"[O] Q      (Energy gain factor)                     : {Q:.3f}",                   file=out)
         print(f"[O] P_elec (Net electrical power)                   : {P_elec:.3f} [MW]",         file=out)
         print(f"[O] P_wallplug (Wall-plug heating/CD power)         : {P_wallplug:.3f} [MW]",     file=out)
         print(f"[O] P_e_gross (Gross electrical power)              : {P_e_gross:.3f} [MWe]", file=out)
         print(f"[O] P_th_smoothed (Smoothed thermal power)          : {P_th_smoothed:.3f} [MWth]", file=out)
         print(f"[O] E_store_th (Stored thermal energy)              : {E_store_th:.3f} [MWhth]", file=out)
-        print(f"[O] P_coil_CS (CS power supply)                     : {P_coil_CS:.3f} [MWe]", file=out)
+        print(f"[O] P_coil_CS (CS recharge, cycle average)          : {P_coil_CS:.3f} [MWe]", file=out)
         print(f"[O] I_feeders (Total TF + CS feeder current)        : {I_feeders:.3f} [MA]", file=out)
         print(f"[O] P_cryo_cool (Refrigeration load at 4.5 K)       : {P_cryo_cool:.3f} [kW]", file=out)
         print(f"[O] P_cryo_electric                                 : {P_cryo_electric:.3f} [MWe]", file=out)
         print(f"[O] P_house_load                                    : {P_house_load:.3f} [MWe]", file=out)
-        print(f"[O] P_BoP                                           : {P_BoP:.3f} [MWe]", file=out)
+        _lbl = f"facilities (floor area {_hl['A_floor']:.0f} m²)"
+        print(f"[O]  ├ {_lbl:<45s}: {_hl['P_facilities']:.3f} [MWe]", file=out)
+        print(f"[I]  ├ {'tritium plant':<45s}: {_hl['P_tritium']:.3f} [MWe]", file=out)
+        print(f"[I]  ├ {'vacuum pumps':<45s}: {_hl['P_vacuum']:.3f} [MWe]", file=out)
+        print(f"[O]  └ {'TF power supplies (bus bars)':<45s}: {_hl['P_TF_supplies']:.3f} [MWe]", file=out)
+        print(f"[O] P_BoP (coolant pumping)                         : {P_BoP:.3f} [MWe]", file=out)
         print(f"[O] P_recirc_var                                    : {P_recirc_var:.3f} [MWe]", file=out)
         print(f"[O] P_recirc_fix                                    : {P_recirc_fix:.3f} [MWe]", file=out)
         print(f"[O] P_recirculated                                  : {P_recirculated:.3f} [MWe]", file=out)
         print(f"[O] E_recirculated                                  : {E_recirculated:.3f} [MWh/year]", file=out)
         print(f"[O] C_tritium                                       : {C_tritium:.3f} [kg/year]", file=out)
-        print(f"[O] Q_eng  (Engineering gain = P_elec / P_wallplug) : {P_elec / P_wallplug:.3f}", file=out)
+        _Q_E = P_e_gross / P_recirculated if P_recirculated > 0 else np.nan
+        print(f"[O] Q_E    (Engineering gain, P_e_gross/P_recirc)   : {_Q_E:.3f}", file=out)
         print(f"[O] Cost   ((V_BB+V_TF+V_CS) / P_fus)               : {cost:.3f} [m³/MW]",    file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[O] t_blanket_fpy  (Blanket lifetime, dpa model)       : {t_life_bl_fpy:.3f} [fpy]", file=out)
@@ -4200,7 +4737,8 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] f_b            (Bootstrap fraction)             : {(Ib/Ip)*100:.3f} [%]",      file=out)
         print(f"[O] l_i(3)         (Internal inductance, {config.q_profile_mode})   : {li_sc:.3f} [-]", file=out)
         print("-------------------------------------------------------------------------", file=out)
-        print(f"[I] Tbar  (Volume-averaged electron temperature Te)  : {config.Tbar:.3f} [keV]",    file=out)
+        _tbar_label = f"[{_Tbar_io}] Tbar  (Volume-averaged Te{', solved' if _Tbar_io == 'O' else ''})"
+        print(f"{_tbar_label:<52}: {config.Tbar:.3f} [keV]",    file=out)
         print(f"[I] tau_i_e (Ion/electron temperature ratio Ti/Te)   : {config.tau_i_e:.3f} [-]",   file=out)
         print(f"[O] Ti    (Volume-averaged ion temperature)          : {config.tau_i_e*config.Tbar:.3f} [keV]", file=out)
         print(f"[{'I' if config.Zeff is not None else 'O'}] Z_eff (Effective charge, {'imposed' if config.Zeff is not None else 'computed from inventory+ash'}) : {_compute_Zeff_effective(config, f_alpha):.3f} [-]", file=out)
@@ -4219,11 +4757,11 @@ def save_run_output(config: GlobalConfig,
             # (same call as in run(); P_tot = P_alpha + P_aux + P_Ohm with
             # P_aux + P_Ohm = P_fus / Q by the D0FUS definition of Q).
             _Pfus_disp = config.P_fus
-            _Ptot_disp = (f_P_alpha(_Pfus_disp, fuel_power_split(config)[0])
+            _Ptot_disp = (f_P_alpha(_Pfus_disp,
+                                    fuel_power_split(config, Vprime_data)[0])
                           + (_Pfus_disp / Q if Q > 0 else 0.0))
             _fnsl_disp = config.f_n_sep * (nbar / nbar_line)
-            _fnel_disp = (f_n_edge_ratio(nu_n, rho_ped, n_ped_frac,
-                                         Vprime_data=Vprime_data)
+            _fnel_disp = (f_n_edge_ratio(nu_n, rho_ped, n_ped_frac)
                           * (nbar / nbar_line))
             n_DL_line_d, n_DL_native_d, n_DL_conv_d = f_density_limit(
                 config.density_limit_model, Ip, config.a,
@@ -4239,7 +4777,7 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] f_DL / f_DL_limit (feasibility ratio, {config.density_limit_model}) : {nbar_line/nG:.3f} [-]", file=out)
         print(f"[O] pbar  (Volume-averaged pressure)                : {pbar:.3f} [MPa]",            file=out)
         print(f"[O] f_He  (Helium ash fraction)                     : {f_alpha*100:.3f} [%]",      file=out)
-        print(f"[O] tau_alpha (Alpha-particle confinement time)     : {tau_alpha:.3f} [s]",         file=out)
+        print(f"[O] tau_alpha (He ash confinement time tau*_He)     : {tau_alpha:.3f} [s]",         file=out)
         print(f"[O] W_th  (Plasma thermal energy content)           : {W_th/1e6:.3f} [MJ]",        file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[O] beta_T (Toroidal beta)                          : {betaT*100:.3f} [%]", file=out)
@@ -4256,12 +4794,22 @@ def save_run_output(config: GlobalConfig,
         print("-------------------------------------------------------------------------", file=out)
         print(f"[O] P_sep    (P_α+P_CD−P_rad_tot, separatrix power) : {P_sep:.3f} [MW]",    file=out)
         print(f"[O] P_Thresh (L-H power threshold)                  : {P_Thresh:.3f} [MW]", file=out)
+        if config.L_H_Scaling_choice in TC26_D_VT:
+            # Upper bound of the divertor-configuration uncertainty
+            _D_VT = TC26_D_VT[config.L_H_Scaling_choice]
+            _lbl = f"[O] P_Thresh, divertor upper bound (D = {_D_VT:.2f})"
+            print(f"{_lbl:<52}: {P_Thresh * _D_VT:.3f} [MW]", file=out)
         print(f"[O] P_rad_tot / S_wall  (FW radiative load)         : {P_wall_rad:.3f} [MW/m²]", file=out)
-        print(f"[O] P_div / S_wall  (mean SOL exhaust flux)         : {P_wall_div:.3f} [MW/m²]", file=out)
+        print(f"[O] P_sep / S_wall  (mean SOL exhaust flux)         : {P_wall_div:.3f} [MW/m²]", file=out)
         print(f"[O] P_sep / R0  (Divertor heat scaling)             : {heat:.3f} [MW/m]",      file=out)
         print(f"[O] P_sep·B0 / R0  (Parallel heat flux proxy)       : {heat_par:.3f} [MW·T/m]", file=out)
         print(f"[O] P_sep·B0 / (q95·R0·A)  (Poloidal heat flux)     : {heat_pol:.3f} [MW·T/m]", file=out)
         print(f"[O] Gamma_n  (Neutron wall load)                    : {Gamma_n:.3f} [MW/m²]",   file=out)
+        # ── Two-point divertor model: SOL dissipation needed for the target ─
+        if isinstance(divertor_out, dict) and 'f_pwr_loss_req' in divertor_out:
+            print(f"[O] f_loss_req (SOL dissipation required, 2PM)      : "
+                  f"{divertor_out['f_pwr_loss_req']:.3f} [-]   [{divertor_out['regime']} at f_cooling = "
+                  f"{divertor_out['f_cooling']:.2f}]", file=out)
         # ── Lengyel detachment diagnostic (indicative only) ───────────────
         # Required SOL impurity concentration to radiate the two-point-model
         # power-loss fraction, recomputed from the divertor dict.
@@ -4278,6 +4826,10 @@ def save_run_output(config: GlobalConfig,
                     float(divertor_out['T_eu']), _Tt_des,
                     _dimp, _fpl)
                 print(f"[O] c_z_req ({_dimp}, Lengyel, f_loss={_fpl:.3f}, T_t={_Tt_des:.0f} eV) : {_cz_req*100:.3f} [%] of n_e (SOL)", file=out)
+                if _cz_req > 0.05:
+                    # Trace-impurity assumption: at 5 % the impurity adds
+                    # 1.5 to 3 to the SOL Z_eff (Ne, <Z> = 6 to 8).
+                    print("[!] c_z_req above 5 % of n_e: not a trace impurity, outside the validity of the Lengyel estimate", file=out)
                 _core_inv = dict(zip(*_parse_impurity_inventory(config)))
                 if _dimp in _core_inv:
                     print(f"[I] c_{_dimp} core seeding (deck inventory)             : {_core_inv[_dimp]*100:.3f} [%]", file=out)
@@ -4291,32 +4843,21 @@ def save_run_output(config: GlobalConfig,
         print("=== Runaway Electron Indicators (Indicative) ===", file=out)
         print("-------------------------------------------------------------------------", file=out)
         try:
-            # li is the l_i(3) value returned by the q-profile dispatcher
-            # (f_q_profile_academic or f_q_profile_refined depending on
-            # config.q_profile_mode), passed through the results tuple.
-            RE = compute_RE_indicators(
-                Ip=Ip, nbar=nbar, Tbar=config.Tbar,
-                a=config.a, R0=config.R0, κ=κ, Z_eff=_compute_Zeff_effective(config, f_alpha), li=li_sc,
-                nu_n=nu_n, nu_T=nu_T,
-                rho_ped=rho_ped, n_ped_frac=n_ped_frac, T_ped_frac=T_ped_frac,
-                Te_final_eV=config.Te_final_eV, tau_TQ=config.tau_TQ,
-                Vprime_data=Vprime_data, V=Volume,
-                pellet_dilution=config.pellet_dilution,
-                pellet_dilution_cools=config.pellet_dilution_cools,
-            )
+            # Same function as the SCAN maps (runaway_indicators)
+            RE = runaway_indicators(config, results, Vprime_data=Vprime_data)
             print(f"[!] INDICATOR ONLY — order-of-magnitude estimate for design comparison.", file=out)
             print(f"[I] tau_TQ         (Thermal quench time)                : {RE['tau_TQ']*1e3:.1f} [ms]", file=out)
             print(f"[I] Te_final       (Post-TQ temperature)                : {RE['Te_final_eV']:.0f} [eV]", file=out)
             print(f"[I] pellet_dilution (SPI/MGI density factor)            : {RE['pellet_dilution']:.1f} [-]", file=out)
-            print(f"[I] nbar_diluted   (Post-pellet density)                : {RE['nbar_diluted']:.3f} [1e20 m-3]", file=out)
-            print(f"[I] Tbar_diluted   (Pre-TQ temperature, {'isobaric' if RE['pellet_dilution_cools'] else 'unchanged'})       : {RE['Tbar_diluted']:.2f} [keV]", file=out)
+            print(f"[O] nbar_diluted   (Post-pellet density)                : {RE['nbar_diluted']:.3f} [1e20 m-3]", file=out)
+            print(f"[O] Tbar_diluted   (Pre-TQ temperature, {'isobaric' if RE['pellet_dilution_cools'] else 'unchanged'})       : {RE['Tbar_diluted']:.2f} [keV]", file=out)
             print(f"[O] f_RE_core      (Hot-tail fraction at rho=0)         : {RE['f_RE_core']:.3e} [-]", file=out)
             print(f"[O] f_RE_avg       (Volume-averaged hot-tail fraction)  : {RE['f_RE_avg']:.3e} [-]", file=out)
-            print(f"[O] I_RE_seed      (Hot-tail seed, pre-pellet)          : {RE['I_RE_seed']:.3e} [A]", file=out)
-            print(f"[O] I_RE_aval      (After avalanche, post-pellet)       : {RE['I_RE_avalanche']*1e-6:.3f} [MA]", file=out)
-            print(f"[O] I_RE / Ip      (RE-to-plasma current fraction)      : {RE['f_RE_to_Ip']*100:.1f} [%]", file=out)
-            print(f"[O] W_mag_RE       (RE magnetic energy = 1/2 Li I^2_RE) : {RE['W_mag_RE']:.1f} [MJ]", file=out)
-            print(f"[O] E_RE_kin       (RE kinetic energy, <gamma>=10)      : {RE['E_RE_kin']:.1f} [MJ]", file=out)
+            print(f"[O] I_RE_seed      (Hot-tail seed, post-pellet n_e)     : {RE['I_RE_seed']:.3e} [A]", file=out)
+            print(f"[O] I_RE_aval      (After avalanche, post-pellet)       : {RE['I_RE_avalanche']*1e-6:.3e} [MA]", file=out)
+            print(f"[O] I_RE / Ip      (RE-to-plasma current fraction)      : {RE['f_RE_to_Ip']*100:.3e} [%]", file=out)
+            print(f"[O] W_mag_RE       (RE magnetic energy = 1/2 Li I^2_RE) : {RE['W_mag_RE']:.3e} [MJ]", file=out)
+            print(f"[O] E_RE_kin       (RE kinetic energy, <gamma>=10)      : {RE['E_RE_kin']:.3e} [MJ]", file=out)
         except Exception as _e:
             print(f"[O] RE indicators could not be computed: {_e}", file=out)
         print("=========================================================================", file=out)
@@ -4347,7 +4888,7 @@ def save_run_output(config: GlobalConfig,
                 _cr = evaluate_costs(config, results)
                 if not _cr:
                     raise ValueError("non-finite cost inputs")
-                P_th, P_e, V_FI_c = _cr['P_t'], _cr['P_e'], _cr['V_FI']
+                P_th, V_FI_c = _cr['P_t'], _cr['V_FI']
                 (T_op_limit, CF, C_invest, COE,
                  C_ind, C_Op_waste, C_Op_OM, C_Op_F,
                  C_syst_other, C_syst_BOP, C_syst_heat, C_syst_aux,
@@ -4372,12 +4913,15 @@ def save_run_output(config: GlobalConfig,
 
                 # Derived inputs from D0FUS
                 print(f"[O] P_th  (thermal power to BoP)                    : {P_th:.1f} [MW]", file=out)
-                print(f"[O] P_e   (net electric power)                      : {P_e:.1f} [MWe]", file=out)
+                print(f"[O] P_e   (net electric power)                      : {P_elec:.1f} [MWe]", file=out)
+                if not _cr['net_electric']:
+                    print("[!] No net electric output: the COE is undefined, the capital cost takes P_e = 0", file=out)
                 print(f"[O] Gamma_n (neutron wall load)                     : {Gamma_n:.3f} [MW/m^2]", file=out)
                 print("-------------------------------------------------------------------------", file=out)
 
                 # Component volumes
-                print(f"[O] V_blanket (FW+BB+shield+VV+gaps, Miller)        : {V_blanket:.1f} [m^3]", file=out)
+                print(f"[O] V_bl  (breeding blanket, radial build)          : {_cr['V_bl']:.1f} [m^3]", file=out)
+                print(f"[O] V_sg  (shield + VV + gaps, radial build)        : {_cr['V_sg']:.1f} [m^3]", file=out)
                 print(f"[O] V_TF_one*N_TF (TF winding packs, Princeton-D)   : {V_TF_one * N_TF_disp:.1f} [m^3]", file=out)
                 print(f"[O] V_CS_geom (central solenoid)                    : {V_CS_geom:.1f} [m^3]", file=out)
                 print(f"[O] V_FI      (fusion island envelope)              : {V_FI_c:.1f} [m^3]", file=out)
@@ -4409,18 +4953,21 @@ def save_run_output(config: GlobalConfig,
                 print("-------------------------------------------------------------------------", file=out)
 
                 # Bottom line
-                print(f"[O] COE (cost of electricity)                       : {COE:.3f} [EUR/MWh]", file=out)
+                if _cr['net_electric']:
+                    print(f"[O] COE (cost of electricity)                       : {COE:.3f} [EUR/MWh]", file=out)
+                else:
+                    print("[O] COE (cost of electricity)                       : undefined (P_elec <= 0)", file=out)
 
             except Exception as _e:
                 print(f"[!] Cost assessment failed: {_e}", file=out)
             print("=========================================================================", file=out)
 
-    if verbose >= 2:
-        print(f"\n✓ Results saved to: {output_path}\n")
+    print(f"\n✓ Results saved to: {output_path}\n")
 
     # ── Optional figure generation ────────────────────────────────────────────
     if save_figures:
-        _generate_run_figures(config, results, output_path, verbose=verbose)
+        _generate_run_figures(config, results, output_path, verbose=verbose,
+                              view_3d=view_3d)
 
     return output_path
 
@@ -4429,9 +4976,11 @@ def save_run_output(config: GlobalConfig,
 # ---------------------------------------------------------------------------
 
 def _generate_run_figures(config: GlobalConfig, results: tuple,
-                          output_path: str, verbose: int = 0) -> None:
+                          output_path: str, verbose: int = 0,
+                          view_3d: bool = True) -> None:
     """
-    Generate and save run-specific figures (12) into output_path/figures/.
+    Generate and save run-specific figures (16, 15 without the 3D view) into
+    output_path/figures/.
 
     Calls D0FUS_figures.plot_run() which produces only the figures that
     depend on the current run geometry and results.
@@ -4473,31 +5022,34 @@ def _generate_run_figures(config: GlobalConfig, results: tuple,
     # ── Assemble run-dict ─────────────────────────────────────────────────────
     run_dict = _build_run_dict(config, results)
 
-    # ── Self-consistent q-profile for figures ─────────────────────────────────
-    # Recompute using the converged global quantities stored in run_dict.
-    # Cost is negligible (~50 ms) and avoids modifying the results tuple.
-    # Mode-aware dispatch on config.q_profile_mode.
+    # ── q-profile for figures ─────────────────────────────────────────────────
+    # Same call and settings as the post-convergence q profile of run()
+    # (shaping at rho_95, CD deposition, n_rho = 80), so that the figure shows
+    # the l_i and q_0 of the report. Mode-aware dispatch on q_profile_mode.
     try:
-        _Ip    = run_dict.get("Ip", 15.0)
-        _q95   = run_dict.get("q95", 3.0)
-        _I_CD  = results[10] if len(results) > 10 else 0.0
+        _Ip, _q95, _f_He = run_dict["Ip"], run_dict["q95"], run_dict["f_He"]
         if config.q_profile_mode == 'academic':
             _q_sc = f_q_profile_academic(
                 _Ip, _q95,
-                config.R0, config.a, run_dict.get("kappa_edge", 1.7),
+                config.R0, config.a, run_dict["kappa_edge"],
                 alpha_J=config.alpha_J,
                 rho_ped=run_dict["rho_ped"],
                 n_ped_frac=run_dict["n_ped_frac"],
                 T_ped_frac=run_dict["T_ped_frac"],
                 Vprime_data=run_dict.get("Vprime_data"),
-                kappa_95=None, rho_95=0.95, n_rho=200)
+                kappa_95=run_dict["kappa_95"], rho_95=0.95, n_rho=80)
         else:  # 'refined'
+            # Driven currents I_CD [10] and I_LH, I_EC, I_NBI [80:83] [MA]
+            _Vpd_fig = run_dict.get("Vprime_data")
+            _rho_CD, _delta_CD = _cd_deposition(
+                config.CD_source, results[80], results[81], results[82],
+                float(rho_V_of_rho_tor(config.rho_EC, _Vpd_fig)),
+                float(rho_V_of_rho_tor(config.rho_NBI, _Vpd_fig)))
             _q_sc = f_q_profile_refined(
-                _Ip, _I_CD,
-                config.R0, config.a,
-                run_dict.get("B0", config.Bmax_TF),
-                run_dict.get("kappa_edge", 1.7), run_dict.get("nbar", 1.0),
-                config.Tbar, _compute_Zeff_effective(config, run_dict.get("f_He", 0.0)),
+                _Ip, float(results[10]),
+                config.R0, config.a, run_dict["B0"],
+                run_dict["kappa_edge"], run_dict["nbar"],
+                config.Tbar, _compute_Zeff_effective(config, _f_He),
                 run_dict["nu_n"], run_dict["nu_T"],
                 trapped_fraction_model=config.trapped_fraction_model,
                 eta_model=config.eta_model,
@@ -4505,9 +5057,11 @@ def _generate_run_figures(config: GlobalConfig, results: tuple,
                 n_ped_frac=run_dict["n_ped_frac"],
                 T_ped_frac=run_dict["T_ped_frac"],
                 Vprime_data=run_dict.get("Vprime_data"),
-                rho_CD=config.rho_EC, delta_CD=0.15,
-                n_ion_frac=_ion_density_fraction(config, run_dict.get("f_He", 0.0)),
-                n_rho=120, max_iter=15, tol=1e-3, damping=0.5,
+                kappa_95=run_dict["kappa_95"], rho_95=0.95,
+                delta=run_dict["delta_edge"], delta_95=run_dict["delta_95"],
+                rho_CD=_rho_CD, delta_CD=_delta_CD,
+                n_ion_frac=_ion_density_fraction(config, _f_He),
+                n_rho=80, max_iter=20, tol=1e-3, damping=0.5,
                 tau_i_e=config.tau_i_e)
         run_dict["_q_sc"]        = _q_sc
     except Exception as _e:
@@ -4518,7 +5072,7 @@ def _generate_run_figures(config: GlobalConfig, results: tuple,
     if verbose >= 2:
         print("\n  Generating figures:")
     try:
-        figs.plot_run(run_dict, save_dir=fig_dir)
+        figs.plot_run(run_dict, save_dir=fig_dir, view_3d=view_3d)
     except Exception as _e:
         if verbose >= 1:
             print(f"  [warn] Figure generation failed: {_e}")
@@ -4560,8 +5114,9 @@ def _parse_save_figures_flag(filepath: str) -> bool:
     return False
 
 
-def main(input_file: str = None, save_figures: bool = False,
-         verbose: int = 0) -> tuple:
+def main(input_file: str = None, save_figures: bool = None,
+         verbose: int = 0, output_dir: str = None,
+         view_3d: bool = True) -> tuple:
     """
     Load a configuration, run the calculation, and save the output report.
 
@@ -4571,13 +5126,18 @@ def main(input_file: str = None, save_figures: bool = False,
         Path to a plain-text input file.  If None, the module looks for
         ``D0FUS_INPUTS/default_input.txt`` relative to the package root.
         Missing files trigger a warning and the code runs with DEFAULT_CONFIG.
-    save_figures : bool, optional
-        If True, generate and save PNG figures alongside the text report.
-        Default: False.  A ``save_figures = 1`` line in the input file
-        overrides this argument.
+    save_figures : bool or None, optional
+        True or False: generate the PNG figures or not, whatever the input
+        file says. None (default): follow the ``save_figures`` line of the
+        input file, no figures without it.
     verbose : int, optional
         Verbosity level: 0 = silent, 1 = convergence summary + warnings,
-        2 = full debug trace.  Default: 2 (backward-compatible).
+        2 = full debug trace.  Default: 0.
+    output_dir : str, optional
+        Parent folder of the run/ result folders. Default:
+        default_output_root().
+    view_3d : bool, optional
+        False skips the 3D machine view (command-line option --no-3d).
 
     Returns
     -------
@@ -4603,9 +5163,9 @@ def main(input_file: str = None, save_figures: bool = False,
         config = DEFAULT_CONFIG
         input_file_path = None
 
-    # Input-file flag takes precedence over the function argument
-    _file_flag = _parse_save_figures_flag(input_file)
-    save_figures = _file_flag or save_figures
+    # An explicit argument wins, otherwise the input-file flag decides
+    if save_figures is None:
+        save_figures = _parse_save_figures_flag(input_file)
 
     # ── Launch calculation ────────────────────────────────────────────────────
     if verbose >= 2:
@@ -4619,10 +5179,12 @@ def main(input_file: str = None, save_figures: bool = False,
         # and reports the solved value instead of the deck placeholder.
         config     = resolve_operating_point(config, verbose=max(verbose, 1))
         results    = run(config, verbose=verbose)
-        output_dir = os.path.join(os.path.dirname(__file__), '..', 'D0FUS_OUTPUTS')
+        if output_dir is None:
+            output_dir = default_output_root()
         os.makedirs(output_dir, exist_ok=True)
         save_run_output(config, results, output_dir, input_file_path,
-                        save_figures=save_figures, verbose=verbose)
+                        save_figures=save_figures, verbose=verbose,
+                        view_3d=view_3d)
         return results
 
     except Exception as e:

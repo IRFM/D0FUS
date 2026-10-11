@@ -11,7 +11,7 @@
 #
 # BASELINE REFERENCE:
 #   ITER 15 MA DT, Q = 10, Ip = 15 MA, B0 = 5.3 T, R0 = 6.2 m, a = 2.0 m
-#   See run_ITER.txt header for full bibliography.
+#   See 1_run_ITER.txt header for full bibliography.
 #
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -21,15 +21,19 @@ generations     = 10
 crossover_rate  = 0.6
 mutation_rate   = 0.5
 n_workers       = 4               # parallel fitness evaluation
+# patience      = 20              # generations without improvement before stopping
+# seed          = 1               # fixed seed (default: drawn at random and recorded)
+# Settings not given here take the defaults of D0FUS_genetic.GA_SETTINGS.
 
-# Minimise Cost of Electricity under a capital cost ceiling
+# Minimise the capital cost C_invest (Sheffield 2016). The soft budget ceiling
+# C_invest_max applies to the COE and P_elec objectives only.
 fitness_objective = C_invest
 C_invest_max      = 25e3          # Budget ceiling [M EUR] — ITER ≈ 25 B EUR (2020)
 
 # ── Local refinement (memetic hybrid) ────────────────────────────────────────
 # At the end of the GA, refine the top-k Hall-of-Fame members with a local
-# search. 'nelder-mead' is robust to the step discontinuities introduced by
-# the stability penalties; 'lbfgsb' is faster on smooth regions; 'gradient'
+# search. 'nelder-mead' is robust to the step of the fitness at the
+# constraint boundaries. 'lbfgsb' is faster on smooth regions. 'gradient'
 # is a transparent fallback. Set local_refine_method = none to disable.
 local_refine_method    = nelder-mead
 local_refine_top_k     = 3
@@ -56,7 +60,7 @@ gif_fps        = 8
 a       : [1.5, 3]              # Minor radius [m]          (ITER: 2.0)
 R0      : [5.0, 7.0]              # Major radius [m]          (ITER: 6.2)
 Bmax_TF : [7.0, 15.0]            # Peak field at the TF conductor [T] (ITER ref ~11.5)
-Tbar    : [5.0, 10.0]             # Volume-avg temperature [keV] (ITER benchmark: 7.75)
+Tbar    : [5.0, 10.0]             # Volume-avg temperature [keV] (ITER benchmark: 8.55)
 
 # ── 1b. Fixed primary parameters ────────────────────────────────────────────
 
@@ -69,7 +73,7 @@ H        = 1.0                     # H98(y,2) confinement enhancement [-]
 # ── 2. Physics and operation ────────────────────────────────────────────────
 
 Operation_mode        = Pulsed
-Temps_Plateau_input   = 450        # Burn flat-top [s]
+Temps_Plateau_input   = 400        # Burn flat-top [s]
 
 Scaling_Law           = IPB98(y,2)
 L_H_Scaling_choice    = Martin
@@ -123,15 +127,15 @@ f_imp_core       = 2e-5, 7e-3
 
 Ce       = 0.45                    # Ejima constant (ITER: 0.45)
 eta_model = sauter
-C_PF     = 0.95                    # ITER PF system optimised
 
 # ── 6. Structural materials ─────────────────────────────────────────────────
 
-Chosen_Steel         = 316L
+Chosen_Steel_TF      = 316L
+Chosen_Steel_CS      = 316L
 Choice_Buck_Wedg     = Wedging
 Radial_build_model   = refined
 nu_Steel             = 0.29        # 316L Poisson's ratio
-fatigue_CS           = 2.0         # CS fatigue knockdown (Pulsed + Wedging)
+fatigue_CS           = 2.0         # CS fatigue knockdown (Pulsed: wedging and light bucking)
 
 # ── 7. TF coil engineering ──────────────────────────────────────────────────
 
@@ -151,13 +155,14 @@ N_sub_CS     = 6
 
 T_helium       = 4.5               # Supercritical He [K]
 Marge_T_He     = 0.3
-Marge_T_Nb3Sn  = 1.5
+Marge_T_Nb3Sn  = 0.7               # ITER TF and CS design margin [Libeyre06]
 f_He_pipe      = 0.10              # He cooling pipe fraction [-]
 f_void         = 0.30           # Strand bundle void fraction [-]
 f_In_cable           = 0.10
 
 Eps            = -6e-3             # Nb3Sn effective axial strain
 I_cond         = 68e3              # TF conductor current [A]
+I_cond_CS      = 45e3              # CS conductor current [A], US ITER CS fact sheet (2026)
 V_max          = 10e3              # Max dump voltage [V]
 tau_h_LTS      = 4.0               # Detection + hold time [s]
 T_hotspot      = 250.0             # Hot-spot limit [K]
@@ -188,6 +193,8 @@ rho_EC      = 0.40                 # Off-axis EC deposition (NTM control)
 # ── 12. Plasma-facing components ────────────────────────────────────────────
 
 theta_deg   = 2.5                  # Divertor grazing angle [deg]
+f_n_sep     = 0.47              # n_sep / <n_e>: n_e,sep = 3-6e19 m-3 at P_SOL = 100 MW
+                                # Pitts et al., NME 20 (2019) 100696, sec. 3.1.2 (SOLPS-4.3): 4.5e19 / 0.95e20
 
 # ── 13. Maintenance constraints ─────────────────────────────────────────────
 
@@ -198,7 +205,7 @@ L_min       = 3.6                  # Equatorial port width [m]
 # EXPECTED GA BEHAVIOUR
 # ══════════════════════════════════════════════════════════════════════════════
 #
-# The ITER reference point (R0=6.2, a=2.0, Bmax=10.6, Tbar=7.75) should
+# The ITER reference point (R0=6.2, a=2.0, Bmax_TF=11.5, Tbar=8.55) should
 # appear near the Pareto front.  The GA may find:
 #   - Slightly more compact designs (lower R0) at higher Bmax
 #   - Lower COE at higher Tbar (improved Q) if stability allows
@@ -212,9 +219,11 @@ L_min       = 3.6                  # Equatorial port width [m]
 #   - standard D0FUS save_run_output for the best design
 #
 # Run:
-#   python D0FUS_genetic.py 3_genetic_ITER.txt
+#   python D0FUS.py D0FUS_INPUTS/3_genetic_ITER.txt
+#   python D0FUS_EXE/D0FUS_genetic.py D0FUS_INPUTS/3_genetic_ITER.txt [options]
 #
 # All knobs above (pop, gen, refine, gif) can also be overridden on the
-# command line, see `python D0FUS_genetic.py` without arguments for help.
+# command line of D0FUS_genetic.py, see `python D0FUS_EXE/D0FUS_genetic.py`
+# without arguments for help.
 #
 # ══════════════════════════════════════════════════════════════════════════════

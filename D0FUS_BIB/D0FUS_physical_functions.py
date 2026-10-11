@@ -31,12 +31,13 @@ else:
 # Plant electrical balance and pulsed-operation utilities (M. Fletcher)
 # =============================================================================
 # Simplified recirculating-power model, scaled on EU-DEMO reference values
-# (GlobalConfig.*_DEMO_ref, f_BoP):
+# (GlobalConfig.*_DEMO_ref, PROCESS output of the EU DEMO1 2017 baseline):
 #   cryogenic loads  proportional to the magnet cold mass (TF + CS),
-#   house load       proportional to P_fus,
-#   BoP load         fraction of P_th.
-# ~100 kW equivalent refrigeration at 4.5 K for EU-DEMO: Corato et al.,
-# Fus. Eng. Des. 174 (2022) 112971. Other reference values: to be sourced.
+#   coolant pumping  fraction f_pump of P_th (blanket concept, Clark et al.
+#                    2025, or f_BoP from the deck),
+#   house load       PROCESS model (f_house_load, below).
+# Cross-check of the cryogenic load: Corato et al., Fus. Eng. Des. 174 (2022)
+# 112971 give ~100 kW equivalent refrigeration at 4.5 K for EU-DEMO.
 
 def f_coil_power_supply(E_mag_J, t_ramp_up_s):
     """
@@ -45,7 +46,8 @@ def f_coil_power_supply(E_mag_J, t_ramp_up_s):
         P = E_mag / t   [MWe]
 
     E_mag_J     : float  Stored magnetic energy [J].
-    t_ramp_up_s : float  Recharge time [s] (the dwell for the CS).
+    t_ramp_up_s : float  Time over which E_mag is supplied or averaged [s]
+                         (the full pulse cycle for the CS cycle average).
     Returns 0 if either input is missing or t <= 0.
     """
     if E_mag_J is None or t_ramp_up_s is None or t_ramp_up_s <= 0:
@@ -58,7 +60,7 @@ def f_feeder_current(I_TF_A, I_CS_A, N_TF=1, N_CS=1):
     return (float(I_TF_A) * float(N_TF) + float(I_CS_A) * float(N_CS)) / 1.0e6
 
 
-def f_cryo_cooling_power(M_cold_kg, M_cold_ref_kg=6.24e6, P_ref_kW=103.0):
+def f_cryo_cooling_power(M_cold_kg, M_cold_ref_kg, P_ref_kW):
     """
     Equivalent refrigeration load at 4.5 K [kW], linear in the magnet
     cold mass (static heat loads through supports, radiation and feeders
@@ -71,18 +73,208 @@ def f_cryo_cooling_power(M_cold_kg, M_cold_ref_kg=6.24e6, P_ref_kW=103.0):
     return float(P_ref_kW) * float(M_cold_kg) / float(M_cold_ref_kg)
 
 
-def f_cryo_electric_power(M_cold_kg, M_cold_ref_kg=6.24e6, P_ref_MWe=29.0):
+def f_cryo_electric_power(M_cold_kg, M_cold_ref_kg, P_ref_MWe):
     """Cryoplant electrical consumption [MWe], linear in the magnet cold mass."""
     return float(P_ref_MWe) * float(M_cold_kg) / float(M_cold_ref_kg)
 
 
-def f_house_load(P_fus_MW, P_fus_ref_MW=2037.0, P_ref_MWe=46.5):
-    """Fixed house load [MWe], linear in P_fus."""
-    return float(P_ref_MWe) * float(P_fus_MW) / float(P_fus_ref_MW)
+# ── House load: PROCESS model ─────────────────────────────────────────────────
+# Port of the PROCESS systems code (UKAEA, MIT licence).
+#   M. Kovari et al., "PROCESS": A systems code for fusion power plants,
+#     Part 1: Physics, Fusion Eng. Des. 89 (2014), doi:10.1016/j.fusengdes.2014.09.018
+#     Part 2: Engineering, Fusion Eng. Des. 104 (2016), doi:10.1016/j.fusengdes.2016.01.007
+#   Source github.com/ukaea/PROCESS, read at commit f15ebb5 (8 Oct 2026),
+#   archived versions doi:10.5281/zenodo.8335291:
+#     f_tf_power_supplies  process/models/power.py      Power.tfcpwr
+#     f_plant_buildings    process/models/buildings.py  Buildings.bldgs
+#                          (i_bldgs_size = 0, ITER 1992 model)
+#     f_house_load         process/models/power.py      Power.plant_electric_production
+#   Default inputs from process/data_structure/buildings_variables.py,
+#   heat_transport_variables.py and build_variables.py.
+# Check against the PROCESS output of the EU DEMO1 2017 baseline (PROCESS
+# 1.0.10, IDM 2NDSKT v1.0) with its machine dimensions: TF supplies 11.16 MW
+# (tfacpd, same value) and facility load 60.3 MW against 60.5 MW (fachtmw).
+# The shield height, not printed in that output, was fitted.
+
+# PROCESS default inputs of Buildings.bldgs
+PROCESS_BUILDINGS = dict(
+    rxcl=4.0,          # clearance around the reactor [m]
+    trcl=1.0,          # transport clearance between components [m]
+    row=4.0,           # clearance to the building wall for crane operation [m]
+    clh2=15.0,         # clearance beneath the TF coil to the foundation, basement included [m]
+    stcl=3.0,          # clearance above the crane to the roof [m]
+    rbvfac=1.6,        # reactor building volume factor [-]
+    rbwt=2.0,          # reactor building wall thickness [m]
+    rbrt=1.0,          # reactor building roof thickness [m]
+    fndt=2.0,          # foundation thickness [m]
+    hcwt=1.5,          # hot cell wall thickness [m]
+    hccl=5.0,          # clearance around components in the hot cell [m]
+    mbvfac=2.8,        # maintenance building volume factor [-]
+    wsvfac=1.9,        # warm shop volume factor [-]
+    wgt=5.0e5,         # reactor building crane capacity [kg]
+    wgt2=1.0e5,        # hot cell crane capacity [kg]
+    triv=4.0e4,        # tritium, fuel handling and health physics buildings [m3]
+    conv=6.0e4,        # control building [m3]
+    admv=1.0e5,        # administration building [m3]
+    shov=1.0e5,        # shops and warehouse [m3]
+    pfbldgm3=2.0e4,    # PF coil power supply building [m3]
+    pibv=2.0e4,        # power injection building [m3]
+    esbldgm3=1.0e3,    # energy storage building, pulsed plant only [m3]
+    f_z_cryostat=4.268,  # cryostat lid clearance factor, scaled from ITER (M. Kovari) [-]
+)
 
 
-def f_bop_power(P_th_MWth, f_BoP=0.03):
-    """Balance-of-plant (pumping) electrical load [MWe] = f_BoP * P_th."""
+def f_tf_power_supplies(I_TF_A, R0, N_TF, V_dump_V, E_TF_J, rho_bus=2.62e-8,
+                        j_bus=0.125, eta_TF=0.9, t_charge_h=4.0, f_rating=1.05):
+    """
+    Superconducting TF coil power supplies (PROCESS Power.tfcpwr).
+
+    The steady-state AC load is the Ohmic loss of the aluminium bus bars,
+    one circuit breaker per coil:
+
+        L_bus = 8 pi R0 + (1 + N_TF) (12 R0 + 80)        [m]
+        A_bus = I_TF / j_bus                              [cm2]
+        P_AC  = rho_bus L_bus / A_bus I_TF^2 / eta_TF
+
+    The volume of the TF power conversion building is 6 m times the floor
+    space of the power modules, circuit breakers and load centres.
+
+    Parameters
+    ----------
+    I_TF_A     : float  TF conductor current [A].
+    R0         : float  Major radius [m].
+    N_TF       : int    Number of TF coils.
+    V_dump_V   : float  Dump voltage [V].
+    E_TF_J     : float  Stored energy of all TF coils [J].
+    rho_bus    : float  Bus resistivity [Ohm m], aluminium at room temperature.
+                        PROCESS 1.0.10 value, which gives back the EU DEMO1
+                        2017 bus resistance. The current PROCESS default
+                        rho_tf_bus is 1.86e-8 Ohm m.
+    j_bus      : float  Bus current density [kA/cm2] (djmka).
+    eta_TF     : float  AC to DC conversion efficiency [-] (etatf).
+    t_charge_h : float  Charge time of the coils [h] (tchghr).
+    f_rating   : float  Rating factor of the power supplies [-] (rtfps).
+
+    Returns
+    -------
+    P_AC       : float  Steady-state AC power of the TF supplies [MWe].
+    V_building : float  TF power conversion building volume [m3].
+    """
+    I_kA = float(I_TF_A) * 1.0e-3
+    N = float(N_TF)
+    L_bus = 8.0 * np.pi * R0 + (1.0 + N) * (12.0 * R0 + 80.0)
+    R_bus = rho_bus * L_bus / (I_kA / j_bus * 1.0e-4)                 # [Ohm]
+    P_AC = R_bus * I_kA**2 / eta_TF                                    # [MW]
+    # Charging circuit: inductance of all coils and charging voltage
+    L_TF = 2.0 * float(E_TF_J) * 1.0e-6 / I_kA**2                      # [H]
+    V_charge = 1.0e3 * I_kA * (R_bus + L_TF / (3600.0 * t_charge_h))   # [V]
+    n_mod = 2.0 * I_kA / 5.0                                           # power modules
+    P_mod_kW = (f_rating * V_charge / 2.0) * (f_rating * I_kA / (n_mod / 2.0))
+    P_charge_AC_kW = P_mod_kW * n_mod / 0.9
+    A_floor = (0.15 * n_mod * P_mod_kW**0.667                          # power modules
+               + 0.8 * N * (V_dump_V * 1.0e-3 * I_kA)**0.667          # circuit breakers
+               + 0.4 * (P_charge_AC_kW / 2.4)**0.667)                  # load centres
+    return P_AC, 6.0 * A_floor
+
+
+def f_plant_buildings(R_cryostat, R_TF_out, R_TF_in, H_TF, W_shield, H_shield,
+                      P_cryo_W, V_TF_supplies, pulsed=True, dz_TF_cryostat=None,
+                      p=PROCESS_BUILDINGS):
+    """
+    Volumes of the plant buildings and effective floor area (PROCESS
+    Buildings.bldgs, ITER 1992 model, fitted on the ITER design in 1990 by
+    J. Galambos).
+
+    Reactor building: half width from the machine radius, the largest
+    transported piece (one TF coil) and the clearances, length with the
+    cryostat laydown, height for a TF coil lifted out over the machine and
+    the crane. Maintenance building (hot cell, decontamination cell,
+    transfer corridor) and warm shop from the shield sector. Cryoplant
+    building 55 P_cryo^0.5 [m3, W]. The other buildings have fixed volumes.
+    Effective floor area = total volume / 6 m.
+
+    D0FUS has no PF coils. The caller sets R_cryostat. By default the
+    clearance between the TF coil top and the cryostat is the PROCESS
+    cryostat lid clearance f_z_cryostat 2 R_cryostat / 28.44 (Cryostat.
+    external_cryo_geometry), with the upper PF coils at the TF coil top.
+
+    Parameters
+    ----------
+    R_cryostat    : float  Cryostat inner radius [m].
+    R_TF_out      : float  TF coil outer radius [m].
+    R_TF_in       : float  TF coil inner radius [m].
+    H_TF          : float  TF coil full height [m].
+    W_shield      : float  Radial width of the shield sector [m].
+    H_shield      : float  Height of the shield sector [m].
+    P_cryo_W      : float  Cryogenic load [W].
+    V_TF_supplies : float  TF power conversion building volume [m3].
+    pulsed        : bool   Pulsed plant (energy storage building).
+    dz_TF_cryostat: float  Clearance between the TF coil top and the cryostat
+                           [m], the lid clearance when None.
+    p             : dict   PROCESS default inputs (PROCESS_BUILDINGS).
+
+    Returns
+    -------
+    dict  V_reactor, V_maintenance, V_warm_shop, V_cryo, V_electrical and
+          V_total [m3], A_floor [m2].
+    """
+    # Reactor building
+    sectl = np.maximum(R_TF_out - R_TF_in, W_shield)    # largest transported piece
+    bmr   = np.maximum(R_cryostat, R_TF_out)            # machine radius
+    wrbi  = bmr + p['rxcl'] + sectl + p['trcl'] + p['row']          # half width
+    hy    = bmr + p['rxcl'] + sectl + p['trcl'] + R_cryostat        # laydown diagonal
+    ang   = np.clip((wrbi - p['trcl'] - R_cryostat) / hy, -1.0, 1.0)
+    drbi  = p['trcl'] + R_cryostat + hy * np.sin(np.arccos(ang)) + wrbi  # length
+    crane = 9.41e-6 * p['wgt'] + 5.1                    # crane height for its load
+    dz_cryostat = (p['f_z_cryostat'] * 2.0 * R_cryostat / 28.44
+                   if dz_TF_cryostat is None else dz_TF_cryostat)
+    hrbi  = (p['clh2'] + 2.0 * H_TF + dz_cryostat + p['trcl'] + crane
+             + p['stcl'])                               # height
+    V_reactor = (p['rbvfac'] * (2.0 * wrbi + 2.0 * p['rbwt'])
+                 * (drbi + 2.0 * p['rbwt']) * (hrbi + p['rbrt'] + p['fndt']))
+    # Maintenance building: transfer corridor, decontamination cell, hot cell
+    tcw  = W_shield + 4.0 * p['trcl']
+    tcl  = 5.0 * tcw + 2.0 * p['hcwt']
+    dcw  = 2.0 * tcw + 1.0
+    hcw  = W_shield + 3.0 * p['hccl'] + 2.0
+    hcl  = 3.0 * W_shield + 4.0 * p['hccl'] + tcw
+    rmbw = hcw + dcw + 3.0 * p['hcwt']
+    rmbl = hcl + 2.0 * p['hcwt']
+    rmbh = (10.0 + H_shield + p['trcl'] + 9.41e-6 * p['wgt2'] + 5.1
+            + p['stcl'] + p['fndt'])
+    tch  = H_shield + p['stcl'] + p['fndt']
+    V_maintenance = p['mbvfac'] * rmbw * rmbl * rmbh + tcw * tcl * tch
+    # Warm shop and hot cell gallery
+    V_warm_shop = p['wsvfac'] * ((rmbw + 7.0) * 20.0 + rmbl * 7.0) * rmbh
+    V_cryo = 55.0 * np.sqrt(np.maximum(P_cryo_W, 0.0))
+    V_electrical = (V_TF_supplies + p['pfbldgm3'] + p['pibv']
+                    + (p['esbldgm3'] if pulsed else 0.0))
+    V_total = (V_reactor + V_maintenance + V_warm_shop + p['triv'] + V_electrical
+               + p['conv'] + V_cryo + p['admv'] + p['shov'])
+    return dict(V_reactor=float(V_reactor), V_maintenance=float(V_maintenance),
+                V_warm_shop=float(V_warm_shop), V_cryo=float(V_cryo),
+                V_electrical=float(V_electrical), V_total=float(V_total),
+                A_floor=float(V_total) / 6.0)
+
+
+def f_house_load(A_floor_m2, P_TF_supplies_MWe, P_base_MWe, pflux_W_m2,
+                 P_tritium_MWe, P_vacuum_MWe):
+    """
+    House load [MWe]: the plant loads not modelled one by one (PROCESS
+    Power.plant_electric_production).
+
+        P_facilities = P_base + pflux A_floor                  (fachtmw)
+        P_house      = P_facilities + P_tritium + P_vacuum + P_TF_supplies
+
+    Returns (P_facilities, P_house).
+    """
+    P_fac = float(P_base_MWe) + float(pflux_W_m2) * float(A_floor_m2) * 1.0e-6
+    return P_fac, (P_fac + float(P_tritium_MWe) + float(P_vacuum_MWe)
+                   + float(P_TF_supplies_MWe))
+
+
+def f_bop_power(P_th_MWth, f_BoP):
+    """Coolant pumping electrical load [MWe] = f_BoP * P_th."""
     return float(f_BoP) * float(P_th_MWth)
 
 
@@ -118,14 +310,18 @@ def f_recirculated_power(P_aux_MW, eta_WP, P_coil_CS_MWe, P_cryo_electric_MWe,
     """
     Recirculated electrical power [MWe].
 
-        P_var = P_aux / eta_WP + P_coil_CS + P_cryo + P_BoP
-        P_fix = P_house_load
+        P_var = P_aux / eta_WP + P_coil_CS + P_BoP   (plant in operation)
+        P_fix = P_cryo + P_house_load                (all year)
+
+    The magnets stay cold outside operation, so the cryoplant is a fixed
+    load like the house load.
 
     Returns (P_var, P_fix, P_var + P_fix).
     """
     P_var = (float(P_aux_MW) / float(eta_WP) + float(P_coil_CS_MWe)
-             + float(P_cryo_electric_MWe) + float(P_BoP_MWe))
-    return P_var, float(P_house_load_MWe), P_var + float(P_house_load_MWe)
+             + float(P_BoP_MWe))
+    P_fix = float(P_cryo_electric_MWe) + float(P_house_load_MWe)
+    return P_var, P_fix, P_var + P_fix
 
 
 def f_recirculated_energy(P_recirc_var_MWe, P_recirc_fix_MWe, CF):
@@ -249,13 +445,16 @@ if __name__ == "__main__":
     # ITER   : deck inputs, mirroring D0FUS_INPUTS/1_run_ITER.txt
     #          (benchmark conventions: peak TF field referenced at the
     #          winding-pack front face, published inboard stack
-    #          b = 1.10 m, Tbar solved by resolve_Tbar for the Greenwald
-    #          fraction f_GW = 0.85). The dict is progressively enriched
+    #          b = 1.10 m, Tbar solved so that the chain closes on the
+    #          Greenwald fraction f_GW = 0.85). The dict is progressively enriched
     #          with the chain results (V, nbar, pbar, P_rad, tau_E, Ip...)
     #          so that every block consumes the outputs of the previous
     #          ones, exactly like the production solver.
     # FROZEN : converged outputs of that deck (frozen 2026-06,
-    #          refreshed 2026-09 for the v2.9.4 ion dilution and bootstrap),
+    #          refreshed 2026-09 for the v2.9.4 ion dilution and bootstrap,
+    #          and 2026-10 for the trapped fraction of the resistivity, the
+    #          NBCD and ECCD fixes, the LCFS area of the L-H threshold and
+    #          the outer-midplane SOL inputs),
     #          re-asserted by the final full-deck regression block. Chain
     #          blocks read FROZEN only (i) to check consistency, and
     #          (ii) as forward references where the file order places a
@@ -276,9 +475,11 @@ if __name__ == "__main__":
         P_fus=500.0,
         P_NBI=33.0, P_ECRH=6.7, P_ICRH=10.0, P_LH=0.0,   # flat-top mix [Kim 2018]
         P_aux=33.0 + 6.7 + 10.0,                          # = 49.7 MW
-        Tbar=8.0617,            # solved by resolve_Tbar for f_GW_target = 0.85
+        Tbar=8.6121,            # solved for f_GW = 0.85 at chain 11
         H=1.0, M=2.5,
-        # Profiles (deck section 2c)
+        # Profiles (deck section 2c). The radial labels of this chain
+        # (rho_ped, rho_rad_core, rho_NBI, rho_EC) are library inputs, volume
+        # labels rho_V. The deck gives rho_tor, converted by run().
         nu_n=0.01, nu_T=2.80,
         rho_ped=0.95, n_ped_frac=0.99, T_ped_frac=0.55,
         # Composition and radiation (deck section 4)
@@ -288,7 +489,7 @@ if __name__ == "__main__":
         # the 2026-06 deck. That deck was converged with the pre-v2.8
         # balance at C_Alpha = 5.0; the two are related by the profile
         # factor <sigma.v n_hat^2> / <sigma.v> and the volume weight.
-        rho_rad_core=0.75, C_Alpha=3.8119,
+        rho_rad_core=0.75, C_Alpha=3.7387,
         # Current-drive deposition (deck section 11)
         A_beam=2, E_beam_keV=1000.0, rho_NBI=0.30, rho_EC=0.40,
         angle_NBI_deg=20.0,
@@ -298,15 +499,15 @@ if __name__ == "__main__":
         kappa=1.8792, kappa95=1.67785, delta=0.527517, delta95=0.351678,
         V=847.587, S=687.331,
         f_alpha=0.0290438, f_imp_dil=0.07103,
-        nbar=0.947461, nbar_line=0.973261, pbar=0.254868, nG=1.14464,
-        B0=5.300, W_th=324.035, betaT=0.0228138, betaP=0.675159, betaN=1.6293,
-        P_Ohm=0.385109, I_Ohm=8.66006,
-        P_Brem=12.5125, P_syn=4.82011, P_line_core=22.7941, P_line=41.162,
-        tauE=2.9485, Ip=14.351, q95=3.74455, Ib=3.9717,
-        eta_LH=0.314557, eta_EC=0.0479919, eta_NBI=0.300999, I_CD=1.74567,
-        Q=9.98184, P_sep=91.206, P_LH_th=71.4991,
-        B_pol=0.68725, lambda_q_mm=1.16497, Gamma_n=0.58196,
-        tau_alpha=11.2373,   # = C_Alpha * tauE with the v2.8 chain C_Alpha
+        nbar=0.9616, nbar_line=1.00035, pbar=0.264825, nG=1.17711,
+        B0=5.300, W_th=336.693, betaT=0.0236944, betaP=0.664373, betaN=1.64507,
+        P_Ohm=0.333267, I_Ohm=7.81865,
+        P_Brem=12.5649, P_syn=4.824, P_line_core=22.172, P_line=40.6107,
+        tauE=3.05006, Ip=14.7524, q95=3.64125, Ib=3.97183,
+        eta_LH=0.322214, eta_EC=0.0463058, eta_NBI=0.532874, I_CD=3.00157,
+        Q=9.98184, P_sep=91.701, P_LH_th=69.6603,
+        B_pol=1.13145, lambda_q_mm=0.736321, Gamma_n=0.58196,
+        tau_alpha=11.4114,   # = C_Alpha * tauE with the v2.8 chain C_Alpha
     )
 
 #%% Geometry formulas
@@ -440,6 +641,29 @@ def _ramanujan_perimeter(semi_a, semi_b):
 # Edge shaping scalings
 # =============================================================================
 
+def _kappa_Wenninger(A, ms):
+    """
+    Wenninger et al. (2015) elongation fit, held constant beyond A = 3.6.
+
+    The fit was derived for 2.6 ≤ A ≤ 3.6. Above A = 3.6 it falls quickly
+    (κ < 1 above A ≈ 5.8, κ ≤ 0 above A ≈ 8.1 at ms = 0.3), so κ keeps its
+    A = 3.6 value there (1.78 at ms = 0.3). Below A = 2.6 the fit stays
+    bounded and is used as is.
+
+    Parameters
+    ----------
+    A  : float or ndarray  Aspect ratio R₀/a [-].
+    ms : float             Vertical stability margin [-].
+
+    Returns
+    -------
+    κ : float or ndarray  Edge elongation [-].
+    """
+    A = np.minimum(A, 3.6)
+    return 1.12 * ((18.84 - 0.87*A
+                    - np.sqrt(4.84*A**2 - 28.77*A + 52.52 + 14.74*ms)) / 7.37)
+
+
 def f_Kappa(A, Option_Kappa, κ_manual, ms):
     """
     Maximum achievable plasma elongation vs aspect ratio.
@@ -480,8 +704,7 @@ def f_Kappa(A, Option_Kappa, κ_manual, ms):
         # The 0.95 operating fraction follows the Stambaugh convention.
         κ = 0.95 * (1.81153991 * A**0.009042 + 1.5205 * A**(-1.63))
     elif Option_Kappa == 'Wenninger':
-        κ = 1.12 * ((18.84 - 0.87*A
-                     - np.sqrt(4.84*A**2 - 28.77*A + 52.52 + 14.74*ms)) / 7.37)
+        κ = _kappa_Wenninger(A, ms)
     elif Option_Kappa == 'Blend':
         # Freidberg toward the spherical limit (left) blended into Wenninger
         # toward conventional / high aspect ratio (right), joined by a logistic
@@ -492,8 +715,7 @@ def f_Kappa(A, Option_Kappa, κ_manual, ms):
         A_t, dA = 2.235, 0.35
         # kappa_F: same Lee Part 2 reference-case fit as the 'Freidberg' branch.
         κ_F = 0.95 * (1.81153991 * A**0.009042 + 1.5205 * A**(-1.63))
-        κ_W = 1.12 * ((18.84 - 0.87*A
-                       - np.sqrt(4.84*A**2 - 28.77*A + 52.52 + 14.74*ms)) / 7.37)
+        κ_W = _kappa_Wenninger(A, ms)
         w = 1.0 / (1.0 + np.exp(-(A - A_t) / dA))
         κ = (1.0 - w) * κ_F + w * κ_W
     elif Option_Kappa == 'Manual':
@@ -555,6 +777,29 @@ if __name__ == "__main__":
     import D0FUS_BIB.D0FUS_figures as figs
     figs.plot_kappa_scaling()
 
+# Three-point PCHIP interpolators of kappa_profile and delta_profile, keyed
+# by their control values. Plain dict, emptied when full (one atomic call,
+# safe with the threading backend of POPCON): a dict pickles with cloudpickle
+# in the parallel modes, an lru_cache wrapper does not survive a module reload.
+_PCHIP3_CACHE: dict = {}
+_PCHIP3_CACHE_MAX = 512
+
+
+def _pchip3(y0, x1, y1, y2):
+    """
+    Three-point PCHIP interpolator through (0, y0), (x1, y1), (1, y2),
+    memoised in _PCHIP3_CACHE (kappa_profile, delta_profile).
+    """
+    key = (y0, x1, y1, y2)
+    interp = _PCHIP3_CACHE.get(key)
+    if interp is None:
+        interp = PchipInterpolator([0.0, x1, 1.0], [y0, y1, y2])
+        if len(_PCHIP3_CACHE) >= _PCHIP3_CACHE_MAX:
+            _PCHIP3_CACHE.clear()
+        _PCHIP3_CACHE[key] = interp
+    return interp
+
+
 def kappa_profile(rho, kappa_edge, kappa_95, rho_95=0.95):
     """
     Elongation radial profile : three-point PCHIP interpolation.
@@ -612,10 +857,8 @@ def kappa_profile(rho, kappa_edge, kappa_95, rho_95=0.95):
     Ball & Parra, PPCF 57, 035006 (2015) — radial penetration of shaping.
     """
     rho = np.asarray(rho, dtype=float)
-    interp = PchipInterpolator(
-        [0.0,      rho_95,   1.0       ],
-        [kappa_95, kappa_95, kappa_edge],
-    )
+    interp = _pchip3(float(kappa_95), float(rho_95), float(kappa_95),
+                     float(kappa_edge))
     return interp(rho)
 
 
@@ -680,10 +923,7 @@ def delta_profile(rho, delta_edge, delta_95, rho_95=0.95):
     Fritsch & Carlson, SIAM J. Numer. Anal. 17, 238 (1980).
     """
     rho = np.asarray(rho, dtype=float)
-    interp = PchipInterpolator(
-        [0.0, rho_95,   1.0       ],
-        [0.0, delta_95, delta_edge],
-    )
+    interp = _pchip3(0.0, float(rho_95), float(delta_95), float(delta_edge))
     return interp(rho)
 
 
@@ -742,7 +982,8 @@ def precompute_Vprime(R0, a, kappa_edge, delta_edge,
                       kappa_95=None, delta_95=None, rho_95=0.95,
                       N_rho=200, N_theta=200):
     """
-    Precompute V'(rho), dA_pol/drho, L_p(rho), and <1/R^2>(rho).
+    Precompute V'(rho), dA_pol/drho, L_p(rho), <1/R^2>(rho), rho_V(rho) and
+    rho_tor(rho).
 
     Called once per design point; the returned tuple is passed to all
     functions that need volume integrals, poloidal cross-section area
@@ -795,6 +1036,14 @@ def precompute_Vprime(R0, a, kappa_edge, delta_edge,
         on the local safety factor.  At rho = 0, <1/R^2> = 1/R0^2 by
         continuity; at the LCFS, it differs from 1/R0^2 by ~10-20% at
         ITER aspect ratio.
+    rhoV_grid   : ndarray  (N_rho,)  [-]     volume label rho_V = sqrt(V(rho)/V_total),
+        the radial coordinate of the kinetic profiles. V(rho) is the
+        cumulative trapezoid of V' on rho_grid. Academic mode: rho_V = rho.
+    rhoTor_grid : ndarray  (N_rho,)  [-]     toroidal-flux label
+        rho_tor = sqrt(Phi(rho)/Phi(1)), the coordinate of the radial inputs
+        of the deck. Phi is the flux of the vacuum field B0 R0 / R, so
+        Phi'(rho) is proportional to oint |J2D| / R dtheta. The plasma
+        diamagnetism is neglected. Academic mode: rho_tor = rho.
 
     Notes
     -----
@@ -843,16 +1092,23 @@ def precompute_Vprime(R0, a, kappa_edge, delta_edge,
             ds = np.sqrt(dRdt**2 + dZdt**2) * dtheta
             inv_R2_grid[i] = float(np.sum(ds / R**2)) / float(np.sum(ds))
 
-        return (rho_grid, Vprime, V_total, dA_grid, Lp_grid, inv_R2_grid)
+        # Volume label: V(rho) = V_total rho^2, so rho_V = rho exactly.
+        # The profiles of the Academic geometry are cylindrical: rho_tor = rho.
+        rhoV_grid = rho_grid.copy()
+        rhoTor_grid = rho_grid.copy()
+
+        return (rho_grid, Vprime, V_total, dA_grid, Lp_grid, inv_R2_grid,
+                rhoV_grid, rhoTor_grid)
 
     elif geometry_model == 'refined':
         theta  = np.linspace(0.0, 2.0*np.pi, N_theta, endpoint=False)
         dtheta = theta[1] - theta[0]
         drho   = rho_grid[1] - rho_grid[0]
 
-        RHO, THETA = np.meshgrid(rho_grid, theta, indexing='ij')
-        R, Z = miller_RZ(RHO, THETA, R0, a, kappa_edge, delta_edge,
-                         kappa_95, delta_95, rho_95)
+        # (N_rho, N_theta) grid by broadcasting a rho column against a theta
+        # row: the shaping profiles are evaluated on the N_rho radii only.
+        R, Z = miller_RZ(rho_grid[:, None], theta[None, :], R0, a,
+                         kappa_edge, delta_edge, kappa_95, delta_95, rho_95)
 
         # Numerical 2D Jacobian |d(R,Z)/d(rho,theta)|, used for V' and dA.
         dR_drho   = np.gradient(R, drho,   axis=0)
@@ -881,7 +1137,22 @@ def precompute_Vprime(R0, a, kappa_edge, delta_edge,
         inv_R2_grid = np.sum(arc_element / R**2, axis=1) * dtheta / Lp_safe
         inv_R2_grid[Lp_grid <= 1e-12] = 1.0 / R0**2
 
-        return (rho_grid, Vprime, V_total, dA_grid, Lp_grid, inv_R2_grid)
+        # Volume label rho_V = sqrt(V(rho)/V_total), with V(rho) the
+        # cumulative trapezoid of V' (the rule of V_total).
+        V_cum = np.concatenate(([0.0], np.cumsum(
+            0.5 * (Vprime[1:] + Vprime[:-1]) * np.diff(rho_grid))))
+        rhoV_grid = np.sqrt(V_cum / V_cum[-1])
+
+        # Toroidal-flux label rho_tor = sqrt(Phi(rho)/Phi(1)), with the
+        # vacuum toroidal field B0 R0 / R: Phi'(rho) = B0 R0 oint |J2D|/R dtheta.
+        # B0 R0 cancels in the ratio.
+        Phi_prime = np.sum(jac / R, axis=1) * dtheta
+        Phi_cum = np.concatenate(([0.0], np.cumsum(
+            0.5 * (Phi_prime[1:] + Phi_prime[:-1]) * np.diff(rho_grid))))
+        rhoTor_grid = np.sqrt(Phi_cum / Phi_cum[-1])
+
+        return (rho_grid, Vprime, V_total, dA_grid, Lp_grid, inv_R2_grid,
+                rhoV_grid, rhoTor_grid)
 
     else:
         raise ValueError(f"Unknown geometry_model '{geometry_model}'. "
@@ -926,6 +1197,97 @@ def interpolate_dA(rho, rho_grid, dA_grid):
     dA_per_drho : float or ndarray  [m²]
     """
     return np.interp(rho, rho_grid, dA_grid)
+
+
+def _rho_V_grid(Vprime_data):
+    """
+    Volume label rho_V = sqrt(V(rho)/V_total) on the grid of Vprime_data.
+
+    Element 6 of the precompute_Vprime() tuple when present, otherwise the
+    cumulative trapezoid of V' (tuples of 3 to 6 elements built by hand).
+    """
+    if len(Vprime_data) >= 7 and Vprime_data[6] is not None:
+        return Vprime_data[6]
+    rho_grid, Vprime = Vprime_data[0], Vprime_data[1]
+    V_cum = np.concatenate(([0.0], np.cumsum(
+        0.5 * (Vprime[1:] + Vprime[:-1]) * np.diff(rho_grid))))
+    return np.sqrt(V_cum / V_cum[-1])
+
+
+def rho_V_of_rho(rho, Vprime_data=None):
+    """
+    Volume label rho_V = sqrt(V/V_total) of the flux surface of Miller label rho.
+
+    rho is the half-width of the surface at the outboard midplane, r/a.
+    The kinetic profiles are defined in rho_V, whose volume element is
+    dV = 2 V_total rho_V drho_V in any geometry.
+
+    Parameters
+    ----------
+    rho         : float or ndarray  Miller label [0, 1].
+    Vprime_data : tuple or None     Output of precompute_Vprime().
+                                    None: Academic geometry, rho_V = rho.
+
+    Returns
+    -------
+    rho_V : float or ndarray  [-]
+    """
+    if Vprime_data is None:
+        return rho
+    return np.interp(rho, Vprime_data[0], _rho_V_grid(Vprime_data))
+
+
+def rho_V_of_rho_tor(rho_tor, Vprime_data=None):
+    """
+    Volume label rho_V of the flux surface of toroidal-flux label rho_tor.
+
+    The radial inputs of the deck (pedestal top, deposition radii, core
+    radiation boundary) are given in rho_tor = sqrt(Phi/Phi_LCFS), the
+    coordinate of transport codes and published profile fits. The kinetic
+    profiles are written in rho_V. run() converts the deck labels once with
+    this function.
+
+    Parameters
+    ----------
+    rho_tor     : float or ndarray  Toroidal-flux label [0, 1].
+    Vprime_data : tuple or None     Output of precompute_Vprime().
+                                    None: Academic geometry, rho_V = rho_tor.
+
+    Returns
+    -------
+    rho_V : float or ndarray  [-]. A label of 1 stays exactly 1.
+
+    Notes
+    -----
+    A tuple without the rho_tor grid (fewer than 8 elements, built by hand)
+    returns rho_tor unchanged.
+    """
+    if Vprime_data is None or len(Vprime_data) < 8 or Vprime_data[7] is None:
+        return rho_tor
+    return np.interp(rho_tor, Vprime_data[7], _rho_V_grid(Vprime_data))
+
+
+def rho_of_rho_V(rho_V, Vprime_data=None):
+    """
+    Miller label rho of the flux surface of volume label rho_V.
+
+    Inverse of rho_V_of_rho. The radial inputs (pedestal top, deposition
+    radii, core radiation boundary) are volume labels. The local geometry
+    of the surface (epsilon = rho a / R0, midplane chord) uses rho.
+
+    Parameters
+    ----------
+    rho_V       : float or ndarray  Volume label [0, 1].
+    Vprime_data : tuple or None     Output of precompute_Vprime().
+                                    None: Academic geometry, rho = rho_V.
+
+    Returns
+    -------
+    rho : float or ndarray  [-]
+    """
+    if Vprime_data is None:
+        return rho_V
+    return np.interp(rho_V, _rho_V_grid(Vprime_data), Vprime_data[0])
 
 
 # =============================================================================
@@ -1060,19 +1422,32 @@ if __name__ == "__main__":
 Radial plasma profiles and fusion power integrals for D0FUS
 ==================================================================================
 
-Two geometry modes are supported throughout this module, controlled by the
-Vprime_data argument:
+Radial coordinate
+-----------------
+The kinetic profiles are functions of the volume label
+
+  ρ_V = √(V(ρ)/V_tot),
+
+with V(ρ) the volume inside the flux surface. The volume element is
+dV = 2 V_tot ρ_V dρ_V in any geometry, so the volume average
+⟨X⟩ = ∫₀¹ X(ρ_V) 2ρ_V dρ_V and the profile normalisation do not depend on
+the plasma shape. The pedestal radius, the deposition radii and the core
+radiation boundary are ρ_V labels. ρ_V is close to the toroidal-flux label:
+on the deck geometries (vacuum field, no Shafranov shift) ρ_V − ρ_tor is
+about 0.01 at ρ_V = 0.95 and at most 0.035 at mid-radius.
+
+The profile functions take the Miller label ρ, the half-width r/a of the
+flux surface at the outboard midplane, and map it to ρ_V with Vprime_data:
 
   Academic  (Vprime_data = None)
-      Volume element: dV = 4π²R₀a²κ · ρ dρ  (cylindrical torus, constant κ)
-      Plasma volume:  V  = 2π²R₀κa²  [Wesson]
-      Profile integrals use the cylindrical weight 2ρ dρ.
+      Ellipses at constant κ: ρ_V = ρ.
+      Volume element: dV = 4π²R₀a²κ · ρ dρ,  V = 2π²R₀κa²  [Wesson]
       Fast, analytical formulas available for parabolic profiles.
 
-  refined  (Vprime_data = (rho_grid, Vprime, V_total) from precompute_Vprime())
-      Volume element: dV = V'_Miller(ρ) dρ  (full Miller geometry, PCHIP κ/δ)
-      All integrals use the precomputed Jacobian; n(ρ) and T(ρ) are midplane
-      radial profiles — the geometry enters only through the volume weight.
+  refined  (Vprime_data from precompute_Vprime())
+      Miller surfaces with κ(ρ), δ(ρ): dV = V'_Miller(ρ) dρ, and ρ_V(ρ)
+      from the cumulative volume. Integrals over ρ use V'_Miller(ρ).
+      The local geometry (ε = ρa/R₀, midplane chord, q) uses ρ.
 
 Profile model
 -------------
@@ -1080,16 +1455,17 @@ Core parabola times tanh pedestal envelope (Lackner 1990 core form; the
 envelope is a symmetric counterpart of the Groebner mtanh fit, with no
 scrape-off-layer ramp, as in the thesis):
 
-  X(ρ) = X_core(ρ) · h(ρ),   X_core = X₀ (1 − (ρ/ρ_ped)²)^ν on [0, ρ_ped]
-  h(ρ) = ½ (1 + tanh((ρ_mid − ρ)/w)),  ρ_mid = (1+ρ_ped)/2, w = (1−ρ_ped)/4
+  X(ρ_V) = X_core(ρ_V) · h(ρ_V)
+  X_core = X_ped + (X₀ − X_ped)(1 − (ρ_V/ρ_ped)²)^ν on [0, ρ_ped], X_ped beyond
+  h(ρ_V) = ½ (1 + tanh((ρ_mid − ρ_V)/w)),  ρ_mid = (1+ρ_ped)/2, w = (1−ρ_ped)/4
 
-Special case ρ_ped = 1, f_ped = 0 → purely parabolic: X(ρ) = X̄(1+ν)(1−ρ²)^ν.
+Special case ρ_ped = 1, f_ped = 0 → purely parabolic: X = X̄(1+ν)(1−ρ_V²)^ν.
 
 ITER reference values (used in __main__ tests)
 -----------------------------------------------
   R₀ = 6.2 m,  a = 2.0 m,  κ = 1.85,  δ = 0.50,  Ip = 15 MA
-  P_fus = 500 MW,  T̄ = 7.75 keV,  n̄_vol ≈ 0.99 × 10²⁰ m⁻³
-  (n̄_line ≈ 1.01 × 10²⁰ m⁻³, line/volume ratio 1.03 for the H preset)
+  P_fus = 500 MW,  T̄ = 8.61 keV,  n̄_vol ≈ 0.96 × 10²⁰ m⁻³
+  (n̄_line ≈ 1.00 × 10²⁰ m⁻³, line/volume ratio 1.04 for the H preset)
 
 References
 ----------
@@ -1106,85 +1482,59 @@ Martin et al., JPCS 123, 012033 (2008)
 _profile_core_peak_cache = {}
 
 
-def _profile_core_peak(nu, rho_ped, f_ped, Vprime_data=None):
+def _profile_core_peak(nu, rho_ped, f_ped):
     """
     Core-peak normalised value X₀/X̄  for a parabola-with-pedestal profile.
 
-    The volume-average constraint ⟨X⟩_vol = X̄  is enforced using:
-      - cylindrical weight  w(ρ) = 2ρ          when Vprime_data is None
-      - Miller weight  w(ρ) = V'(ρ)/V_total    when Vprime_data is provided
-
-    This ensures that the profile normalisation is consistent with
-    whichever volume element is used by downstream integrals.
+    The volume-average constraint ⟨X⟩_vol = X̄ uses the volume element of
+    the profile coordinate, dV/V = 2ρ_V dρ_V, exact in any geometry. X₀/X̄
+    therefore depends on the profile parameters only.
 
     Parameters
     ----------
     nu      : float  Core peaking exponent (ν_n or ν_T).
-    rho_ped : float  Normalised pedestal radius ∈ (0, 1].
+    rho_ped : float  Pedestal radius, volume label ρ_V ∈ (0, 1].
     f_ped   : float  X_ped / X̄  (pedestal fraction of the volume average).
-    Vprime_data : tuple or None
-        (rho_grid, Vprime, V_total) from precompute_Vprime().
-        None → cylindrical weight (Academic mode).
 
     Returns
     -------
     X0_frac : float  X₀ / X̄
     """
-    # ── Purely parabolic + cylindrical: exact analytical result ────────
-    if rho_ped >= 1.0 and Vprime_data is None:
+    # ── Purely parabolic: exact analytical result ──────────────────────
+    if rho_ped >= 1.0:
         return 1.0 + nu
 
-    # ── Cache lookup, keyed on the geometry CONTENT ─────────────────────
-    # id(Vprime_data[0]) is not a valid key: once a design point's arrays are
-    # freed, CPython reuses the address for the next geometry and the cache
-    # returned the previous design's X0/X̄ (seen in SCAN / GENETIC loops).
-    if Vprime_data is not None:
-        geo_key = hash(np.ascontiguousarray(Vprime_data[1]).tobytes())
-    else:
-        geo_key = None
-    cache_key = (nu, rho_ped, f_ped, geo_key)
-    if len(_profile_core_peak_cache) > 20000:   # bound memory in long GA runs
-        _profile_core_peak_cache.clear()
+    cache_key = (nu, rho_ped, f_ped)
     cached = _profile_core_peak_cache.get(cache_key)
     if cached is not None:
         return cached
-
-    # ── Build radial grid and normalised volume weight ─────────────────
-    if Vprime_data is not None:
-        rho_arr = Vprime_data[0]
-        w_vol   = Vprime_data[1] / Vprime_data[2]   # V'(ρ)/V, ∫ w dρ = 1
-    else:
-        rho_arr = np.linspace(0, 1, 200)
-        w_vol   = 2.0 * rho_arr                      # 2ρ,       ∫ w dρ = 1
-
-    # ── Purely parabolic + Miller: no tanh, just X₀ from Miller weight ─
-    if rho_ped >= 1.0:
-        # X(ρ) = X₀ (1-ρ²)^ν,  ⟨X⟩ = X₀ ∫ (1-ρ²)^ν w dρ = 1
-        g = np.maximum(1.0 - rho_arr**2, 0.0)**nu
-        I_g = np.trapezoid(g * w_vol, rho_arr)
-        result = 1.0 / I_g if I_g > 1e-15 else 1.0 + nu
-        _profile_core_peak_cache[cache_key] = result
-        return result
+    if len(_profile_core_peak_cache) > 20000:   # bound memory in long GA runs
+        _profile_core_peak_cache.clear()
 
     # ── Tanh-envelope: solve ⟨X⟩ = X̄ via linearity in X₀ ─────────────
-    # X(ρ) = [f_ped + (X0_frac - f_ped) · g(ρ)] × h(ρ)
-    #   g(ρ) = (1 - (ρ/ρ_ped)²)^ν       core parabola
-    #   h(ρ) = tanh envelope
+    # X(ρ_V) = [f_ped + (X0_frac - f_ped) · g(ρ_V)] × h(ρ_V)
+    #   g(ρ_V) = (1 - (ρ_V/ρ_ped)²)^ν on [0, ρ_ped], 0 beyond
+    #   h(ρ_V) = tanh envelope
     #
     # ⟨X⟩/X̄ = 1 = f_ped · I_h + (X0_frac - f_ped) · I_gh
     # ⟹ X0_frac = f_ped + (1 - f_ped · I_h) / I_gh
     #
-    # where I_h  = ∫₀¹ h(ρ) · w(ρ) dρ
-    #       I_gh = ∫₀¹ g(ρ) · h(ρ) · w(ρ) dρ
-    delta   = (1.0 - rho_ped) / 2.0
-    rho_mid = rho_ped + delta            # = (1 + rho_ped) / 2
-    hw      = delta / 2.0               # half-width = (1 - rho_ped) / 4
+    # where I_h  = ∫₀¹ h(ρ_V) 2ρ_V dρ_V
+    #       I_gh = ∫₀^ρ_ped g(ρ_V) h(ρ_V) 2ρ_V dρ_V
+    # Core segment: ρ_V = ρ_ped sin φ, so that the cusp of g at ρ_ped
+    # (ν < 1) becomes a smooth zero of the integrand, g = cos(φ)^(2ν).
+    # Edge segment [ρ_ped, 1]: uniform grid. Relative error below 1e-6
+    # against adaptive quadrature.
+    phi = np.linspace(0.0, 0.5 * np.pi, 4001)
+    x_c = rho_ped * np.sin(phi)
+    w_c = 2.0 * x_c * rho_ped * np.cos(phi)          # 2ρ_V dρ_V/dφ
+    h_c = _tanh_envelope(x_c, rho_ped)
+    g_c = np.cos(phi)**(2.0 * nu)
+    x_e = np.linspace(rho_ped, 1.0, 2001)
 
-    h = 0.5 * (1.0 + np.tanh((rho_mid - rho_arr) / hw))
-    g = np.maximum(1.0 - (rho_arr / rho_ped)**2, 0.0)**nu
-
-    I_h  = np.trapezoid(h * w_vol, rho_arr)
-    I_gh = np.trapezoid(g * h * w_vol, rho_arr)
+    I_h  = (np.trapezoid(h_c * w_c, phi)
+            + np.trapezoid(_tanh_envelope(x_e, rho_ped) * 2.0 * x_e, x_e))
+    I_gh = np.trapezoid(g_c * h_c * w_c, phi)
 
     if I_gh < 1e-15:
         result = 1.0 + nu     # degenerate fallback
@@ -1225,43 +1575,67 @@ def _tanh_envelope_deriv(rho, rho_ped):
     return -sech2 / (2.0 * w)
 
 
+def _profile_shape(rho_V, nu, rho_ped, f_ped):
+    """
+    Normalised profile X(ρ_V)/X̄ of the parabola-with-pedestal model.
+
+    Parameters
+    ----------
+    rho_V   : float or ndarray  Volume label ρ_V ∈ [0, 1].
+    nu      : float  Core peaking exponent.
+    rho_ped : float  Pedestal radius ρ_V (1.0 → purely parabolic).
+    f_ped   : float  X_ped / X̄ (ignored when rho_ped = 1.0).
+
+    Returns
+    -------
+    X_hat : float or ndarray  X / X̄
+    """
+    rho_V = np.asarray(rho_V, dtype=float)
+    X0 = _profile_core_peak(nu, rho_ped, f_ped)
+    if rho_ped >= 1.0:
+        return X0 * np.maximum(1.0 - rho_V**2, 0.0)**nu
+    g = np.maximum(1.0 - (rho_V / rho_ped)**2, 0.0)**nu
+    return (f_ped + (X0 - f_ped) * g) * _tanh_envelope(rho_V, rho_ped)
+
+
 def f_Tprof(Tbar, nu_T, rho, rho_ped=1.0, T_ped_frac=0.0, Vprime_data=None):
     """
-    Electron temperature radial profile T(ρ)  [keV].
+    Electron temperature radial profile T  [keV].
 
-    Two models selected by rho_ped:
+    The profile is a function of the volume label ρ_V = √(V/V_tot) of the
+    flux surface (see the section header). Two models selected by rho_ped:
 
     1. Purely parabolic (rho_ped = 1.0, default):
-         T(ρ) = T̄(1 + ν_T)(1 − ρ²)^ν_T
+         T(ρ_V) = T̄(1 + ν_T)(1 − ρ_V²)^ν_T
 
     2. Parabola-with-tanh-pedestal (rho_ped < 1.0):
-         T(ρ) = T_core(ρ) × h(ρ)
+         T(ρ_V) = T_core(ρ_V) × h(ρ_V)
 
        where:
-         T_core(ρ) = T_ped + (T₀ − T_ped)·(1 − (ρ/ρ_ped)²)^ν_T
-         h(ρ)      = ½(1 + tanh((ρ_mid − ρ) / w))
-         ρ_mid     = (1 + ρ_ped)/2,  w = (1 − ρ_ped)/4
+         T_core(ρ_V) = T_ped + (T₀ − T_ped)·(1 − (ρ_V/ρ_ped)²)^ν_T
+         h(ρ_V)      = ½(1 + tanh((ρ_mid − ρ_V) / w))
+         ρ_mid       = (1 + ρ_ped)/2,  w = (1 − ρ_ped)/4
 
        The tanh envelope replaces the linear SOL ramp, providing a smooth
        and physically motivated pedestal transition with continuous gradient.
        T₀ is determined from the volume-average constraint ⟨T⟩_vol = T̄.
 
     Profile normalisation:
-      When Vprime_data is None (Academic), the volume average uses the
-      cylindrical weight 2ρ dρ.  When Vprime_data is provided (refined),
-      the Miller weight V'(ρ)/V is used, ensuring consistency with
-      downstream Miller-weighted integrals.
+      ⟨T⟩_vol = ∫₀¹ T(ρ_V) 2ρ_V dρ_V is exact in any geometry, so T₀/T̄
+      depends on the profile parameters only.
 
     Parameters
     ----------
     Tbar      : float  Volume-averaged electron temperature [keV].
     nu_T      : float  Temperature peaking exponent (core region).
-    rho       : float or ndarray  Normalised minor radius r/a ∈ [0, 1].
-    rho_ped   : float  Normalised pedestal radius (default 1.0 → parabolic).
+    rho       : float or ndarray  Miller label r/a ∈ [0, 1], half-width of
+                the flux surface at the outboard midplane.
+    rho_ped   : float  Pedestal radius, volume label ρ_V (default 1.0 →
+                parabolic).
     T_ped_frac: float  T_ped / T̄ (ignored when rho_ped = 1.0).
     Vprime_data : tuple or None
-        (rho_grid, Vprime, V_total) from precompute_Vprime().
-        None → cylindrical normalisation (Academic mode).
+        Output of precompute_Vprime(), for the map ρ → ρ_V.
+        None → Academic geometry, ρ_V = ρ.
 
     Returns
     -------
@@ -1273,25 +1647,13 @@ def f_Tprof(Tbar, nu_T, rho, rho_ped=1.0, T_ped_frac=0.0, Vprime_data=None):
     ITER Physics Basis, Nucl. Fusion 39, 2175 (1999) — Sec. 2.
     Groebner & Osborne, Phys. Plasmas 5, 1800 (1998) — mtanh.
     """
-    rho = np.asarray(rho, dtype=float)
-
-    if rho_ped >= 1.0:
-        T0 = _profile_core_peak(nu_T, rho_ped, 0.0, Vprime_data) * Tbar
-        return T0 * np.maximum(1.0 - rho**2, 0.0)**nu_T
-
-    T_ped = T_ped_frac * Tbar
-    T0    = _profile_core_peak(nu_T, rho_ped, T_ped_frac, Vprime_data) * Tbar
-
-    g = np.maximum(1.0 - (rho / rho_ped)**2, 0.0)**nu_T
-    T_core = T_ped + (T0 - T_ped) * g
-    h = _tanh_envelope(rho, rho_ped)
-
-    return T_core * h
+    rho_V = rho_V_of_rho(np.asarray(rho, dtype=float), Vprime_data)
+    return Tbar * _profile_shape(rho_V, nu_T, rho_ped, T_ped_frac)
 
 
 def f_nprof(nbar, nu_n, rho, rho_ped=1.0, n_ped_frac=0.0, Vprime_data=None):
     """
-    Electron density radial profile n(ρ)  [10²⁰ m⁻³].
+    Electron density radial profile n  [10²⁰ m⁻³].
 
     Identical parameterisation to f_Tprof; see that docstring.
 
@@ -1299,31 +1661,20 @@ def f_nprof(nbar, nu_n, rho, rho_ped=1.0, n_ped_frac=0.0, Vprime_data=None):
     ----------
     nbar      : float  Volume-averaged electron density [10²⁰ m⁻³].
     nu_n      : float  Density peaking exponent (core region).
-    rho       : float or ndarray  r/a ∈ [0, 1].
-    rho_ped   : float  Normalised pedestal radius (default 1.0 → parabolic).
+    rho       : float or ndarray  Miller label r/a ∈ [0, 1].
+    rho_ped   : float  Pedestal radius, volume label ρ_V (default 1.0 →
+                parabolic).
     n_ped_frac: float  n_ped / n̄ (ignored when rho_ped = 1.0).
     Vprime_data : tuple or None
-        (rho_grid, Vprime, V_total) from precompute_Vprime().
-        None → cylindrical normalisation (Academic mode).
+        Output of precompute_Vprime(), for the map ρ → ρ_V.
+        None → Academic geometry, ρ_V = ρ.
 
     Returns
     -------
     n : float or ndarray  [10²⁰ m⁻³]
     """
-    rho = np.asarray(rho, dtype=float)
-
-    if rho_ped >= 1.0:
-        n0 = _profile_core_peak(nu_n, rho_ped, 0.0, Vprime_data) * nbar
-        return n0 * np.maximum(1.0 - rho**2, 0.0)**nu_n
-
-    n_ped = n_ped_frac * nbar
-    n0    = _profile_core_peak(nu_n, rho_ped, n_ped_frac, Vprime_data) * nbar
-
-    g = np.maximum(1.0 - (rho / rho_ped)**2, 0.0)**nu_n
-    n_core = n_ped + (n0 - n_ped) * g
-    h = _tanh_envelope(rho, rho_ped)
-
-    return n_core * h
+    rho_V = rho_V_of_rho(np.asarray(rho, dtype=float), Vprime_data)
+    return nbar * _profile_shape(rho_V, nu_n, rho_ped, n_ped_frac)
 
 
 if __name__ == "__main__":
@@ -1337,55 +1688,36 @@ def f_nbar_line(nbar_vol, nu_n, rho_ped=1.0, n_ped_frac=0.0, N=2000,
     Convert volume-averaged electron density to line-averaged density.
 
     Interferometers measure n̄_line along a horizontal midplane chord (Z = 0).
-    For the Academic geometry (δ = 0), the midplane flux-surface intersection
-    gives R(ρ, θ=0) = R₀ + ρa exactly, so dR = a dρ and the chord maps ρ
+    The Miller surfaces cross the midplane at R = R₀ ± ρa for any κ(ρ) and
+    δ(ρ) (no Shafranov shift), so the chord maps the Miller label ρ
     uniformly on [0, 1]:
 
-        n̄_line = ∫₀¹ n(ρ) dρ          (exact for δ = 0)
+        n̄_line = ∫₀¹ n(ρ) dρ          (exact in both geometry modes)
 
-    The volume average (cylindrical approximation) is:
-        n̄_vol  = 2 ∫₀¹ n(ρ) ρ dρ
+    The volume average is n̄_vol = ∫₀¹ n(ρ_V) 2ρ_V dρ_V. The profile is
+    defined in the volume label ρ_V and mapped to the chord with
+    Vprime_data.
 
     The ratio n̄_line/n̄_vol > 1 for any peaked profile (the chord integral
-    does not down-weight the dense core).  For a parabolic profile:
+    does not down-weight the dense core).  For a parabolic profile in
+    Academic geometry (ρ_V = ρ):
         ν_n = 0.5  →  ratio ≈ 1.18;   ν_n = 1.0  →  ratio ≈ 1.33.
-
-    Limitation — triangularity correction (refined mode)
-    --------------------------------------------------
-    In Miller geometry the outer midplane (θ = 0) gives:
-        R(ρ, θ=0) = R₀ + ρa · cos(arcsin(δ(ρ)))
-        dR/dρ     = a · cos(arcsin(δ(ρ)))    [≠ a when δ(ρ) ≠ 0]
-
-    The exact chord integral is therefore:
-        n̄_line = ∫₀¹ n(ρ) · cos(arcsin(δ(ρ))) dρ   (refined mode)
-
-    This function uses the δ = 0 approximation for both geometry modes.
-    Direct evaluation of the chord integral on the PCHIP δ(ρ) profile
-    gives a relative error on n̄_line below 1 % for ITER-class shaping
-    (δ_edge ≈ 0.5) with moderately peaked density profiles (ν_n ≳ 0.5),
-    and below 4 % for very high triangularity (δ_edge ≈ 0.8) combined
-    with a flat density profile.  The correction is negligible in all
-    ITER and EU-DEMO relevant operating points.
-
-    Note: elongation κ does NOT affect the midplane chord.  The horizontal
-    line Z = 0 intersects the plasma at fixed ρ values independent of κ,
-    since the Miller Z-coordinate scales as κ sin θ and vanishes at θ = 0.
+    In refined geometry the elongation rises towards the edge, so the outer
+    surfaces hold more volume: a pedestal at ρ_V = 0.95 crosses the chord
+    at ρ ≈ 0.97 on ITER.
 
     Parameters
     ----------
     nbar_vol   : float  Volume-averaged density [any unit].
     nu_n       : float  Density peaking exponent.
-    rho_ped    : float  Normalised pedestal radius (default 1.0).
+    rho_ped    : float  Pedestal radius, volume label ρ_V (default 1.0).
     n_ped_frac : float  n_ped / n̄.
     N          : int    Integration points (default 2000).
-    Vprime_data: tuple or None  Flux-surface Jacobian used to normalise the
-        profile to nbar_vol.  MUST be the same Vprime_data as the run that
-        produced nbar_vol.  None (default) falls back to the cylindrical
-        volume element 2 rho drho, which is correct in Academic geometry
-        only.  Passing None while nbar_vol is a refined-Miller volume
-        average rebuilds a profile of the wrong amplitude and peaking: on
-        the SF Plant V2 point this returned 1.968e20 instead of 2.102e20,
-        a 6.8 % error propagating to f_GW, the L-H threshold and Ip.
+    Vprime_data: tuple or None  Output of precompute_Vprime(), for the map
+        ρ → ρ_V. Pass the Vprime_data of the run that produced nbar_vol.
+        None (default) is the Academic geometry, ρ_V = ρ. For a
+        refined-geometry run it places the pedestal at the wrong chord
+        position.
 
     Returns
     -------
@@ -1424,7 +1756,7 @@ def f_nbar_vol_from_line(nbar_line, nu_n, rho_ped=1.0, n_ped_frac=0.0, N=2000,
     nu_n       : float  Density peaking exponent.
     rho_ped, n_ped_frac : float  Pedestal parameters.
     N          : int    Integration points.
-    Vprime_data: tuple or None  Flux-surface Jacobian, see f_nbar_line().
+    Vprime_data: tuple or None  Output of precompute_Vprime(), see f_nbar_line().
 
     Returns
     -------
@@ -1674,7 +2006,7 @@ def f_fuel_power_split(fuel, Tbar, nu_T, nu_n, rho_ped=1.0, n_ped_frac=0.0,
 # Required electron density for a target fusion power
 # =============================================================================
 
-def f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, kappa,
+def f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, kappa, delta,
            rho_ped=1.0, n_ped_frac=0.0, T_ped_frac=0.0,
            Vprime_data=None, f_imp=0.0, tau_i_e=1.0, fuel='DT'):
     """
@@ -1694,11 +2026,14 @@ def f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, kappa,
     reactivity integral and w(ρ) is the volume weight (see below).
 
     Volume weights:
-      Academic : w(ρ) = 2ρ   (cylindrical, V = 2π²R₀κa²)
+      Academic : w(ρ) = 2ρ   (cylindrical)
       refined    : w(ρ) = V'_Miller(ρ)/V_Miller  (full Miller geometry)
+    The volume V is f_plasma_volume, the same as in run(), so that the
+    fusion power in the plasma volume of run() equals P_fus.
 
-    The profiles n(ρ) and T(ρ) are midplane radial profiles; the geometry
-    enters only through the volume weight.
+    The profiles are functions of the volume label ρ_V (see the section
+    header), so I_fus does not depend on the plasma shape. The geometry
+    enters through V.
 
     Particle balance (quasi-neutrality):
         n_e = n_fuel + 2 n_α + Σ_j Z_j n_j
@@ -1715,12 +2050,13 @@ def f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, kappa,
     Tbar       : float  Volume-averaged temperature [keV].
     R0, a      : float  Major and minor radii [m].
     kappa      : float  Plasma elongation (used for Academic volume only).
+    delta      : float  Plasma triangularity (used for Academic volume only).
     rho_ped    : float  Normalised pedestal radius (default 1.0).
     n_ped_frac : float  n_ped / n̄.
     T_ped_frac : float  T_ped / T̄.
     Vprime_data : tuple or None
         Precomputed (rho_grid, Vprime, V_total) from precompute_Vprime().
-        None → Academic mode (cylindrical volume, quad integration).
+        None → Academic mode (analytical volume, quad integration).
     f_imp      : float, optional
         Dimensionless impurity charge fraction Σ_j Z_j n_j / n_e (default 0.0).
         Accounts for fuel dilution by metallic or gaseous impurities beyond
@@ -1754,10 +2090,9 @@ def f_nbar(P_fus, nu_n, nu_T, f_alpha, Tbar, R0, a, kappa,
                               Vprime_data=Vprime_data, tau_i_e=tau_i_e,
                               nu_n=nu_n, n_ped_frac=n_ped_frac,
                               reaction=reaction) * (E_ch + E_n)
-    if Vprime_data is not None:
-        V = Vprime_data[2]                          # Miller volume
-    else:
-        V = 2.0 * np.pi**2 * R0 * kappa * a**2      # Wesson volume
+    # Same plasma volume as run(): Miller volume in refined geometry,
+    # analytical formula with triangularity in Academic geometry.
+    V = f_plasma_volume(R0, a, kappa, delta, Vprime_data=Vprime_data)
 
     # Fuel ion density from fusion power balance
     # Guard: EI_fus ≤ 0 if T is too low for appreciable reactivity, or
@@ -2009,21 +2344,19 @@ def f_n_limit_zanca(P_tot, Ip, a, Z_eff, Z_i=1.0, f0=0.5):
             * (P_tot / Ip)**(4.0/9.0) * nGW**(8.0/9.0))
 
 
-def f_n_edge_ratio(nu_n, rho_ped=1.0, n_ped_frac=0.0, rho_edge=0.9,
-                   Vprime_data=None):
+def f_n_edge_ratio(nu_n, rho_ped=1.0, n_ped_frac=0.0, rho_edge=0.9):
     """
     Near-separatrix to volume-average density ratio n(rho_edge)/nbar [-].
 
     The Giacomin et al. (2022) density limit bounds the NEAR-SEPARATRIX
     density, measured around rho ~ 0.9 in the reference paper (edge Thomson
     at MARFE onset), not the separatrix density itself. This helper
-    evaluates n(rho_edge)/nbar from the parameterised density profile, with
-    the same volume element as nbar (Miller V' in refined geometry,
-    cylindrical otherwise), for use as the edge-to-average conversion of
-    f_density_limit.
+    evaluates n(rho_edge)/nbar from the parameterised density profile, for
+    use as the edge-to-average conversion of f_density_limit. rho_edge is a
+    volume label ρ_V, like rho_ped, so the ratio does not depend on the
+    geometry.
     """
-    return float(f_nprof(1.0, nu_n, np.array([rho_edge]),
-                         rho_ped, n_ped_frac, Vprime_data)[0])
+    return float(_profile_shape(rho_edge, nu_n, rho_ped, n_ped_frac))
 
 
 def f_density_limit(model, Ip, a, P_sol=None, P_tot=None, R0=None, kappa=None,
@@ -2139,14 +2472,15 @@ if __name__ == "__main__":
 if __name__ == "__main__":
     # ── ITER chain (2/12) - operating point: density and pressure ───────
     # The deck specifies the operating point through the Greenwald
-    # fraction (Tbar_mode = greenwald, f_GW_target = 0.85): resolve_Tbar
-    # solves Tbar = 7.754 keV, used here as the chain input. Two forward
+    # fraction (Tbar_mode = greenwald, f_GW_target = 0.85): the chain
+    # input Tbar = 8.612 keV closes f_GW = 0.85 at chain 11. Two forward
     # references are taken from FROZEN and closed downstream:
     #   - f_alpha (helium ash fraction), closed by chain 12;
     #   - f_imp_dil = sum_j <Z_j> c_j (fuel dilution by the W + Ne mix),
     #     closed by chain 4 where get_Z_mean is defined.
     _n = f_nbar(ITER['P_fus'], ITER['nu_n'], ITER['nu_T'], FROZEN['f_alpha'],
                 ITER['Tbar'], ITER['R0'], ITER['a'], ITER['kappa'],
+                ITER['delta'],
                 rho_ped=ITER['rho_ped'], n_ped_frac=ITER['n_ped_frac'],
                 T_ped_frac=ITER['T_ped_frac'],
                 Vprime_data=ITER_Vpd, f_imp=FROZEN['f_imp_dil'], tau_i_e=1.0)
@@ -2157,7 +2491,8 @@ if __name__ == "__main__":
                 rho_ped=ITER['rho_ped'], n_ped_frac=ITER['n_ped_frac'],
                 T_ped_frac=ITER['T_ped_frac'],
                 Vprime_data=ITER_Vpd, tau_i_e=1.0, n_ion_frac=_n_ion_frac)
-    _nl = f_nbar_line(_n, ITER['nu_n'], ITER['rho_ped'], ITER['n_ped_frac'])
+    _nl = f_nbar_line(_n, ITER['nu_n'], ITER['rho_ped'], ITER['n_ped_frac'],
+                      Vprime_data=ITER_Vpd)
     _nl_flat = f_nbar_line(1.0, 0.0)   # analytic identity for a flat profile
     ITER.update(nbar=_n, pbar=_p, nbar_line=_nl)
     _bench("ITER chain 2/12 - operating point (density, pressure)", [
@@ -2322,6 +2657,40 @@ def f_Bpol_ampere(Ip_MA, a, kappa):
     mu0 = 4.0e-7 * np.pi
     L_pol = _ramanujan_perimeter(a, kappa * a)
     return mu0 * Ip_MA * 1e6 / L_pol
+
+
+# Outer-midplane separatrix poloidal field over the perimeter average
+# mu0 Ip / L_pol of f_Bpol_ampere. The field at the outer midplane exceeds
+# the average, which includes the low-field region near the X-point.
+# Calibrated on the ITER row of Eich et al., NF 53 (2013) 093031, Table 1:
+# B_pol,MP = 1.185 T at Ip = 15 MA, a = 2 m, kappa = 1.8, where the
+# perimeter average is 1.050 T. One device only: the ratio may differ for
+# other shapes.
+C_BPOL_OMP = 1.13
+
+
+def f_Bpol_omp(Ip_MA, a, kappa):
+    """
+    Poloidal field at the outer-midplane separatrix, the variable of the
+    Eich (2013) SOL-width regression.
+
+        B_pol,MP = C_BPOL_OMP × mu0 I_p / L_pol
+
+    Parameters
+    ----------
+    Ip_MA : float  Plasma current [MA].
+    a     : float  Minor radius [m].
+    kappa : float  Plasma elongation at the LCFS [-].
+
+    Returns
+    -------
+    float  Outer-midplane separatrix poloidal field [T].
+
+    References
+    ----------
+    Eich et al., Nucl. Fusion 53 (2013) 093031, Table 1 (ITER row).
+    """
+    return C_BPOL_OMP * f_Bpol_ampere(Ip_MA, a, kappa)
 
 
 def f_beta_T(pbar_MPa, B0):
@@ -2614,7 +2983,7 @@ if __name__ == "__main__":
          "Stix slowing-down"),
     ], notes=[
         "beta_N solves below the published 1.8 because the deck-solved "
-        "temperature (7.75 keV) sits under the 8.9 keV design assumption; "
+        "temperature (8.61 keV) sits under the 8.9 keV design assumption; "
         "the deviation follows the stored energy and density directly.",
     ])
 
@@ -2834,29 +3203,29 @@ _albajar_exponent_cache = {}
 
 
 def _albajar_profile_exponents(nu_n, nu_T, rho_ped=1.0, n_ped_frac=0.0,
-                               T_ped_frac=0.0, Vprime_data=None, tbeta=2.0):
+                               T_ped_frac=0.0, tbeta=2.0):
     """
     Shape exponents (alpha_n, alpha_T, beta_T) of the Albajar (2001) K factor
     that best describe the D0FUS profiles.
 
     Albajar's K was fitted for n = n0 (1 - rho^2)^alpha_n and
-    T = T0 (1 - rho^beta_T)^alpha_T. Purely parabolic profiles map exactly
+    T = T0 (1 - rho^beta_T)^alpha_T on elliptic surfaces of constant
+    elongation, where rho = rho_V. Purely parabolic profiles map exactly
     (alpha_n = nu_n, alpha_T = nu_T, beta_T = tbeta). With a pedestal, the
     core exponents nu_n, nu_T no longer describe the normalised profile
     shape (up to 10 % rms deviation in T/T0), so the three exponents are
-    least-squares fitted to n(rho)/n0 and T(rho)/T0 on the core,
-    rho <= rho_ped, where the synchrotron power is emitted.
+    least-squares fitted to n(rho_V)/n0 and T(rho_V)/T0 on the core,
+    rho_V <= rho_ped, where the synchrotron power is emitted. The profiles
+    are functions of rho_V only, so the fit does not depend on the geometry.
     """
     if rho_ped >= 1.0:
         return nu_n, nu_T, tbeta
-    geo = (hash(np.ascontiguousarray(Vprime_data[1]).tobytes())
-           if Vprime_data is not None else None)
-    key = (nu_n, nu_T, rho_ped, n_ped_frac, T_ped_frac, geo)
+    key = (nu_n, nu_T, rho_ped, n_ped_frac, T_ped_frac)
     if key in _albajar_exponent_cache:
         return _albajar_exponent_cache[key]
     rho = np.linspace(0.0, rho_ped, 200)
-    t = f_Tprof(1.0, nu_T, rho, rho_ped, T_ped_frac, Vprime_data)
-    n = f_nprof(1.0, nu_n, rho, rho_ped, n_ped_frac, Vprime_data)
+    t = _profile_shape(rho, nu_T, rho_ped, T_ped_frac)
+    n = _profile_shape(rho, nu_n, rho_ped, n_ped_frac)
     t, n = t / t[0], n / n[0]
     rT = lambda p: np.maximum(1.0 - rho**p[1], 0.0)**p[0] - t
     rN = lambda p: np.maximum(1.0 - rho**2, 0.0)**p[0] - n
@@ -2948,7 +3317,7 @@ def f_P_synchrotron(Tbar, R0, a, B0, nbar, kappa, nu_n, nu_T, r_synch,
     # The denominator (βT^1.53 + 1.87·αT − 0.16) vanishes for small βT;
     # clamp βT to 0.5 minimum for numerical safety.
     a_n, a_T, b_T = _albajar_profile_exponents(nu_n, nu_T, rho_ped, n_ped_frac,
-                                               T_ped_frac, Vprime_data, tbeta)
+                                               T_ped_frac, tbeta)
     bT = max(b_T, 0.5)
     nu_T_K = max(a_T, 0.1)
     if a_T < 0.1:
@@ -2995,8 +3364,8 @@ def f_P_bremsstrahlung(nbar, Tbar, Z_eff, V, nu_n=0.0, nu_T=0.0,
         Analytical profile-peaking correction f_peak derived for
         purely parabolic profiles with cylindrical weight 2ρ dρ.
       refined  (Vprime_data provided):
-        Numerical integration with Miller-normalised profiles and
-        V'(ρ) weight, consistent with all other D0FUS integrals.
+        Numerical integration with the V'(ρ) weight, consistent with
+        all other D0FUS integrals.
 
     Parameters
     ----------
@@ -3182,8 +3551,9 @@ def f_P_line_radiation_profile(impurity, f_imp, nbar, Tbar, nu_n, nu_T, V,
     Vprime_data : tuple or None  Precomputed (rho_grid, Vprime, V_total)
     N           : int    Radial integration points (default 500)
     rho_core    : float or None
-        Boundary between core and edge radiation regions.  When None
-        (default), only the total is returned for backward compatibility.
+        Boundary between core and edge radiation regions, volume label
+        ρ_V.  When None (default), only the total is returned for backward
+        compatibility.
         Canonical presets: 0.6 (PROCESS-aligned) and 1.0 (conservative default).
 
     Returns
@@ -3211,8 +3581,8 @@ def f_P_line_radiation_profile(impurity, f_imp, nbar, Tbar, nu_n, nu_T, V,
         P_total_W = f_imp * float(np.trapezoid(integrand, rho_grid))
 
         if rho_core is not None:
-            # Core contribution: integrate from 0 to rho_core only
-            mask_core = rho_grid <= rho_core
+            # Core contribution: surfaces inside the volume label rho_core
+            mask_core = rho_V_of_rho(rho_grid, Vprime_data) <= rho_core
             if np.any(mask_core) and np.sum(mask_core) >= 2:
                 P_core_W = f_imp * float(
                     np.trapezoid(integrand[mask_core], rho_grid[mask_core]))
@@ -3393,8 +3763,16 @@ def f_L_INT(impurity, T_start_eV, T_stop_eV, n_pts=300):
     return float(np.trapezoid(get_Lz_SOL(impurity, T) * np.sqrt(T), T))
 
 
+# Spitzer-Härm parallel electron conduction constant [W m⁻¹ eV⁻⁷ᐟ²],
+# q_∥ = −κ₀ₑ T^{5/2} ∇_∥T, shared by the two-point model and the Lengyel
+# closure. 2600 is the cfspopcon value, consistent with the Lengyel
+# calibration factor 4.3. Spitzer-Härm gives 3.06e4 / ln Λ for Z = 1, that
+# is 2000 to 2600 for ln Λ = 15 to 12.
+KAPPA0_E = 2600.0
+
+
 def f_lengyel_concentration(q_par_u, n_u, T_u_eV, T_t_eV, impurity,
-                            f_pwr_loss, kappa_e0=2600.0,
+                            f_pwr_loss, kappa_e0=KAPPA0_E,
                             lengyel_factor=4.3):
     """
     Required SOL impurity concentration for a given power-loss fraction —
@@ -3428,8 +3806,8 @@ def f_lengyel_concentration(q_par_u, n_u, T_u_eV, T_t_eV, impurity,
         f_pwr_loss_req diagnostic of f_heat_two_point).
     kappa_e0 : float, optional
         Spitzer-Härm parallel electron heat conductivity constant
-        [W m⁻¹ eV⁻⁷ᐟ²], q_∥ = −κ_e0 T^{5/2} ∇_∥T. Default 2600
-        (cfspopcon SPARC PRD reference value).
+        [W m⁻¹ eV⁻⁷ᐟ²], q_∥ = −κ_e0 T^{5/2} ∇_∥T. Default KAPPA0_E = 2600
+        (cfspopcon SPARC PRD reference value), as in f_heat_two_point.
     lengyel_factor : float, optional
         Calibration divisor C_Lengyel correcting the known systematic
         overestimation of the Lengyel model against SOLPS (Moulton et al.
@@ -4072,7 +4450,7 @@ def f_etaCD_EC_physics(a, R0, Tbar, nbar, Z_eff, nu_T, nu_n, rho_EC,
     Tbar, nbar  : float  Volume-averaged Te [keV] and ne [10^20 m^-3].
     Z_eff       : float  Effective ion charge.
     nu_T, nu_n  : float  Profile peaking exponents.
-    rho_EC      : float  Normalised EC wave deposition radius.
+    rho_EC      : float  EC wave deposition radius, volume label ρ_V.
     theta_EC_pol_deg : float  Poloidal angle of EC deposition [deg].
                               0 = outboard midplane (LFS), 180 = HFS.
     rho_ped, n_ped_frac, T_ped_frac : float  Pedestal parameters.
@@ -4080,7 +4458,10 @@ def f_etaCD_EC_physics(a, R0, Tbar, nbar, Z_eff, nu_T, nu_n, rho_EC,
 
     Returns
     -------
-    float  gamma_CD^EC  [MA / (MW m^2)].
+    float  gamma_CD^EC  [MA / (MW m^2)], normalised with the volume-averaged
+           density: I_EC = gamma P_EC / (R0 n_bar). The model gives the local
+           efficiency, with n_e at the deposition radius; it is converted
+           with n_bar / n_e(rho_EC).
 
     References
     ----------
@@ -4090,12 +4471,16 @@ def f_etaCD_EC_physics(a, R0, Tbar, nbar, Z_eff, nu_T, nu_n, rho_EC,
     Taguchi, Plasma Phys. Controlled Fusion 31 (1989) 241.
     Fisch & Boozer, Phys. Rev. Lett. 45 (1980) 720.
     """
-    # Local Te at deposition radius
-    Te_loc = max(float(f_Tprof(Tbar, nu_T, rho_EC, rho_ped, T_ped_frac,
+    # Deposition surface: rho_EC is a volume label, the local geometry is
+    # evaluated at its Miller label rho_M
+    rho_M  = float(rho_of_rho_V(rho_EC, Vprime_data))
+    Te_loc = max(float(f_Tprof(Tbar, nu_T, rho_M, rho_ped, T_ped_frac,
                                 Vprime_data)), 0.1)
+    ne_loc = float(f_nprof(nbar, nu_n, rho_M, rho_ped, n_ped_frac,
+                           Vprime_data))
 
     # Local inverse aspect ratio
-    eps = abs(rho_EC) * a / R0
+    eps = abs(rho_M) * a / R0
 
     # Poloidal angle in radians
     theta_p = np.radians(theta_EC_pol_deg)
@@ -4113,17 +4498,23 @@ def f_etaCD_EC_physics(a, R0, Tbar, nbar, Z_eff, nu_T, nu_n, rho_EC,
         G_trap = 1.0
     else:
         G_trap = 1.0 - (1.0 + rho_hat / 3.0) * sqrt2_mu ** rho_hat
+    # The fit falls below zero on the low-field side for eps above about
+    # 0.18 (Z_eff = 1.65), outside its validity. No EC current is driven
+    # there rather than a reversed one.
+    G_trap = max(G_trap, 0.0)
 
     # Factor 3: Zeff + circulating fraction (Lin-Liu GA-A24257, Eq. 34)
     f_c = _f_circ_simple(eps)
     G_Zeff = 6.0 / (1.0 + 4.0 * f_c + Z_eff)
 
-    return f_Te * G_trap * G_Zeff
+    # Local efficiency, converted to the volume-averaged density convention
+    return f_Te * G_trap * G_Zeff * nbar / max(ne_loc, 1e-6)
 
 
 # ── NBCD physics-based model (Stix/Cordey/Lin-Liu) ──────────────────────
 # Replaces the calibrated C_NBI formula. No free constant.
-# Validated against METIS zicd0.m to < 1.5% (see test_NBCD_physics.py).
+# Agrees with the IPDG89 formula used by PROCESS (etanb) within 4 % at the
+# same local T_e on three machine cases (self-test below).
 #
 # References
 # ----------
@@ -4157,20 +4548,6 @@ def _stix_critical_energy(Te_keV, A_beam, sum_nZ2_over_A):
     return max(E_c, 0.03)
 
 
-def _stix_critical_energy_gamma(Te_keV, A_beam, Z_eff):
-    """
-    Modified critical energy for current-drive efficiency [keV].
-
-        E_{c,gamma} = 14.8 * T_e * (2 sqrt(A_b) Z_eff)^{2/3}
-
-    References
-    ----------
-    METIS zicd0.m, l.783-813 (Artaud et al. 2018).
-    """
-    E_c_g = 14.8 * Te_keV * (2.0 * np.sqrt(A_beam) * Z_eff)**(2.0 / 3.0)
-    return max(E_c_g, 0.03)
-
-
 def _slowing_down_time(Te_keV, ne_20, A_beam, lnL):
     """
     Spitzer slowing-down time on electrons [s].
@@ -4186,25 +4563,40 @@ def _slowing_down_time(Te_keV, ne_20, A_beam, lnL):
     return 6.27e14 * A_beam * Te_eV**1.5 / (ne * lnL)
 
 
-def _cordey_velocity_integral(v_0, v_c, v_g):
+def _cordey_velocity_integral(v_0, v_c, p):
     """
     Slowing-down-averaged beam current integral [m/s].
 
-    Numerically evaluates the Cordey (1979) velocity-space integral.
-    Replaces the sqrt(E_b/A_b) approximation of the old C_NBI formula.
+    A beam ion born at v_0 with pitch xi_0 slows down as
+    dv/dt = -(v³ + v_c³)/(tau_s v²) while its mean pitch decays as
+    [v³ (v_0³ + v_c³) / (v_0³ (v³ + v_c³))]^p. Its time-integrated
+    parallel velocity is xi_0 tau_s v_eff, with
+
+        v_eff = v_c ((v_0³ + v_c³)/v_0³)^p ∫₀^{x_0} (x³/(1 + x³))^{1+p} dx,
+
+    x = v/v_c and x_0 = v_0/v_c. The integral is evaluated with x = x_0 u,
+    whose Jacobian is the constant x_0. v_eff tends to v_0 when v_c → 0.
+
+    Parameters
+    ----------
+    v_0 : float  Injection velocity [m/s].
+    v_c : float  Critical velocity [m/s].
+    p   : float  Pitch-decay exponent [-] (see f_etaCD_NBI_physics).
+
+    Returns
+    -------
+    float  v_eff [m/s], capped at v_0.
 
     References
     ----------
     Cordey, Jones & Start, Nucl. Fusion 19 (1979) 249.
-    METIS zicd0.m, l.892-897.
     """
-    ev = 1.0 + 2.0 * (v_g / v_c)**3 / 3.0
     x0 = v_0 / v_c
     u  = np.linspace(0.0, 1.0, 501)
     xu = x0 * u
-    integrand = xu * (xu**3 / (1.0 + xu**3))**ev
+    integrand = x0 * (xu**3 / (1.0 + xu**3))**(1.0 + p)
     F_int = np.trapezoid(integrand, u)
-    prefactor = v_c * ((v_0**3 + v_c**3) / v_0**3)**(ev - 1.0)
+    prefactor = v_c * ((v_0**3 + v_c**3) / v_0**3)**p
     return min(prefactor * F_int, v_0)
 
 
@@ -4276,7 +4668,15 @@ def f_etaCD_NBI_physics(A_beam, E_beam_keV, a, R0, Tbar, nbar, Z_eff,
     Stix critical energy, NRL slowing-down time, Cordey velocity integral,
     Lin-Liu trapped-particle correction.
 
-    Validated against METIS zicd0.m to < 1.5% (see test_NBCD_physics.py).
+    The pitch of a beam ion decays by deflection on the ions while its
+    speed decays by drag on electrons and ions. The decay exponent of the
+    Cordey integral is p = Z_eff / (3 A_b <Z²/A>), with <Z²/A> =
+    sum(n_i Z_i²/A_i)/n_e, the ratio of the deflection rate on ions to the
+    ion drag (NRL rates, test-particle derivation). The IPDG89 formula
+    uses 0.8 Z_eff/A_b (PROCESS etanb), within 4 % for D-T.
+
+    The efficiency is local (T_e and n_e at the deposition radius). It is
+    returned normalised with the volume-averaged density.
 
     Parameters
     ----------
@@ -4286,7 +4686,7 @@ def f_etaCD_NBI_physics(A_beam, E_beam_keV, a, R0, Tbar, nbar, Z_eff,
     Tbar, nbar    : float  Vol-averaged T_e [keV] and n_e [10^20 m^-3].
     Z_eff         : float  Effective ion charge.
     nu_T, nu_n    : float  Temperature / density peaking exponents.
-    rho_NBI       : float  Normalised deposition radius.
+    rho_NBI       : float  Deposition radius, volume label ρ_V.
     f_alpha       : float  Helium ash fraction n_He/n_e (default 0.04).
     angle_NBI_deg : float  Injection angle from tangential [deg] (default 20).
     rho_ped, n_ped_frac, T_ped_frac : float  Pedestal parameters.
@@ -4295,7 +4695,8 @@ def f_etaCD_NBI_physics(A_beam, E_beam_keV, a, R0, Tbar, nbar, Z_eff,
 
     Returns
     -------
-    float  gamma_CD [MA/(MW m^2)].
+    float  gamma_CD [MA/(MW m^2)], normalised with the volume-averaged
+           density: I_NBI = gamma P_NBI / (R0 n_bar).
 
     References
     ----------
@@ -4303,38 +4704,41 @@ def f_etaCD_NBI_physics(A_beam, E_beam_keV, a, R0, Tbar, nbar, Z_eff,
     Cordey, Jones & Start, Nucl. Fusion 19 (1979) 249.
     Lin-Liu & Hinton, Phys. Plasmas 4 (1997) 4179.
     Artaud et al., Nucl. Fusion 58 (2018) 105001.
+    Uckan et al., ITER Physics Design Guidelines 1989, IAEA/ITER/DS/10
+    (1990): IPDG89 formula, as implemented in PROCESS (etanb).
     """
-    # Local plasma at deposition point
-    Te_keV = max(float(f_Tprof(Tbar, nu_T, rho_NBI, rho_ped,
+    # Deposition surface: rho_NBI is a volume label, the local geometry
+    # (trapped fraction, epsilon) is evaluated at its Miller label rho_M
+    rho_M  = float(rho_of_rho_V(rho_NBI, Vprime_data))
+    Te_keV = max(float(f_Tprof(Tbar, nu_T, rho_M, rho_ped,
                                 T_ped_frac, Vprime_data)), 0.1)
-    ne_20  = float(f_nprof(nbar, nu_n, rho_NBI, rho_ped,
+    ne_20  = float(f_nprof(nbar, nu_n, rho_M, rho_ped,
                             n_ped_frac, Vprime_data))
 
     lnL = _ln_Lambda_CD(Te_keV, ne_20)
 
-    # Ion composition and critical energies
+    # Ion composition, critical energy and pitch-decay exponent
     sum_nZ2A  = _sum_nZ2_over_A(f_alpha, Z_eff, fuel)
     E_c_slow  = _stix_critical_energy(Te_keV, A_beam, sum_nZ2A)
-    E_c_gamma = _stix_critical_energy_gamma(Te_keV, A_beam, Z_eff)
+    p_pitch   = Z_eff / (3.0 * A_beam * sum_nZ2A)
 
     # Velocities [m/s]  (M_I = 2*m_p in D0FUS, so M_I/2 = m_p)
     keV_to_J = 1.0e3 * E_ELEM
     m_proton = M_I / 2.0
     v_0 = np.sqrt(2.0 * E_beam_keV * keV_to_J / (A_beam * m_proton))
     v_c = np.sqrt(2.0 * E_c_slow   * keV_to_J / (A_beam * m_proton))
-    v_g = np.sqrt(2.0 * E_c_gamma  * keV_to_J / (A_beam * m_proton))
 
     # Cordey velocity integral
-    v_eff = _cordey_velocity_integral(v_0, v_c, v_g)
+    v_eff = _cordey_velocity_integral(v_0, v_c, p_pitch)
 
     # Lin-Liu trapped-particle correction
-    f_trap  = _f_trap_CD(rho_NBI, a, R0)
+    f_trap  = _f_trap_CD(rho_M, a, R0)
     GZ      = _linliu_GZ(f_trap, Z_eff)
     cd_corr = 1.0 - (1.0 - GZ) / Z_eff
 
     # Orbit screening
     pitch   = np.cos(np.radians(angle_NBI_deg))
-    eps_loc = rho_NBI * a / R0
+    eps_loc = rho_M * a / R0
     fi_trap = _orbit_trapping_screening(abs(pitch), eps_loc)
 
     # Density-independent assembly (tau_s * n_e cancels):
@@ -4346,76 +4750,90 @@ def f_etaCD_NBI_physics(A_beam, E_beam_keV, a, R0, Tbar, nbar, Z_eff,
     gamma = (tau_n * E_ELEM * abs(pitch) * v_eff
              * cd_corr * fi_trap / (E_b_J * 2.0 * np.pi))
 
-    return gamma / 1.0e20
+    # Local efficiency (n_e at deposition), converted to the volume-averaged
+    # density convention of the callers
+    return gamma / 1.0e20 * nbar / max(ne_20, 1e-6)
 
 
 if __name__ == "__main__":
-    # ── Published anchors - NBCD physics model vs METIS ──────────────────
-    # Expected values from the METIS zicd0.m benchmark
-    # (test_NBCD_physics.py). Tolerance 2 % (lnLambda formula difference,
-    # NRL vs METIS). Perpendicular injection must drive zero current.
+    # ── Cross-checks - NBCD physics model ────────────────────────────────
+    # (i) Cordey integral against the test-particle ODE: dv/dt =
+    # -(v^3 + 1)/v^2 and d<xi>/dt = -3p <xi>/v^3 (v in units of v_c, t in
+    # tau_s), integrated from x0 until the ion has stopped.
+    # (ii) gamma_NBI against the IPDG89 formula (Uckan et al. 1990, as in
+    # PROCESS etanb: x^2 = E_b/(10 A_b T_e), y = 0.8 Z_eff/A_b, epseff =
+    # 0.5/A, no profile factor), at the same local T_e and with a flat
+    # density so that the local and averaged conventions coincide.
+    # IPDG89 is itself a fit of the Cordey model: this is a consistency
+    # check of the implementation, tolerance 5 %. Perpendicular injection
+    # must drive zero current.
+    from scipy.integrate import solve_ivp as _solve_ivp
+
+    def _F_ode(_x0, _p):
+        def _rhs(_t, _y):
+            _v = max(_y[0], 1e-9)
+            return [-(_v**3 + 1.0) / _v**2, -3.0 * _p / _v**3 * _y[1],
+                    _v * _y[1]]
+        _stop = lambda _t, _y: _y[0] - 1e-4
+        _stop.terminal = True
+        _s = _solve_ivp(_rhs, [0.0, 50.0], [_x0, 1.0, 0.0], events=_stop,
+                        rtol=1e-10, atol=1e-12, method='LSODA')
+        return float(_s.y[2, -1])
+
+    _rows = [(f"v_eff/v_c, x0 = {_x0}, p = {_p}",
+              _cordey_velocity_integral(_x0, 1.0, _p), _F_ode(_x0, _p), 1e-3,
+              "test-particle ODE")
+             for _x0, _p in ((0.6, 0.6), (1.75, 0.65), (3.0, 2.0))]
+
+    def _ipdg89(A_beam, E_beam_keV, a, R0, Te, Z_eff):
+        _xs = E_beam_keV / (10.0 * A_beam * Te)
+        _y = 0.8 * Z_eff / A_beam
+        _J0 = _xs / (4.0 + 3.0 * _y + _xs * (np.sqrt(_xs) + 1.39
+                                              + 0.61 * _y**0.7))
+        _eps = 0.5 * a / R0
+        _G = ((1.55 + 0.85 / Z_eff) * np.sqrt(_eps)
+              - (0.2 + 1.55 / Z_eff) * _eps)
+        _abd = 0.107 * (1.0 - 0.2e-3 * E_beam_keV + 0.09e-6 * E_beam_keV**2)
+        return _abd * 5.0 * 0.1 * Te * _J0 / 0.2 * (1.0 - (1.0 - _G) / Z_eff)
+
     _nbcd_cases = [
-        ("ITER 1 MeV D", 0.3336, dict(A_beam=2, E_beam_keV=1000, a=2.0, R0=6.2,
+        ("ITER 1 MeV D", dict(A_beam=2, E_beam_keV=1000, a=2.0, R0=6.2,
                               Tbar=8.9, nbar=1.0, Z_eff=1.65, nu_T=1.5,
-                              nu_n=0.3, rho_NBI=0.3, f_alpha=0.04,
+                              nu_n=0.0, rho_NBI=0.3, f_alpha=0.04,
                               angle_NBI_deg=20.0)),
-        ("ARC 150 keV D", 0.1147, dict(A_beam=2, E_beam_keV=150, a=1.13,
-                              R0=3.3, Tbar=14.0, nbar=1.8, Z_eff=1.5,
-                              nu_T=1.2, nu_n=0.5, rho_NBI=0.4, f_alpha=0.06,
-                              angle_NBI_deg=25.0)),
-        ("EU-DEMO 1 MeV", 0.4006, dict(A_beam=2, E_beam_keV=1000, a=2.88,
-                              R0=9.07, Tbar=12.0, nbar=0.8, Z_eff=1.6,
-                              nu_T=1.5, nu_n=0.3, rho_NBI=0.3, f_alpha=0.05,
-                              angle_NBI_deg=20.0)),
+        ("ARC 150 keV D", dict(A_beam=2, E_beam_keV=150, a=1.13,
+                               R0=3.3, Tbar=14.0, nbar=1.8, Z_eff=1.5,
+                               nu_T=1.2, nu_n=0.0, rho_NBI=0.4, f_alpha=0.06,
+                               angle_NBI_deg=25.0)),
+        ("EU-DEMO 1 MeV", dict(A_beam=2, E_beam_keV=1000, a=2.88,
+                               R0=9.07, Tbar=12.0, nbar=0.8, Z_eff=1.6,
+                               nu_T=1.5, nu_n=0.0, rho_NBI=0.3, f_alpha=0.05,
+                               angle_NBI_deg=20.0)),
     ]
-    _rows = [(f"gamma_NBI {_nm}", f_etaCD_NBI_physics(**_kw), _ref, 0.02,
-              "METIS zicd0.m")
-             for _nm, _ref, _kw in _nbcd_cases]
+    for _nm, _kw in _nbcd_cases:
+        _Te = max(float(f_Tprof(_kw['Tbar'], _kw['nu_T'], _kw['rho_NBI'])),
+                  0.1)
+        _rows.append((f"gamma_NBI {_nm}", f_etaCD_NBI_physics(**_kw),
+                      _ipdg89(_kw['A_beam'], _kw['E_beam_keV'], _kw['a'],
+                              _kw['R0'], _Te, _kw['Z_eff']), 0.05,
+                      "IPDG89 (PROCESS)"))
     _g_perp = f_etaCD_NBI_physics(2, 500, 2.0, 6.2, 10.0, 1.0, 1.65,
                                   1.5, 0.3, 0.3, angle_NBI_deg=90.0)
     _rows.append(("gamma_NBI perpendicular limit", float(_g_perp),
                   (-1e-6, 1e-6), 1, "physics limit"))
-    _bench("Published anchors - NBCD (Stix/Cordey/Lin-Liu) vs METIS", _rows)
+    _bench("Cross-checks - NBCD (Stix/Cordey/Lin-Liu)", _rows)
 
 if __name__ == "__main__":
-    # ── Published anchors - ECCD physics model vs METIS ──────────────────
-    # The formula is identical to METIS zicd0.m lhmode = 5 (Giruzzi 1987 +
-    # Lin-Liu trapped-particle correction): the reference is re-evaluated
-    # inline at the same local T_e, so the agreement must hold to machine
-    # precision. Physics ordering: HFS > top > LFS > 0.
-    _ec_cases = [
-        ("ITER HFS 160 deg", 160.0, dict(a=2.0, R0=6.2, Tbar=8.9, nbar=1.0,
-                                         Z_eff=1.65, nu_T=1.0, nu_n=0.3,
-                                         rho_EC=0.3)),
-        ("ITER LFS 0 deg", 0.0, dict(a=2.0, R0=6.2, Tbar=8.9, nbar=1.0,
-                                     Z_eff=1.65, nu_T=1.0, nu_n=0.3,
-                                     rho_EC=0.3)),
-        ("ITER top 90 deg", 90.0, dict(a=2.0, R0=6.2, Tbar=8.9, nbar=1.0,
-                                       Z_eff=1.65, nu_T=1.0, nu_n=0.3,
-                                       rho_EC=0.3)),
-        ("EU-DEMO HFS 160 deg", 160.0, dict(a=2.88, R0=9.07, Tbar=12.0,
-                                            nbar=0.8, Z_eff=1.6, nu_T=1.5,
-                                            nu_n=0.3, rho_EC=0.3)),
-    ]
+    # ── Physics checks - ECCD model ──────────────────────────────────────
+    # No independent reference is available: the checks are the ordering
+    # HFS > top > LFS > 0 and a zero current, not a reversed one, where the
+    # Giruzzi trapping fit falls below zero (LFS, eps = 0.25).
     _rows = []
-    _g_by_case = {}
-    for _nm, _theta, _kw in _ec_cases:
-        _g = f_etaCD_EC_physics(**_kw, theta_EC_pol_deg=_theta)
-        _g_by_case[_nm] = _g
-        # METIS reference evaluated inline at the same local T_e
-        _Te_loc = max(float(f_Tprof(_kw['Tbar'], _kw['nu_T'], _kw['rho_EC'])),
-                      0.1)
-        _eps = abs(_kw['rho_EC']) * _kw['a'] / _kw['R0']
-        _theta_r = np.radians(_theta)
-        _mut = np.sqrt(max(_eps * (1 + np.cos(_theta_r))
-                           / max(1 + _eps * np.cos(_theta_r), 1e-10), 0.0))
-        _rh = (5.0 + _kw['Z_eff']) / (1.0 + _kw['Z_eff'])
-        _s2m = np.sqrt(2.0) * _mut
-        _Gt = 1.0 - (1.0 + _rh / 3.0) * _s2m ** _rh if _s2m > 1e-12 else 1.0
-        _fc = 1.0 - np.sqrt(2.0 * _eps / (1.0 + _eps))
-        _g_metis = (_Te_loc / (_Te_loc + 100.0) * _Gt
-                    * 6.0 / (1.0 + 4.0 * _fc + _kw['Z_eff']))
-        _rows.append((f"gamma_EC {_nm}", _g, _g_metis, 1e-9, "METIS zicd0.m"))
+    _g_trap_lfs = f_etaCD_EC_physics(a=2.0, R0=6.2, Tbar=8.9, nbar=1.0,
+                                     Z_eff=1.65, nu_T=1.0, nu_n=0.3,
+                                     rho_EC=0.775, theta_EC_pol_deg=0.0)
+    _rows.append(("gamma_EC LFS, eps = 0.25 (floored)", _g_trap_lfs,
+                  (0.0, 1e-12), 1, "fit validity"))
     _g_hfs = f_etaCD_EC_physics(a=2.0, R0=6.2, Tbar=8.9, nbar=1.0, Z_eff=1.65,
                                 nu_T=1.0, nu_n=0.3, rho_EC=0.3,
                                 theta_EC_pol_deg=180.0)
@@ -4429,11 +4847,11 @@ if __name__ == "__main__":
                   (1.0 + 1e-9, 100.0), 1, "trapping physics"))
     _rows.append(("ordering gamma_top/gamma_LFS", _g_top / _g_lfs,
                   (1.0 + 1e-9, 100.0), 1, "trapping physics"))
-    _bench("Published anchors - ECCD (Giruzzi/Lin-Liu) vs METIS", _rows)
+    _bench("Physics checks - ECCD (Giruzzi/Lin-Liu)", _rows)
 
-def f_etaCD_effective(config, a, R0, B0, nbar, Tbar, nu_n, nu_T, Z_eff,
-                      rho_ped=1.0, n_ped_frac=0.0, T_ped_frac=0.0,
-                      Vprime_data=None):
+def f_etaCD_effective(config, a, R0, B0, nbar, Tbar, nu_n, nu_T, Z_eff, *,
+                      f_alpha, rho_ped=1.0, n_ped_frac=0.0, T_ped_frac=0.0,
+                      Vprime_data=None, rho_EC=None, rho_NBI=None):
     """
     Effective CD figure of merit γ_CD [MA/(MW·m²)] for the active heating mix.
 
@@ -4454,10 +4872,15 @@ def f_etaCD_effective(config, a, R0, B0, nbar, Tbar, nu_n, nu_T, Z_eff,
 
        The technology-specific branches (``'LHCD'``, ``'ECCD'``, ``'NBCD'``,
        ``'Multi'``) follow the METIS efficiency models (Giruzzi ECCD,
-       Stix–Cordey NBCD, LH n_∥ model) and match METIS to within 1.5 % on
-       three machine cases (ITER 1 MeV D, ARC 150 keV D, EU-DEMO 1 MeV D;
-       thesis, current-drive appendix). ``'Academic'`` remains the
-       recommended default for scans and quick studies.
+       Stix–Cordey NBCD, LH n_∥ model). The NBCD efficiency agrees with
+       the IPDG89 formula used by PROCESS within 4 % on three machine
+       cases (ITER 1 MeV D, ARC 150 keV D, EU-DEMO 1 MeV D). ECCD has no
+       independent check. ``'Academic'`` remains the recommended default
+       for scans and quick studies.
+
+    The NBCD and ECCD efficiencies are local and are returned normalised
+    with the volume-averaged density, so that every source follows
+    I = γ P / (R₀ n̄).
 
     For ``'Multi'``, the effective γ is:
 
@@ -4478,10 +4901,16 @@ def f_etaCD_effective(config, a, R0, B0, nbar, Tbar, nu_n, nu_T, Z_eff,
     Tbar    : float  Volume-averaged electron temperature [keV].
     nu_n, nu_T : float  Density and temperature peaking exponents.
     Z_eff   : float  Effective plasma charge.
+    f_alpha : float  Helium ash fraction n_He/n_e [-], keyword only. Enters
+                     the NBI slowing-down through the ion composition.
     rho_ped, n_ped_frac, T_ped_frac : float  Pedestal parameters.
     Vprime_data : tuple or None  Miller volume element used for nbar, Tbar,
                   so that the local T_e and n_e at deposition share their
                   normalisation.
+    rho_EC, rho_NBI : float or None  Deposition radii, volume labels rho_V.
+                  None: config.rho_EC and config.rho_NBI, given in rho_tor,
+                  used as is (exact in Academic geometry). run() passes the
+                  converted labels.
 
     Returns
     -------
@@ -4493,6 +4922,8 @@ def f_etaCD_effective(config, a, R0, B0, nbar, Tbar, nu_n, nu_T, Z_eff,
     Ehst & Karney, Nucl. Fusion 31 (1991) 1933.
     """
     CD_source = config.CD_source
+    rho_EC = config.rho_EC if rho_EC is None else rho_EC
+    rho_NBI = config.rho_NBI if rho_NBI is None else rho_NBI
 
     if CD_source == 'Academic':
         # Technology-agnostic mode: return the user-specified fixed γ_CD.
@@ -4504,7 +4935,7 @@ def f_etaCD_effective(config, a, R0, B0, nbar, Tbar, nu_n, nu_T, Z_eff,
 
     elif CD_source == 'ECCD':
         return f_etaCD_EC_physics(a, R0, Tbar, nbar, Z_eff, nu_T, nu_n,
-                          config.rho_EC,
+                          rho_EC,
                           theta_EC_pol_deg=config.theta_EC_pol_deg,
                           rho_ped=rho_ped, n_ped_frac=n_ped_frac,
                           T_ped_frac=T_ped_frac, Vprime_data=Vprime_data)
@@ -4513,8 +4944,8 @@ def f_etaCD_effective(config, a, R0, B0, nbar, Tbar, nu_n, nu_T, Z_eff,
         return f_etaCD_NBI_physics(
             config.A_beam, config.E_beam_keV,
             a, R0, Tbar, nbar, Z_eff, nu_T, nu_n,
-            config.rho_NBI,
-            f_alpha=getattr(config, '_f_alpha', 0.04),
+            rho_NBI,
+            f_alpha=f_alpha,
             angle_NBI_deg=config.angle_NBI_deg,
             rho_ped=rho_ped, n_ped_frac=n_ped_frac,
             T_ped_frac=T_ped_frac, Vprime_data=Vprime_data,
@@ -4525,15 +4956,15 @@ def f_etaCD_effective(config, a, R0, B0, nbar, Tbar, nu_n, nu_T, Z_eff,
         # Individual efficiencies
         gamma_LH  = f_etaCD_LH_physics(Tbar, Z_eff)
         gamma_EC  = f_etaCD_EC_physics(a, R0, Tbar, nbar, Z_eff, nu_T, nu_n,
-                                config.rho_EC,
+                                rho_EC,
                                 theta_EC_pol_deg=config.theta_EC_pol_deg,
                                 rho_ped=rho_ped, n_ped_frac=n_ped_frac,
                                 T_ped_frac=T_ped_frac, Vprime_data=Vprime_data)
         gamma_NBI = f_etaCD_NBI_physics(
                         config.A_beam, config.E_beam_keV,
                         a, R0, Tbar, nbar, Z_eff, nu_T, nu_n,
-                        config.rho_NBI,
-                        f_alpha=getattr(config, '_f_alpha', 0.04),
+                        rho_NBI,
+                        f_alpha=f_alpha,
                         angle_NBI_deg=config.angle_NBI_deg,
                         rho_ped=rho_ped, n_ped_frac=n_ped_frac,
                         T_ped_frac=T_ped_frac, Vprime_data=Vprime_data,
@@ -4592,6 +5023,9 @@ def f_CD_breakdown(config, P_CD_total, R0, nbar,
     For single-source modes (``CD_source`` ∈ {'LHCD', 'ECCD', 'NBCD'}):
         The full P_CD_total is assigned to that source; all others are zero.
 
+    For ``CD_source = 'Academic'``:
+        No per-source breakdown. All powers and currents are zero.
+
     For ``CD_source = 'Multi'``:
         Powers are split in proportion to the heating fractions
         (f_heat_LH, f_heat_EC, f_heat_NBI, f_heat_ICR) after normalisation.
@@ -4620,10 +5054,10 @@ def f_CD_breakdown(config, P_CD_total, R0, nbar,
     CD_source = config.CD_source
 
     if CD_source == 'Academic':
-        # Technology-agnostic: all power is generic auxiliary heating.
-        # Mapped to P_LH slot for output-tuple compatibility; no physical
-        # significance — per-source breakdown is meaningless in this mode.
-        P_LH, P_EC, P_NBI, P_ICR = P_CD_total, 0.0, 0.0, 0.0
+        # Technology-agnostic: the driven current follows from gamma_CD_acad
+        # and there is no per-source breakdown. Every source is left at zero,
+        # so that no source current differs from I_CD.
+        P_LH, P_EC, P_NBI, P_ICR = 0.0, 0.0, 0.0, 0.0
 
     elif CD_source == 'LHCD':
         P_LH, P_EC, P_NBI, P_ICR = P_CD_total, 0.0, 0.0, 0.0
@@ -4752,7 +5186,7 @@ if __name__ == "__main__":
                                     rho_ped=_kwq['rho_ped'],
                                     n_ped_frac=_kwq['n_ped_frac'],
                                     T_ped_frac=_kwq['T_ped_frac'])
-    # Part B: chain evaluation at the deck point (Tbar = 7.754 keV,
+    # Part B: chain evaluation at the deck point (Tbar = 8.612 keV,
     # rho_EC = 0.40 for NTM control, rho_NBI = 0.30, 1 MeV D, 20 deg).
     _eLH = f_etaCD_LH_physics(ITER['Tbar'], ITER['Zeff'])
     _eEC = f_etaCD_EC_physics(ITER['a'], ITER['R0'], ITER['Tbar'],
@@ -4760,7 +5194,8 @@ if __name__ == "__main__":
                               ITER['nu_n'], ITER['rho_EC'],
                               rho_ped=ITER['rho_ped'],
                               n_ped_frac=ITER['n_ped_frac'],
-                              T_ped_frac=ITER['T_ped_frac'])
+                              T_ped_frac=ITER['T_ped_frac'],
+                              Vprime_data=ITER_Vpd)
     _eNBI = f_etaCD_NBI_physics(ITER['A_beam'], ITER['E_beam_keV'], ITER['a'],
                                 ITER['R0'], ITER['Tbar'], ITER['nbar'],
                                 ITER['Zeff'], ITER['nu_T'], ITER['nu_n'],
@@ -4768,7 +5203,8 @@ if __name__ == "__main__":
                                 angle_NBI_deg=ITER['angle_NBI_deg'],
                                 rho_ped=ITER['rho_ped'],
                                 n_ped_frac=ITER['n_ped_frac'],
-                                T_ped_frac=ITER['T_ped_frac'])
+                                T_ped_frac=ITER['T_ped_frac'],
+                                Vprime_data=ITER_Vpd)
     _IEC = f_I_CD(ITER['R0'], ITER['nbar'], _eEC, ITER['P_ECRH'])
     _INBI = f_I_CD(ITER['R0'], ITER['nbar'], _eNBI, ITER['P_NBI'])
     _ICD = _IEC + _INBI            # ICRH drives no current (gamma_ICR = 0)
@@ -4792,7 +5228,7 @@ if __name__ == "__main__":
     ], notes=[
         "Chain efficiencies are lower than the PIPB-point values because "
         "the deck deposits EC off-axis (rho = 0.40, NTM control) at the "
-        "solved Tbar = 7.75 keV.",
+        "chain Tbar = 8.61 keV.",
         "Current budget context (Eriksson et al., NF 64 (2024) 126033): "
         "inductive ~10 MA, non-inductive ~5 MA with bootstrap dominant.",
     ])
@@ -4890,188 +5326,188 @@ def f_P_wall(P_rad, S_wall):
     """
     return P_rad / S_wall
 
-def P_Thresh_Martin(nbar, B0, a, R0, kappa, M_ion):
+def P_Thresh_Martin(nbar, B0, S, M_ion):
     """
-    L-H transition power threshold — Martin et al. (2008).
-
-    Empirical multi-machine power-law regression from the ITPA H-mode database
-    (2008 update), with the plasma surface area exponent free and the ion mass
-    exponent fixed to 1:
+    L-H transition power threshold — Martin et al. (2008), ITPA 2008.
 
         P_LH = 0.0488 × (2/M) × n̄^{0.717} × B₀^{0.803} × S^{0.941}
 
-    where S = 2πR₀ × P_e is the plasma surface area [m²], with P_e the
-    Ramanujan ellipse perimeter (semi-axes a and κa).
-
-    This is the ITER baseline L-H scaling.  Uncertainty: RMSE ~ 30 %.
-    ITER Q=10 prediction: ~85 MW (95 % CI: 45–160 MW).
-
-    Parameters
-    ----------
-    nbar : float  Line-averaged electron density [10²⁰ m⁻³].
-    B0 : float  On-axis magnetic field [T].
-    a, R0, kappa : float  Minor radius [m], major radius [m], elongation.
-    M_ion : float  Main ion atomic mass [AMU] (DT: 2.5).
-
-    Returns
-    -------
-    float  L-H power threshold [MW].
-
-    References
-    ----------
-    Martin et al., J. Phys.: Conf. Ser. 123 (2008) 012033.
-    """
-    S = 2.0 * np.pi * R0 * _ramanujan_perimeter(a, kappa * a)
-    return 0.0488 * (2.0 / M_ion) * nbar**0.717 * B0**0.803 * S**0.941
-
-
-def P_Thresh_New_S(nbar, B0, a, R0, kappa, M_ion):
-    """
-    L-H transition threshold — Delabie (ITPA 2017), surface-area regression.
-
-    Updated regression on the 2017 ITPA database with S exponent fixed to 1
-    and ion mass exponent free (fitted: 0.96):
-
-        P_LH = 0.045 × C_div × (2/M)^{0.96} × n̄^{1.08} × B₀^{0.56} × S
-
-    C_div = 1.0 for standard lower single-null divertor;
-    C_div = 1.93 for upper-null or corner configurations.
-
-    RMSE ~ 26 %.
-
-    Parameters
-    ----------
-    nbar, B0, a, R0, kappa, M_ion : float  (see P_Thresh_Martin).
-
-    Returns
-    -------
-    float  L-H power threshold [MW].
-
-    References
-    ----------
-    Delabie, ITPA TC-26 (2017) — unpublished internal report.
-    """
-    S     = 2.0 * np.pi * R0 * _ramanujan_perimeter(a, kappa * a)
-    C_div = 1.0
-    return 0.045 * C_div * (2.0 / M_ion)**0.96 * nbar**1.08 * B0**0.56 * S
-
-
-def P_Thresh_New_Ip(nbar, B0, a, R0, kappa, Ip, M_ion):
-    """
-    L-H transition threshold — Delabie (ITPA 2017), Ip/a regression.
-
-    Alternative regression replacing B₀ with Ip/a as the current-related
-    variable, reducing scatter (RMSE ~ 21 %):
-
-        P_LH = 0.049 × (2/M) × n̄^{1.06} × (Ip/a)^{0.65} × S
-
-    Parameters
-    ----------
-    nbar, B0, a, R0, kappa, M_ion : float  (see P_Thresh_Martin).
-    Ip : float  Plasma current [MA].
-
-    Returns
-    -------
-    float  L-H power threshold [MW].
-
-    References
-    ----------
-    Delabie, ITPA TC-26 (2017) — unpublished internal report.
-    """
-    S = 2.0 * np.pi * R0 * _ramanujan_perimeter(a, kappa * a)
-    return 0.049 * (2.0 / M_ion) * nbar**1.06 * (Ip / a)**0.65 * S
-
-
-def f_P_thresh(nbar, B0, a, R0, kappa, M_ion, Ip=None,
-               Option_PLH='Martin'):
-    """
-    L-H transition power threshold — unified dispatcher.
-
-    Selects among the three available scaling laws via `Option_PLH`.
-    This mirrors the `f_Get_parameter_scaling_law` pattern used for τ_E.
+    Deuterium fit on the 2008 multi-machine database, mostly carbon walls.
+    The 2/M factor extends it to other isotopes. RMSE 0.31 (Delabie et al.
+    2026, Table 4). ITER in deuterium, S = 680 m²: 52.3 MW at 0.5 and
+    86.0 MW at 1.0 × 10²⁰ m⁻³ (same paper, Table 5).
 
     Parameters
     ----------
     nbar  : float  Line-averaged electron density [10²⁰ m⁻³].
     B0    : float  On-axis toroidal field [T].
-    a     : float  Minor radius [m].
-    R0    : float  Major radius [m].
-    kappa : float  Plasma elongation at the LCFS [-].
-    M_ion : float  Main ion atomic mass [AMU] (D-T: 2.5).
-    Ip    : float or None
-        Plasma current [MA].  Required only for Option_PLH='New_Ip';
-        a ValueError is raised if None is passed with that option.
-    Option_PLH : str, optional
-        Scaling law selector (default 'Martin'):
-        'Martin'  — Martin et al. (2008).  ITER baseline, RMSE ~ 30 %.
-        'New_S'   — Delabie ITPA (2017), surface-area regression, RMSE ~ 26 %.
-        'New_Ip'  — Delabie ITPA (2017), Ip/a regression, RMSE ~ 21 %.
+    S     : float  Area of the last closed flux surface [m²].
+    M_ion : float  Effective main-ion mass [AMU] (D-T: 2.5).
 
     Returns
     -------
-    float  L-H transition power threshold [MW].
+    float  L-H power threshold [MW].
 
     References
     ----------
     Martin et al., J. Phys.: Conf. Ser. 123 (2008) 012033.
-    Delabie, ITPA TC-26 (2017).
+    """
+    return 0.0488 * (2.0 / M_ion) * nbar**0.717 * B0**0.803 * S**0.941
+
+
+# Divertor factor D of the ITPA TC-26 scalings (Delabie et al., NF 66
+# (2026) 036016, Table 4). D = 1 for a horizontal-target-like divertor
+# (JET HT, AUG, C-Mod). The values below are fitted on JET vertical-target
+# and corner configurations. The authors advise using them as the maximum
+# uncertainty range of a prediction, not as a configuration choice.
+TC26_D_VT = {'TC26_Bt': 1.93, 'TC26_Bpol': 1.67}
+
+
+def P_Thresh_TC26_Bt(nbar, B0, S, M_ion, D=1.0):
+    """
+    L-H transition power threshold — ITPA TC-26 metal-wall scaling with the
+    toroidal field, Delabie et al. (2026), Eq. 5.
+
+        P_LH = 0.0441 × S × B₀^{0.580} × n̄^{1.08} × (2/M)^{0.975} × D
+
+    Baseline scaling of the paper, RMSE 0.24. D = 1 gives the nominal
+    threshold, D = TC26_D_VT['TC26_Bt'] = 1.93 the upper bound of the
+    divertor-configuration uncertainty. Valid on the high-density branch
+    only, above the density of minimum threshold. ITER in deuterium,
+    S = 680 m²: 38.1 MW at 0.5 and 80.3 MW at 1.0 × 10²⁰ m⁻³ (Table 5,
+    computed with unrounded coefficients: the rounded ones give 2 % less).
+
+    Parameters
+    ----------
+    nbar, B0, S, M_ion : float  (see P_Thresh_Martin).
+    D : float  Divertor factor [-], 1 (nominal) to 1.93.
+
+    Returns
+    -------
+    float  L-H power threshold [MW].
+
+    References
+    ----------
+    Delabie et al., Nucl. Fusion 66 (2026) 036016, Eq. 5 and Table 4.
+    """
+    return 0.0441 * S * B0**0.580 * nbar**1.08 * (2.0 / M_ion)**0.975 * D
+
+
+def P_Thresh_TC26_Bpol(nbar, Ip, R0, S, M_ion, D=1.0):
+    """
+    L-H transition power threshold — ITPA TC-26 metal-wall scaling with the
+    separatrix poloidal field, Delabie et al. (2026), Table 4.
+
+        P_LH  = 0.166 × S × B_pol^{0.631} × n̄^{1.07} × (2/M)^{1.01} × D
+        B_pol = 2π μ₀ I_p R₀ / S
+
+    Lowest RMSE of the paper (0.19), with D = 1 to 1.67. The paper does
+    not recommend it for extrapolation: the ITER current and surface lie
+    outside the database, and the B_pol dependence raises the ITER
+    threshold. ITER in deuterium, S = 680 m², I_p = 15 MA: 56.0 MW at
+    0.5 and 117 MW at 1.0 × 10²⁰ m⁻³ (Table 5).
+
+    Parameters
+    ----------
+    nbar, S, M_ion : float  (see P_Thresh_Martin).
+    Ip : float  Plasma current [MA].
+    R0 : float  Major radius [m].
+    D  : float  Divertor factor [-], 1 (nominal) to 1.67.
+
+    Returns
+    -------
+    float  L-H power threshold [MW].
+
+    References
+    ----------
+    Delabie et al., Nucl. Fusion 66 (2026) 036016, Table 4.
+    """
+    B_pol = 2.0 * np.pi * μ0 * Ip * 1e6 * R0 / S
+    return 0.166 * S * B_pol**0.631 * nbar**1.07 * (2.0 / M_ion)**1.01 * D
+
+
+def f_P_thresh(nbar, B0, S, M_ion, Ip=None, R0=None, Option_PLH='TC26_Bt',
+               D=1.0):
+    """
+    L-H transition power threshold — dispatcher over the available scalings.
+
+    All scalings were fitted with the line-averaged density and the area of
+    the last closed flux surface. They were fitted against the loss power;
+    D0FUS compares them with P_sep, as PROCESS does.
+
+    Parameters
+    ----------
+    nbar  : float  Line-averaged electron density [10²⁰ m⁻³].
+    B0    : float  On-axis toroidal field [T].
+    S     : float  Area of the last closed flux surface [m²].
+    M_ion : float  Effective main-ion mass [AMU] (D-T: 2.5).
+    Ip, R0 : float or None
+        Plasma current [MA] and major radius [m], required for 'TC26_Bpol'.
+    Option_PLH : str, optional
+        'TC26_Bt'   — Delabie et al. (2026), Eq. 5 (default, paper baseline).
+        'TC26_Bpol' — Delabie et al. (2026), Table 4.
+        'Martin'    — Martin et al. (2008).
+    D : float, optional
+        Divertor factor of the TC-26 scalings (ignored by 'Martin').
+
+    Returns
+    -------
+    float  L-H transition power threshold [MW].
     """
     if Option_PLH == 'Martin':
-        return P_Thresh_Martin(nbar, B0, a, R0, kappa, M_ion)
-    elif Option_PLH == 'New_S':
-        return P_Thresh_New_S(nbar, B0, a, R0, kappa, M_ion)
-    elif Option_PLH == 'New_Ip':
-        if Ip is None:
+        return P_Thresh_Martin(nbar, B0, S, M_ion)
+    if Option_PLH == 'TC26_Bt':
+        return P_Thresh_TC26_Bt(nbar, B0, S, M_ion, D)
+    if Option_PLH == 'TC26_Bpol':
+        if Ip is None or R0 is None:
             raise ValueError(
-                "f_P_thresh: Ip must be provided for Option_PLH='New_Ip'."
-            )
-        return P_Thresh_New_Ip(nbar, B0, a, R0, kappa, Ip, M_ion)
-    else:
-        raise ValueError(
-            f"Unknown Option_PLH: '{Option_PLH}'. "
-            "Valid options: 'Martin', 'New_S', 'New_Ip'."
-        )
+                "f_P_thresh: Ip and R0 must be provided for 'TC26_Bpol'.")
+        return P_Thresh_TC26_Bpol(nbar, Ip, R0, S, M_ion, D)
+    raise ValueError(
+        f"Unknown Option_PLH: '{Option_PLH}'. "
+        "Valid options: 'TC26_Bt', 'TC26_Bpol', 'Martin'.")
 
 
 if __name__ == "__main__":
     # ── Published anchors - L-H power threshold ──────────────────────────
-    # Martin, JPCS 123 (2008) 012033, against the PUBLISHED ITER
-    # predictions of Table 5 in the ITPA TC-26 paper (NF 2026,
-    # 10.1088/1741-4326/ae39f2): 52.3 MW at 0.5e20 m-3 and 86.0 MW at
-    # 1.0e20 m-3 (deuterium, full field). Tolerance 10 %: D0FUS evaluates
-    # the plasma surface from the Ramanujan ellipse perimeter, the
-    # reference from the true ITER LCFS (~680 m2). The 'New_S' option
-    # (TC-26 draft 2017, Delabie) must sit within the published 1-sigma
-    # intervals of TC-26(Bt): P/S = (0.0441+-0.0025) B^(0.580+-0.039)
-    # n^(1.08+-0.03) (2/M)^(0.975+-0.032); updating to the published
-    # central values (2-4 % on P_LH) is a deliberate maintainer decision.
-    _b_ref = P_Thresh_New_S(1., 1., 2., 6.2, 1.7, 2.)
-    _bench("Published anchors - L-H threshold (Martin, New_S)", [
-        ("P_LH Martin, 0.5e20, D [MW]",
-         P_Thresh_Martin(0.5, 5.3, 2.0, 6.2, 1.85, 2.0), 52.3, 0.10,
-         "ITPA TC-26 2026"),
-        ("P_LH Martin, 1.0e20, D [MW]",
-         P_Thresh_Martin(1.0, 5.3, 2.0, 6.2, 1.85, 2.0), 86.0, 0.10,
-         "ITPA TC-26 2026"),
-        ("New_S exponent on B [-]",
-         float(np.log2(P_Thresh_New_S(1., 2., 2., 6.2, 1.7, 2.) / _b_ref)),
-         0.580, 0.07, "TC-26 1-sigma"),
-        ("New_S exponent on n [-]",
-         float(np.log2(P_Thresh_New_S(2., 1., 2., 6.2, 1.7, 2.) / _b_ref)),
-         1.08, 0.037, "TC-26 1-sigma"),
+    # ITER predictions of Delabie et al., NF 66 (2026) 036016, Table 5:
+    # deuterium, full field and current, S = 680 m2, Bt = 5.3 T,
+    # Ip = 15 MA, R = 6.2 m. Table 5 was computed with the unrounded fit
+    # coefficients: the published rounded ones reproduce it within 2.2 %.
+    _lh = dict(B0=5.3, S=680.0, M=2.0, Ip=15.0, R0=6.2)
+    def _plh(opt, n, D=1.0):
+        return f_P_thresh(n, _lh['B0'], _lh['S'], _lh['M'], Ip=_lh['Ip'],
+                          R0=_lh['R0'], Option_PLH=opt, D=D)
+    _bench("Published anchors - L-H threshold (Delabie 2026, Table 5)", [
+        ("P_LH Martin, 0.5e20 [MW]", _plh('Martin', 0.5), 52.3, 0.01,
+         "Delabie 2026 T5"),
+        ("P_LH Martin, 1.0e20 [MW]", _plh('Martin', 1.0), 86.0, 0.01,
+         "Delabie 2026 T5"),
+        ("P_LH TC26_Bt, 0.5e20 [MW]", _plh('TC26_Bt', 0.5), 38.1, 0.03,
+         "Delabie 2026 T5"),
+        ("P_LH TC26_Bt, 1.0e20 [MW]", _plh('TC26_Bt', 1.0), 80.3, 0.03,
+         "Delabie 2026 T5"),
+        ("P_LH TC26_Bt, 1.0e20, D = 1.93 [MW]",
+         _plh('TC26_Bt', 1.0, TC26_D_VT['TC26_Bt']), 155.0, 0.03,
+         "Delabie 2026 T5"),
+        ("P_LH TC26_Bpol, 0.5e20 [MW]", _plh('TC26_Bpol', 0.5), 56.0, 0.03,
+         "Delabie 2026 T5"),
+        ("P_LH TC26_Bpol, 1.0e20 [MW]", _plh('TC26_Bpol', 1.0), 117.0, 0.03,
+         "Delabie 2026 T5"),
     ])
 
 if __name__ == "__main__":
     # ── ITER chain (6/12) - L-H threshold and separatrix power ──────────
-    # The Martin scaling is evaluated with the LINE-averaged chain density
-    # and the D-T isotope mass M = 2.5 (P_LH proportional to 1/M), as in
-    # the production solver. P_sep = P_alpha + P_CD - P_rad,total
-    # (f_P_sep; P_Ohm is not included, matching D0FUS_run.py). The
-    # metal-wall correction (W/Be vs C, factor ~0.70: Ryter et al., NF 53
-    # (2013) 113003; Maggi et al., NF 54 (2014) 023007) yields the ~50 MW
-    # best estimate usually quoted for ITER.
-    _PLH = P_Thresh_Martin(ITER['nbar_line'], ITER['B0'], ITER['a'],
-                           ITER['R0'], ITER['kappa'], ITER['M'])
+    # The Martin scaling is evaluated with the LINE-averaged chain density,
+    # the Miller LCFS area of chain 1 and the D-T isotope mass M = 2.5
+    # (P_LH proportional to 1/M), as in the production solver.
+    # P_sep = P_alpha + P_CD - P_rad,total (f_P_sep; P_Ohm is not
+    # included, matching D0FUS_run.py). The metal-wall correction (W/Be
+    # vs C, factor ~0.70: Ryter et al., NF 53 (2013) 113003; Maggi et al.,
+    # NF 54 (2014) 023007) yields the ~50 MW best estimate usually quoted
+    # for ITER.
+    _PLH = P_Thresh_Martin(ITER['nbar_line'], ITER['B0'], ITER['S'],
+                           ITER['M'])
     _Psep = f_P_sep(ITER['P_fus'], ITER['P_aux'], ITER['P_rad_tot'])
     ITER.update(P_sep=_Psep, P_LH_th=_PLH)
     _bench("ITER chain 6/12 - L-H threshold and P_sep", [
@@ -5083,11 +5519,6 @@ if __name__ == "__main__":
         ("H-mode access P_sep/P_LH [-]", _Psep / _PLH, (1.0, 3.0), 1,
          "operational"),
     ])
-
-def f_P_LH_thresh(nbar, B0, a, R0, kappa, M_ion, Ip=None,
-                  Option_PLH='Martin'):
-    """Alias for f_P_thresh — kept for backward compatibility."""
-    return f_P_thresh(nbar, B0, a, R0, kappa, M_ion, Ip, Option_PLH)
 
 
 #%% Plasma resistivity
@@ -5183,11 +5614,74 @@ def eta_spitzer(T_keV, ne, Z_eff=1.0):
     return 1.65e-9 * ln_lambda * T_safe**(-1.5) * coef_Zeff
 
 
-def eta_sauter(T_keV, ne, Z_eff, epsilon, q=2.0, R0=6.2):
+def _trapped_fraction(epsilon, fit='Sauter2002'):
+    """
+    Geometric trapped particle fraction f_t(ε).
+
+    The trapped fraction enters the Sauter/Redl bootstrap coefficients and
+    the neoclassical resistivity (eta_sauter, eta_redl) via the effective
+    trapped fractions f_t_eff(ν*).  At low collisionality
+    (banana regime, ν*_e < 0.1, typical of reactor-grade plasmas), the
+    bootstrap current is approximately proportional to f_t.
+
+    Shaping effects (elongation, triangularity) on the bootstrap current
+    are captured by the shaped area element dA = 2π ρ a² κ(ρ) dρ and the
+    pressure gradients, not by modifying the trapped fraction formula.
+    This is consistent with NEOS, PROCESS, ASTRA, JINTRAC, and CRONOS.
+
+    Parameters
+    ----------
+    epsilon : float or ndarray
+        Local inverse aspect ratio ε = ρ a / R₀.
+    fit : str, optional
+        Trapped fraction formula.  Options:
+
+        'Sauter2002' (default, recommended)
+            Equation 4 of Sauter et al., PPCF 44 (2002) 1999.
+            f_t = 1 - (1-ε)² / [(1+1.46√ε)√(1-ε²)]
+            Standard in NEOS (Sauter's own code), JINTRAC, and CRONOS.
+
+        'ASTRA'
+            ASTRA formula from Fable (IPP Garching, private comm.).
+            f_t = 1 - (1-ε)^{3/2} / (1+1.46√ε)
+            Used by PROCESS (fit=0) and ASTRA transport code.
+
+    Returns
+    -------
+    f_t : float or ndarray
+        Geometric trapped particle fraction (0 < f_t < 1).
+
+    References
+    ----------
+    Sauter et al., PPCF 44 (2002) 1999 — Eq. 4 ('Sauter2002').
+    Lin-Liu & Miller, Phys. Plasmas 2 (1995) 1666 — derivation.
+    Fable, IPP Garching (private comm.) — ASTRA formula ('ASTRA').
+    """
+    sqrt_eps = np.sqrt(np.maximum(epsilon, 0.0))
+
+    if fit == 'Sauter2002':
+        # Sauter, PPCF 44 (2002) 1999, Eq. 4
+        return 1.0 - ((1.0 - epsilon)**2
+                       / ((1.0 + 1.46 * sqrt_eps) * np.sqrt(1.0 - epsilon**2)))
+
+    elif fit == 'ASTRA':
+        # ASTRA/Fable — PROCESS default (fit=0 in bootstrap_current.py)
+        return 1.0 - (1.0 - epsilon)**1.5 / (1.0 + 1.46 * sqrt_eps)
+
+    else:
+        raise ValueError(
+            f"Unknown trapped fraction model '{fit}'. "
+            f"Options: 'Sauter2002', 'ASTRA'."
+        )
+
+
+def eta_sauter(T_keV, ne, Z_eff, epsilon, q=2.0, R0=6.2,
+               trapped_fraction_model='Sauter2002'):
     """
     Neoclassical resistivity according to Sauter et al. (1999).
 
-    Trapped electrons (f_t ~ 1.46*sqrt(eps)) reduce parallel conductivity.
+    Trapped electrons (geometric fraction f_t of _trapped_fraction, the
+    model of the bootstrap current) reduce parallel conductivity.
     The effective trapped fraction interpolates between banana (low nu*) 
     and Pfirsch-Schlüter (high nu*) regimes.
 
@@ -5206,21 +5700,21 @@ def eta_sauter(T_keV, ne, Z_eff, epsilon, q=2.0, R0=6.2):
 
     All four physics inputs (T_keV, ne, epsilon, q) accept either scalars
     or numpy arrays of identical shape; vectorisation is element-wise.
+    trapped_fraction_model selects f_t ('Sauter2002' or 'ASTRA').
 
     References:
         [1] O. Sauter et al., Phys. Plasmas 6, 2834 (1999)
         [2] O. Sauter et al., Erratum, Phys. Plasmas 9, 5140 (2002)
         [3] https://crppwww.epfl.ch/~sauter/neoclassical/
     """
-    # Geometric trapped fraction (Kim et al. PoF 1991).
+    # Geometric trapped fraction, same model as the bootstrap current.
     # Regularise epsilon at the magnetic axis: epsilon(rho=0) = 0 would
     # cause a division by zero in nu_star.  At epsilon -> 0: f_t -> 0
     # and the neoclassical correction vanishes (sigma_neo -> sigma_Spitzer).
     # np.maximum is array-safe; the function therefore accepts both
     # scalar and ndarray inputs.
     eps_reg  = np.maximum(epsilon, 1e-6)
-    sqrt_eps = np.sqrt(eps_reg)
-    f_t      = 1.46 * sqrt_eps * (1 - 0.54 * sqrt_eps)
+    f_t      = _trapped_fraction(eps_reg, fit=trapped_fraction_model)
 
     # Electron collisionality — Sauter (1999) Eq. (18b) with the Coulomb
     # logarithm of Eq. (18d): ln Lambda_e = 31.3 - ln(sqrt(n_e)/T_e),
@@ -5247,7 +5741,8 @@ def eta_sauter(T_keV, ne, Z_eff, epsilon, q=2.0, R0=6.2):
     return eta_spitzer(T_keV, ne, Z_eff) / sigma_ratio
 
 
-def eta_redl(T_keV, ne, Z_eff, epsilon, q=2.0, R0=6.2):
+def eta_redl(T_keV, ne, Z_eff, epsilon, q=2.0, R0=6.2,
+             trapped_fraction_model='Sauter2002'):
     """
     Neoclassical resistivity according to Redl et al. (2021).
 
@@ -5261,17 +5756,19 @@ def eta_redl(T_keV, ne, Z_eff, epsilon, q=2.0, R0=6.2):
 
     All four physics inputs (T_keV, ne, epsilon, q) accept either scalars
     or numpy arrays of identical shape; vectorisation is element-wise.
+    trapped_fraction_model selects the geometric trapped fraction f_t of
+    _trapped_fraction ('Sauter2002' or 'ASTRA'), as for the bootstrap current.
 
     References:
         [1] A. Redl et al., Phys. Plasmas 28, 022502 (2021)
         [2] Data: https://doi.org/10.5281/zenodo.4072358
     """
-    # Geometric trapped fraction.  Regularise epsilon at the magnetic
-    # axis (see eta_sauter for rationale).  np.maximum makes the call
-    # array-safe for the q-profile Picard iteration.
+    # Geometric trapped fraction, same model as the bootstrap current.
+    # Regularise epsilon at the magnetic axis (see eta_sauter for
+    # rationale).  np.maximum makes the call array-safe for the q-profile
+    # Picard iteration.
     eps_reg  = np.maximum(epsilon, 1e-6)
-    sqrt_eps = np.sqrt(eps_reg)
-    f_t      = 1.46 * sqrt_eps * (1 - 0.54 * sqrt_eps)
+    f_t      = _trapped_fraction(eps_reg, fit=trapped_fraction_model)
 
     # Electron collisionality — Sauter (1999) Eq. (18b) with ln Lambda_e
     # of Eq. (18d); Redl (2021) keeps the same nu*_e definition.
@@ -5299,10 +5796,34 @@ def eta_redl(T_keV, ne, Z_eff, epsilon, q=2.0, R0=6.2):
 #%% Loop voltage and effective resistance
 
 
+# Gauss-Legendre rule of f_Reff: nodes and weights on [-1, 1].
+_REFF_GL_N = 24
+_REFF_GL_T, _REFF_GL_W = np.polynomial.legendre.leggauss(_REFF_GL_N)
+
+
+def _reff_nodes(rho_ped):
+    """
+    Composite Gauss-Legendre nodes and weights on [0, 1] in the volume label
+    for f_Reff: two equal segments in the core and two in the pedestal, the
+    pedestal top (end of the core parabola) being a segment boundary, or four
+    equal segments without pedestal (rho_ped = 1).
+    """
+    if rho_ped < 1.0:
+        edges = (0.0, 0.5 * rho_ped, rho_ped, 0.5 * (1.0 + rho_ped), 1.0)
+    else:
+        edges = (0.0, 0.25, 0.5, 0.75, 1.0)
+    x, w = [], []
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        h = 0.5 * (hi - lo)
+        x.append(h * _REFF_GL_T + (lo + h))
+        w.append(h * _REFF_GL_W)
+    return np.concatenate(x), np.concatenate(w)
+
+
 def f_Reff(a, kappa, R0, Tbar, nbar, Z_eff, q95, nu_T, nu_n,
            eta_model='redl',
            rho_ped=1.0, n_ped_frac=0.0, T_ped_frac=0.0,
-           Vprime_data=None):
+           Vprime_data=None, trapped_fraction_model='Sauter2002'):
     """
     Effective plasma resistance from neoclassical conductivity integration.
 
@@ -5326,6 +5847,15 @@ def f_Reff(a, kappa, R0, Tbar, nbar, Z_eff, q95, nu_T, nu_n,
     The current profile j(rho) ~ sigma_neo(rho) emerges self-consistently
     from T(rho) and n(rho) via the neoclassical conductivity — no
     prescribed alpha_J exponent is used.
+
+    Numerical integration
+    ---------------------
+    The integral is evaluated in the volume label rho_V of the kinetic
+    profiles, where the volume element is exactly
+    V'(rho) d rho = V_total 2 rho_V d rho_V, with a composite Gauss-Legendre
+    rule (_reff_nodes, 4 x 24 nodes).  The pedestal top is a segment
+    boundary.  On the reference decks the rule is within 1.1e-6 of an
+    adaptive quadrature at relative tolerance 1e-12.
 
     Parameters
     ----------
@@ -5356,8 +5886,12 @@ def f_Reff(a, kappa, R0, Tbar, nbar, Z_eff, q95, nu_T, nu_n,
     T_ped_frac : float, optional
         T_ped / Tbar.
     Vprime_data : tuple or None, optional
-        (rho_grid, Vprime, V_total) from precompute_Vprime().
-        When None, cylindrical V' = 4 pi^2 R0 a^2 kappa rho is used.
+        From precompute_Vprime(): V_total and the map between the Miller
+        label (epsilon) and the volume label of the profiles.  When None,
+        the cylindrical V_total = 2 pi^2 R0 a^2 kappa and rho_V = rho.
+    trapped_fraction_model : str, optional
+        Geometric trapped fraction of the neoclassical models
+        ('Sauter2002' or 'ASTRA', see _trapped_fraction).
 
     Returns
     -------
@@ -5372,46 +5906,34 @@ def f_Reff(a, kappa, R0, Tbar, nbar, Z_eff, q95, nu_T, nu_n,
         HELIOS — only other 0D code including the 1/R correction.
     """
 
-    def _eta_local(rho):
-        """Neoclassical resistivity [Ohm.m] at normalised radius rho."""
-        T_loc = max(float(f_Tprof(Tbar, nu_T, rho, rho_ped, T_ped_frac,
-                                  Vprime_data)), 0.1)
-        n_loc = float(f_nprof(nbar, nu_n, rho, rho_ped, n_ped_frac,
-                              Vprime_data))
-        n_loc_m3 = n_loc * 1e20
-        epsilon_loc = rho * a / R0
+    # Nodes in the volume label, mapped to the Miller label for epsilon
+    x, w  = _reff_nodes(rho_ped)
+    rho_M = rho_of_rho_V(x, Vprime_data)
+    T_loc    = np.maximum(Tbar * _profile_shape(x, nu_T, rho_ped, T_ped_frac), 0.1)
+    n_loc_m3 = nbar * _profile_shape(x, nu_n, rho_ped, n_ped_frac) * 1e20
+    epsilon_loc = rho_M * a / R0
 
-        if eta_model == 'old':
-            return eta_old(T_loc, n_loc_m3, Z_eff)
-        elif eta_model == 'spitzer':
-            return eta_spitzer(T_loc, n_loc_m3, Z_eff)
-        elif eta_model == 'sauter':
-            return eta_sauter(T_loc, n_loc_m3, Z_eff, epsilon_loc, q95, R0)
-        elif eta_model == 'redl':
-            return eta_redl(T_loc, n_loc_m3, Z_eff, epsilon_loc, q95, R0)
-        else:
-            raise ValueError(f"Unknown eta_model '{eta_model}'.")
+    # Neoclassical resistivity [Ohm.m] at the nodes
+    if eta_model == 'old':
+        eta_loc = eta_old(T_loc, n_loc_m3, Z_eff)
+    elif eta_model == 'spitzer':
+        eta_loc = eta_spitzer(T_loc, n_loc_m3, Z_eff)
+    elif eta_model == 'sauter':
+        eta_loc = eta_sauter(T_loc, n_loc_m3, Z_eff, epsilon_loc, q95, R0,
+                             trapped_fraction_model)
+    elif eta_model == 'redl':
+        eta_loc = eta_redl(T_loc, n_loc_m3, Z_eff, epsilon_loc, q95, R0,
+                           trapped_fraction_model)
+    else:
+        raise ValueError(f"Unknown eta_model '{eta_model}'.")
 
-    def _Vprime_local(rho):
-        """Volume derivative V'(rho) = dV/drho [m^3]."""
-        if Vprime_data is not None:
-            return float(interpolate_Vprime(rho, Vprime_data[0], Vprime_data[1]))
-        return 4.0 * np.pi**2 * R0 * a**2 * kappa * rho
+    # Flux-surface average <R0/R> for concentric circular surfaces
+    R0_over_R = 1.0 / np.sqrt(1.0 - epsilon_loc**2)
 
-    def _R0_over_R_fsa(rho):
-        """Flux-surface average <R0/R> for concentric circular surfaces."""
-        eps_rho = rho * a / R0
-        return 1.0 / math.sqrt(1.0 - eps_rho**2)
-
-    def _integrand(rho):
-        """Shaped conductance integrand with 1/R correction."""
-        return _R0_over_R_fsa(rho) * _Vprime_local(rho) / max(_eta_local(rho), 1e-12)
-
-    with warnings.catch_warnings():
-        warnings.filterwarnings('ignore', category=IntegrationWarning)
-        sigma_integral, _ = quad(
-            _integrand, 0, 1.0,
-            limit=200, epsabs=1e-8, epsrel=1e-4)
+    V_total = (float(Vprime_data[2]) if Vprime_data is not None
+               else 2.0 * np.pi**2 * R0 * a**2 * kappa)
+    sigma_integral = V_total * float(np.sum(
+        w * R0_over_R * 2.0 * x / np.maximum(eta_loc, 1e-12)))
 
     return (2.0 * np.pi * R0)**2 / sigma_integral
 
@@ -5419,7 +5941,7 @@ def f_Reff(a, kappa, R0, Tbar, nbar, Z_eff, q95, nu_T, nu_n,
 def f_P_Ohm_integrated(I_Ohm, a, kappa, R0, Tbar, nbar, Z_eff, q95, nu_T, nu_n,
                        eta_model='redl',
                        rho_ped=1.0, n_ped_frac=0.0, T_ped_frac=0.0,
-                       Vprime_data=None):
+                       Vprime_data=None, trapped_fraction_model='Sauter2002'):
     """
     Ohmic heating power from the profile-integrated plasma resistance.
 
@@ -5442,7 +5964,8 @@ def f_P_Ohm_integrated(I_Ohm, a, kappa, R0, Tbar, nbar, Z_eff, q95, nu_T, nu_n,
     I_Ohm : float
         Inductive (Ohmic) plasma current component [MA].
     a, kappa, R0, Tbar, nbar, Z_eff, q95, nu_T, nu_n : see f_Reff.
-    eta_model, rho_ped, n_ped_frac, T_ped_frac, Vprime_data : see f_Reff.
+    eta_model, rho_ped, n_ped_frac, T_ped_frac : see f_Reff.
+    Vprime_data, trapped_fraction_model : see f_Reff.
 
     Returns
     -------
@@ -5467,14 +5990,15 @@ def f_P_Ohm_integrated(I_Ohm, a, kappa, R0, Tbar, nbar, Z_eff, q95, nu_T, nu_n,
     R_eff = f_Reff(a, kappa, R0, Tbar, nbar, Z_eff, q95, nu_T, nu_n,
                    eta_model=eta_model,
                    rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-                   T_ped_frac=T_ped_frac, Vprime_data=Vprime_data)
+                   T_ped_frac=T_ped_frac, Vprime_data=Vprime_data,
+                   trapped_fraction_model=trapped_fraction_model)
     return R_eff * (I_Ohm * 1e6)**2 * 1e-6   # [W] -> [MW]
 
 
 def f_Vloop(I_Ohm, a, kappa, R0, Tbar, nbar, Z_eff, q95, nu_T, nu_n,
             eta_model='redl',
             rho_ped=1.0, n_ped_frac=0.0, T_ped_frac=0.0,
-            Vprime_data=None):
+            Vprime_data=None, trapped_fraction_model='Sauter2002'):
     """
     Steady-state loop voltage: V_loop = R_eff × I_Ohm.
 
@@ -5486,7 +6010,8 @@ def f_Vloop(I_Ohm, a, kappa, R0, Tbar, nbar, Z_eff, q95, nu_T, nu_n,
     I_Ohm : float
         Ohmic (inductive) plasma current [MA].
     a, kappa, R0, Tbar, nbar, Z_eff, q95, nu_T, nu_n : see f_Reff.
-    eta_model, rho_ped, n_ped_frac, T_ped_frac, Vprime_data : see f_Reff.
+    eta_model, rho_ped, n_ped_frac, T_ped_frac : see f_Reff.
+    Vprime_data, trapped_fraction_model : see f_Reff.
 
     Returns
     -------
@@ -5499,7 +6024,8 @@ def f_Vloop(I_Ohm, a, kappa, R0, Tbar, nbar, Z_eff, q95, nu_T, nu_n,
     R_eff = f_Reff(a, kappa, R0, Tbar, nbar, Z_eff, q95, nu_T, nu_n,
                    eta_model=eta_model,
                    rho_ped=rho_ped, n_ped_frac=n_ped_frac,
-                   T_ped_frac=T_ped_frac, Vprime_data=Vprime_data)
+                   T_ped_frac=T_ped_frac, Vprime_data=Vprime_data,
+                   trapped_fraction_model=trapped_fraction_model)
     return R_eff * I_Ohm * 1e6   # I_Ohm [MA] -> [A], R_eff [Ohm] -> V_loop [V]
 
 
@@ -5914,66 +6440,6 @@ References for this validation
 # Internal Functions (Sauter model)
 # ==============================================================================
 
-def _trapped_fraction(epsilon, fit='Sauter2002'):
-    """
-    Geometric trapped particle fraction f_t(ε).
-
-    The trapped fraction enters the Sauter/Redl bootstrap coefficients
-    via the effective trapped fractions f_t_eff(ν*).  At low collisionality
-    (banana regime, ν*_e < 0.1, typical of reactor-grade plasmas), the
-    bootstrap current is approximately proportional to f_t.
-
-    Shaping effects (elongation, triangularity) on the bootstrap current
-    are captured by the shaped area element dA = 2π ρ a² κ(ρ) dρ and the
-    pressure gradients, not by modifying the trapped fraction formula.
-    This is consistent with NEOS, PROCESS, ASTRA, JINTRAC, and CRONOS.
-
-    Parameters
-    ----------
-    epsilon : float or ndarray
-        Local inverse aspect ratio ε = ρ a / R₀.
-    fit : str, optional
-        Trapped fraction formula.  Options:
-
-        'Sauter2002' (default, recommended)
-            Equation 4 of Sauter et al., PPCF 44 (2002) 1999.
-            f_t = 1 - (1-ε)² / [(1+1.46√ε)√(1-ε²)]
-            Standard in NEOS (Sauter's own code), JINTRAC, and CRONOS.
-
-        'ASTRA'
-            ASTRA formula from Fable (IPP Garching, private comm.).
-            f_t = 1 - (1-ε)^{3/2} / (1+1.46√ε)
-            Used by PROCESS (fit=0) and ASTRA transport code.
-
-    Returns
-    -------
-    f_t : float or ndarray
-        Geometric trapped particle fraction (0 < f_t < 1).
-
-    References
-    ----------
-    Sauter et al., PPCF 44 (2002) 1999 — Eq. 4 ('Sauter2002').
-    Lin-Liu & Miller, Phys. Plasmas 2 (1995) 1666 — derivation.
-    Fable, IPP Garching (private comm.) — ASTRA formula ('ASTRA').
-    """
-    sqrt_eps = np.sqrt(np.maximum(epsilon, 0.0))
-
-    if fit == 'Sauter2002':
-        # Sauter, PPCF 44 (2002) 1999, Eq. 4
-        return 1.0 - ((1.0 - epsilon)**2
-                       / ((1.0 + 1.46 * sqrt_eps) * np.sqrt(1.0 - epsilon**2)))
-
-    elif fit == 'ASTRA':
-        # ASTRA/Fable — PROCESS default (fit=0 in bootstrap_current.py)
-        return 1.0 - (1.0 - epsilon)**1.5 / (1.0 + 1.46 * sqrt_eps)
-
-    else:
-        raise ValueError(
-            f"Unknown trapped fraction model '{fit}'. "
-            f"Options: 'Sauter2002', 'ASTRA'."
-        )
-
-
 def _nu_e_star(n_e, T_e, q, R0, epsilon, Z_eff):
     """Electron collisionality [Eq. 18b]."""
     ln_Lambda = 31.3 - np.log(np.sqrt(n_e) / T_e)
@@ -6140,6 +6606,41 @@ def f_q_profile(rho, q95=3.0, rho95=0.95, alpha_J=1.5):
     return q
 
 
+def _rho_grid(rho_ped, n_rho, with_axis=False):
+    """
+    Radial grid of the q-profile and bootstrap integrals, strictly increasing.
+
+    The core segment [0.05, ρ_ped) and the pedestal segment [ρ_ped, ρ_max]
+    have n_rho points each, so that the pedestal gradient is resolved for
+    any pedestal width. The grid stops at ρ_max = 0.999. This covers the
+    whole tanh pedestal and avoids the zero temperature of a parabolic
+    profile at ρ = 1. Without a pedestal inside the grid (ρ_ped ≥ ρ_max,
+    parabolic profile) a single segment [0.05, ρ_max] of 2 n_rho points is
+    used.
+
+    Parameters
+    ----------
+    rho_ped   : float  Normalised pedestal radius, in (0.05, 1].
+    n_rho     : int    Number of points of each segment.
+    with_axis : bool   Prepend 30 points on [0.001, 0.05) for the on-axis
+                       limit of the q profile.
+
+    Returns
+    -------
+    rho : ndarray  Strictly increasing radial grid.
+    """
+    rho_max = 0.999
+    if not 0.05 < rho_ped <= 1.0:
+        raise ValueError(f"rho_ped = {rho_ped} must lie in (0.05, 1].")
+    segments = [np.linspace(0.001, 0.05, 30, endpoint=False)] if with_axis else []
+    if rho_ped < rho_max:
+        segments += [np.linspace(0.05, rho_ped, n_rho, endpoint=False),
+                     np.linspace(rho_ped, rho_max, n_rho)]
+    else:
+        segments += [np.linspace(0.05, rho_max, 2 * n_rho)]
+    return np.concatenate(segments)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Academic q,j profile builder (Mode A pedagogical entry point)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -6228,11 +6729,10 @@ def f_q_profile_academic(
     Luce et al., Nucl. Fusion 54 (2014) 093005 — l_i(3) integral definition.
     """
     # == Radial grid =========================================================
-    # Same layout as the refined mode for diagnostic comparability.
-    rho_inner = np.linspace(0.001, 0.05, 30, endpoint=False)
-    rho_core  = np.linspace(0.05, rho_ped, n_rho, endpoint=False)
-    rho_edge  = np.linspace(rho_ped, 0.99, n_rho)
-    rho = np.concatenate([rho_inner, rho_core, rho_edge])
+    # Same layout as the refined mode for diagnostic comparability. The
+    # pedestal segment starts at the Miller label of the pedestal top.
+    rho = _rho_grid(float(rho_of_rho_V(rho_ped, Vprime_data)), n_rho,
+                    with_axis=True)
 
     if kappa_95 is None:
         kappa_95 = f_Kappa_95(kappa)
@@ -6562,7 +7062,7 @@ def f_Sauter_Redl_Ib(R0, a, kappa, B0, nbar, Tbar, q95, Z_eff, nu_n, nu_T, n_rho
         Temperature peaking exponent (core)
     n_rho : int
         Number of radial integration points (default 100)
-    rho_ped    : float  Normalised pedestal radius (1.0 = no pedestal).
+    rho_ped    : float  Pedestal radius, volume label ρ_V (1.0 = no pedestal).
     n_ped_frac : float  n_ped / nbar.
     T_ped_frac : float  T_ped / Tbar.
     Vprime_data : tuple or None, optional
@@ -6581,7 +7081,11 @@ def f_Sauter_Redl_Ib(R0, a, kappa, B0, nbar, Tbar, q95, Z_eff, nu_n, nu_T, n_rho
     Returns
     -------
     I_bs : float
-        Bootstrap current [MA]
+        Bootstrap current [MA].  With return_profile=True, a dict with I_bs
+        [MA], per grid shell rho (Miller label of the midpoint), j_bs
+        [A/m^2], dA [m^2], drho, kappa_arr and q_arr, and per grid node
+        rho_nodes (Miller label) and I_enc, the bootstrap current enclosed
+        by the node [A].
 
     Notes
     -----
@@ -6592,7 +7096,18 @@ def f_Sauter_Redl_Ib(R0, a, kappa, B0, nbar, Tbar, q95, Z_eff, nu_n, nu_T, n_rho
     psi' = B0 a^2 rho / q), so that
         j_bs = -F p [L31 dln p + L32 R_pe dln Te + L34 alpha (1-R_pe) dln Ti]
                / (B0 psi'),   derivatives in rho,
-    as in TORAX (formulas.calculate_analytic_bootstrap_current).
+    as in TORAX (formulas.calculate_analytic_bootstrap_current).  With
+    T_i = tau_i_e T_e and p = e n_e T_e (1 + tau_i_e n_i/n_e), the area
+    element cancels in the current of a shell:
+        dI_bs = G e (1 + tau_i_e n_i/n_e) [L31 T_e dn_e
+                + (L31 + L32 R_pe + L34 alpha (1-R_pe)) n_e dT_e],
+        G = -2 pi q / (B0 R0 <1/R^2>).
+    The integral is evaluated in this Stieltjes form: coefficients at the
+    shell midpoints (mean of the node values) times the exact increments of
+    n_e and T_e between grid nodes.  The increments telescope, so that a
+    kink or a step of the profiles at the pedestal top is integrated
+    exactly.  A sum of nodal np.gradient values counts a step at
+    (1 + h_ped/h_core)/2 of its value only, at any resolution.
 
     References
     ----------
@@ -6603,29 +7118,29 @@ def f_Sauter_Redl_Ib(R0, a, kappa, B0, nbar, Tbar, q95, Z_eff, nu_n, nu_T, n_rho
     if kappa_95 is None:
         kappa_95 = f_Kappa_95(kappa)
 
-    I_psi = R0 * B0
+    # Grid nodes in the volume label, core + pedestal (equal numbers), with a
+    # node exactly at the pedestal top where the core parabola ends (a cusp
+    # for nu < 1), mapped to the Miller label of the local geometry (eps,
+    # <1/R^2>, q).  The default n_rho = 100 is within 0.03 % of the
+    # converged integral on the reference decks.
+    rhoV_nodes = _rho_grid(rho_ped, n_rho)
+    rho_nodes  = rho_of_rho_V(rhoV_nodes, Vprime_data)
+    T_nodes    = Tbar * _profile_shape(rhoV_nodes, nu_T, rho_ped, T_ped_frac)
+    n_nodes    = nbar * _profile_shape(rhoV_nodes, nu_n, rho_ped, n_ped_frac)
 
-    # Radial grid — core + pedestal edge (equal density).
-    # Pedestal resolution tested: <1% effect on I_bs (60 to 800 pts).
-    rho_core = np.linspace(0.05, rho_ped, n_rho, endpoint=False)
-    rho_edge = np.linspace(rho_ped, 0.99, n_rho)
-    rho_arr  = np.concatenate([rho_core, rho_edge])
+    # Shells between consecutive nodes: midpoint in the volume label, mean
+    # profile values, exact profile increments.
+    rho_arr = rho_of_rho_V(0.5 * (rhoV_nodes[1:] + rhoV_nodes[:-1]), Vprime_data)
+    T_arr   = 0.5 * (T_nodes[1:] + T_nodes[:-1])     # [keV]
+    n_arr   = 0.5 * (n_nodes[1:] + n_nodes[:-1])     # [1e20 m^-3]
+    dT_eV   = np.diff(T_nodes) * 1e3                 # [eV]
+    dn_m3   = np.diff(n_nodes) * 1e20                # [m^-3]
 
     use_miller = (Vprime_data is not None)
 
-    # ── Vectorised profile evaluation ─────────────────────────────────────
-    T_arr = f_Tprof(Tbar, nu_T, rho_arr, rho_ped, T_ped_frac, Vprime_data)
-    n_arr = f_nprof(nbar, nu_n, rho_arr, rho_ped, n_ped_frac, Vprime_data)
-
-    # Numerical logarithmic gradients in rho [-]
-    dT_drho = np.gradient(T_arr, rho_arr)
-    dn_drho = np.gradient(n_arr, rho_arr)
-    dln_T = np.where(T_arr > 0.01, dT_drho / T_arr, 0.0)
-    dln_n = np.where(n_arr > 1e-3, dn_drho / n_arr, 0.0)
-
-    # ── Vectorised local quantities ───────────────────────────────────────
+    # ── Local quantities at the shell midpoints (vectorised) ──────────────
     eps_arr = rho_arr * a / R0
-    # Safety factor profile for collisionality — see f_Sauter_Redl_Ib for rationale.
+    # q(rho) of the solver (frozen profile), or the parabolic fallback
     if q_profile is not None and 'rho' in q_profile and 'q_arr' in q_profile:
         q_arr = np.interp(rho_arr, q_profile['rho'], q_profile['q_arr'],
                           left=q_profile['q_arr'][0], right=q95)
@@ -6662,50 +7177,41 @@ def f_Sauter_Redl_Ib(R0, a, kappa, B0, nbar, Tbar, q95, Z_eff, nu_n, nu_T, n_rho
     L34 = L31                                    # Redl Eq. 19
     alp = _alpha_Redl(f_t, nu_i_arr, Z_eff)     # Redl α depends on Z_eff
 
-    # Logarithmic gradients
-    dln_p  = dln_n + dln_T   # T_i = tau_i_e T_e (const ratio): dln(p_tot) = dln_n + dln_Te
-    dln_Ti = dln_T           # dln(T_i) = dln(tau_i_e T_e) = dln(T_e) for constant ratio
-
-    # Bootstrap coefficient [Redl Eq. 5]
-    C_bs = L31 * dln_p + L32 * R_pe * dln_T + L34 * alp * (1.0 - R_pe) * dln_Ti
-
-    # Poloidal cross-section area element dA/drho and perimeter average
-    # <1/R^2>: Miller-consistent profiles from Vprime_data when available
-    # (kappa(rho), delta(rho)); otherwise the ellipse dA/drho = 2 pi rho a^2
-    # kappa and the circular-surface <1/R^2> = 1/(R0^2 (1-eps^2)^1.5).
-    if (Vprime_data is not None and len(Vprime_data) >= 5
-            and Vprime_data[3] is not None):
-        dA_per_drho = interpolate_dA(rho_arr, Vprime_data[0], Vprime_data[3])
-    else:
-        dA_per_drho = 2.0 * np.pi * rho_arr * a**2 * kappa_arr
+    # Perimeter average <1/R^2>: Miller-consistent profile from Vprime_data
+    # when available, otherwise the circular-surface 1/(R0^2 (1-eps^2)^1.5).
     if Vprime_data is not None and len(Vprime_data) >= 6:
         inv_R2 = np.interp(rho_arr, Vprime_data[0], Vprime_data[5])
     else:
         inv_R2 = 1.0 / (R0**2 * (1.0 - eps_arr**2)**1.5)
 
-    # Poloidal-flux derivative per radian [Wb/rad], same closure as the q profile
-    psi_p = R0 * I_psi * inv_R2 * dA_per_drho / (2.0 * np.pi * q_arr)
+    # Current of each shell [A], Stieltjes form (see Notes)
+    G  = -2.0 * np.pi * q_arr / (B0 * R0 * inv_R2)
+    dI = G * E_ELEM * (1.0 + tau_i_e * n_ion_frac) * (
+        L31 * T_eV * dn_m3
+        + (L31 + L32 * R_pe + L34 * alp * (1.0 - R_pe)) * n_e * dT_eV)
 
-    # Local j_bs [A/m^2] (Sauter Eq. 5 with d/dpsi = (1/psi') d/drho)
-    j_bs = np.where(psi_p > 0, -I_psi * p_tot * C_bs / (B0 * np.where(psi_p > 0, psi_p, 1.0)), 0.0)
-
-    # Grid spacing for area-weighted integration
-    drho = np.zeros_like(rho_arr)
-    drho[0]    = rho_arr[1] - rho_arr[0]
-    drho[-1]   = rho_arr[-1] - rho_arr[-2]
-    drho[1:-1] = (rho_arr[2:] - rho_arr[:-2]) / 2.0
-    dA = dA_per_drho * drho
-
-    # Mask out unphysical points (eps too small, n or T too low)
+    # Mask out unphysical shells (eps too small, n or T too low)
     valid = (eps_arr >= 0.01) & (n_arr >= 1e-3) & (T_arr >= 0.1)
-    j_bs = np.where(valid, j_bs, 0.0)
+    dI = np.where(valid, dI, 0.0)
 
-    I_bs = np.sum(j_bs * dA) / 1e6   # [MA]
+    I_bs = float(np.sum(dI)) / 1e6   # [MA]
 
     if return_profile:
+        # Poloidal cross-section area of each shell: Miller-consistent
+        # dA/drho from Vprime_data when available, otherwise the ellipse
+        # 2 pi rho a^2 kappa.
+        if (Vprime_data is not None and len(Vprime_data) >= 5
+                and Vprime_data[3] is not None):
+            dA_per_drho = interpolate_dA(rho_arr, Vprime_data[0], Vprime_data[3])
+        else:
+            dA_per_drho = 2.0 * np.pi * rho_arr * a**2 * kappa_arr
+        drho = np.diff(rho_nodes)
+        dA   = dA_per_drho * drho
+        j_bs = np.where(dA > 0, dI / np.where(dA > 0, dA, 1.0), 0.0)
         return {'I_bs': I_bs, 'rho': rho_arr, 'j_bs': j_bs,
                 'dA': dA, 'kappa_arr': kappa_arr, 'q_arr': q_arr,
-                'drho': drho}
+                'drho': drho, 'rho_nodes': rho_nodes,
+                'I_enc': np.concatenate([[0.0], np.cumsum(dI)])}
     return I_bs
 
 
@@ -6763,7 +7269,9 @@ def f_q_profile_refined(
     -----------------
     j_bs : Sauter (1999/2002) structure with Redl (2021) refitted
            coefficients (f_Sauter_Redl_Ib).  Collisionality nu*_e and the
-           L_31, L_32 coefficients see the local q(rho).
+           L_31, L_32 coefficients see the local q(rho).  The enclosed
+           current takes the bootstrap from its exact cumulative shell
+           currents, so that it reaches I_bs at the edge.
     j_CD : Gaussian deposition centred on rho_CD with width delta_CD,
            normalised to I_CD.  No physical-source decomposition here;
            the caller selects the deposition centre via the Multi-source
@@ -6841,7 +7349,8 @@ def f_q_profile_refined(
         or 'spitzer'.  The neoclassical models couple j_Ohm to q(rho) via
         the trapped-particle correction.
     rho_ped, n_ped_frac, T_ped_frac : float
-        Pedestal parameters passed to f_Tprof / f_nprof.
+        Pedestal parameters passed to f_Tprof / f_nprof (rho_ped: volume
+        label ρ_V).
     Vprime_data : tuple or None
         Miller geometry data.  Accepted formats:
             6-tuple: (rho, Vprime, V_total, dA, Lp, inv_R2)  [preferred]
@@ -6855,7 +7364,8 @@ def f_q_profile_refined(
         Edge and 95%-surface triangularity.  Used when Vprime_data does
         not provide inv_R2 or Lp; ignored otherwise.
     rho_CD, delta_CD : float
-        Current-drive Gaussian deposition centre and width.
+        Current-drive Gaussian deposition centre and width, in the volume
+        label ρ_V.
     q_init : dict or None
         Optional warm start from a previous solution (must contain 'rho'
         and 'q_arr' keys).  When None, the iteration starts from a
@@ -6909,10 +7419,10 @@ def f_q_profile_refined(
     Luce et al., Nucl. Fusion 54 (2014) 093005 — l_i(3) integral definition.
     """
     # == Radial grid =========================================================
-    rho_inner = np.linspace(0.001, 0.05, 30, endpoint=False)
-    rho_core  = np.linspace(0.05, rho_ped, n_rho, endpoint=False)
-    rho_edge  = np.linspace(rho_ped, 0.99, n_rho)
-    rho = np.concatenate([rho_inner, rho_core, rho_edge])
+    # Built in the volume label, with a node at the pedestal top, and mapped
+    # to the Miller label rho of the local geometry.
+    rho_V_arr = _rho_grid(rho_ped, n_rho, with_axis=True)
+    rho       = rho_of_rho_V(rho_V_arr, Vprime_data)
 
     if kappa_95 is None:
         kappa_95 = f_Kappa_95(kappa)
@@ -7008,16 +7518,16 @@ def f_q_profile_refined(
                                     Vprime_data_internal[1])
 
     # == Profiles of T(rho), n(rho), epsilon(rho) ============================
-    # Kinetic profiles and bootstrap use the CALLER's volume element (None in
-    # Academic geometry), i.e. the normalisation under which nbar and Tbar were
-    # defined by the chain; the internal Miller surfaces above only provide the
-    # geometric weights (dA, Lp, <1/R^2>) of the q formula.
-    T_arr   = f_Tprof(Tbar, nu_T, rho, rho_ped, T_ped_frac, Vprime_data)
-    n_arr   = f_nprof(nbar, nu_n, rho, rho_ped, n_ped_frac, Vprime_data)
+    # Kinetic profiles and bootstrap use the CALLER's Vprime_data (None in
+    # Academic geometry) for the map rho <-> rho_V; the internal Miller
+    # surfaces above only provide the geometric weights (dA, Lp, <1/R^2>)
+    # of the q formula.
+    T_arr   = Tbar * _profile_shape(rho_V_arr, nu_T, rho_ped, T_ped_frac)
+    n_arr   = nbar * _profile_shape(rho_V_arr, nu_n, rho_ped, n_ped_frac)
     eps_arr = rho * a / R0
 
-    # == Current-drive deposition profile (Gaussian, geometric only) =========
-    j_CD_shape = np.exp(-0.5 * ((rho - rho_CD) / max(delta_CD, 0.01))**2)
+    # == Current-drive deposition profile (Gaussian in the volume label) =====
+    j_CD_shape = np.exp(-0.5 * ((rho_V_arr - rho_CD) / max(delta_CD, 0.01))**2)
     I_CD_A     = max(I_CD * 1e6, 0.0)
     jCD_dA     = float(np.sum(j_CD_shape * dA))
     if jCD_dA > 0.0 and I_CD_A > 0.0:
@@ -7050,13 +7560,14 @@ def f_q_profile_refined(
         steps = 0.5 * (f_ext[:-1] + f_ext[1:]) * np.diff(rho_ext)
         return np.cumsum(steps)
 
-    def _q_from_Ienc(j_total_arr, j_axis_for_limit):
-        # Cumulative enclosed current via trapezoidal rule.  The integrand
-        # 2 pi rho a^2 kappa(rho) j_total vanishes at rho = 0, so the
-        # prepended virtual point at rho_ext[0] = 0 is exactly zero.
-        integrand     = j_total_arr * dA_per_drho
+    def _q_from_Ienc(j_non_bs_arr, I_bs_enc_arr, j_axis_for_limit):
+        # Cumulative enclosed current: trapezoidal rule for the Ohmic and
+        # driven densities (the integrand 2 pi rho a^2 kappa(rho) j vanishes
+        # at rho = 0, so the prepended virtual point at rho_ext[0] = 0 is
+        # exactly zero), plus the bootstrap current enclosed by each node.
+        integrand     = j_non_bs_arr * dA_per_drho
         integrand_ext = np.concatenate([[0.0], integrand])
-        I_enc_arr     = _cum_trap_from_zero(integrand_ext)
+        I_enc_arr     = _cum_trap_from_zero(integrand_ext) + I_bs_enc_arr
         I_safe        = np.maximum(I_enc_arr, 1.0)   # zero/negative guard
 
         # Rigorous Miller-based q formula
@@ -7073,6 +7584,24 @@ def f_q_profile_refined(
             k0 = float(kappa_arr[0])
             q_calc[0] = ((1.0 + k0**2) / k0) * B0 / (μ0 * R0 * j_axis_for_limit)
         return q_calc, I_enc_arr
+
+    def _bootstrap_on_grid(bs_res):
+        """
+        Bootstrap current on the q grid from a f_Sauter_Redl_Ib profile.
+
+        The enclosed current I_bs_enc(rho) [A] is interpolated from the
+        cumulative shell currents, so that it reaches the total exactly at
+        the edge.  The density follows as j_bs = (dI_bs_enc/drho) / (dA/drho)
+        [A/m^2].  The total is clipped to [0, Ip] (I_bs_A [A]) and the
+        enclosed current scaled with it.
+        """
+        I_raw  = float(bs_res['I_enc'][-1])
+        I_bs_A = float(np.clip(I_raw, 0.0, Ip_A))
+        scale  = I_bs_A / I_raw if I_raw > 0.0 else 0.0
+        I_bs_enc = scale * np.interp(rho, bs_res['rho_nodes'], bs_res['I_enc'])
+        j_bs = (np.gradient(I_bs_enc, rho)
+                / np.where(dA_per_drho > 0.0, dA_per_drho, 1.0))
+        return I_bs_enc, j_bs, I_bs_A
 
     # == Picard iteration on q(rho) =========================================
     converged = False
@@ -7094,8 +7623,7 @@ def f_q_profile_refined(
             return_profile=True, q_profile=q_dict,
             trapped_fraction_model=trapped_fraction_model, tau_i_e=tau_i_e,
             n_ion_frac=n_ion_frac)
-        j_bs   = np.interp(rho, bs_res['rho'], bs_res['j_bs'])
-        I_bs_A = float(np.clip(bs_res['I_bs'] * 1e6, 0.0, Ip_A))
+        I_bs_enc, j_bs, I_bs_A = _bootstrap_on_grid(bs_res)
 
         # Ohmic share closes the current balance.
         I_Ohm_A = max(Ip_A - I_CD_A - I_bs_A, 0.0)
@@ -7103,10 +7631,12 @@ def f_q_profile_refined(
         # Local conductivity sigma_neo(T, q, eps, Z_eff)
         if eta_model == 'redl':
             eta_loc = eta_redl(T_arr, n_arr * 1e20, Z_eff,
-                               eps_arr, q=q_old, R0=R0)
+                               eps_arr, q=q_old, R0=R0,
+                               trapped_fraction_model=trapped_fraction_model)
         elif eta_model == 'sauter':
             eta_loc = eta_sauter(T_arr, n_arr * 1e20, Z_eff,
-                                 eps_arr, q=q_old, R0=R0)
+                                 eps_arr, q=q_old, R0=R0,
+                                 trapped_fraction_model=trapped_fraction_model)
         else:  # 'spitzer' or any unknown -> classical Spitzer-Harm
             eta_loc = eta_spitzer(T_arr, n_arr * 1e20, Z_eff)
         sigma_loc   = 1.0 / np.maximum(eta_loc, 1e-12)
@@ -7121,7 +7651,7 @@ def f_q_profile_refined(
         # Composite current density and rebuild q(rho) from the rigorous
         # Miller-based formula.
         j_total = j_Ohm + j_CD_arr + j_bs
-        q_new, I_enc = _q_from_Ienc(j_total,
+        q_new, I_enc = _q_from_Ienc(j_Ohm + j_CD_arr, I_bs_enc,
                                     j_axis_for_limit=float(j_total[0]))
 
         # Damped update.
@@ -7150,16 +7680,17 @@ def f_q_profile_refined(
         return_profile=True, q_profile=q_dict_final,
         trapped_fraction_model=trapped_fraction_model, tau_i_e=tau_i_e,
         n_ion_frac=n_ion_frac)
-    j_bs   = np.interp(rho, bs_res['rho'], bs_res['j_bs'])
-    I_bs_A = float(np.clip(bs_res['I_bs'] * 1e6, 0.0, Ip_A))
+    I_bs_enc, j_bs, I_bs_A = _bootstrap_on_grid(bs_res)
     I_Ohm_A = max(Ip_A - I_CD_A - I_bs_A, 0.0)
 
     if eta_model == 'redl':
         eta_loc = eta_redl(T_arr, n_arr * 1e20, Z_eff,
-                           eps_arr, q=q_arr, R0=R0)
+                           eps_arr, q=q_arr, R0=R0,
+                           trapped_fraction_model=trapped_fraction_model)
     elif eta_model == 'sauter':
         eta_loc = eta_sauter(T_arr, n_arr * 1e20, Z_eff,
-                             eps_arr, q=q_arr, R0=R0)
+                             eps_arr, q=q_arr, R0=R0,
+                             trapped_fraction_model=trapped_fraction_model)
     else:
         eta_loc = eta_spitzer(T_arr, n_arr * 1e20, Z_eff)
     sigma_loc  = 1.0 / np.maximum(eta_loc, 1e-12)
@@ -7172,7 +7703,7 @@ def f_q_profile_refined(
         j_Ohm = np.zeros_like(rho)
 
     j_total = j_Ohm + j_CD_arr + j_bs
-    _q_unused, I_enc = _q_from_Ienc(j_total,
+    _q_unused, I_enc = _q_from_Ienc(j_Ohm + j_CD_arr, I_bs_enc,
                                     j_axis_for_limit=float(j_total[0]))
 
     # == Internal inductance l_i(3) (Luce convention) =======================
@@ -7213,9 +7744,11 @@ if __name__ == "__main__":
     # ── ITER chain (9/12) - bootstrap current ────────────────────────────
     # Sauter-Redl evaluated at the chain operating point with the deck
     # pedestal profiles. q95 is a forward reference (FROZEN), closed by
-    # chain 12 after f_q95 is defined. The production solver additionally
-    # refines the collisionality with the Picard q(rho) cache, worth
-    # ~0.2 % on I_bs, hence the 1 % tolerance. The Segal (2021) model is
+    # chain 12 after f_q95 is defined. Without a q(rho) profile the
+    # bootstrap takes the parabolic fallback q = 1 + (q95 - 1) rho^2. The
+    # production solver evaluates it on the self-consistent q(rho) of its
+    # outer fixed point, lower in the core: 13 % less I_bs at the shipped
+    # ITER point (2.94 against 3.38 MA). The Segal (2021) model is
     # reported for model comparison at the same point.
     _Ib = f_Sauter_Redl_Ib(ITER['R0'], ITER['a'], ITER['kappa'], ITER['B0'],
                            ITER['nbar'], ITER['Tbar'], FROZEN['q95'],
@@ -7361,7 +7894,8 @@ def f_heat_PFU_Eich(P_sol, B_pol, R, eps, theta_deg,
     P_sol : float
         Power entering the scrape-off layer (= P_sep) [MW]
     B_pol : float
-        Poloidal magnetic field at the outer midplane [T]
+        Poloidal magnetic field at the outer-midplane separatrix [T]
+        (f_Bpol_omp).
     R : float
         Major radius [m]
     eps : float
@@ -7396,9 +7930,11 @@ def f_heat_PFU_Eich(P_sol, B_pol, R, eps, theta_deg,
         λ_q ∝ B_tor^{-0.77} · q95^{1.05} · P_sol^{0.09};   not used here.)
 
     Upstream peak parallel flux.  The SOL power flows along B through the
-    annular cross-section 2π R λ_q (B_θ/B)|omp, hence
-        q_∥u = f_out · P_sol / (2π R λ_q) · (B/B_θ)|omp
-    with B_tor,omp = B0/(1+ε) and B = sqrt(B_tor,omp² + B_pol²).
+    annular cross-section 2π R_omp λ_q (B_θ/B)|omp at the outer midplane,
+    R_omp = R (1 + ε), hence
+        q_∥u = f_out · P_sol / (2π R_omp λ_q) · (B/B_θ)|omp
+    with B_tor,omp = B0/(1+ε) and B = sqrt(B_tor,omp² + B_pol²). PROCESS
+    uses the same area (calculate_upstream_sol_outboard_parallel_area).
     Omitting the pitch factor B/B_θ (≈ 3-6 for conventional tokamaks)
     underestimates q_∥u and is inconsistent with the use of the total
     grazing angle θ below.
@@ -7416,8 +7952,8 @@ def f_heat_PFU_Eich(P_sol, B_pol, R, eps, theta_deg,
     # SOL power decay length: empirical multi-machine regression [mm → m]
     lambda_q = 1.35 * R**0.04 * B_pol**(-0.92) * eps**0.42 * P_sol**(-0.02) * 1e-3
 
-    # Outer-midplane poloidal-projection heat flux [MW m⁻²]
-    q_pol_omp = f_outer_target * P_sol / (2 * np.pi * R * lambda_q)
+    # Outer-midplane poloidal-projection heat flux [MW m⁻²], R_omp = R (1+ε)
+    q_pol_omp = f_outer_target * P_sol / (2 * np.pi * R * (1.0 + eps) * lambda_q)
 
     # Field-line pitch factor (B/B_θ)|omp
     if B0 is None:
@@ -7449,11 +7985,12 @@ if __name__ == "__main__":
     # gives lambda_q = 0.73 mm (P_SOL = 100 MW, Bpol,MP = 1.185 T,
     # R = 6.2 m, a = 2 m); tolerance 8 % (rounding of the quoted
     # midplane poloidal field).
-    # Chain: B_pol from the q-inversion at the frozen q95 (closed by
-    # chain 12) and lambda_q at the chain P_sep.
+    # Chain: outer-midplane B_pol as in the production solver
+    # (f_Bpol_omp), at the frozen Ip (closed by chain 11), and lambda_q at
+    # the chain P_sep. C_BPOL_OMP reproduces the Eich ITER row by
+    # construction.
     _lam_pub, _, _ = f_heat_PFU_Eich(100., 1.185, 6.2, 2 / 6.2, 3.0, B0=5.3)
-    _Bpol = f_Bpol(FROZEN['q95'], ITER['B0'], ITER['a'], ITER['R0'],
-                   kappa=ITER['kappa'])
+    _Bpol = f_Bpol_omp(FROZEN['Ip'], ITER['a'], ITER['kappa'])
     _lam, _, _ = f_heat_PFU_Eich(ITER['P_sep'], _Bpol, ITER['R0'],
                                  ITER['a'] / ITER['R0'],
                                  3.0,  # grazing angle [deg]; was FROZEN['q95'] by accident (same value)
@@ -7461,6 +7998,8 @@ if __name__ == "__main__":
     _bench("ITER chain 10/12 - SOL heat-flux width (Eich #15)", [
         ("lambda_q paper inputs [mm]", _lam_pub * 1e3, 0.73, 0.08,
          "Eich 2013"),
+        ("B_pol,MP at the Eich ITER row [T]", f_Bpol_omp(15.0, 2.0, 1.8),
+         1.185, 0.01, "Eich 2013 T1"),
         ("B_pol outer midplane [T]", _Bpol, FROZEN['B_pol'], 2e-3,
          "deck frozen"),
         ("lambda_q chain point [mm]", _lam * 1e3, FROZEN['lambda_q_mm'],
@@ -7554,7 +8093,7 @@ def _two_point_core(q_par_u_SI, p_u, f_cooling, f_mom, gamma_sheath, m_f):
 def f_heat_two_point(P_sol, B_pol, R0, eps, q95, n_sep, theta_deg,
                      B0=None, f_outer_target=0.65,
                      f_cooling=0.0, f_mom=0.0,
-                     gamma_sheath=7.0, kappa0e=2000.0, eps_pot=15.0,
+                     gamma_sheath=7.0, kappa0e=KAPPA0_E, eps_pot=15.0,
                      q_dep_limit=5.0, flux_expansion=1.0,
                      m_f=M_F_DT):
     """
@@ -7562,7 +8101,7 @@ def f_heat_two_point(P_sol, B_pol, R0, eps, q95, n_sep, theta_deg,
 
     Chain (Stangeby 2018):
       1. λ_q from Eich (2013) regression #15 → upstream parallel flux
-         q_∥u = f_out · P_sol / (2π R₀ λ_q) · (B/B_θ)|omp,
+         q_∥u = f_out · P_sol / (2π R_omp λ_q) · (B/B_θ)|omp, R_omp = R₀ (1+ε),
          with B_tor,omp = B0/(1+ε) and B = sqrt(B_tor,omp² + B_pol²).
       2. Upstream electron temperature from Spitzer–Härm conduction (Eq. 38),
          T_eu = (7 q_∥u L / 2 κ₀ₑ)^(2/7), connection length L = π R₀ q₉₅.
@@ -7575,14 +8114,14 @@ def f_heat_two_point(P_sol, B_pol, R0, eps, q95, n_sep, theta_deg,
     The 2PM is CONDUCTION-LIMITED: valid only for T_et ≪ T_eu. When the inputs
     (typically a reactor with q_∥u ~ GW/m² and no dissipation, f_cooling=f_mom=0)
     drive T_et above T_eu, the regime is sheath-limited and the attached target
-    is unviable; this is flagged via 'regime' and T_et is capped at T_eu. The
-    physical reading is that strong dissipation is mandatory, which is exactly
-    what f_pwr_loss_req quantifies.
+    is unviable. This is flagged via 'regime', T_et is capped at T_eu, and
+    n_et, Gamma_et and q_dep_t are NaN. The physical reading is that strong
+    dissipation is mandatory, which is exactly what f_pwr_loss_req quantifies.
 
     Parameters
     ----------
     P_sol : float     Power crossing the separatrix (= divertor power) [MW].
-    B_pol : float     Outer-midplane poloidal field [T].
+    B_pol : float     Outer-midplane separatrix poloidal field [T] (f_Bpol_omp).
     R0 : float        Major radius [m].
     eps : float       Inverse aspect ratio a/R₀ [-].
     q95 : float       Safety factor at ψ_N = 0.95 [-].
@@ -7599,7 +8138,7 @@ def f_heat_two_point(P_sol, B_pol, R0, eps, q95, n_sep, theta_deg,
     f_mom : float     Volumetric momentum-loss fraction (Eq. 19). 0 = attached.
     gamma_sheath : float  Sheath heat transmission coefficient [-], default 7.0.
     kappa0e : float   Electron Spitzer–Härm coefficient [W m⁻¹ eV⁻⁷ᐟ²], default
-        2000. Stangeby uses ~3000; T_eu ∝ κ₀ₑ^(−2/7) makes this nearly immaterial.
+        KAPPA0_E = 2600, the value of the Lengyel closure. T_eu ∝ κ₀ₑ^(−2/7).
     eps_pot : float   Hydrogenic potential energy deposited per ion [eV], default 15.
     q_dep_limit : float  Tolerable deposited target flux [MW/m²], default 5.0.
     flux_expansion : float  Target/upstream flux expansion R_t/R_u [-].
@@ -7609,15 +8148,17 @@ def f_heat_two_point(P_sol, B_pol, R0, eps, q95, n_sep, theta_deg,
     -------
     dict with keys:
         'lambda_q'        SOL power width [m].
-        'q_pol_omp'       Poloidal-projection flux f_out·P_sol/(2πR₀λ_q) [MW/m²].
+        'q_pol_omp'       Poloidal-projection flux f_out·P_sol/(2πR_omp λ_q) [MW/m²].
         'pitch_B_over_Bpol'  Field-line pitch (B/B_θ)|omp applied to q_∥u [-].
         'f_outer_target'  Outer-target power-sharing fraction used [-].
         'q_par_u'         Upstream parallel heat flux [MW/m²].
         'T_eu'            Upstream electron temperature [eV].
         'T_et'            Target electron temperature [eV] (capped at T_eu).
-        'n_et'            Target electron density [m⁻³].
-        'Gamma_et'        Target parallel particle flux [m⁻²s⁻¹].
-        'q_dep_t'         Deposited perpendicular target flux [MW/m²].
+        'n_et'            Target electron density [m⁻³] (NaN if sheath-limited).
+        'Gamma_et'        Target parallel particle flux [m⁻²s⁻¹] (NaN if
+                          sheath-limited).
+        'q_dep_t'         Deposited perpendicular target flux [MW/m²] (NaN if
+                          sheath-limited).
         'f_pwr_loss_req'  Min. SOL power-loss fraction for survival [-].
         'regime'          'sheath-limited' | 'conduction-limited'.
         'detached'        bool, T_et < 10 eV.
@@ -7631,11 +8172,12 @@ def f_heat_two_point(P_sol, B_pol, R0, eps, q95, n_sep, theta_deg,
     s = np.sin(np.deg2rad(theta_deg))
 
     # 1. SOL width and upstream parallel flux.
-    #    q_∥u = f_out · P_sol/(2π R λ_q) · (B/B_θ)|omp — the pitch factor is
-    #    mandatory: the Spitzer-Härm relation in step 2 requires the TRUE
-    #    parallel flux (Stangeby 2018). B_tor,omp = B0/(1+ε).
+    #    q_∥u = f_out · P_sol/(2π R_omp λ_q) · (B/B_θ)|omp — the pitch factor
+    #    is mandatory: the Spitzer-Härm relation in step 2 requires the TRUE
+    #    parallel flux (Stangeby 2018). R_omp = R0 (1+ε), B_tor,omp = B0/(1+ε).
     lambda_q = 1.35 * R0**0.04 * B_pol**(-0.92) * eps**0.42 * P_sol**(-0.02) * 1e-3
-    q_pol_omp = f_outer_target * P_sol / (2.0 * np.pi * R0 * lambda_q)  # [MW/m²]
+    q_pol_omp = (f_outer_target * P_sol
+                 / (2.0 * np.pi * R0 * (1.0 + eps) * lambda_q))   # [MW/m²]
     if B0 is None:
         warnings.warn(
             "f_heat_two_point: B0 not provided — pitch factor B/B_theta set "
@@ -7663,15 +8205,18 @@ def f_heat_two_point(P_sol, B_pol, R0, eps, q95, n_sep, theta_deg,
         q_par_u_SI, p_u, f_cooling, f_mom, gamma_sheath, m_f)
 
     # Conduction-limited validity: cap T_et at T_eu, flag sheath-limited.
+    # In the sheath-limited regime n_et and Gamma_et come from the uncapped
+    # solution and would break the power balance with the capped T_et, so
+    # the target density, particle flux and deposited flux are left undefined.
     if T_et >= T_eu:
         regime = 'sheath-limited'
         T_et = T_eu
+        n_et = Gamma_et = q_dep_t = np.nan
     else:
         regime = 'conduction-limited'
-
-    # 5. Deposited perpendicular target heat flux (Eqs. 1–3)
-    gamma_target = gamma_sheath + eps_pot / T_et
-    q_dep_t = gamma_target * E_ELEM * T_et * Gamma_et * s * 1e-6  # [MW/m²]
+        # 5. Deposited perpendicular target heat flux (Eqs. 1–3)
+        gamma_target = gamma_sheath + eps_pot / T_et
+        q_dep_t = gamma_target * E_ELEM * T_et * Gamma_et * s * 1e-6  # [MW/m²]
 
     # 6. Required dissipation fraction (Eq. 14)
     f_pwr_loss_req = f_heat_dissipation_required(
@@ -7750,11 +8295,12 @@ def f_Ip(tauE, R0, a, κ, δ, nbar, B0, Atomic_mass,
     exactly satisfied.
 
     .. warning:: Elongation convention
-       The IPB98(y,2) scaling uses κ_x = S₀/(πa²), NOT κ_LCFS.
-       For shaped plasmas (δ > 0), κ_x < κ_LCFS.
-       Use f_kappa_x() to convert.  ITER: κ_LCFS=1.85 → κ_x ≈ 1.75.
-       Passing κ_LCFS overestimates confinement by ~(κ_LCFS/κ_x)^0.78 ≈ 5%.
-       Ref: Shimada et al., NF 47 (2007), Table 2 — S₀ = 22 m².
+       Pass the elongation of the law's fit, given by
+       f_Get_kappa_convention: the area elongation κ_a = V/(2π²R₀a²) for
+       IPB98(y,2), ITPA20 and ITPA20-IL, the LCFS elongation for ITER89-P.
+       For shaped plasmas (δ > 0), κ_a < κ_LCFS. ITER: κ_LCFS = 1.85,
+       κ_a ≈ 1.70. Passing κ_LCFS to IPB98(y,2) overestimates confinement
+       by (κ_LCFS/κ_a)^0.78 ≈ 7 %.
 
     .. warning:: Density convention
        The IPB98(y,2) and ITPA20 scalings were fitted using LINE-AVERAGED
@@ -7772,8 +8318,8 @@ def f_Ip(tauE, R0, a, κ, δ, nbar, B0, Atomic_mass,
     a : float
         Minor radius [m]
     κ : float
-        Plasma elongation — should be κ_x = S₀/(πa²) for IPB98(y,2).
-        Use f_kappa_x() or κ_a = V/(2π²R₀a²) to compute.
+        Plasma elongation in the convention of the law
+        (f_Get_kappa_convention).
     δ : float
         Plasma triangularity (LCFS) (dimensionless)
     nbar : float
@@ -8121,10 +8667,10 @@ def f_Get_parameter_scaling_law(Scaling_Law):
     IPB98(y,2) : ITER Physics Basis Expert Groups on Confinement & Transport,
         Nucl. Fusion 39 (1999) 2175, Table 5 (ELMy H-mode, type-I).
     ITPA20     : Verdoolaege, Kaye, Angioni, Kardaun, Maslov, Romanelli,
-        Ryter & Thomsen, Nucl. Fusion 61 (2021) 076006, Table 4
-        (full ELMy H-mode database DB5.2.3, log-linear regression).
-    ITPA20-IL  : Same paper, Table 4 — ITER-Like subset (metal wall,
-        single-null, type-I ELMs, n̄/nG < 1.2, q95 > 2.5).
+        Ryter & Thomsen, Nucl. Fusion 61 (2021) 076006, Table 16, WLS row
+        (ELMy H-modes of DB5.2.3-STD5, with triangularity).
+    ITPA20-IL  : Same paper, Table 10, WLS row (ELMy H-modes of
+        DB5.2.3-STD5 restricted to the ITER-like conditions).
     DS03       : Doyle et al. (PIPB Ch. 2), Nucl. Fusion 47 (2007) S18,
         Table III — dimensionless-variables-motivated fit (Petty 2008
         convention; named DS03 after the dataset used).
@@ -8145,14 +8691,16 @@ def f_Get_parameter_scaling_law(Scaling_Law):
         'IPB98(y,2)': dict(C_SL=0.0562, α_δ=0,    α_M=0.19, α_κ=0.78,
                            α_ε=0.58,  α_R=1.97,  α_B=0.15,
                            α_n=0.41,  α_I=0.93,  α_P=-0.69),
-        # Verdoolaege et al. (2021), NF 61, 076006 — Table 4, ITER-Like subset
-        'ITPA20-IL':  dict(C_SL=0.067,  α_δ=0.56, α_M=0.3,  α_κ=0.67,
-                           α_ε=0,     α_R=1.19,  α_B=-0.13,
-                           α_n=0.147, α_I=1.29,  α_P=-0.644),
-        # Verdoolaege et al. (2021), NF 61, 076006 — Table 4, full H-mode DB
-        'ITPA20':     dict(C_SL=0.053,  α_δ=0.36, α_M=0.2,  α_κ=0.8,
-                           α_ε=0.35,  α_R=1.71,  α_B=0.22,
-                           α_n=0.24,  α_I=0.98,  α_P=-0.669),
+        # Verdoolaege et al. (2021), NF 61, 076006 — Table 10, WLS row,
+        # ITER-like subset. ITER prediction of the paper: 2.902 s.
+        'ITPA20-IL':  dict(C_SL=0.0670, α_δ=0.560, α_M=0.302, α_κ=0.673,
+                           α_ε=0,      α_R=1.194, α_B=-0.134,
+                           α_n=0.1473, α_I=1.291, α_P=-0.6442),
+        # Verdoolaege et al. (2021), NF 61, 076006 — Table 16, WLS row,
+        # all ELMy H-modes of STD5. ITER prediction of the paper: 3.067 s.
+        'ITPA20':     dict(C_SL=0.0534, α_δ=0.362, α_M=0.195, α_κ=0.799,
+                           α_ε=0.354,  α_R=1.710, α_B=0.218,
+                           α_n=0.2442, α_I=0.976, α_P=-0.6687),
         # Doyle et al. (2007 PIPB Ch.2), NF 47, S18 — Table III
         'DS03':       dict(C_SL=0.028,  α_δ=0,    α_M=0.14, α_κ=0.75,
                            α_ε=0.3,   α_R=2.11,  α_B=0.07,
@@ -8201,6 +8749,56 @@ def f_Get_parameter_scaling_law(Scaling_Law):
             p['α_ε'], p['α_R'], p['α_B'], p['α_n'], p['α_I'], p['α_P'])
 
 
+def f_Get_kappa_convention(Scaling_Law):
+    """
+    Elongation convention of a τ_E scaling law, the one of its fit.
+
+    'area' : area elongation κ_a = V / (2π² R₀ a²), with V the plasma
+             volume inside the LCFS (IPB definition).
+    'edge' : elongation of the LCFS, κ = b / a.
+
+    Sources of each convention:
+        IPB98(y,2)        : area. ITER Physics Basis, NF 39 (1999) 2175,
+                            with the volume definition of Kardaun et al.,
+                            NF 48 (2008) 099801. PROCESS does the same.
+        ITPA20, ITPA20-IL : area. Verdoolaege et al., NF 61 (2021) 076006,
+                            section 2.2.1: κ_a = V / (2π R_geo π a²).
+        ITER89-P          : edge. Yushmanov et al., NF 30 (1990) 1999,
+                            section 2: elongation at the plasma surface.
+        Auclair2026(-fGW) : area. Paper 1 fits κ_a.
+        DS03, L-mode,
+        L-mode OK         : area. Not checked against Doyle et al. (2007)
+                            and Kaye et al. (1997). PROCESS uses κ_95 for
+                            these laws, close to κ_a for ITER-like shapes.
+
+    Parameters
+    ----------
+    Scaling_Law : str
+        Registry key of f_Get_parameter_scaling_law.
+
+    Returns
+    -------
+    str : 'area' or 'edge'.
+
+    Raises
+    ------
+    ValueError
+        If `Scaling_Law` is not found in the registry.
+    """
+    _conventions = {
+        'IPB98(y,2)': 'area', 'ITPA20': 'area', 'ITPA20-IL': 'area',
+        'DS03': 'area', 'L-mode': 'area', 'L-mode OK': 'area',
+        'ITER89-P': 'edge',
+        'Auclair2026': 'area', 'Auclair2026-fGW': 'area',
+    }
+    if Scaling_Law not in _conventions:
+        raise ValueError(
+            f"Unknown scaling law '{Scaling_Law}'. "
+            f"Available: {list(_conventions.keys())}"
+        )
+    return _conventions[Scaling_Law]
+
+
 def f_Get_fGW_correction(Scaling_Law):
     """
     Greenwald-fraction correction attached to a τ_E scaling law.
@@ -8235,7 +8833,14 @@ if __name__ == "__main__":
     assert f_Get_parameter_scaling_law('IPB98(y,2)') == \
         (0.0562, 0, 0.19, 0.78, 0.58, 1.97, 0.15, 0.41, 0.93, -0.69)
     assert f_Get_parameter_scaling_law('ITPA20') == \
-        (0.053, 0.36, 0.2, 0.8, 0.35, 1.71, 0.22, 0.24, 0.98, -0.669)
+        (0.0534, 0.362, 0.195, 0.799, 0.354, 1.710, 0.218, 0.2442, 0.976,
+         -0.6687)
+    assert f_Get_parameter_scaling_law('ITPA20-IL') == \
+        (0.0670, 0.560, 0.302, 0.673, 0, 1.194, -0.134, 0.1473, 1.291,
+         -0.6442)
+    assert [f_Get_kappa_convention(_l) for _l in
+            ('IPB98(y,2)', 'ITPA20', 'ITPA20-IL', 'ITER89-P')] == \
+        ['area', 'area', 'area', 'edge']
     # IPB98 at the ITER Q=10 point evaluated at P = 87 MW (total heating
     # power, no radiation subtracted in this published-value check;
     # kappa_x = 1.70,
@@ -8255,6 +8860,21 @@ if __name__ == "__main__":
          "Yushmanov 1990"),
         ("tau_IPB98, published convention [s]", _tau98, 3.7, 0.08,
          "IPB 1999"),
+    ])
+    # ITPA20 and ITPA20-IL at the ITER point of Verdoolaege et al. (2021),
+    # section 3.2.2: Ip = 15 MA, B = 5.3 T, n19 = 10.3, P = 87 MW,
+    # R = 6.2 m, delta = 0.48, kappa_a = 1.7, eps = 0.32, M = 2.5.
+    # Published predictions: 3.067 s (Table 16) and 2.902 s (Table 10).
+    def _tau_law(_law):
+        _C, _ad, _aM, _ak, _ae, _aR, _aB, _an, _aI, _aP = \
+            f_Get_parameter_scaling_law(_law)
+        return (_C * 15**_aI * 5.3**_aB * 10.3**_an * 87.0**_aP * 6.2**_aR
+                * 1.48**_ad * 1.7**_ak * 0.32**_ae * 2.5**_aM)
+    _bench("Published anchors - ITPA20 scaling laws", [
+        ("tau_ITPA20 at the ITER point [s]", _tau_law('ITPA20'), 3.067,
+         5e-3, "Verdoolaege 2021 T16"),
+        ("tau_ITPA20-IL at the ITER point [s]", _tau_law('ITPA20-IL'),
+         2.902, 5e-3, "Verdoolaege 2021 T10"),
     ])
     # Auclair2026 at the ITER baseline point of paper 1 (Ip = 15 MA,
     # B = 5.3 T, n19 = 10.3, P = 87 MW, R = 6.2 m, eps = 0.32,
@@ -8708,7 +9328,7 @@ def f_volume(a, b, c, d, R0, κ, Delta_TF, H_TF):
     V_CS_geom = 2 * np.pi * (κ * a + b + c) * (2 * d * R_i - d**2)
 
     # Fusion-island bounding cylinder: π R² H_TF, R = R0 + a + b + Delta_TF + c
-    V_FI = 2 * np.pi * H_TF * (R0 + a + b + Delta_TF + c)**2
+    V_FI = np.pi * H_TF * (R0 + a + b + Delta_TF + c)**2
 
     return (V_blanket, V_TF_Pappus, V_CS_geom, V_FI)
 
@@ -8846,13 +9466,20 @@ def f_availability_schedule(t_life_bl_fpy: float, t_life_div_fpy: float,
         t_A, t_B   = t_div_yr,  t_bl_yr
         dt_A, dt_B = dt_rep_div, dt_rep_bl
 
-    # Number of B-cycles per A-cycle (floor, never exceed lifetime)
-    n = max(1, int(t_A / t_B))
-
-    dt_rep_eff = ((n - 1) * dt_B + max(dt_A, dt_B)) / n
+    # Number of B-cycles per A-cycle (floor, never exceed lifetime).
+    # An infinite lifetime (e.g. a divertor without load, P_sep ≤ 0) means
+    # that the component is never replaced: limit n → ∞, dt_rep_eff = dt_B.
+    if np.isfinite(t_A):
+        n = max(1, int(t_A / t_B))
+        dt_rep_eff = ((n - 1) * dt_B + max(dt_A, dt_B)) / n
+    else:
+        dt_rep_eff = dt_B
     T_op_limit = t_B
 
-    Av = T_op_limit / (T_op_limit + dt_rep_eff)
+    if np.isfinite(T_op_limit):
+        Av = T_op_limit / (T_op_limit + dt_rep_eff)
+    else:
+        Av = 1.0   # neither component is ever replaced
     CF = Av * UD
     return (T_op_limit, dt_rep_eff, Av, CF)
 
@@ -9497,7 +10124,8 @@ def compute_RE_indicators(Ip, nbar, Tbar, a, R0, κ, Z_eff, li,
         Uses n_e,diluted throughout.  Output I_RE_avalanche [A] (capped at Ip).
 
     Step 3 — Energy estimates:
-        Kinetic energy: E_kin = N_RE × ⟨γ⟩ × m_e c²  (⟨γ⟩ = 10, indicative).
+        Kinetic energy: E_kin = N_RE × (⟨γ⟩ − 1) × m_e c², with
+        N_RE = 2π R0 I_RE / (e c)  (⟨γ⟩ = 10, indicative).
         Magnetic energy: W_mag = ½ L_i I_RE²  (dominates wall damage).
 
     Parameters
@@ -9525,7 +10153,8 @@ def compute_RE_indicators(Ip, nbar, Tbar, a, R0, κ, Z_eff, li,
     pellet_dilution : float
         Density multiplication factor representing shattered-pellet or MGI
         assimilation into the background plasma before the current quench
-        (default 10).  Applied to nbar for the avalanche step only.
+        (default 10).  Applied to nbar for both the hot-tail seed and
+        the avalanche step.
         Set to 1.0 to disable pellet mitigation (unmitigated disruption).
     pellet_dilution_cools : bool
         If True, isobaric energy conservation is enforced: the pre-TQ
@@ -9618,13 +10247,16 @@ def compute_RE_indicators(Ip, nbar, Tbar, a, R0, κ, Z_eff, li,
     # ── Step 3: Derived quantities ────────────────────────────────────────────
     f_RE_to_Ip = I_RE_final / Ip_A if Ip_A > 0 else 0.0
 
-    # Kinetic energy: E_kin = N_RE × ⟨γ⟩ × m_e c²
+    # Kinetic energy: E_kin = N_RE × (⟨γ⟩ − 1) × m_e c²
     # ⟨γ⟩ = 10 is a conventional indicative value for disruption RE beams
     # (Hender et al. 2007, NF 47 S128).  Actual γ spans 2–100+ depending
     # on the electric field and current-quench duration.
-    N_RE_final = I_RE_final / (E_ELEM * C_LIGHT)
+    # I_RE / (e c) is the number of electrons per metre of beam (v ≈ c).
+    # The beam goes once around the torus, so the total count is 2π R0 times
+    # larger, consistently with the seed count N_RE = ∫ n_RE dV.
+    N_RE_final = I_RE_final * 2.0 * np.pi * R0 / (E_ELEM * C_LIGHT)
     gamma_avg  = 10.0
-    E_RE_kin   = N_RE_final * gamma_avg * M_E * C_LIGHT**2 * 1e-6  # [MJ]
+    E_RE_kin   = N_RE_final * (gamma_avg - 1.0) * M_E * C_LIGHT**2 * 1e-6  # [MJ]
 
     # Magnetic energy: W_mag = ½ L_internal × I_RE²
     # This is the principal energy channel for first-wall damage during the
@@ -9633,7 +10265,7 @@ def compute_RE_indicators(Ip, nbar, Tbar, a, R0, κ, Z_eff, li,
     W_mag      = 0.5 * L_internal * I_RE_final**2 * 1e-6  # [MJ]
 
     return {
-        'I_RE_seed':       I_RE_seed,         # [A]   — pre-pellet hot-tail seed
+        'I_RE_seed':       I_RE_seed,         # [A]   hot-tail seed at the post-pellet density
         'I_RE_avalanche':  I_RE_final,         # [A]   — post-avalanche, post-pellet
         'f_RE_to_Ip':      f_RE_to_Ip,         # [-]
         'N_RE_seed':       ht['N_RE'],
@@ -9707,9 +10339,7 @@ if __name__ == "__main__":
         "value re-emerges from the ash balance at the chain tau_E.",
         "The IPB exhaust value (4.4 %) corresponds to the ITER Physics "
         "Basis assumption at its own operating point.",
-        "The I_Ohm row closes the forward reference of chain 7 "
-        "(0.2 % residual inherited from the Picard q-profile cache of "
-        "the bootstrap step).",
+        "The I_Ohm row closes the forward reference of chain 7.",
     ])
 
 if __name__ == "__main__":
@@ -9752,7 +10382,7 @@ if __name__ == "__main__":
 if __name__ == "__main__":
     # ─────────────────────────────────────────────────────────────────────
     # Full-device regression: the shipped reference deck must reproduce
-    # the frozen 2026-09 values (anti-drift guard; intentional physics
+    # the frozen 2026-10 values (anti-drift guard; intentional physics
     # changes must update these anchors AND the FROZEN dict at the top of
     # this file). Skipped gracefully if the deck is absent. Indices
     # follow the save_run_output tuple map of D0FUS_EXE/D0FUS_run.py.
@@ -9763,17 +10393,17 @@ if __name__ == "__main__":
             os.path.abspath(__file__))), 'D0FUS_INPUTS', '1_run_ITER.txt')
         _res = run(load_config_from_file(_deck), verbose=0)
         _frozen_idx = [
-            (0, "B0 [T]", 5.620), (3, "tau_E [s]", 3.2554),
-            (5, "Q [-]", 9.973), (8, "Ip [MA]", 14.821),
-            (9, "I_bs [MA]", 2.838), (13, "n_line [1e20 m-3]", 1.0025),
-            (14, "n_GW [1e20 m-3]", 1.1794), (16, "beta_N [-]", 1.5792),
-            (20, "q95 [-]", 3.194), (23, "P_LH [MW]", 76.523),
-            (40, "f_alpha [-]", 0.041776),
+            (0, "B0 [T]", 5.620), (3, "tau_E [s]", 3.6570),
+            (5, "Q [-]", 9.959), (8, "Ip [MA]", 15.589),
+            (9, "I_bs [MA]", 2.953), (13, "n_line [1e20 m-3]", 1.0544),
+            (14, "n_GW [1e20 m-3]", 1.2405), (16, "beta_N [-]", 1.5719),
+            (20, "q95 [-]", 3.036), (23, "P_LH [MW]", 75.829),
+            (40, "f_alpha [-]", 0.042744),
         ]
         _rows = [(f"deck[{_i}] {_nm}", float(_res[_i]), _v, 5e-3,
-                  "frozen 2026-09") for _i, _nm, _v in _frozen_idx]
-        _rows.append(("deck[4] W_th [MJ]", float(_res[4]) / 1e6, 332.71,
-                      5e-3, "frozen 2026-09"))
+                  "frozen 2026-10") for _i, _nm, _v in _frozen_idx]
+        _rows.append(("deck[4] W_th [MJ]", float(_res[4]) / 1e6, 348.32,
+                      5e-3, "frozen 2026-10"))
         _bench("Full-device regression - shipped ITER deck", _rows, notes=[
             "Closes the chain: every forward reference (f_alpha, "
             "f_imp_dil, q95, I_Ohm) and every chain output is "
