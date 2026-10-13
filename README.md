@@ -129,7 +129,7 @@ The mode is detected from the content of the input file. Text after `#` is a com
 
 **SCAN** evaluates an independent grid in parallel (`joblib`/`loky`), overlaying the operational limits (Greenwald, Troyon, kink) and the radial-build closure on any registered output.
 
-**OPTIMIZATION** minimises `COE` (default), `C_invest`, `volume` or `R0`, or maximises `P_elec`. Feasibility follows the RUN rule and comes first in the ranking: any feasible design beats any infeasible one, and infeasible designs are ranked by their violation of the limits. An optional capital-cost ceiling adds a soft penalty.
+**OPTIMIZATION** minimises `COE` (default), `C_invest`, `volume` or `R0`, maximises `P_elec`, or minimises an expression of the inputs and outputs written in the deck (`custom`). Feasibility follows the RUN rule and comes first in the ranking: any feasible design beats any infeasible one, and infeasible designs are ranked by their violation of the limits. An optional capital-cost ceiling adds a soft penalty.
 
 **POPCON** freezes the deck's converged machine and sweeps (n̄_line, T̄), returning Q, powers and the H-mode access margin at every node, bounded by the Greenwald, Troyon and L-H limits (logic of the open-source `cfspopcon`, reusing the D0FUS physics chain).
 
@@ -195,13 +195,14 @@ Key parameters and their actual defaults:
 | `P_fus` / `R0` / `a` / `b` | Fusion power [MW], radii [m], blanket+shield [m] | 2000 / 9.0 / 3.0 / 1.2 | |
 | `Bmax_TF` / `Bmax_CS_adm` | Peak field on TF / admissible on CS [T] | 12.0 / 25.0 | |
 | `Supra_choice` | Superconductor | `Nb3Sn` | `NbTi`, `Nb3Sn`, `REBCO` |
+| `Supra_choice_CS` / `J_wost_Manual_CS` | CS superconductor / CS current density when `Manual` [A/m²] | `same` / None | `same`, `NbTi`, `Nb3Sn`, `REBCO`, `Manual` |
 | `Choice_Buck_Wedg` | TF mechanical configuration | `Wedging` | `Wedging`, `Bucking`, `Plug` |
 | `Chosen_Steel_TF` / `Chosen_Steel_CS` | TF structural steel / CS jacket steel | `316L` / `316L` | `316L`, `N50H`, `Manual` |
 | `Scaling_Law` | Confinement scaling | `ITPA20` | `IPB98(y,2)`, `ITPA20-IL`, `DS03`, `L-mode`, `L-mode OK`, `ITER89-P` |
 | `Option_Kappa` | Elongation model | `Blend` | `Wenninger`, `Stambaugh`, `Freidberg`, `Manual` |
 | `Option_q95` | q₉₅ formula | `ITER_1989` | `Sauter` |
 | `density_limit_model` | Density limit | `greenwald` | `zanca`, `giacomin` |
-| `Plasma_profiles` | Profile preset | `H` | `L`, `Advanced`, `EU-DEMO`, `Manual` |
+| `Plasma_profiles` | Profile preset | `H` | `L`, `Advanced`, `EU-DEMO`, `NT`, `Manual` |
 | `Bootstrap_choice` | Bootstrap model | `Sauter-Redl` | `Segal` |
 | `Operation_mode` | Scenario | `Pulsed` (3600 s, 50 MW) | `Steady-State` |
 | `CD_source` | Current-drive model | `Academic` (γ_CD 0.20, η_WP 0.40) | `LHCD`, `ECCD`, `NBCD`, `Multi` |

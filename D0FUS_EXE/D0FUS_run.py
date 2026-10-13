@@ -44,6 +44,9 @@ dc_replace = replace
 #   'H'        : CORSICA simulations of the 15 MA ITER baseline (Kim 2018)
 #   'Advanced' : improved-confinement scenarios (peaked profiles)
 #   'EU-DEMO'  : EU-DEMO 2017 PROCESS reference profile set
+#   'NT'       : negative triangularity, L-mode edge (no pedestal), parabolic
+#                profiles fitted on DIII-D NT discharges (Marinoni 2019, Austin
+#                2019): n0/<n> = 1.55, T0/<T> = 2.80 in any geometry
 # ---------------------------------------------------------------------------
 _PROFILE_PRESETS = {
     'L':        {'nu_n': 0.50, 'nu_T': 1.00, 'rho_ped': 1.00,
@@ -54,6 +57,8 @@ _PROFILE_PRESETS = {
                  'n_ped_frac': 0.95, 'T_ped_frac': 0.55},
     'EU-DEMO': {'nu_n': 1.00, 'nu_T': 1.45, 'rho_ped': 0.95,
                  'n_ped_frac': 0.78, 'T_ped_frac': 0.43},
+    'NT':       {'nu_n': 0.55, 'nu_T': 1.80, 'rho_ped': 1.00,
+                 'n_ped_frac': 0.00, 'T_ped_frac': 0.00},
 }
 
 
@@ -1152,6 +1157,12 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     Choice_Buck_Wedg          = config.Choice_Buck_Wedg
     Supra_choice              = config.Supra_choice
     J_wost_Manual             = config.J_wost_Manual
+    # CS conductor: its own superconductor and manual current density when
+    # given, else those of the TF ('same' / None).
+    Supra_choice_CS           = (Supra_choice if config.Supra_choice_CS == 'same'
+                                 else config.Supra_choice_CS)
+    J_wost_Manual_CS          = (J_wost_Manual if config.J_wost_Manual_CS is None
+                                 else config.J_wost_Manual_CS)
     coef_inboard_tension      = config.coef_inboard_tension
     F_CClamp                  = config.F_CClamp
     n_shape_TF                = config.n_shape_TF
@@ -1295,7 +1306,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     else:
         raise ValueError(
             f"Unknown Plasma_profiles: '{Plasma_profiles}'. "
-            "Valid options: 'L', 'H', 'Advanced', 'EU-DEMO', 'Manual'."
+            "Valid options: 'L', 'H', 'Advanced', 'EU-DEMO', 'NT', 'Manual'."
         )
 
     # Validate the fuel early. Atomic_mass stays an input (scaling laws,
@@ -1330,6 +1341,12 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 f"(current value: {J_wost_Manual}).  "
                 "Example: J_wost_Manual = 25e6  # 25 MA/m²"
             )
+    if Supra_choice_CS == 'Manual':
+        if J_wost_Manual_CS is None or J_wost_Manual_CS <= 0:
+            raise ValueError(
+                "When the CS superconductor is 'Manual', a valid J_wost_Manual_CS "
+                "(or J_wost_Manual) > 0 must be provided "
+                f"(current value: {J_wost_Manual_CS}).")
 
     # ── Steel stress allowables ───────────────────────────────────────────────
     σ_TF = Steel(Chosen_Steel_TF, config.σ_manual_TF)
@@ -1469,17 +1486,22 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
 
     # ── TF coil current density (cable-level sizing) ──────────────────────────
     tau_h = tau_h_HTS if Supra_choice == 'REBCO' else tau_h_LTS
+    tau_h_CS = tau_h_HTS if Supra_choice_CS == 'REBCO' else tau_h_LTS
 
     # ── Auto-select f_void based on conductor technology ──────────────────────
     # REBCO tapes are stacked (no interstitial void between round strands).
     # LTS (Nb3Sn, NbTi) use CICC with ~33% void fraction in the strand bundle.
     # If the user explicitly sets f_void in GlobalConfig, that value is used;
-    # if left at the default sentinel (None), auto-select based on Supra_choice.
+    # if left at the default sentinel (None), auto-select based on Supra_choice,
+    # and on Supra_choice_CS for the CS cable.
     if f_void is None:
         f_void = default_f_void(Supra_choice)
+        f_void_CS = default_f_void(Supra_choice_CS)
         # Update config so downstream functions (f_CS_refined, _unpack_CS_config)
         # that read config.f_void directly also see the resolved value.
         config = dc_replace(config, f_void=f_void)
+    else:
+        f_void_CS = f_void
 
     N_TF, ripple, Delta_TF = Number_TF_coils(R0, a, b, ripple_adm, L_min)
     # N_TF is a float from Number_TF_coils; truncate to int before dividing so
@@ -3044,8 +3066,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     #    Determines the CS radial thickness 'd' to satisfy the Volt-second budget.
     # ==============================================================================
     cs_args = (ΨPI, ΨRampUp, Ψplateau, ΨPF, a, b, c, R0, Bmax_TF, Bmax_CS_adm, σ_CS,
-           Supra_choice, J_wost_Manual, T_helium, Choice_Buck_Wedg, κ, N_sub_CS, tau_h,
-           config)
+           Supra_choice_CS, J_wost_Manual_CS, T_helium, Choice_Buck_Wedg, κ, N_sub_CS, tau_h_CS,
+           config if f_void_CS == f_void else dc_replace(config, f_void=f_void_CS))
 
     if Radial_build_model == "academic":
         (d, σ_z_CS, σ_theta_CS, σ_r_CS,
@@ -3070,7 +3092,6 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # the same stored energy as inside the solver (same radii, same H_CS).
 
     if np.isfinite(B_CS) and B_CS > 0:
-        Supra_choice_CS = config.Supra_choice   # Same SC for TF and CS
         E_mag_CS_post = calculate_E_mag_CS(
             B_CS,
             R0 - a - b - c - _gap_eff - d,   # CS inner bore [m]
@@ -3079,12 +3100,12 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         result_J_CS = calculate_cable_current_density(
             sc_type=Supra_choice_CS, B_peak=B_CS, T_op=T_helium,
             E_mag=E_mag_CS_post,
-            I_cond=I_cond_CS, V_max=V_max, N_sub=N_sub_CS, tau_h=tau_h,
-            f_He_pipe=f_He_pipe, f_void=f_void, f_In_cable=f_In_cable, f_In_WP=f_In_WP,
+            I_cond=I_cond_CS, V_max=V_max, N_sub=N_sub_CS, tau_h=tau_h_CS,
+            f_He_pipe=f_He_pipe, f_void=f_void_CS, f_In_cable=f_In_cable, f_In_WP=f_In_WP,
             T_hotspot=T_hotspot, RRR=RRR, Marge_T_He=Marge_T_He,
             Marge_T_Nb3Sn=Marge_T_Nb3Sn, Marge_T_NbTi=Marge_T_NbTi,
             Marge_T_REBCO=Marge_T_REBCO, Eps=Eps, Tet=Tet,
-            J_wost_Manual=J_wost_Manual if Supra_choice == 'Manual' else None)
+            J_wost_Manual=J_wost_Manual_CS if Supra_choice_CS == 'Manual' else None)
         f_sc_CS      = result_J_CS['f_sc']
         f_cu_CS      = result_J_CS['f_cu']
         f_He_pipe_CS = result_J_CS['f_He_pipe']
@@ -3206,14 +3227,15 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
      M_steel_CS, M_sc_CS, M_cu_CS, M_In_CS, M_total_CS) = f_coil_masses(
         V_steel_TF, V_sc_TF, V_cu_TF, V_In_TF,
         V_steel_CS, V_sc_CS, V_cu_CS, V_In_CS,
-        Chosen_Steel_TF, Supra_choice, f_TF_steel_mass, Chosen_Steel_CS)
+        Chosen_Steel_TF, Supra_choice, f_TF_steel_mass, Chosen_Steel_CS,
+        Supra_choice_CS)
 
     # ── SC strand counts and total SC strand lengths ───────────────────────────
     (n_sc_TF, n_sc_CS,
      L_sc_strand_TF, L_sc_strand_CS) = f_cable_strands(
         V_sc_TF, L_cable_TF,
         V_sc_CS, L_cable_CS,
-        Supra_choice)
+        Supra_choice, Supra_choice_CS)
 
     # ── Component lifetimes and plant availability ────────────────────────────
     A_div          = config.f_div_area_fraction * Surface_solution
@@ -3655,6 +3677,8 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         "n_shape_TF":  config.n_shape_TF,
         "n_shape_CS":  config.n_shape_CS,
         "Supra_choice": config.Supra_choice,
+        "Supra_choice_CS": (config.Supra_choice if config.Supra_choice_CS == 'same'
+                            else config.Supra_choice_CS),
         "Steel_fraction_TF": _f(_sf_TF),
         "f_sc_TF":      _f(_f_sc_TF),
         "f_cu_TF":      _f(_f_cu_TF),
@@ -4515,7 +4539,9 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] Volume   (Plasma volume)                        : {Volume:.3f} [m³]",   file=out)
         print(f"[O] Surface  (First wall area)                      : {Surface:.3f} [m²]",  file=out)
         print(f"[I] Mechanical configuration                        : {config.Choice_Buck_Wedg}", file=out)
-        print(f"[I] Superconductor technology                       : {config.Supra_choice}",    file=out)
+        _sc_CS = (config.Supra_choice if config.Supra_choice_CS == 'same'
+                  else config.Supra_choice_CS)
+        print(f"[I] Superconductor technology (TF / CS)             : {config.Supra_choice} / {_sc_CS}", file=out)
         print(f"[O] N_TF   (Number of TF coils)                     : {N_TF_disp}",              file=out)
         print(f"[O] Delta_TF (Port-access outboard clearance)       : {Delta_TF_disp:.3f} [m]", file=out)
         print(f"[I] N_CS   (Number of CS modules)                   : {config.N_sub_CS}",         file=out)
@@ -4557,7 +4583,7 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] L_cable_TF (total cable, all TF coils)          : {L_cable_TF/1e3:.3f} [km]", file=out)
         print(f"[O] L_cable_CS (total cable, all CS modules)        : {L_cable_CS/1e3:.3f} [km]", file=out)
         print("-------------------------------------------------------------------------", file=out)
-        print(f"[O] SC strands per cable  ({config.Supra_choice})", file=out)
+        print(f"[O] SC strands per cable  ({config.Supra_choice} / {_sc_CS})", file=out)
         print(f"[O]  ├ n_sc_TF                                      : {n_sc_TF:.0f}", file=out)
         print(f"[O]  └ n_sc_CS                                      : {n_sc_CS:.0f}", file=out)
         print("-------------------------------------------------------------------------", file=out)
@@ -4597,7 +4623,7 @@ def save_run_output(config: GlobalConfig,
         print(f"[O]  ├ M_cu_TF                                      : {M_cu_TF/1e3:.1f} [t]",    file=out)
         print(f"[O]  ├ M_In_TF                                      : {M_In_TF/1e3:.1f} [t]",    file=out)
         print(f"[O]  └ M_total_TF                                   : {M_total_TF/1e3:.1f} [t]",       file=out)
-        print(f"[O] CS coil masses  (total solenoid, {config.Chosen_Steel_CS} / {config.Supra_choice})", file=out)
+        print(f"[O] CS coil masses  (total solenoid, {config.Chosen_Steel_CS} / {_sc_CS})", file=out)
         print(f"[O]  ├ M_steel_CS                                   : {M_steel_CS/1e3:.1f} [t]", file=out)
         print(f"[O]  ├ M_sc_CS                                      : {M_sc_CS/1e3:.1f} [t]",   file=out)
         print(f"[O]  ├ M_cu_CS                                      : {M_cu_CS/1e3:.1f} [t]",   file=out)

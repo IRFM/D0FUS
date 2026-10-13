@@ -63,6 +63,9 @@ Selected via 'fitness_objective' in the input file:
   - 'R0'        major radius (minimised), i.e. the most compact
                 machine satisfying every constraint. R0 must be a
                 GA-optimised parameter for this to be meaningful.
+  - 'custom'    any arithmetic expression of the design inputs and
+                outputs, given by 'fitness_expression' (minimised),
+                e.g. R0 + 0.05 * Ip or R0 + 10 * max(0, 20 - Q).
 
 Outputs
 -------
@@ -189,8 +192,11 @@ dc_replace = replace
 #                 R0 must be declared as a GA-optimised parameter
 #                 (e.g. 'R0 = [4.0, 9.0]') for this objective to be
 #                 meaningful; otherwise the fitness is a constant.
+#   'custom'   : minimise the expression given by 'fitness_expression',
+#                 built from the design inputs and outputs (see
+#                 custom_fitness_names). A lower value is better.
 #
-VALID_FITNESS_OBJECTIVES = ('COE', 'volume', 'C_invest', 'P_elec', 'R0')
+VALID_FITNESS_OBJECTIVES = ('COE', 'volume', 'C_invest', 'P_elec', 'R0', 'custom')
 
 # =============================================================================
 # run() return-tuple index map (indices 0-148 of the 165 outputs)
@@ -440,6 +446,7 @@ GA_SETTINGS = {
 }
 FITNESS_SETTINGS = {
     'fitness_objective':         ('COE', str),
+    'fitness_expression':        (None,  str),    # used when fitness_objective = custom
     'feasibility_epsilon':       (DEFAULT_FEASIBILITY_EPSILON,   float),
     'infeasible_floor':          (DEFAULT_INFEASIBLE_FLOOR,      float),
     'feasibility_band_gain':     (DEFAULT_FEASIBILITY_BAND_GAIN, float),
@@ -748,6 +755,147 @@ def compute_feasibility_fitness(raw_fitness, total_violation, objective,
     return min(fitness, PENALTY_VALUE * (1.0 - 1e-9))
 
 
+# ── Custom fitness expression ────────────────────────────────────────────────
+# fitness_objective = custom minimises an arithmetic expression written in the
+# deck, for instance
+#     fitness_expression = R0 + 0.05 * Ip + 10 * max(0, 20 - Q)
+# The expression may use numbers, the names of custom_fitness_names() (numeric
+# GlobalConfig inputs, run() outputs of _IDX and a few derived quantities),
+# the operators + - * / ** %, parentheses and the functions of _EXPR_FUNCS.
+# Square brackets and '#' cannot appear in a deck value (range and comment
+# markers). The expression is parsed with the ast module and evaluated on a
+# closed set of nodes: no Python code is executed.
+import ast as _ast
+import operator as _operator
+
+_EXPR_FUNCS = {'min': min, 'max': max, 'abs': abs, 'sqrt': np.sqrt,
+               'log': np.log, 'log10': np.log10, 'exp': np.exp}
+_EXPR_BINOPS = {_ast.Add: _operator.add, _ast.Sub: _operator.sub,
+                _ast.Mult: _operator.mul, _ast.Div: _operator.truediv,
+                _ast.Pow: _operator.pow, _ast.Mod: _operator.mod}
+_EXPR_UNARYOPS = {_ast.UAdd: _operator.pos, _ast.USub: _operator.neg}
+# Derived names: A = R0 / a, f_GW = nbar_line / (Ip / (pi a^2)),
+# P_aux = P_aux_input [MW], C_invest [M EUR] and COE [EUR/MWh] (Sheffield).
+_EXPR_DERIVED = ('A', 'f_GW', 'P_aux', 'C_invest', 'COE')
+_EXPR_COST_NAMES = ('C_invest', 'COE')
+_EXPR_CACHE = {}        # expression string -> (parsed tree, names used)
+
+
+def custom_fitness_names():
+    """Sorted names usable in fitness_expression."""
+    inputs = [k for k in DEFAULT_CONFIG.__dataclass_fields__
+              if isinstance(getattr(DEFAULT_CONFIG, k), (int, float))
+              and not isinstance(getattr(DEFAULT_CONFIG, k), bool)]
+    return sorted(set(inputs) | set(_IDX) | set(_EXPR_DERIVED))
+
+
+def parse_fitness_expression(expr):
+    """
+    Parse and check a fitness expression once (cached).
+
+    Returns
+    -------
+    tuple  (tree, names): the ast.Expression and the frozenset of the
+           names it reads. A ValueError names the first unsupported
+           element or unknown name.
+    """
+    if expr in _EXPR_CACHE:
+        return _EXPR_CACHE[expr]
+    if not isinstance(expr, str) or not expr.strip():
+        raise ValueError("fitness_objective = custom needs a non-empty "
+                         "fitness_expression in the deck.")
+    try:
+        tree = _ast.parse(expr.strip(), mode='eval')
+    except SyntaxError as exc:
+        raise ValueError(f"fitness_expression {expr!r}: syntax error ({exc.msg}).") from None
+    allowed = set(custom_fitness_names())
+    names = set()
+    for node in _ast.walk(tree):
+        if (isinstance(node, (_ast.Expression, _ast.Load, _ast.BinOp, _ast.UnaryOp))
+                or type(node) in _EXPR_BINOPS or type(node) in _EXPR_UNARYOPS):
+            continue
+        if isinstance(node, _ast.Constant):
+            if isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
+                continue
+            raise ValueError(f"fitness_expression {expr!r}: constant {node.value!r} "
+                             "is not a number.")
+        if isinstance(node, _ast.Call):
+            if (not isinstance(node.func, _ast.Name) or node.func.id not in _EXPR_FUNCS
+                    or node.keywords or not node.args):
+                raise ValueError(f"fitness_expression {expr!r}: only the functions "
+                                 f"{', '.join(_EXPR_FUNCS)} are allowed, with positional "
+                                 "arguments.")
+            continue
+        if isinstance(node, _ast.Name):
+            if node.id in _EXPR_FUNCS:
+                continue
+            if node.id not in allowed:
+                import difflib
+                close = difflib.get_close_matches(node.id, allowed, n=3, cutoff=0.6)
+                raise ValueError(f"fitness_expression {expr!r}: unknown name "
+                                 f"{node.id!r}. Closest names: {close}. Full list: "
+                                 "custom_fitness_names().")
+            names.add(node.id)
+            continue
+        raise ValueError(f"fitness_expression {expr!r}: element "
+                         f"{type(node).__name__} is not allowed.")
+    _EXPR_CACHE[expr] = (tree, frozenset(names))
+    return _EXPR_CACHE[expr]
+
+
+def _eval_expr_node(node, ns):
+    """Recursive evaluation of a node checked by parse_fitness_expression."""
+    if isinstance(node, _ast.Expression):
+        return _eval_expr_node(node.body, ns)
+    if isinstance(node, _ast.Constant):
+        return float(node.value)
+    if isinstance(node, _ast.Name):
+        return ns[node.id]
+    if isinstance(node, _ast.BinOp):
+        return _EXPR_BINOPS[type(node.op)](_eval_expr_node(node.left, ns),
+                                           _eval_expr_node(node.right, ns))
+    if isinstance(node, _ast.UnaryOp):
+        return _EXPR_UNARYOPS[type(node.op)](_eval_expr_node(node.operand, ns))
+    if isinstance(node, _ast.Call):
+        return _EXPR_FUNCS[node.func.id](*[_eval_expr_node(a, ns) for a in node.args])
+    raise ValueError(f"unsupported node {type(node).__name__}")
+
+
+def custom_fitness_namespace(config, output, costs=None):
+    """
+    Values of the names usable in fitness_expression for one design.
+
+    Numeric GlobalConfig inputs, then the run() outputs of _IDX (an output
+    overrides an input of the same name), then the derived quantities.
+    C_invest and COE are NaN when costs is None or empty.
+    """
+    ns = {}
+    for k in config.__dataclass_fields__:
+        v = getattr(config, k)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            ns[k] = float(v)
+    ns.update({k: _safe_real(output[i]) for k, i in _IDX.items() if i < len(output)})
+    ns['A'] = config.R0 / config.a
+    nGW = ns['Ip'] / (np.pi * config.a ** 2)
+    ns['f_GW'] = ns['nbar_line'] / nGW if nGW > 0 else np.nan
+    ns['P_aux'] = float(config.P_aux_input)
+    costs = costs or {}
+    ns['C_invest'] = _safe_real(costs.get('C_invest', np.nan))
+    ns['COE'] = _safe_real(costs.get('COE', np.nan))
+    return ns
+
+
+def evaluate_fitness_expression(expr, config, output, costs=None):
+    """Value of fitness_expression for one design (NaN on a math error)."""
+    tree, _ = parse_fitness_expression(expr)
+    ns = custom_fitness_namespace(config, output, costs)
+    try:
+        with np.errstate(all='ignore'):
+            return _safe_real(_eval_expr_node(tree, ns))
+    except (ZeroDivisionError, OverflowError, ValueError, TypeError):
+        return np.nan
+
+
 def evaluate_individual(individual, verbose=False):
     """
     Evaluate the fitness of a single individual.
@@ -792,10 +940,14 @@ def evaluate_individual(individual, verbose=False):
 
         # ── Objective ────────────────────────────────────────────────────
         objective = static_inputs.get('fitness_objective', 'COE')
+        _expr = static_inputs.get('fitness_expression')
+        _expr_cost = (objective == 'custom' and bool(
+            parse_fitness_expression(_expr)[1] & set(_EXPR_COST_NAMES)))
         # Sheffield cost (shared RUN evaluator, exact RUN volumes). Needed by
-        # the cost objectives and by the C_invest_max budget of 'P_elec'.
+        # the cost objectives, by the C_invest_max budget of 'P_elec' and by
+        # a custom expression that reads C_invest or COE.
         _cres = (evaluate_costs(config, output)
-                 if objective in ('COE', 'C_invest', 'P_elec') else {})
+                 if objective in ('COE', 'C_invest', 'P_elec') or _expr_cost else {})
         _C_inv = _safe_real(_cres.get('C_invest', np.nan))
 
         if objective == 'volume':
@@ -808,10 +960,14 @@ def evaluate_individual(individual, verbose=False):
             raw_fitness = _safe_real(_cres.get('COE', np.nan))
         elif objective == 'C_invest':
             raw_fitness = _C_inv
+        elif objective == 'custom':
+            # User expression, minimised. Any finite value, sign included.
+            raw_fitness = evaluate_fitness_expression(_expr, config, output, _cres)
         else:  # 'P_elec', maximised
             raw_fitness = -_safe_real(output[_IDX['P_elec']])
 
-        if not np.isfinite(raw_fitness) or (raw_fitness <= 0 and objective != 'P_elec'):
+        if not np.isfinite(raw_fitness) or (raw_fitness <= 0
+                                            and objective not in ('P_elec', 'custom')):
             if verbose:
                 print(f"  [PENALTY] objective '{objective}' not finite or <= 0")
             return (PENALTY_VALUE,)
@@ -2686,6 +2842,11 @@ def resolve_ga_settings(static_inputs, overrides):
     if settings['fitness_objective'] not in VALID_FITNESS_OBJECTIVES:
         raise ValueError(f"fitness_objective = {settings['fitness_objective']!r}: "
                          f"valid values are {', '.join(VALID_FITNESS_OBJECTIVES)}.")
+    if settings['fitness_objective'] == 'custom':
+        parse_fitness_expression(settings['fitness_expression'])   # fails early
+    elif settings['fitness_expression'] is not None:
+        print(f"  [warn] fitness_expression is ignored: fitness_objective = "
+              f"{settings['fitness_objective']}, not custom.")
     return settings, sources, refine_kwargs
 
 
@@ -2801,6 +2962,10 @@ def run_genetic_optimization(input_file,
     if objective in ('COE', 'C_invest') and _cost_model == 'None':
         raise ValueError(f"fitness_objective = {objective} needs a cost model: "
                          f"cost_model = None in the deck.")
+    if (objective == 'custom' and _cost_model == 'None' and
+            parse_fitness_expression(S['fitness_expression'])[1] & set(_EXPR_COST_NAMES)):
+        raise ValueError("fitness_expression reads C_invest or COE, which need a "
+                         "cost model: cost_model = None in the deck.")
     if objective == 'R0' and 'R0' not in param_keys:
         # Degenerate case: minimising a fixed major radius gives a constant
         # fitness, so the GA would only search the remaining design space
@@ -2889,6 +3054,10 @@ def run_genetic_optimization(input_file,
         _C_invest_best = _cres_best['C_invest'] * 1e-3  # M EUR -> B EUR
 
     print(f"\n Fitness objective: {objective}")
+    if objective == 'custom':
+        _cres_expr = _cres_best if _cres_best else None
+        print(f"    Expression: {S['fitness_expression']}")
+        print(f"    Value     : {evaluate_fitness_expression(S['fitness_expression'], config, final_output, _cres_expr):.6g}")
     if objective == 'COE':
         _budget = config.C_invest_max
         _within = _C_invest_best * 1e3 <= _budget if np.isfinite(_C_invest_best) else False

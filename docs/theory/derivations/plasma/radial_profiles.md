@@ -13,7 +13,7 @@ This section gives the functional forms of the profile parameterisation of Secti
 
 ## Profile model
 
-All radial quantities (density $n$, temperature $T$) are built on the same parameterisation, controlled by five parameters: the volume-averaged value $\bar{X}$, a core peaking exponent $\nu$, a normalised pedestal radius $\rho_\mathrm{ped}$, a pedestal fraction $f_\mathrm{ped} = X_\mathrm{ped}/\bar{X}$, and the radial coordinate, the volume label $\rho_V = \sqrt{V(\rho)/V}$ of Eq. {eq}`eq:rho_V`. The profiles below are written in $\rho_V$. The deck gives $\rho_\mathrm{ped}$ in the toroidal-flux label $\rho_\mathrm{tor}$, converted to $\rho_V$ before use (Section {ref}`Radial profiles <ssec:chap1_profiles>`). The model is inspired by the parabolic profile ansatz of Lackner {footcite:p}`lackner1990comments` and the pedestal parameterisation used in the ITER Physics Basis {footcite:p}`iterphysicsbasis1999`. Four presets (L-Mode, H-mode, Advanced confinement mode and an EU-DEMO 2017 profile set) are exposed with H-mode like profile as default. The Advanced preset ($\nu_n = 1.5$, $\nu_T = 2.00$, $\rho_\mathrm{ped} = 0.96$) mimics improved-confinement scenarios, with markedly more peaked profiles and a deeper pedestal than the standard H preset.
+All radial quantities (density $n$, temperature $T$) are built on the same parameterisation, controlled by five parameters: the volume-averaged value $\bar{X}$, a core peaking exponent $\nu$, a normalised pedestal radius $\rho_\mathrm{ped}$, a pedestal fraction $f_\mathrm{ped} = X_\mathrm{ped}/\bar{X}$, and the radial coordinate, the volume label $\rho_V = \sqrt{V(\rho)/V}$ of Eq. {eq}`eq:rho_V`. The profiles below are written in $\rho_V$. The deck gives $\rho_\mathrm{ped}$ in the toroidal-flux label $\rho_\mathrm{tor}$, converted to $\rho_V$ before use (Section {ref}`Radial profiles <ssec:chap1_profiles>`). The model is inspired by the parabolic profile ansatz of Lackner {footcite:p}`lackner1990comments` and the pedestal parameterisation used in the ITER Physics Basis {footcite:p}`iterphysicsbasis1999`. Five presets (L-Mode, H-mode, Advanced confinement mode, an EU-DEMO 2017 profile set and a negative-triangularity set) are exposed with H-mode like profile as default. The Advanced preset ($\nu_n = 1.5$, $\nu_T = 2.00$, $\rho_\mathrm{ped} = 0.96$) mimics improved-confinement scenarios, with markedly more peaked profiles and a deeper pedestal than the standard H preset.
 
 Two parameterisations are implemented. When $\rho_\mathrm{ped} = 1$ and $f_\mathrm{ped} = 0$, the profile reduces to the purely parabolic L-mode form,
 
@@ -68,9 +68,9 @@ $$ (eq:X0_inversion)
 
 with $g(\rho_V) = \bigl(1 - (\rho_V/\rho_\mathrm{ped})^2\bigr)^\nu$, $I_h = \int_0^1 h\, 2\rho_V\, \mathrm{d}\rho_V$ and $I_{gh} = \int_0^1 g\, h\, 2\rho_V\, \mathrm{d}\rho_V$ evaluated numerically. In the purely parabolic limit ($\rho_\mathrm{ped} = 1$, $f_\mathrm{ped} = 0$), the result collapses to the closed form $X_0/\bar{X} = 1 + \nu$ already mentioned, which D0FUS returns directly without entering the numerical branch.
 
-The geometry enters Eq. {eq}`eq:X0_inversion` only through $\rho_\mathrm{ped}$, converted from $\rho_\mathrm{tor}$ to $\rho_V$. {numref}`Table %s <tab:profile_X0>` gives the on-axis peak of the four presets in Academic geometry, where $\rho_V = \rho_\mathrm{tor}$. At ITER shaping, $\rho_\mathrm{ped} = 0.95$ places the pedestal at $\rho_V = 0.959$, and the peaks of the pedestal presets fall by at most 2 % (H preset: $n_0/\bar{n} = 1.045$, $T_0/\bar{T} = 2.503$).
+The geometry enters Eq. {eq}`eq:X0_inversion` only through $\rho_\mathrm{ped}$, converted from $\rho_\mathrm{tor}$ to $\rho_V$. {numref}`Table %s <tab:profile_X0>` gives the on-axis peak of the five presets in Academic geometry, where $\rho_V = \rho_\mathrm{tor}$. At ITER shaping, $\rho_\mathrm{ped} = 0.95$ places the pedestal at $\rho_V = 0.959$, and the peaks of the pedestal presets fall by at most 2 % (H preset: $n_0/\bar{n} = 1.045$, $T_0/\bar{T} = 2.503$).
 
-:::{table} On-axis peak $X_0/\bar{X}$ of the density and temperature profiles of the four presets, in Academic geometry.
+:::{table} On-axis peak $X_0/\bar{X}$ of the density and temperature profiles of the five presets, in Academic geometry.
 :name: tab:profile_X0
 :align: center
 
@@ -80,6 +80,7 @@ The geometry enters Eq. {eq}`eq:X0_inversion` only through $\rho_\mathrm{ped}$, 
 | H        | 1.056         | 2.559         |
 | Advanced | 1.188         | 2.086         |
 | EU-DEMO  | 1.353         | 2.035         |
+| NT       | 1.550         | 2.800         |
 :::
 
 ## Profile presets
@@ -87,6 +88,8 @@ The geometry enters Eq. {eq}`eq:X0_inversion` only through $\rho_\mathrm{ped}$, 
 The L-mode preset uses purely parabolic profiles with no pedestal ($\rho_\mathrm{ped} = 1$). The values $\nu_n = 0.50$ and $\nu_T = 1.00$ reproduce the standard reactor profile ansatz of Freidberg {footcite:p}`freidberg2015designing`, yielding $n_0/\bar{n} = 1.50$ and $T_0/\bar{T} = 2.00$.
 
 The H-mode preset is the default in D0FUS, featuring a nearly flat core density ($\nu_n = 0.01$, $n_\mathrm{ped}/\bar{n} = 0.99$) combined with a strongly peaked core temperature ($\nu_T = 2.80$, $T_\mathrm{ped}/\bar{T} = 0.55$) at a pedestal radius $\rho_\mathrm{ped} = 0.95$. These values reproduce the H-mode profiles of the CORSICA simulations of the 15 MA ITER baseline scenario by Kim {footcite:p}`kim2018iter` ($n_{e0}/\langle n_e\rangle \approx 1.04$, $\tanh$ pedestal near $\rho_\mathrm{tor} \approx 0.94$). The flat-density assumption may be pessimistic, since Angioni {footcite:p}`angioni2007jetpeaking` reports H-mode peaking factors rising up to $\sim 1.5$ in ITER-like conditions, which would translate into a higher fusion power at fixed $\bar{n}$ and $\beta$.
+
+The NT preset represents negative-triangularity plasmas, which keep an L-mode edge: parabolic profiles without pedestal ($\rho_\mathrm{ped} = 1$), so that $n_0/\bar{n} = 1.55$ and $T_0/\bar{T} = 2.80$ in any geometry. The exponents $\nu_n = 0.55$ and $\nu_T = 1.80$ are fitted on the normalised profiles of three phases of DIII-D negative-triangularity discharges, digitised in $\rho_\mathrm{tor} \approx \rho_V$ (Marinoni {footcite:p}`marinoni2019hmode`, Fig. 1, EC and EC+NBI phases; Austin {footcite:p}`austin2019reactor`, Fig. 7). These give $n_0/\bar{n} = 1.42$ to $1.66$ and $T_0/\bar{T} = 2.66$ to $3.39$, and the preset takes the middle of both ranges. These are low-power phases ($T_e \approx 3$ to $4$ keV, $n_e \approx 4$ to $6 \times 10^{19}\,\mathrm{m^{-3}}$) of weakly shaped plasmas, so the extrapolation to a power plant remains uncertain.
 
 ## Line-averaged versus volume-averaged density
 

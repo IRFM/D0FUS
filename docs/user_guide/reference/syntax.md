@@ -36,7 +36,12 @@ The input file specifies two or more parameters with their admissible range (two
         P_fus   = 2000               # fixed
         fitness_objective = COE      # objective function
 
-Five fitness objectives are available: **COE** (minimise the levelised cost of electricity, default), **C_invest** (minimise capital cost), **P_elec** (maximise net electric power), **volume** (minimise the volume normalised to fusion power, a robust, geometry-based cost proxy), and **R0** (minimise the major radius, which gives the most compact feasible machine when $R_0$ is optimised).
+Six fitness objectives are available: **COE** (minimise the levelised cost of electricity, default), **C_invest** (minimise capital cost), **P_elec** (maximise net electric power), **volume** (minimise the volume normalised to fusion power, a robust, geometry-based cost proxy), and **R0** (minimise the major radius, which gives the most compact feasible machine when $R_0$ is optimised). The sixth, **custom**, minimises an arithmetic expression given by `fitness_expression`. It may combine numbers, the numeric inputs, the outputs of the run (for instance `R0`, `a`, `B0`, `Ip`, `Q`, `P_fus`, `P_sep`, `Gamma_n`, `betaN_total`), the derived quantities `A`, `f_GW`, `P_aux`, `C_invest` (M EUR) and `COE`, the operators `+ - * / ** %` and the functions `min`, `max`, `abs`, `sqrt`, `log`, `log10`, `exp`. A lower value is better. A target can be imposed through a penalty, as in the smallest machine reaching $Q \geq 20$ with $P_{fus}$ and $P_{aux}$ optimised:
+
+        fitness_objective  = custom
+        fitness_expression = R0 + 10 * max(0, 20 - Q)
+
+The expression is checked when the run starts, and `custom_fitness_names()` of `D0FUS_genetic` lists the names it may use. Square brackets and `#` cannot appear in it, since they mark ranges and comments in the input file.
 
 A design is feasible under the same rule as in Run mode: the Greenwald density limit, the normalised beta limit, the kink safety factor, the plasma-current ceiling when one is set, and the closure of the radial build. The ranking puts feasibility first, following the rules of Deb: any feasible design beats any infeasible one, and infeasible designs are ranked by their total violation of the limits. A design that just fails a limit therefore ranks above one that fails it widely. This keeps the search moving toward the feasible boundary, where optimal designs typically sit. A design whose radial build does not close receives the worst score. An optional capital-cost ceiling adds a soft quadratic penalty.
 
