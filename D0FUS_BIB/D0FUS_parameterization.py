@@ -69,7 +69,7 @@ CONFIG_OPTIONS = {
     'Tbar_mode':              ('manual', 'greenwald'),
     'P_fus_mode':             ('manual', 'greenwald'),
     'Operation_mode':         ('Pulsed', 'Steady-State'),
-    'Plasma_profiles':        ('L', 'H', 'Advanced', 'EU-DEMO', 'Manual'),
+    'Plasma_profiles':        ('L', 'H', 'Advanced', 'EU-DEMO', 'NT', 'Manual'),
     'Scaling_Law':            ('IPB98(y,2)', 'ITPA20', 'ITPA20-IL', 'DS03',
                                'L-mode', 'L-mode OK', 'ITER89-P',
                                'Auclair2026', 'Auclair2026-fGW'),
@@ -92,6 +92,7 @@ CONFIG_OPTIONS = {
     'Radial_build_model':     ('refined', 'academic', 'CIRCE'),
     'Choice_Buck_Wedg':       ('Wedging', 'Bucking', 'Plug'),
     'Supra_choice':           ('Nb3Sn', 'NbTi', 'REBCO', 'Manual'),
+    'Supra_choice_CS':        ('same', 'Nb3Sn', 'NbTi', 'REBCO', 'Manual'),
     'CD_source':              ('Academic', 'LHCD', 'ECCD', 'NBCD', 'Multi'),
     'cost_model':             ('Sheffield', 'None'),
     # Must match the keys of BLANKET_CONCEPTS, defined further down.
@@ -187,7 +188,7 @@ class GlobalConfig:
                                                 # rescaled in proportion). None = P_aux_input.
                                                 # Reported Q includes P_Ohm, slightly lower.
 
-    Plasma_profiles    : str   = 'H'            # Profile peaking: 'L', 'H', 'Advanced', 'EU-DEMO', 'Manual'
+    Plasma_profiles    : str   = 'H'            # Profile peaking: 'L', 'H', 'Advanced', 'EU-DEMO', 'NT', 'Manual'
     nu_n_manual        : float = 0.1            # Density peaking factor (Manual mode only) [-]
     nu_T_manual        : float = 1.0            # Temperature peaking factor (Manual mode only) [-]
     rho_ped    : float = 1.0                    # Pedestal radius, toroidal-flux label rho_tor (1.0 = no pedestal) [-]
@@ -378,6 +379,8 @@ class GlobalConfig:
     Choice_Buck_Wedg     : str   = 'Wedging' # Mechanical config: 'Wedging', 'Bucking', 'Plug'
     Supra_choice         : str   = 'Nb3Sn'   # Superconductor: 'NbTi', 'Nb3Sn', 'REBCO', 'Manual'
     J_wost_Manual        : float = 100e6     # Engineering current density (Manual SC only) [A/m²]
+    Supra_choice_CS      : str   = 'same'    # CS superconductor, 'same' = Supra_choice
+    J_wost_Manual_CS     : float = None      # CS current density if Manual [A/m²], J_wost_Manual when None
 
     coef_inboard_tension : float = 0.5      # Inboard/outboard vertical stress ratio [-]
     F_CClamp             : float = 0.0      # C-clamp structural limit [N]

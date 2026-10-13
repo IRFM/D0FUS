@@ -6676,6 +6676,7 @@ def f_coil_masses(
     Chosen_Steel_TF: str, Supra_choice: str,
     f_TF_steel_mass: float = 1.0,
     Chosen_Steel_CS: str = None,
+    Supra_choice_CS: str = None,
 ) -> tuple:
     """
     Compute the mass of each material component for the TF and CS coil systems.
@@ -6697,6 +6698,8 @@ def f_coil_masses(
         approximations, gravitational supports, and inter-coil structures [-].
     Chosen_Steel_CS : str or None
         Steel grade of the CS jacket. None: Chosen_Steel_TF.
+    Supra_choice_CS : str or None
+        SC type of the CS. None: Supra_choice.
 
     Returns
     -------
@@ -6717,8 +6720,10 @@ def f_coil_masses(
 
     rho_st_CS  = (rho_st if Chosen_Steel_CS is None
                   else material_rho(Chosen_Steel_CS, Supra_choice)['steel'])
+    rho_sc_CS  = (rho_sc if Supra_choice_CS is None
+                  else material_rho(Chosen_Steel_TF, Supra_choice_CS)['SC'])
     M_steel_CS = V_steel_CS * rho_st_CS
-    M_sc_CS    = V_sc_CS    * rho_sc
+    M_sc_CS    = V_sc_CS    * rho_sc_CS
     M_cu_CS    = V_cu_CS    * rho_cu
     M_In_CS    = V_In_CS    * rho_ins
     M_total_CS = M_steel_CS + M_sc_CS + M_cu_CS + M_In_CS
@@ -6855,6 +6860,7 @@ def f_cable_strands(
     V_sc_TF: float, L_cable_TF: float,
     V_sc_CS: float, L_cable_CS: float,
     Supra_choice: str,
+    Supra_choice_CS: str = None,
 ) -> tuple:
     """
     SC and Cu strand (or tape) counts per cable, and total strand lengths.
@@ -6882,6 +6888,7 @@ def f_cable_strands(
     V_sc_CS    : float  SC material volume for full CS solenoid [m³].
     L_cable_CS : float  Total CS cable conductor length [m].
     Supra_choice : str  SC type ('Nb3Sn', 'NbTi', 'REBCO', 'Manual').
+    Supra_choice_CS : str or None  SC type of the CS. None: Supra_choice.
 
     Returns
     -------
@@ -6889,22 +6896,23 @@ def f_cable_strands(
         n in SC strands/tapes per cable cross-section [-].
         L in total SC strand length [m].
     """
-    if 'REBCO' in Supra_choice:
-        A_strand = 12e-3 * 100e-6              # full tape 12 mm × 100 µm [m²]
-    elif Supra_choice == 'NbTi':
-        A_strand = np.pi * (0.81e-3 / 2.0) ** 2   # 0.81 mm strand [m²]
-    else:
-        A_strand = np.pi * (0.82e-3 / 2.0) ** 2   # 0.82 mm strand (Nb3Sn/Manual)
+    def _strand_area(sc):
+        if 'REBCO' in sc:
+            return 12e-3 * 100e-6              # full tape 12 mm × 100 µm [m²]
+        if sc == 'NbTi':
+            return np.pi * (0.81e-3 / 2.0) ** 2   # 0.81 mm strand [m²]
+        return np.pi * (0.82e-3 / 2.0) ** 2       # 0.82 mm strand (Nb3Sn/Manual)
 
-    def _compute(V_sc, L_cable):
+    def _compute(V_sc, L_cable, A_strand):
         if not (np.isfinite(V_sc) and np.isfinite(L_cable)
                 and L_cable > 0 and A_strand > 0):
             return np.nan, np.nan
         n_sc = (V_sc / L_cable) / A_strand
         return n_sc, L_cable * n_sc
 
-    n_sc_TF, L_sc_TF = _compute(V_sc_TF, L_cable_TF)
-    n_sc_CS, L_sc_CS = _compute(V_sc_CS, L_cable_CS)
+    n_sc_TF, L_sc_TF = _compute(V_sc_TF, L_cable_TF, _strand_area(Supra_choice))
+    n_sc_CS, L_sc_CS = _compute(V_sc_CS, L_cable_CS,
+                                _strand_area(Supra_choice_CS or Supra_choice))
 
     return n_sc_TF, n_sc_CS, L_sc_TF, L_sc_CS
 

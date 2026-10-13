@@ -5509,6 +5509,8 @@ def build_conductor_from_run(run: dict, coil: str = "TF") -> dict:
     f_void  = run.get(f"f_void_{coil}", np.nan)
     f_In_cable    = run.get(f"f_In_{coil}", np.nan)
     sc_type = run.get("Supra_choice", "Nb3Sn")
+    if coil == "CS":
+        sc_type = run.get("Supra_choice_CS", sc_type)   # CS conductor may differ
 
     # Steel asymmetry parameter: n = δ_S1/δ_S2 (1 = square, 0 = optimal).
     # The run dict stores this as ``n_shape_TF`` / ``n_shape_CS`` (see

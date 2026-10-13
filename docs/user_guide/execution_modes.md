@@ -22,8 +22,9 @@ runaway-electron indicators.
 the operational limits (Greenwald, Troyon, kink) and the radial-build closure on
 any registered output.
 
-**OPTIMIZATION** minimises `COE` (default), `C_invest`, `volume` or `R0`, or
-maximises `P_elec`. Feasibility follows the RUN rule and comes first in the
+**OPTIMIZATION** minimises `COE` (default), `C_invest`, `volume` or `R0`,
+maximises `P_elec`, or minimises an expression of the inputs and outputs
+written in the deck (`custom`, see {doc}`reference/syntax`). Feasibility follows the RUN rule and comes first in the
 ranking: any feasible design beats any infeasible one, and infeasible designs are
 ranked by their violation of the limits. An optional capital-cost ceiling adds a
 soft penalty.
