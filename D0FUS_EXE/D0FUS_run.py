@@ -3275,8 +3275,6 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         P_th_solution, config.Temps_Plateau_input, config.Dwell_factor,
         config.eta_store)
     P_e_gross_solution = eta_T * P_th_smoothed_solution
-    # Burn fraction of the cycle, Dwell_factor = t_flat-top / t_cycle
-    _burn = min(float(config.Dwell_factor), 1.0)
     # CS recharge: E_mag_CS supplied during the dwell, averaged over the
     # cycle (zero without dwell)
     P_coil_CS_solution = (f_coil_power_supply(
@@ -3294,12 +3292,12 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         calculate_E_mag_TF(Bmax_TF, a, b, R0, c, Delta_TF),
         P_cryo_cool_solution)['P_house']
     # Coolant pumping on the heat extracted during the burn
-    P_BoP_solution = f_bop_power(P_th_solution * _burn, f_pump)
+    P_BoP_solution = f_bop_power(P_th_solution, f_pump)
     # Heating/CD wall-plug power on P_CD, as in P_wallplug_solution, during
     # the burn
     (P_recirc_var_solution, P_recirc_fix_solution,
      P_recirculated_solution) = f_recirculated_power(
-        P_CD_solution * _burn, eta_WP, P_coil_CS_solution,
+        P_CD_solution, eta_WP, P_coil_CS_solution,
         P_cryo_electric_solution, P_BoP_solution, P_house_load_solution)
     P_elec_solution = P_e_gross_solution - P_recirculated_solution
 
@@ -5229,4 +5227,4 @@ def main(input_file: str = None, save_figures: bool = None,
 if __name__ == "__main__":
     input_file = sys.argv[1] if len(sys.argv) > 1 else None
     main(input_file)
-    print("\nD0FUS_run completed successfully!")
+    print("\nD0FUS_run completed successfully!")
