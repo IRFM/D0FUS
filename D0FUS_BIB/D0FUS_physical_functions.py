@@ -46,8 +46,8 @@ def f_coil_power_supply(E_mag_J, t_ramp_up_s):
         P = E_mag / t   [MWe]
 
     E_mag_J     : float  Stored magnetic energy [J].
-    t_ramp_up_s : float  Time over which E_mag is supplied or averaged [s]
-                         (the full pulse cycle for the CS cycle average).
+    t_ramp_up_s : float  Time over which E_mag is supplied [s] (the dwell
+                         for the CS recharge).
     Returns 0 if either input is missing or t <= 0.
     """
     if E_mag_J is None or t_ramp_up_s is None or t_ramp_up_s <= 0:
@@ -274,7 +274,7 @@ def f_house_load(A_floor_m2, P_TF_supplies_MWe, P_base_MWe, pflux_W_m2,
 
 
 def f_bop_power(P_th_MWth, f_BoP):
-    """Coolant pumping electrical load [MWe] = f_BoP * P_th."""
+    """Coolant pumping electrical load [MWe] = f_BoP * P_th, P_th during the burn."""
     return float(f_BoP) * float(P_th_MWth)
 
 
@@ -305,28 +305,75 @@ def f_pulsed_thermal_quantities(P_th_MWth, t_plateau_s, dwell_factor,
     return t_dwell, E_store / 3600.0, P_smoothed
 
 
-def f_recirculated_power(P_aux_MW, eta_WP, P_coil_CS_MWe, P_cryo_electric_MWe,
+def f_recirculated_power(P_aux_MW, eta_WP, P_cryo_electric_MWe,
                          P_BoP_MWe, P_house_load_MWe):
     """
-    Recirculated electrical power [MWe].
+    Nominal recirculated electrical power during the burn [MWe].
 
-        P_var = P_aux / eta_WP + P_coil_CS + P_BoP   (plant in operation)
-        P_fix = P_cryo + P_house_load                (all year)
+        P_var = P_aux / eta_WP + P_BoP     (burn only)
+        P_fix = P_cryo + P_house_load      (all year)
 
+    Nominal values size the plant electrical systems, so they are not
+    averaged over the pulse cycle. The duty cycle enters once, in
+    f_recirculated_power_cycle_average and f_recirculated_energy.
+    The CS recharge runs during the dwell and is kept apart (P_coil_CS).
     The magnets stay cold outside operation, so the cryoplant is a fixed
     load like the house load.
 
     Returns (P_var, P_fix, P_var + P_fix).
     """
-    P_var = (float(P_aux_MW) / float(eta_WP) + float(P_coil_CS_MWe)
-             + float(P_BoP_MWe))
+    P_var = float(P_aux_MW) / float(eta_WP) + float(P_BoP_MWe)
     P_fix = float(P_cryo_electric_MWe) + float(P_house_load_MWe)
     return P_var, P_fix, P_var + P_fix
 
 
-def f_recirculated_energy(P_recirc_var_MWe, P_recirc_fix_MWe, CF):
-    """Annual recirculated electricity [MWh/yr] = 8760 (P_var CF + P_fix)."""
-    return 8760.0 * (float(P_recirc_var_MWe) * float(CF) + float(P_recirc_fix_MWe))
+def f_recirculated_power_cycle_average(P_recirc_var_MWe, P_coil_CS_MWe,
+                                       P_recirc_fix_MWe, dwell_factor):
+    """
+    Recirculated power averaged over one pulse cycle [MWe].
+
+        <P_recirc> = D P_var + (1 - D) P_coil_CS + P_fix
+
+    D = t_flat-top / t_cycle. P_var runs during the burn, the CS recharge
+    P_coil_CS during the dwell. Steady state (D >= 1): P_var + P_fix.
+    This is the load subtracted from the cycle-averaged gross power
+    (thermal store) to get the net electric power.
+    """
+    D = min(float(dwell_factor), 1.0)
+    return (D * float(P_recirc_var_MWe) + (1.0 - D) * float(P_coil_CS_MWe)
+            + float(P_recirc_fix_MWe))
+
+
+def f_recirculated_energy(P_recirc_var_MWe, P_coil_CS_MWe, P_recirc_fix_MWe,
+                          f_op, dwell_factor):
+    """
+    Annual recirculated electricity [MWh/yr].
+
+        E = 8760 [f_op (D P_var + (1 - D) P_coil_CS) + P_fix]
+
+    f_op = Av x Util is the operating fraction of the year, so f_op D is the
+    burn fraction of the year (Av x Util x D) applied to the nominal burn
+    loads. The fixed loads run all year.
+    """
+    D = min(float(dwell_factor), 1.0)
+    return 8760.0 * (float(f_op) * (D * float(P_recirc_var_MWe)
+                                    + (1.0 - D) * float(P_coil_CS_MWe))
+                     + float(P_recirc_fix_MWe))
+
+
+def f_net_electric_energy(P_elec_MWe, P_recirc_fix_MWe, f_op):
+    """
+    Annual net electricity [MWh/yr].
+
+        E_net = 8760 [f_op P_elec - (1 - f_op) P_fix]
+
+    P_elec is the net power during operation (cycle average), f_op =
+    Av x Util the operating fraction of the year. The fixed loads (cryoplant,
+    house load) run all year, so they are drawn from the grid during the
+    outages. E_net = E_gross - E_recirculated.
+    """
+    return 8760.0 * (float(f_op) * float(P_elec_MWe)
+                     - (1.0 - float(f_op)) * float(P_recirc_fix_MWe))
 
 
 def f_tritium_consumption(P_fus_MW, CF):
@@ -9414,6 +9461,34 @@ def f_lifetime_to_years(t_fpy: float, Util_factor: float,
     return t_fpy / (Util_factor * Dwell_factor)
 
 
+def f_replacement_intervals(t_bl_yr: float, t_div_yr: float) -> tuple:
+    """
+    Operating calendar time between two replacements of the blanket and of
+    the divertor, in the parallel schedule of f_availability_schedule.
+
+    Let A = longer-lived component, B = shorter-lived, n = floor(t_A / t_B).
+    B is replaced every t_B. A is replaced with the n-th replacement of B,
+    every n t_B <= t_A. An infinite lifetime (e.g. a divertor without load,
+    P_sep <= 0) means that the component is never replaced (np.inf).
+
+    Parameters
+    ----------
+    t_bl_yr  : float  Blanket calendar lifetime [yr].
+    t_div_yr : float  Divertor calendar lifetime [yr].
+
+    Returns
+    -------
+    t_rep_bl_yr, t_rep_div_yr : float  Intervals [yr], np.inf if never replaced.
+    n                         : int    B-cycles per A-cycle (0 if A never replaced).
+    """
+    t_A, t_B = max(t_bl_yr, t_div_yr), min(t_bl_yr, t_div_yr)
+    n = max(1, int(t_A / t_B)) if np.isfinite(t_A) else 0
+    t_rep_A = n * t_B if n > 0 else np.inf
+    if t_bl_yr >= t_div_yr:
+        return t_rep_A, t_B, n
+    return t_B, t_rep_A, n
+
+
 def f_availability_schedule(t_life_bl_fpy: float, t_life_div_fpy: float,
                              dt_rep_bl: float, dt_rep_div: float,
                              Util_factor: float, Dwell_factor: float) -> tuple:
@@ -9426,7 +9501,8 @@ def f_availability_schedule(t_life_bl_fpy: float, t_life_div_fpy: float,
     Algorithm
     ---------
     Let A = longer-lived component, B = shorter-lived.
-    n = floor(t_A / t_B)  — how many B-cycles fit inside one A-cycle.
+    n = floor(t_A / t_B)  — how many B-cycles fit inside one A-cycle
+    (f_replacement_intervals).
 
     Every t_B calendar years a replacement occurs:
       - (n−1) out of n times: only B replaced  → downtime = dt_B
@@ -9436,7 +9512,9 @@ def f_availability_schedule(t_life_bl_fpy: float, t_life_div_fpy: float,
         dt_eff = [(n−1)*dt_B + max(dt_A, dt_B)] / n
 
     Availability: Av = t_B_yr / (t_B_yr + dt_eff)
-    Capacity factor: CF = Av * Util_factor * Dwell_factor
+
+    The operating fraction of the year is Av x Util, the burn fraction
+    Av x Util x Dwell. The caller builds them (D0FUS_run.run).
 
     Parameters
     ----------
@@ -9452,36 +9530,23 @@ def f_availability_schedule(t_life_bl_fpy: float, t_life_div_fpy: float,
     T_op_limit : float  Calendar years of operation per replacement cycle [yr].
     dt_rep_eff : float  Effective average replacement downtime per cycle [yr].
     Av         : float  Plant availability [-].
-    CF         : float  Capacity factor [-].
     """
     UD = Util_factor * Dwell_factor
     t_bl_yr  = t_life_bl_fpy  / UD
     t_div_yr = t_life_div_fpy / UD
+    dt_A, dt_B = ((dt_rep_bl, dt_rep_div) if t_bl_yr >= t_div_yr
+                  else (dt_rep_div, dt_rep_bl))
+    T_op_limit = min(t_bl_yr, t_div_yr)   # t_B
+    _, _, n = f_replacement_intervals(t_bl_yr, t_div_yr)
 
-    # Identify longer (A) and shorter (B) component
-    if t_bl_yr >= t_div_yr:
-        t_A, t_B   = t_bl_yr,  t_div_yr
-        dt_A, dt_B = dt_rep_bl, dt_rep_div
-    else:
-        t_A, t_B   = t_div_yr,  t_bl_yr
-        dt_A, dt_B = dt_rep_div, dt_rep_bl
-
-    # Number of B-cycles per A-cycle (floor, never exceed lifetime).
-    # An infinite lifetime (e.g. a divertor without load, P_sep ≤ 0) means
-    # that the component is never replaced: limit n → ∞, dt_rep_eff = dt_B.
-    if np.isfinite(t_A):
-        n = max(1, int(t_A / t_B))
-        dt_rep_eff = ((n - 1) * dt_B + max(dt_A, dt_B)) / n
-    else:
-        dt_rep_eff = dt_B
-    T_op_limit = t_B
+    # n = 0: the longer-lived component is never replaced, dt_rep_eff = dt_B
+    dt_rep_eff = ((n - 1) * dt_B + max(dt_A, dt_B)) / n if n > 0 else dt_B
 
     if np.isfinite(T_op_limit):
         Av = T_op_limit / (T_op_limit + dt_rep_eff)
     else:
         Av = 1.0   # neither component is ever replaced
-    CF = Av * UD
-    return (T_op_limit, dt_rep_eff, Av, CF)
+    return (T_op_limit, dt_rep_eff, Av)
 
 
 def _coulomb_log_ee(ne, Te_eV):

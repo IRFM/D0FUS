@@ -132,7 +132,7 @@ OUTPUT_REGISTRY = {
         fmt='%d',
         use_radial_mask=True,
         category='performance',
-        description='Cost of electricity (Sheffield 2016)'
+        description='Cost of electricity (cost_model of the deck)'
     ),
     'C_invest': OutputParameter(
         name='C_invest',
@@ -1234,7 +1234,7 @@ OUTPUT_REGISTRY = {
         fmt='%.2f',
         use_radial_mask=True,
         category='availability',
-        description='Plant capacity factor'
+        description='Operating fraction of the year, Av x Util'
     ),
 }
 
@@ -1772,7 +1772,7 @@ def display_input_parameters():
         ('Flux model',               ['Ce', 'E_BD']),
         ('Disruption / RE indicators (post-convergence)',
                                      ['tau_TQ', 'Te_final_eV', 'pellet_dilution']),
-        ('Techno-economics (Sheffield, post-convergence)',
+        ('Techno-economics (post-convergence)',
                                      ['discount_rate', 'T_life', 'T_build', 'contingency',
                                       'Util_factor', 'Dwell_factor', 'dt_rep_bl', 'dt_rep_div',
                                       'Supra_cost_factor', 'C_invest_max']),
@@ -2022,7 +2022,7 @@ def generic_2D_scan(scan_params, fixed_params, base_config, compute_re=True,
          *_coil_extra) = res
 
         # ── Feasibility and cost: shared RUN evaluators ──────────────
-        # Same rule and same Sheffield geometry as the RUN report, so a scan
+        # Same rule and same cost evaluation as the RUN report, so a scan
         # cell and a RUN of the same inputs give identical verdicts and costs.
         _fz = evaluate_feasibility(config, res)
         n_condition    = _fz['ratios']['density']

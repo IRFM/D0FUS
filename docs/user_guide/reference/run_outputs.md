@@ -188,8 +188,9 @@ This page lists the 167 scalar outputs of the Run mode, organised in 13 families
 | Blanket calendar lifetime t_life_bl_yr             | yr           |     |
 | Divertor calendar lifetime t_life_div_yr           | yr           |     |
 | Operation time per cycle T_op_limit                | yr           |     |
-| Capacity factor CF                                 | \-           |     |
-| **Techno-economics (Sheffield 2016)**              |              |     |
+| Operating fraction CF (Av x Util)                  | \-           |     |
+| **Techno-economics (cost_model)**                  |              |     |
 | Geometric cost proxy (V_build / P_fus)             | m^3/MW       |     |
+| Annual net electricity E_net                       | MWh/year     |     |
 | Cost of electricity COE                            | EUR/MWh      |     |
 | Total constructed capital C_invest                 | M EUR (2025) |     |

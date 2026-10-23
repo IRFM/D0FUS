@@ -94,7 +94,7 @@ CONFIG_OPTIONS = {
     'Supra_choice':           ('Nb3Sn', 'NbTi', 'REBCO', 'Manual'),
     'Supra_choice_CS':        ('same', 'Nb3Sn', 'NbTi', 'REBCO', 'Manual'),
     'CD_source':              ('Academic', 'LHCD', 'ECCD', 'NBCD', 'Multi'),
-    'cost_model':             ('Sheffield', 'None'),
+    'cost_model':             ('Sheffield', 'Whyte', 'None'),
     # Must match the keys of BLANKET_CONCEPTS, defined further down.
     'Blanket_choice':         ('HCPB', 'HCLL', 'DCLL', 'SCLL', 'SCLV', 'F-LIB'),
 }
@@ -527,8 +527,9 @@ class GlobalConfig:
     pellet_dilution_cools : bool = False  # True: isobaric cooling before TQ (T ∝ 1/dilution)
 
     # ── 15. Techno-economic cost model (indicative, post-convergence) ────────
-    # Model: Sheffield & Milora, Fus. Sci. Technol. 70 (2016).
-    cost_model          : str   = 'Sheffield'  # 'Sheffield' or 'None'
+    # Sheffield & Milora, Fus. Sci. Technol. 70 (2016), the reference, or the
+    # surface-proportional benchmark adapted from Whyte (2024).
+    cost_model          : str   = 'Sheffield'  # 'Sheffield', 'Whyte' or 'None'
     # Financial parameters (Ref: Sheffield 2016, Section III.D)
     discount_rate       : float = 0.07   # Real discount rate [-]
     T_life              : int   = 40     # Plant operational lifetime [yr]
