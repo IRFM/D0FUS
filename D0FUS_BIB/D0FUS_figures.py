@@ -5386,7 +5386,7 @@ def plot_density_map(run, save_dir=None):
 
 def plot_cost_breakdown(run: dict, save_dir: str | None = None) -> None:
     """
-    Techno-economic cost breakdown (Sheffield & Milora 2016 model).
+    Techno-economic cost breakdown (Sheffield & Milora 2016 or Whyte 2024).
 
     Left panel : CapEx by component (TF + CS coils, breeding blanket,
                  shield + gaps, divertor targets, heat transfer system, balance of
@@ -5466,8 +5466,8 @@ def plot_cost_breakdown(run: dict, save_dir: str | None = None) -> None:
         ax2.axis("off")
 
     coe_txt = (f"COE = {coe:.0f} {coe_u}" if np.isfinite(coe)
-               else "COE undefined (no net electric output)")
-    fig.suptitle(f"Cost breakdown (Sheffield 2016)   |   {coe_txt}",
+               else "COE undefined (no net electricity over the year)")
+    fig.suptitle(f"Cost breakdown ({cb.get('model', 'Sheffield 2016')})   |   {coe_txt}",
                  fontsize=13, fontweight="bold")
     plt.tight_layout()
     _save_or_show(fig, save_dir, "cost_breakdown")

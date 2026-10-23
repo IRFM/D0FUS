@@ -54,9 +54,9 @@ c_2025USD_2010USD = 1.4723                                    # 2025 USD per 201
 c_2025EUR_2025USD = 0.8862                                    # 2025 EUR per 2025 USD
 c_2025EUR_2010USD = c_2025EUR_2025USD * c_2025USD_2010USD     # 2025 EUR per 2010 USD
 
-#%% Denis Whyte model inputs (modified to ITER 2025 data)
+#%% Denis Whyte model inputs (modified to ITER 2025 data, cost_model = 'Whyte')
 # ──────────────────────────────────────────────────────────────────────────────
-# Simple surface-proportional cost model.
+# Simple surface-proportional cost model, kept as a benchmark.
 # Investment scaled from ITER 2025 project cost / first-wall surface area.
 # Blanket replacement cost assumed 7% of total investment.
 # Ref: ITER Organization, "ITER Project Cost" (2024); Whyte JPP seminar (2024).
@@ -93,6 +93,7 @@ spare_tt_sfd  = 0.2    # Divertor target spares                  [-]
 # -- External costs --
 
 C_waste_sfd = 5        # Radioactive waste disposal              [$/MWh]
+                       # (Sheffield 2016: 0.5 waste + 1.0 decommissioning)
 
 # -- Annual fuel costs --
 # D + Li supply.  Negligible vs replacement costs: a defining feature of
@@ -126,6 +127,15 @@ x_BoP_sfd = 0.6     # Economy-of-scale exponent                 [-]
 C_bld_sfd = 839     # Reference buildings cost                  [2010 M$]
 V_bld_sfd = 5100    # Reference fusion island volume            [m^3]
 x_bld_sfd = 0.67    # Economy-of-scale exponent                 [-]
+
+# -- Thermal store of a pulsed plant (not in Sheffield 2016) --
+# Two-tank molten-salt storage, SAM default of 27 $/kWh_th (Turchi & Heath,
+# NREL/TP-5500-57625, 2013, Table 1). The dollar year is not stated in the
+# report: taken as 2012 USD and brought to 2010 USD with the CPI-U ratio
+# 229.594 / 218.056. CSP salt runs at 290-565 C. A blanket coolant at lower
+# temperature stores less energy per tonne of salt, so this value may be
+# optimistic for some blanket concepts.
+c_store_sfd = 0.027 / (229.594 / 218.056)   # Thermal store  [2010 M$ / MWh_th]
 
 # -- Annual O&M costs scaling (Table IV) --
 # C_OM = C_ref * (Pe / P_ref)^x
@@ -174,7 +184,7 @@ if __name__ == "__main__":
     print(SEP)
     ok1 = all(v > 0 for v in [c_pc_sfd, c_sg_sfd, c_aux_sfd, c_bl_sfd,
               c_tt_sfd, C_heat_sfd, C_BoP_sfd, C_tur_sfd, C_bld_sfd,
-              C_OM_sfd, C_fa_sfd])
+              C_OM_sfd, C_fa_sfd, c_store_sfd])
     print(f"  All unit costs > 0{PASS if ok1 else FAIL}")
     ok2 = all(0 < v < 1 for v in [red_pc_sfd, ducts_sg_sfd, spare_aux_sfd,
               spare_bl_sfd, spare_tt_sfd, x_heat_sfd, x_BoP_sfd,

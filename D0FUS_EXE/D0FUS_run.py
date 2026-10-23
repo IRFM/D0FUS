@@ -26,7 +26,7 @@ from D0FUS_BIB.D0FUS_parameterization import (
     LEGACY_SPLIT_KEYS, apply_legacy_split_keys, plant_conversion)
 from D0FUS_BIB.D0FUS_radial_build_functions import *
 from D0FUS_BIB.D0FUS_physical_functions import *
-from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield
+from D0FUS_BIB.D0FUS_cost_functions import f_costs_Sheffield, f_costs_Whyte
 from D0FUS_BIB.D0FUS_cost_data import *
 
 # Backwards-compatible alias for dataclasses.replace (exported by D0FUS_import
@@ -692,43 +692,75 @@ def core_plasma_values(config, results):
 _RI = dict(Surface=7, Ip=8, nbar_line=13, nG=14, betaT=17, qstar=19, q95=20,
            P_CD=21, P_elec=25, cost=27, Gamma_n=39, c=44, d=51, r_d=61,
            kappa=62, betaN_total=96, V_TF_one=99, V_CS_geom=100,
-           t_life_bl_yr=130, t_life_div_yr=131,
-           T_op_limit=132, CF=135, V_rb_BB=138, V_rb_shield=139, V_rb_VV=140,
-           V_rb_gap_TF=141, P_th=150)
+           t_life_bl_fpy=128, t_life_bl_yr=130, t_life_div_yr=131,
+           T_op_limit=132, Av=134, CF=135, V_rb_BB=138, V_rb_shield=139,
+           V_rb_VV=140, V_rb_gap_TF=141, P_th=150, P_th_smoothed=151,
+           E_store_th=152, P_recirc_fix=161)
 
 
 def evaluate_costs(config, results):
     """
-    Sheffield (2016) cost breakdown of a converged design, on the RUN geometry.
+    Cost breakdown of a converged design (cost_model = 'Sheffield' or
+    'Whyte'), on the RUN geometry.
 
-    Volumes are the exact ones computed by run(): TF on the conductor
-    centreline (V_TF_one x N_TF), CS with the resolved height (V_CS_geom),
-    breeding blanket (V_bl = V_rb_BB) and shield and gaps (V_sg = shield +
-    vacuum vessel + gap layers) from the radial build layers, and the
-    fusion-island cylinder of height H_TF from the Princeton-D solve. The
-    divertor target area is f_div_area_fraction x plasma surface.
-    P_th is read from the results tuple, so it carries the P_fus resolved by
-    run() (P_fus_mode = 'greenwald') rather than the deck placeholder.
+    Both models divide the annual cost by the annual net electricity
+    E_net = 8760 [CF P_elec - (1 - CF) P_fix] (f_net_electric_energy), with
+    CF = Av x Util the operating fraction and P_fix the cryoplant and house
+    load, drawn all year.
 
-    A plant without net electric output (P_elec <= 0) has no COE: it is NaN
-    and 'net_electric' is False. Its capital cost is still given, with the
-    balance of plant taken at P_e = 0.
+    Sheffield: volumes are the exact ones computed by run(): TF on the
+    conductor centreline (V_TF_one x N_TF), CS with the resolved height
+    (V_CS_geom), breeding blanket (V_bl = V_rb_BB) and shield and gaps
+    (V_sg = shield + vacuum vessel + gap layers) from the radial build
+    layers, and the fusion-island cylinder of height H_TF from the
+    Princeton-D solve. The divertor target area is f_div_area_fraction x
+    plasma surface. P_th is read from the results tuple, so it carries the
+    P_fus resolved by run() (P_fus_mode = 'greenwald') rather than the deck
+    placeholder. Blanket and divertor are replaced on the parallel schedule
+    of the availability model (f_replacement_intervals).
+
+    Whyte: investment on the plasma surface, blanket replaced on its dpa
+    lifetime at the burn fraction CF x Dwell_factor.
+
+    A plant without net electricity over the year (E_net <= 0) has no COE:
+    it is NaN and 'net_electric' is False. Its capital cost is still given,
+    with the balance of plant taken at P_e = max(P_elec, 0).
 
     Returns
     -------
-    dict  All f_costs_Sheffield outputs (C_invest [M EUR], COE [EUR/MWh],
-          component costs), the inputs and 'net_electric'. Empty dict when
-          cost_model = 'None' or when an input is non-finite.
+    dict  The cost-model outputs (C_invest [M EUR], COE [EUR/MWh],
+          component and annual costs), the inputs, 'model', 'E_net'
+          [MWh/yr] and 'net_electric'. Empty dict when cost_model = 'None'
+          or when an input is non-finite.
     """
-    if getattr(config, 'cost_model', 'None') == 'None':
+    model = getattr(config, 'cost_model', 'None')
+    if model == 'None':
         return {}
     g = {k: float(np.real(results[i])) for k, i in _RI.items()}
     need = ('Surface', 'P_CD', 'P_elec', 'Gamma_n', 'c', 'd', 'kappa',
-            'V_TF_one', 'V_CS_geom', 't_life_bl_yr', 't_life_div_yr',
-            'T_op_limit', 'CF', 'V_rb_BB', 'V_rb_shield', 'V_rb_VV',
-            'V_rb_gap_TF', 'P_th')
-    if not all(np.isfinite(g[k]) for k in need):
+            'V_TF_one', 'V_CS_geom', 't_life_bl_fpy', 't_life_bl_yr',
+            't_life_div_yr', 'T_op_limit', 'Av', 'CF', 'V_rb_BB',
+            'V_rb_shield', 'V_rb_VV', 'V_rb_gap_TF', 'P_th', 'P_th_smoothed',
+            'E_store_th', 'P_recirc_fix')
+    # Lifetimes may be infinite (component never replaced)
+    if not all(np.isfinite(g[k]) or (k.startswith('t_life') and g[k] == np.inf)
+               for k in need):
         return {}
+    E_net = f_net_electric_energy(g['P_elec'], g['P_recirc_fix'], g['CF'])
+    common = dict(model=model, E_net=E_net, net_electric=bool(E_net > 0.0),
+                  P_e=max(g['P_elec'], 0.0), CF=g['CF'], Av=g['Av'],
+                  T_op_limit=g['T_op_limit'], Gamma_n=g['Gamma_n'])
+
+    if model == 'Whyte':
+        f_burn = g['CF'] * min(float(config.Dwell_factor), 1.0)
+        res = f_costs_Whyte(discount_rate=config.discount_rate,
+                            T_life=config.T_life, S_FW=g['Surface'],
+                            t_life_bl_fpy=g['t_life_bl_fpy'], f_burn=f_burn,
+                            E_net=E_net)
+        res.update(common, S_FW=g['Surface'], t_life_bl_fpy=g['t_life_bl_fpy'],
+                   f_burn=f_burn)
+        return res
+
     try:
         N_TF, _, Delta_TF = Number_TF_coils(config.R0, config.a, config.b,
                                             config.ripple_adm, config.L_min)
@@ -740,26 +772,24 @@ def evaluate_costs(config, results):
     except Exception:
         return {}
     V_sg = g['V_rb_shield'] + g['V_rb_VV'] + g['V_rb_gap_TF']
-    inputs = dict(P_t=g['P_th'], P_e=max(g['P_elec'], 0.0), P_aux=g['P_CD'],
-                  Gamma_n=g['Gamma_n'], T_op_limit=g['T_op_limit'], CF=g['CF'],
-                  t_life_bl_yr=g['t_life_bl_yr'], t_life_div_yr=g['t_life_div_yr'],
+    t_rep_bl_yr, t_rep_div_yr, _ = f_replacement_intervals(
+        g['t_life_bl_yr'], g['t_life_div_yr'])
+    inputs = dict(P_t=g['P_th'], P_t_smoothed=g['P_th_smoothed'],
+                  P_e=common['P_e'], E_net=E_net, P_aux=g['P_CD'],
+                  E_store_th=g['E_store_th'], Av=g['Av'],
+                  t_rep_bl_yr=t_rep_bl_yr, t_rep_div_yr=t_rep_div_yr,
                   V_FI=V_FI, V_pc=g['V_TF_one'] * N_TF + g['V_CS_geom'],
                   V_sg=V_sg, V_bl=g['V_rb_BB'],
                   S_tt=config.f_div_area_fraction * g['Surface'])
-    out = f_costs_Sheffield(
+    res = f_costs_Sheffield(
         discount_rate=config.discount_rate, contingency=config.contingency,
         T_life=config.T_life, T_build=config.T_build,
         Supra_cost_factor=config.Supra_cost_factor, **inputs)
-    keys = ('T_op_limit', 'CF', 'C_invest', 'COE', 'C_ind', 'C_Op_waste',
-            'C_Op_OM', 'C_Op_F', 'C_syst_other', 'C_syst_BOP', 'C_syst_heat',
-            'C_syst_aux', 'C_reac_tt', 'C_reac_bl', 'C_reac_sg', 'C_reac_pc')
-    res = {k: float(v) for k, v in zip(keys, out)}
-    res.update(inputs, N_TF=N_TF, Delta_TF=Delta_TF, H_TF=H_TF,
-               net_electric=bool(g['P_elec'] > 0.0))
+    res.update(inputs, **common)
+    res.update(N_TF=N_TF, Delta_TF=Delta_TF, H_TF=H_TF)
     # C_Op_waste is a cost per unit of energy [EUR/MWh], added to the COE.
     # Its annual value [M EUR/yr] is shown with the other operating costs.
-    res['C_Op_waste_annual'] = (res['C_Op_waste'] * 8760.0 * res['CF']
-                                * res['P_e'] * 1e-6)
+    res['C_Op_waste_annual'] = res['C_Op_waste'] * max(E_net, 0.0) * 1e-6
     return res
 
 
@@ -3250,7 +3280,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     t_life_div_yr  = f_lifetime_to_years(t_life_div_fpy,
                                           config.Util_factor, config.Dwell_factor)
     (T_op_limit, dt_rep_eff,
-     Av_solution, CF_solution) = f_availability_schedule(
+     Av_solution) = f_availability_schedule(
         t_life_bl_fpy, t_life_div_fpy,
         config.dt_rep_bl, config.dt_rep_div,
         config.Util_factor, config.Dwell_factor)
@@ -3261,13 +3291,16 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # coolant pumping on P_th, house load from the PROCESS model
     # (house_load_breakdown).
     # Pulsed operation: a thermal store delivers a constant P_th_smoothed over
-    # the full cycle (flat-top + dwell), so P_elec is a cycle-averaged value.
-    # The loads are averaged over the same cycle: heating/CD and coolant
-    # pumping run during the burn only, the CS energy is supplied once per
-    # cycle, cryogenics and house load run all the time.
-    # The dwell is then carried by P_elec, and CF excludes it (CF = Av × Util)
-    # to avoid counting it twice in COE = cost / (8760 CF P_elec). Component
-    # calendar lifetimes and Av above keep the dwell (fluence per year).
+    # the full cycle (flat-top + dwell), so P_e_gross is a cycle average.
+    # Loads are given at their nominal value, which sizes the plant: heating/
+    # CD and coolant pumping during the burn (P_recirc_var), CS recharge
+    # during the dwell (P_coil_CS), cryogenics and house load all the time
+    # (P_recirc_fix). The duty cycle D is applied once, in the cycle average
+    # <P_recirc> = D P_var + (1 - D) P_coil_CS + P_fix subtracted from
+    # P_e_gross (P_elec) and in E_recirculated (burn fraction Av x Util x D).
+    # P_elec is then a cycle average, so CF = Av x Util excludes the dwell in
+    # COE = cost / (8760 CF P_elec). Component calendar lifetimes and Av above
+    # keep the dwell (fluence per year).
     P_th_solution = (P_fus * (f_neutron * M_blanket + 1.0 - f_neutron)
                      + P_CD_solution)   # neutron-only blanket multiplication
     (t_dwell_solution, E_store_th_solution,
@@ -3275,13 +3308,9 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         P_th_solution, config.Temps_Plateau_input, config.Dwell_factor,
         config.eta_store)
     P_e_gross_solution = eta_T * P_th_smoothed_solution
-    # Burn fraction of the cycle, Dwell_factor = t_flat-top / t_cycle
-    _burn = min(float(config.Dwell_factor), 1.0)
-    # CS recharge: E_mag_CS supplied during the dwell, averaged over the
-    # cycle (zero without dwell)
-    P_coil_CS_solution = (f_coil_power_supply(
-        E_mag_CS_post, config.Temps_Plateau_input + t_dwell_solution)
-        if config.Dwell_factor < 1.0 else 0.0)
+    # CS recharge power: E_mag_CS supplied during the dwell (zero without dwell)
+    P_coil_CS_solution = (f_coil_power_supply(E_mag_CS_post, t_dwell_solution)
+                          if config.Dwell_factor < 1.0 else 0.0)
     I_feeders_solution = f_feeder_current(
         I_cond, I_cond_CS, N_TF=N_TF, N_CS=config.N_sub_CS)
     M_cold_solution = M_total_TF + M_total_CS   # magnet cold mass [kg]
@@ -3293,21 +3322,24 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         config, _R_TF_out, R_bore_TF, c, _H_TF_D, Z_TF_bore_half, N_TF,
         calculate_E_mag_TF(Bmax_TF, a, b, R0, c, Delta_TF),
         P_cryo_cool_solution)['P_house']
-    # Coolant pumping on the heat extracted during the burn
-    P_BoP_solution = f_bop_power(P_th_solution * _burn, f_pump)
-    # Heating/CD wall-plug power on P_CD, as in P_wallplug_solution, during
-    # the burn
+    # Coolant pumping on the heat extracted during the burn (nominal)
+    P_BoP_solution = f_bop_power(P_th_solution, f_pump)
+    # Heating/CD wall-plug power on P_CD, as in P_wallplug_solution (nominal)
     (P_recirc_var_solution, P_recirc_fix_solution,
      P_recirculated_solution) = f_recirculated_power(
-        P_CD_solution * _burn, eta_WP, P_coil_CS_solution,
+        P_CD_solution, eta_WP,
         P_cryo_electric_solution, P_BoP_solution, P_house_load_solution)
-    P_elec_solution = P_e_gross_solution - P_recirculated_solution
+    # Net electric power, cycle average: the only place where D enters P_elec
+    P_elec_solution = P_e_gross_solution - f_recirculated_power_cycle_average(
+        P_recirc_var_solution, P_coil_CS_solution, P_recirc_fix_solution,
+        config.Dwell_factor)
 
-    CF_solution = Av_solution * config.Util_factor
+    CF_solution = Av_solution * config.Util_factor   # operating fraction
     E_recirculated_solution = f_recirculated_energy(
-        P_recirc_var_solution, P_recirc_fix_solution, CF_solution)
+        P_recirc_var_solution, P_coil_CS_solution, P_recirc_fix_solution,
+        CF_solution, config.Dwell_factor)
     # Burn time fraction = Av × Util × Dwell. D-D consumes no external tritium.
-    C_tritium_solution = (f_tritium_consumption(
+    m_tritium_solution = (f_tritium_consumption(
         P_fus, CF_solution * config.Dwell_factor) if Fuel == 'DT' else 0.0)
 
     return (B0_solution,  B_CS,  B_pol_solution,
@@ -3383,7 +3415,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             P_recirc_fix_solution,
             P_recirculated_solution,
             E_recirculated_solution,
-            C_tritium_solution)
+            m_tritium_solution)
 
 
 #%% Output writer
@@ -3413,7 +3445,7 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
          _plant["P_e_gross"], _plant["P_coil_CS"], _plant["I_feeders"],
          _plant["P_cryo_cool"], _plant["P_cryo_electric"], _plant["P_house_load"],
          _plant["P_BoP"], _plant["P_recirc_var"], _plant["P_recirc_fix"],
-         _plant["P_recirculated"], _plant["E_recirculated"], _plant["C_tritium"]) = results[-15:]
+         _plant["P_recirculated"], _plant["E_recirculated"], _plant["m_tritium"]) = results[-15:]
     except Exception:
         _plant = {}
 
@@ -3588,24 +3620,37 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         _H_CS_rd = f_H_CS(_Z_bore_half_cb)
     _H_CS_mod_rd = f_H_CS_module(_H_CS_rd, config.N_sub_CS)
 
-    # ── Techno-economic breakdown (Sheffield), shared evaluate_costs() so the
-    # figure matches the RUN report and every other execution mode; empty dict
+    # ── Techno-economic breakdown, shared evaluate_costs() so the figure
+    # matches the RUN report and every other execution mode; empty dict
     # when cost_model is off or any required input is unavailable.
     _cost_bd = {}
     _cr = evaluate_costs(config, results)
-    if _cr:
+    if _cr and _cr['model'] == 'Whyte':
         _cost_bd = {
-            "COE": _cr['COE'], "C_invest": _cr['C_invest'],
+            "model": "Whyte 2024", "COE": _cr['COE'],
+            "C_invest": _cr['C_invest'], "E_net": _cr['E_net'],
             "currency": "M EUR (2025)", "coe_unit": "EUR/MWh",
-            "capex": {"TF + CS coils":    _cr['C_reac_pc'],
-                      "Breeding blanket":  _cr['C_reac_bl'],
-                      "Shield + gaps":     _cr['C_reac_sg'],
-                      "Divertor targets":  _cr['C_reac_tt'],
-                      "Heat transfer system": _cr['C_syst_heat'],
-                      "Balance of plant":  _cr['C_syst_BOP'],
-                      "Aux. heating":      _cr['C_syst_aux'],
-                      "Buildings & other": _cr['C_syst_other'],
-                      "Indirect, interest, contingency": _cr['C_ind']},
+            "capex": {"Plant (ITER-scaled, per m2 of first wall)": _cr['C_invest']},
+            "opex": {"Capital annuity":       _cr['C_Op_fixed'],
+                     "Blanket replacement":   _cr['C_Op_bl']},
+        }
+    elif _cr:
+        _capex = {"TF + CS coils":    _cr['C_reac_pc'],
+                  "Breeding blanket":  _cr['C_reac_bl'],
+                  "Shield + gaps":     _cr['C_reac_sg'],
+                  "Divertor targets":  _cr['C_reac_tt'],
+                  "Heat transfer system": _cr['C_syst_heat'],
+                  "Balance of plant":  _cr['C_syst_BOP'],
+                  "Aux. heating":      _cr['C_syst_aux'],
+                  "Buildings & other": _cr['C_syst_other'],
+                  "Indirect, interest, contingency": _cr['C_ind']}
+        if _cr['C_syst_store'] > 0.0:   # pulsed plant only
+            _capex["Thermal store"] = _cr['C_syst_store']
+        _cost_bd = {
+            "model": "Sheffield 2016", "COE": _cr['COE'],
+            "C_invest": _cr['C_invest'], "E_net": _cr['E_net'],
+            "currency": "M EUR (2025)", "coe_unit": "EUR/MWh",
+            "capex": _capex,
             # Annual operating costs [M EUR/yr]. The waste cost is defined
             # per unit of energy (coe_waste, EUR/MWh) and converted here.
             "opex": {"O&M":               _cr['C_Op_OM'],
@@ -4203,7 +4248,7 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
     row("Operation time per cycle T_op_limit", T_op_limit, "yr")
     row("Effective replacement downtime dt_rep_eff", dt_rep_eff, "yr")
     row("Plant availability Av", Av, "-")
-    row("Capacity factor CF", CF, "-")
+    row("Operating fraction CF (Av x Util)", CF, "-")
     lines.append("")
 
     H("14. OUTPUTS - Plant electrical balance & pulsed operation")
@@ -4211,24 +4256,25 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
     row("Smoothed thermal power P_th_smoothed", rd.get("P_th_smoothed"), "MWth")
     row("Stored thermal energy E_store_th", rd.get("E_store_th"), "MWhth")
     row("Gross electrical power P_e_gross", rd.get("P_e_gross"), "MWe")
-    row("CS recharge, cycle average P_coil_CS", rd.get("P_coil_CS"), "MWe")
+    row("CS recharge power (dwell) P_coil_CS", rd.get("P_coil_CS"), "MWe")
     row("Total TF + CS feeder current I_feeders", rd.get("I_feeders"), "MA")
     row("Refrigeration load at 4.5 K P_cryo_cool", rd.get("P_cryo_cool"), "kW")
     row("Cryogenic electrical consumption P_cryo_electric", rd.get("P_cryo_electric"), "MWe")
     row("House load P_house_load (PROCESS model)", rd.get("P_house_load"), "MWe")
-    row("Coolant pumping power P_BoP", rd.get("P_BoP"), "MWe")
-    row("Variable recirculating power P_recirc_var", rd.get("P_recirc_var"), "MWe")
+    row("Coolant pumping power (burn) P_BoP", rd.get("P_BoP"), "MWe")
+    row("Variable recirculating power (burn) P_recirc_var", rd.get("P_recirc_var"), "MWe")
     row("Fixed recirculating power P_recirc_fix", rd.get("P_recirc_fix"), "MWe")
-    row("Total recirculated power P_recirculated", rd.get("P_recirculated"), "MWe")
+    row("Total recirculated power (burn) P_recirculated", rd.get("P_recirculated"), "MWe")
     row("Annual recirculated electricity E_recirculated", rd.get("E_recirculated"), "MWh/year")
-    row("Annual tritium consumption C_tritium", rd.get("C_tritium"), "kg/year")
+    row("Annual tritium consumption m_tritium", rd.get("m_tritium"), "kg/year")
     lines.append("")
 
-    H("15. OUTPUTS - Techno-economics (Sheffield 2016)")
-    row("Geometric cost proxy (V_build / P_fus)", get("cost"), "m^3/MW")
     _cb = rd.get("cost_breakdown") or {}
+    H(f"15. OUTPUTS - Techno-economics ({_cb.get('model', config.cost_model)})")
+    row("Geometric cost proxy (V_build / P_fus)", get("cost"), "m^3/MW")
     if _cb:
         cur = _cb.get("currency", "M EUR")
+        row("Annual net electricity E_net", _cb.get("E_net"), "MWh/year")
         row("Cost of electricity COE", _cb.get("COE"), _cb.get("coe_unit", "EUR/MWh"))
         row("Total constructed capital C_invest", _cb.get("C_invest"), cur)
         lines.append(f"  CapEx components [{cur}]:")
@@ -4237,8 +4283,9 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
         lines.append(f"  Annual OpEx [{cur}/yr]:")
         for k, v in (_cb.get("opex") or {}).items():
             row("  " + str(k), v)
-        row("Waste disposal cost (included in COE)", _cb.get("coe_waste"),
-            _cb.get("coe_unit", "EUR/MWh"))
+        if "coe_waste" in _cb:
+            row("Waste disposal cost (included in COE)", _cb.get("coe_waste"),
+                _cb.get("coe_unit", "EUR/MWh"))
     else:
         lines.append("  (cost model disabled or unavailable)")
     lines.append("")
@@ -4356,13 +4403,13 @@ def save_run_output(config: GlobalConfig,
          P_e_gross, P_coil_CS, I_feeders,
          P_cryo_cool, P_cryo_electric, P_house_load,
          P_BoP, P_recirc_var, P_recirc_fix,
-         P_recirculated, E_recirculated, C_tritium) = plant_results
+         P_recirculated, E_recirculated, m_tritium) = plant_results
     else:
         (P_th, P_th_smoothed, E_store_th,
          P_e_gross, P_coil_CS, I_feeders,
          P_cryo_cool, P_cryo_electric, P_house_load,
          P_BoP, P_recirc_var, P_recirc_fix,
-         P_recirculated, E_recirculated, C_tritium) = (np.nan,) * 15
+         P_recirculated, E_recirculated, m_tritium) = (np.nan,) * 15
 
     # ── Recompute N_TF for display (not stored in results tuple) ──────────
     # Same deterministic call as in run().
@@ -4723,7 +4770,7 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] P_e_gross (Gross electrical power)              : {P_e_gross:.3f} [MWe]", file=out)
         print(f"[O] P_th_smoothed (Smoothed thermal power)          : {P_th_smoothed:.3f} [MWth]", file=out)
         print(f"[O] E_store_th (Stored thermal energy)              : {E_store_th:.3f} [MWhth]", file=out)
-        print(f"[O] P_coil_CS (CS recharge, cycle average)          : {P_coil_CS:.3f} [MWe]", file=out)
+        print(f"[O] P_coil_CS (CS recharge power, dwell)            : {P_coil_CS:.3f} [MWe]", file=out)
         print(f"[O] I_feeders (Total TF + CS feeder current)        : {I_feeders:.3f} [MA]", file=out)
         print(f"[O] P_cryo_cool (Refrigeration load at 4.5 K)       : {P_cryo_cool:.3f} [kW]", file=out)
         print(f"[O] P_cryo_electric                                 : {P_cryo_electric:.3f} [MWe]", file=out)
@@ -4733,14 +4780,16 @@ def save_run_output(config: GlobalConfig,
         print(f"[I]  ├ {'tritium plant':<45s}: {_hl['P_tritium']:.3f} [MWe]", file=out)
         print(f"[I]  ├ {'vacuum pumps':<45s}: {_hl['P_vacuum']:.3f} [MWe]", file=out)
         print(f"[O]  └ {'TF power supplies (bus bars)':<45s}: {_hl['P_TF_supplies']:.3f} [MWe]", file=out)
-        print(f"[O] P_BoP (coolant pumping)                         : {P_BoP:.3f} [MWe]", file=out)
-        print(f"[O] P_recirc_var                                    : {P_recirc_var:.3f} [MWe]", file=out)
+        print(f"[O] P_BoP (coolant pumping, burn)                   : {P_BoP:.3f} [MWe]", file=out)
+        print(f"[O] P_recirc_var (burn)                             : {P_recirc_var:.3f} [MWe]", file=out)
         print(f"[O] P_recirc_fix                                    : {P_recirc_fix:.3f} [MWe]", file=out)
-        print(f"[O] P_recirculated                                  : {P_recirculated:.3f} [MWe]", file=out)
+        print(f"[O] P_recirculated (burn)                           : {P_recirculated:.3f} [MWe]", file=out)
         print(f"[O] E_recirculated                                  : {E_recirculated:.3f} [MWh/year]", file=out)
-        print(f"[O] C_tritium                                       : {C_tritium:.3f} [kg/year]", file=out)
-        _Q_E = P_e_gross / P_recirculated if P_recirculated > 0 else np.nan
-        print(f"[O] Q_E    (Engineering gain, P_e_gross/P_recirc)   : {_Q_E:.3f}", file=out)
+        print(f"[O] m_tritium (annual tritium burn)                 : {m_tritium:.3f} [kg/year]", file=out)
+        # Cycle-averaged recirculated power = P_e_gross - P_elec
+        _P_rc_avg = P_e_gross - P_elec
+        _Q_E = P_e_gross / _P_rc_avg if _P_rc_avg > 0 else np.nan
+        print(f"[O] Q_E    (Engineering gain, P_e_gross/<P_recirc>) : {_Q_E:.3f}", file=out)
         print(f"[O] Cost   ((V_BB+V_TF+V_CS) / P_fus)               : {cost:.3f} [m³/MW]",    file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[O] t_blanket_fpy  (Blanket lifetime, dpa model)       : {t_life_bl_fpy:.3f} [fpy]", file=out)
@@ -4750,7 +4799,7 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] T_op_limit     (Operation per replacement cycle)   : {T_op_limit:.3f} [yr]", file=out)
         print(f"[O] dt_rep_eff     (Effective replacement downtime)    : {dt_rep_eff:.3f} [yr]", file=out)
         print(f"[O] Av             (Plant availability)                : {Av:.4f} [-]", file=out)
-        print(f"[O] CF             (Capacity factor)                   : {CF:.4f} [-]", file=out)
+        print(f"[O] CF             (Operating fraction Av x Util)      : {CF:.4f} [-]", file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[I] H              (H-factor)                       : {config.H:.3f}",             file=out)
         print(f"[I] Operation mode                                  : {config.Operation_mode}",    file=out)
@@ -4904,33 +4953,30 @@ def save_run_output(config: GlobalConfig,
         print("=========================================================================", file=out)
 
         # ── Techno-economic cost assessment (post-convergence) ────────────
-        # Sheffield & Milora, Fus. Sci. Technol. 70, 14–35 (2016).
-        # Uses D0FUS radial build volumes and power balance outputs.
+        # Sheffield & Milora, Fus. Sci. Technol. 70, 14–35 (2016), or the
+        # Whyte (2024) benchmark. Uses D0FUS radial build volumes and power
+        # balance outputs.
         if config.cost_model != 'None':
-            print("=== Cost Assessment — Sheffield (2016) ===", file=out)
+            _cm_title = {'Sheffield': 'Sheffield (2016)',
+                         'Whyte': 'Whyte (2024)'}.get(config.cost_model,
+                                                      config.cost_model)
+            print(f"=== Cost Assessment — {_cm_title} ===", file=out)
             print("-------------------------------------------------------------------------", file=out)
             try:
                 # Shared cost evaluation (identical in every execution mode)
                 _cr = evaluate_costs(config, results)
                 if not _cr:
                     raise ValueError("non-finite cost inputs")
-                P_th, V_FI_c = _cr['P_t'], _cr['V_FI']
-                (T_op_limit, CF, C_invest, COE,
-                 C_ind, C_Op_waste, C_Op_OM, C_Op_F,
-                 C_syst_other, C_syst_BOP, C_syst_heat, C_syst_aux,
-                 C_reac_tt, C_reac_bl, C_reac_sg, C_reac_pc) = (
-                    _cr[k] for k in ('T_op_limit', 'CF', 'C_invest', 'COE',
-                                     'C_ind', 'C_Op_waste', 'C_Op_OM', 'C_Op_F',
-                                     'C_syst_other', 'C_syst_BOP', 'C_syst_heat',
-                                     'C_syst_aux', 'C_reac_tt', 'C_reac_bl',
-                                     'C_reac_sg', 'C_reac_pc'))
-                C_D = C_invest - C_ind  # direct cost [M EUR]
+                _shf = _cr['model'] == 'Sheffield'
+                T_op_limit, CF, C_invest, COE = (
+                    _cr[k] for k in ('T_op_limit', 'CF', 'C_invest', 'COE'))
 
                 # Inputs (condensed)
                 print(f"[I] r={config.discount_rate:.0%}  T_life={config.T_life}yr"
-                      f"  T_build={config.T_build}yr"
-                      f"  contingency={config.contingency:.0%}"
-                      f"  Supra_cost={config.Supra_cost_factor:.1f}x", file=out)
+                      + (f"  T_build={config.T_build}yr"
+                         f"  contingency={config.contingency:.0%}"
+                         f"  Supra_cost={config.Supra_cost_factor:.1f}x"
+                         if _shf else ""), file=out)
                 print(f"[I] Util={config.Util_factor:.2f}"
                       f"  Dwell={config.Dwell_factor:.2f}"
                       f"  dt_rep_bl={config.dt_rep_bl:.1f}yr"
@@ -4938,51 +4984,68 @@ def save_run_output(config: GlobalConfig,
                 print("-------------------------------------------------------------------------", file=out)
 
                 # Derived inputs from D0FUS
-                print(f"[O] P_th  (thermal power to BoP)                    : {P_th:.1f} [MW]", file=out)
-                print(f"[O] P_e   (net electric power)                      : {P_elec:.1f} [MWe]", file=out)
+                if _shf:
+                    print(f"[O] P_th  (thermal power during the burn)           : {_cr['P_t']:.1f} [MW]", file=out)
+                    print(f"[O] P_th_smoothed (thermal power to the turbine)    : {_cr['P_t_smoothed']:.1f} [MW]", file=out)
+                print(f"[O] P_e   (net electric power, operation)           : {P_elec:.1f} [MWe]", file=out)
+                print(f"[O] E_net (annual net electricity)                  : {_cr['E_net']*1e-6:.3f} [TWh/yr]", file=out)
                 if not _cr['net_electric']:
-                    print("[!] No net electric output: the COE is undefined, the capital cost takes P_e = 0", file=out)
+                    print("[!] No net electricity over the year: the COE is undefined, the capital cost takes P_e = max(P_elec, 0)", file=out)
                 print(f"[O] Gamma_n (neutron wall load)                     : {Gamma_n:.3f} [MW/m^2]", file=out)
-                print("-------------------------------------------------------------------------", file=out)
-
-                # Component volumes
-                print(f"[O] V_bl  (breeding blanket, radial build)          : {_cr['V_bl']:.1f} [m^3]", file=out)
-                print(f"[O] V_sg  (shield + VV + gaps, radial build)        : {_cr['V_sg']:.1f} [m^3]", file=out)
-                print(f"[O] V_TF_one*N_TF (TF winding packs, Princeton-D)   : {V_TF_one * N_TF_disp:.1f} [m^3]", file=out)
-                print(f"[O] V_CS_geom (central solenoid)                    : {V_CS_geom:.1f} [m^3]", file=out)
-                print(f"[O] V_FI      (fusion island envelope)              : {V_FI_c:.1f} [m^3]", file=out)
                 print("-------------------------------------------------------------------------", file=out)
 
                 # Availability
                 print(f"[O] T_op_limit (time before replacement)            : {T_op_limit:.3f} [yr]", file=out)
-                print(f"[O] CF (capacity factor)                            : {CF:.3f}", file=out)
+                print(f"[O] CF (operating fraction Av x Util)               : {CF:.3f}", file=out)
+                if _shf:
+                    print(f"[O] t_rep_bl / t_rep_div (operation between replacements): "
+                          f"{_cr['t_rep_bl_yr']:.2f} / {_cr['t_rep_div_yr']:.2f} [yr]", file=out)
                 print("-------------------------------------------------------------------------", file=out)
 
-                # CapEx breakdown
-                print(f"[O] C_reac_pc (primary coils)                       : {C_reac_pc:.1f} [M EUR]", file=out)
-                print(f"[O] C_reac_bl (blanket)                             : {C_reac_bl:.1f} [M EUR]", file=out)
-                print(f"[O] C_reac_sg (shield & gaps)                       : {C_reac_sg:.1f} [M EUR]", file=out)
-                print(f"[O] C_reac_tt (divertor targets)                    : {C_reac_tt:.1f} [M EUR]", file=out)
-                print(f"[O] C_syst_heat (heat transfer)                     : {C_syst_heat:.1f} [M EUR]", file=out)
-                print(f"[O] C_syst_aux (heating & CD)                       : {C_syst_aux:.1f} [M EUR]", file=out)
-                print(f"[O] C_syst_BOP (turbine & BoP)                      : {C_syst_BOP:.1f} [M EUR]", file=out)
-                print(f"[O] C_syst_other (buildings & auxiliaries)          : {C_syst_other:.1f} [M EUR]", file=out)
-                print(f"[O] C_D    (total direct cost)                      : {C_D:.1f} [M EUR]", file=out)
-                print(f"[O] C_ind  (indirect + contingency)                 : {C_ind:.1f} [M EUR]", file=out)
-                print(f"[O] C_invest (total capital cost)                   : {C_invest*1e-3:.3f} [B EUR]", file=out)
-                print("-------------------------------------------------------------------------", file=out)
+                if _shf:
+                    # Component volumes
+                    print(f"[O] V_bl  (breeding blanket, radial build)          : {_cr['V_bl']:.1f} [m^3]", file=out)
+                    print(f"[O] V_sg  (shield + VV + gaps, radial build)        : {_cr['V_sg']:.1f} [m^3]", file=out)
+                    print(f"[O] V_TF_one*N_TF (TF winding packs, Princeton-D)   : {V_TF_one * N_TF_disp:.1f} [m^3]", file=out)
+                    print(f"[O] V_CS_geom (central solenoid)                    : {V_CS_geom:.1f} [m^3]", file=out)
+                    print(f"[O] V_FI      (fusion island envelope)              : {_cr['V_FI']:.1f} [m^3]", file=out)
+                    print("-------------------------------------------------------------------------", file=out)
 
-                # OpEx
-                print(f"[O] C_Op_OM (annual O&M)                            : {C_Op_OM:.1f} [M EUR/yr]", file=out)
-                print(f"[O] C_Op_F  (annual fuel & replacements)            : {C_Op_F:.1f} [M EUR/yr]", file=out)
-                print(f"[O] C_Op_waste (waste disposal)                     : {C_Op_waste:.3f} [EUR/MWh]", file=out)
+                    # CapEx breakdown
+                    print(f"[O] C_reac_pc (primary coils)                       : {_cr['C_reac_pc']:.1f} [M EUR]", file=out)
+                    print(f"[O] C_reac_bl (blanket)                             : {_cr['C_reac_bl']:.1f} [M EUR]", file=out)
+                    print(f"[O] C_reac_sg (shield & gaps)                       : {_cr['C_reac_sg']:.1f} [M EUR]", file=out)
+                    print(f"[O] C_reac_tt (divertor targets)                    : {_cr['C_reac_tt']:.1f} [M EUR]", file=out)
+                    print(f"[O] C_syst_heat (heat transfer)                     : {_cr['C_syst_heat']:.1f} [M EUR]", file=out)
+                    print(f"[O] C_syst_aux (heating & CD)                       : {_cr['C_syst_aux']:.1f} [M EUR]", file=out)
+                    print(f"[O] C_syst_BOP (turbine & BoP)                      : {_cr['C_syst_BOP']:.1f} [M EUR]", file=out)
+                    if _cr['C_syst_store'] > 0.0:
+                        print(f"[O] C_syst_store (thermal store {_cr['E_store_th']:.0f} MWh_th)      : {_cr['C_syst_store']:.1f} [M EUR]", file=out)
+                    print(f"[O] C_syst_other (buildings & auxiliaries)          : {_cr['C_syst_other']:.1f} [M EUR]", file=out)
+                    print(f"[O] C_D    (total direct cost)                      : {C_invest - _cr['C_ind']:.1f} [M EUR]", file=out)
+                    print(f"[O] C_ind  (indirect + contingency)                 : {_cr['C_ind']:.1f} [M EUR]", file=out)
+                    print(f"[O] C_invest (total capital cost)                   : {C_invest*1e-3:.3f} [B EUR]", file=out)
+                    print("-------------------------------------------------------------------------", file=out)
+
+                    # OpEx
+                    print(f"[O] C_Op_OM (annual O&M)                            : {_cr['C_Op_OM']:.1f} [M EUR/yr]", file=out)
+                    print(f"[O] C_Op_F  (annual fuel & replacements)            : {_cr['C_Op_F']:.1f} [M EUR/yr]", file=out)
+                    print(f"[O] C_Op_waste (waste disposal)                     : {_cr['C_Op_waste']:.3f} [EUR/MWh]", file=out)
+                else:
+                    # Whyte: capital on the first-wall surface, blanket replacement
+                    print(f"[O] S_FW  (first-wall surface)                      : {_cr['S_FW']:.1f} [m^2]", file=out)
+                    print(f"[O] C_invest (ITER-scaled, per m^2 of first wall)   : {C_invest*1e-3:.3f} [B EUR]", file=out)
+                    print(f"[O] C_blanket (one blanket set)                     : {_cr['C_blanket']:.1f} [M EUR]", file=out)
+                    print("-------------------------------------------------------------------------", file=out)
+                    print(f"[O] C_Op_fixed (capital annuity)                    : {_cr['C_Op_fixed']:.1f} [M EUR/yr]", file=out)
+                    print(f"[O] C_Op_bl (blanket replacement)                   : {_cr['C_Op_bl']:.1f} [M EUR/yr]", file=out)
                 print("-------------------------------------------------------------------------", file=out)
 
                 # Bottom line
                 if _cr['net_electric']:
                     print(f"[O] COE (cost of electricity)                       : {COE:.3f} [EUR/MWh]", file=out)
                 else:
-                    print("[O] COE (cost of electricity)                       : undefined (P_elec <= 0)", file=out)
+                    print("[O] COE (cost of electricity)                       : undefined (E_net <= 0)", file=out)
 
             except Exception as _e:
                 print(f"[!] Cost assessment failed: {_e}", file=out)
