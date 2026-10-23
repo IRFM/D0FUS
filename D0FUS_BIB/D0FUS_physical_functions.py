@@ -123,6 +123,12 @@ PROCESS_BUILDINGS = dict(
     f_z_cryostat=4.268,  # cryostat lid clearance factor, scaled from ITER (M. Kovari) [-]
 )
 
+def f_cryo_LHe_LN_volume(P_cryo_MWe):
+    """1. LHe volume for cryogenics [L]: function scaled against cryo electrical power (1 point fit: ITER [40 MWe, 190e3 L]) 2. LN volume for cryogenics [L]: scaled against LHe volume (1 point fit: ITER [LN: 300e3 L, LHe: 190e3 L]). Ref: H. Vaghela, “ITER Cryogenics System: Challenges and Current Status,” presented at the 2025 EIROforum Topical Workshop on Cryogenics, Garching, Germany, Oct. 14–15, 2025."""
+    V_LHe = 4.75e3 * float(P_cryo_MWe)
+    V_LN = 300 / 190 * V_LHe
+    return (V_LHe, V_LN)
+
 
 def f_tf_power_supplies(I_TF_A, R0, N_TF, V_dump_V, E_TF_J, rho_bus=2.62e-8,
                         j_bus=0.125, eta_TF=0.9, t_charge_h=4.0, f_rating=1.05):

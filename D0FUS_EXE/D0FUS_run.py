@@ -3287,6 +3287,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         M_cold_solution, config.M_cold_DEMO_ref, config.P_cryo_cool_DEMO_ref)
     P_cryo_electric_solution = f_cryo_electric_power(
         M_cold_solution, config.M_cold_DEMO_ref, config.P_cryo_electric_DEMO_ref)
+    (V_cryo_LHe_solution, V_cryo_LN_solution) = f_cryo_LHe_LN_volume(P_cryo_electric_solution)
     P_house_load_solution = house_load_breakdown(
         config, _R_TF_out, R_bore_TF, c, _H_TF_D, Z_TF_bore_half, N_TF,
         calculate_E_mag_TF(Bmax_TF, a, b, R0, c, Delta_TF),
@@ -3375,6 +3376,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             I_feeders_solution,
             P_cryo_cool_solution,
             P_cryo_electric_solution,
+            V_cryo_LHe_solution,
+            V_cryo_LN_solution,
             P_house_load_solution,
             P_BoP_solution,
             P_recirc_var_solution,
@@ -3409,7 +3412,8 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
     try:
         (_plant["P_th"], _plant["P_th_smoothed"], _plant["E_store_th"],
          _plant["P_e_gross"], _plant["P_coil_CS"], _plant["I_feeders"],
-         _plant["P_cryo_cool"], _plant["P_cryo_electric"], _plant["P_house_load"],
+         _plant["P_cryo_cool"], _plant["P_cryo_electric"], _plant["V_cryo_LHe"],
+         _plant["V_cryo_LN"], _plant["P_house_load"],
          _plant["P_BoP"], _plant["P_recirc_var"], _plant["P_recirc_fix"],
          _plant["P_recirculated"], _plant["E_recirculated"], _plant["C_tritium"]) = results[-15:]
     except Exception:
@@ -4213,6 +4217,8 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
     row("Total TF + CS feeder current I_feeders", rd.get("I_feeders"), "MA")
     row("Refrigeration load at 4.5 K P_cryo_cool", rd.get("P_cryo_cool"), "kW")
     row("Cryogenic electrical consumption P_cryo_electric", rd.get("P_cryo_electric"), "MWe")
+    row("Cryogenic LHe volume V_cryo_LHe", rd.get("V_cryo_LHe"), "L")
+    row("Cryogenic LN volume V_cryo_LN", rd.get("V_cryo_LN"), "L")
     row("House load P_house_load (PROCESS model)", rd.get("P_house_load"), "MWe")
     row("Coolant pumping power P_BoP", rd.get("P_BoP"), "MWe")
     row("Variable recirculating power P_recirc_var", rd.get("P_recirc_var"), "MWe")
@@ -4349,18 +4355,20 @@ def save_run_output(config: GlobalConfig,
     # ── Plant electrical-balance outputs (return indices 150–164) ───────────
     # The original 150 result positions remain unchanged; the new quantities
     # are appended after them.
-    if len(plant_results) == 15:
+    if len(plant_results) == 17:
         (P_th, P_th_smoothed, E_store_th,
          P_e_gross, P_coil_CS, I_feeders,
-         P_cryo_cool, P_cryo_electric, P_house_load,
+         P_cryo_cool, P_cryo_electric, V_cryo_LHe,
+         V_cryo_LN, P_house_load,
          P_BoP, P_recirc_var, P_recirc_fix,
          P_recirculated, E_recirculated, C_tritium) = plant_results
     else:
         (P_th, P_th_smoothed, E_store_th,
          P_e_gross, P_coil_CS, I_feeders,
-         P_cryo_cool, P_cryo_electric, P_house_load,
+         P_cryo_cool, P_cryo_electric, V_cryo_LHe,
+         V_cryo_LN, P_house_load,
          P_BoP, P_recirc_var, P_recirc_fix,
-         P_recirculated, E_recirculated, C_tritium) = (np.nan,) * 15
+         P_recirculated, E_recirculated, C_tritium) = (np.nan,) * 17
 
     # ── Recompute N_TF for display (not stored in results tuple) ──────────
     # Same deterministic call as in run().
@@ -4725,6 +4733,8 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] I_feeders (Total TF + CS feeder current)        : {I_feeders:.3f} [MA]", file=out)
         print(f"[O] P_cryo_cool (Refrigeration load at 4.5 K)       : {P_cryo_cool:.3f} [kW]", file=out)
         print(f"[O] P_cryo_electric                                 : {P_cryo_electric:.3f} [MWe]", file=out)
+        print(f"[O] V_cryo_LHe                                      : {V_cryo_LHe:.3f} [L]", file=out)
+        print(f"[O] V_cryo_LN                                       : {V_cryo_LN:.3f} [L]", file=out)
         print(f"[O] P_house_load                                    : {P_house_load:.3f} [MWe]", file=out)
         _lbl = f"facilities (floor area {_hl['A_floor']:.0f} m²)"
         print(f"[O]  ├ {_lbl:<45s}: {_hl['P_facilities']:.3f} [MWe]", file=out)
