@@ -3260,21 +3260,17 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # EU-DEMO reference values (config.*_DEMO_ref) with the TF + CS cold mass,
     # coolant pumping on P_th, house load from the PROCESS model
     # (house_load_breakdown).
-    # Pulsed operation: a thermal store delivers a constant P_th_smoothed over
-    # the full cycle (flat-top + dwell), so P_elec is a cycle-averaged value.
-    # The loads are averaged over the same cycle: heating/CD and coolant
-    # pumping run during the burn only, the CS energy is supplied once per
-    # cycle, cryogenics and house load run all the time.
-    # The dwell is then carried by P_elec, and CF excludes it (CF = Av × Util)
-    # to avoid counting it twice in COE = cost / (8760 CF P_elec). Component
-    # calendar lifetimes and Av above keep the dwell (fluence per year).
+    # Net ELECTRICAL output is smoothed across pulse and dwell. The nominal
+    # reactor thermal power also determines coolant pumping, independent of x.
+    # CS recharge retains its existing cycle-averaged definition unchanged;
+    # its contribution to P_recirc_var is assigned to the pulse balance by
+    # the simplified model (not a time-resolved recharge profile).
     P_th_solution = (P_fus * (f_neutron * M_blanket + 1.0 - f_neutron)
                      + P_CD_solution)   # neutron-only blanket multiplication
-    (t_dwell_solution, E_store_th_solution,
-     P_th_smoothed_solution) = f_pulsed_thermal_quantities(
-        P_th_solution, config.Temps_Plateau_input, config.Dwell_factor,
-        config.eta_store)
-    P_e_gross_solution = eta_T * P_th_smoothed_solution
+    # Derive dwell duration here solely for the existing P_coil_CS expression.
+    t_dwell_solution = (config.Temps_Plateau_input
+                        * (1.0 / config.Dwell_factor - 1.0)
+                        if config.Dwell_factor < 1.0 else 0.0)
     # CS recharge: E_mag_CS supplied during the dwell, averaged over the
     # cycle (zero without dwell)
     P_coil_CS_solution = (f_coil_power_supply(
@@ -3300,7 +3296,15 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
      P_recirculated_solution) = f_recirculated_power(
         P_CD_solution, eta_WP, P_coil_CS_solution,
         P_cryo_electric_solution, P_BoP_solution, P_house_load_solution)
-    P_elec_solution = P_e_gross_solution - P_recirculated_solution
+    electrical_balance = f_pulsed_electrical_quantities(
+        P_th_solution, config.Temps_Plateau_input, config.Dwell_factor,
+        eta_T, P_recirc_var_solution, P_recirc_fix_solution, config.eta_store)
+    E_store_th_solution = electrical_balance['E_store_th']
+    # Legacy fields kept for downstream callers. P_th_smoothed now means
+    # reactor-to-turbine heat *during pulse*; it is not constant over cycle.
+    P_th_smoothed_solution = electrical_balance['P_th_reactor_to_turbine_pulse']
+    P_e_gross_solution = electrical_balance['P_e_gross_pulse']
+    P_elec_solution = electrical_balance['P_e_net_smoothed']
 
     CF_solution = Av_solution * config.Util_factor
     E_recirculated_solution = f_recirculated_energy(
@@ -3367,7 +3371,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             M_rb_VV,      M_rb_divertor, M_rb_total,
             divertor_solution,                         # 149
 
-            # ── Plant electrical balance / pulsed-operation outputs (150–164)
+            # ── Plant electrical balance outputs (150–166) + phase details (167–174)
             P_th_solution,
             P_th_smoothed_solution,
             E_store_th_solution,
@@ -3384,7 +3388,16 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             P_recirc_fix_solution,
             P_recirculated_solution,
             E_recirculated_solution,
-            C_tritium_solution)
+            C_tritium_solution,
+            # Additional explicitly phase-resolved smoothing metrics.
+            electrical_balance['x_storage_split'],
+            electrical_balance['P_th_reactor_to_storage_pulse'],
+            electrical_balance['P_th_reactor_to_turbine_pulse'],
+            electrical_balance['P_th_storage_to_turbine_dwell'],
+            electrical_balance['P_e_gross_pulse'],
+            electrical_balance['P_e_gross_dwell'],
+            electrical_balance['P_e_net_pulse'],
+            electrical_balance['P_e_net_dwell'])
 
 
 #%% Output writer
@@ -3409,15 +3422,23 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
     dict  Ready to pass to plot_run().
     """
     _plant = {}
-    try:
-        (_plant["P_th"], _plant["P_th_smoothed"], _plant["E_store_th"],
-         _plant["P_e_gross"], _plant["P_coil_CS"], _plant["I_feeders"],
-         _plant["P_cryo_cool"], _plant["P_cryo_electric"], _plant["V_cryo_LHe"],
-         _plant["V_cryo_LN"], _plant["P_house_load"],
-         _plant["P_BoP"], _plant["P_recirc_var"], _plant["P_recirc_fix"],
-         _plant["P_recirculated"], _plant["E_recirculated"], _plant["C_tritium"]) = results[-15:]
-    except Exception:
-        _plant = {}
+    _base_plant_keys = (
+        'P_th', 'P_th_smoothed', 'E_store_th', 'P_e_gross',
+        'P_coil_CS', 'I_feeders', 'P_cryo_cool', 'P_cryo_electric',
+        'V_cryo_LHe', 'V_cryo_LN', 'P_house_load', 'P_BoP',
+        'P_recirc_var', 'P_recirc_fix', 'P_recirculated',
+        'E_recirculated', 'C_tritium')
+    _phase_keys = ('x_storage_split', 'P_th_reactor_to_storage_pulse',
+                   'P_th_reactor_to_turbine_pulse',
+                   'P_th_storage_to_turbine_dwell', 'P_e_gross_pulse',
+                   'P_e_gross_dwell', 'P_e_net_pulse', 'P_e_net_dwell')
+    if len(results) >= 150 + len(_base_plant_keys):
+        _plant.update(zip(_base_plant_keys, results[150:167]))
+    if len(results) >= 175:
+        _plant.update(zip(_phase_keys, results[167:175]))
+        _plant['P_th_reactor_pulse'] = _plant['P_th']
+        _plant['P_th_turbine_dwell'] = _plant['P_th_storage_to_turbine_dwell']
+        _plant['P_e_net_smoothed'] = results[25]
 
     # ── Unpack the results tuple (same ordering as run() return statement) ────
     (B0, _B_CS_r, _B_pol_r,
@@ -4210,8 +4231,22 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
 
     H("14. OUTPUTS - Plant electrical balance & pulsed operation")
     row("Instantaneous thermal power P_th", rd.get("P_th"), "MWth")
-    row("Smoothed thermal power P_th_smoothed", rd.get("P_th_smoothed"), "MWth")
+    row("Pulse reactor-to-turbine thermal power P_th_smoothed (legacy)", rd.get("P_th_smoothed"), "MWth")
     row("Stored thermal energy E_store_th", rd.get("E_store_th"), "MWhth")
+    for label, key, unit in (
+        ('Electrical smoothing split x', 'x_storage_split', '-'),
+        ('Nominal reactor thermal output during pulse', 'P_th_reactor_pulse', 'MWth'),
+        ('Reactor to storage during pulse', 'P_th_reactor_to_storage_pulse', 'MWth'),
+        ('Reactor to turbine during pulse', 'P_th_reactor_to_turbine_pulse', 'MWth'),
+        ('Storage to turbine during dwell', 'P_th_storage_to_turbine_dwell', 'MWth'),
+        ('Total turbine thermal input during dwell', 'P_th_turbine_dwell', 'MWth'),
+        ('Turbine gross electrical output during pulse', 'P_e_gross_pulse', 'MWe'),
+        ('Turbine gross electrical output during dwell', 'P_e_gross_dwell', 'MWe'),
+        ('Net electrical output during pulse', 'P_e_net_pulse', 'MWe'),
+        ('Net electrical output during dwell', 'P_e_net_dwell', 'MWe'),
+        ('Net smoothed electrical output', 'P_e_net_smoothed', 'MWe')):
+        row(label, rd.get(key), unit)
+
     row("Gross electrical power P_e_gross", rd.get("P_e_gross"), "MWe")
     row("CS recharge, cycle average P_coil_CS", rd.get("P_coil_CS"), "MWe")
     row("Total TF + CS feeder current I_feeders", rd.get("I_feeders"), "MA")
@@ -4352,16 +4387,16 @@ def save_run_output(config: GlobalConfig,
      divertor_out,
      *plant_results) = results
 
-    # ── Plant electrical-balance outputs (return indices 150–164) ───────────
+    # ── Plant electrical-balance outputs (return indices 150–174) ───────────
     # The original 150 result positions remain unchanged; the new quantities
     # are appended after them.
-    if len(plant_results) == 17:
+    if len(plant_results) >= 17:
         (P_th, P_th_smoothed, E_store_th,
          P_e_gross, P_coil_CS, I_feeders,
          P_cryo_cool, P_cryo_electric, V_cryo_LHe,
          V_cryo_LN, P_house_load,
          P_BoP, P_recirc_var, P_recirc_fix,
-         P_recirculated, E_recirculated, C_tritium) = plant_results
+         P_recirculated, E_recirculated, C_tritium) = plant_results[:17]
     else:
         (P_th, P_th_smoothed, E_store_th,
          P_e_gross, P_coil_CS, I_feeders,
@@ -4724,10 +4759,20 @@ def save_run_output(config: GlobalConfig,
         print(f"[I] rho_rad_core (core/edge boundary, rho_tor)      : {rho_rad_core:.2f}", file=out)
         print(f"[O] gamma_CD (CD figure of merit, effective)        : {eta_CD:.3f} [10²⁰ A/(W·m²)]", file=out)
         print(f"[O] Q      (Energy gain factor)                     : {Q:.3f}",                   file=out)
-        print(f"[O] P_elec (Net electrical power)                   : {P_elec:.3f} [MW]",         file=out)
         print(f"[O] P_wallplug (Wall-plug heating/CD power)         : {P_wallplug:.3f} [MW]",     file=out)
-        print(f"[O] P_e_gross (Gross electrical power)              : {P_e_gross:.3f} [MWe]", file=out)
-        print(f"[O] P_th_smoothed (Smoothed thermal power)          : {P_th_smoothed:.3f} [MWth]", file=out)
+        if len(plant_results) >= 25:
+            (x_split, p_to_store, p_reactor_turbine, p_tank_turbine,
+             pe_pulse, pe_dwell) = plant_results[17:23]
+            for _key, _val, _unit in (
+                ('x_storage_split', x_split, '-'),
+                ('P_th_reactor_pulse', P_th, 'MWth'),
+                ('P_th_reactor_to_storage_pulse', p_to_store, 'MWth'),
+                ('P_th_reactor_to_turbine_pulse', p_reactor_turbine, 'MWth'),
+                ('P_th_storage_to_turbine_dwell', p_tank_turbine, 'MWth'),
+                ('P_e_gross_pulse', pe_pulse, 'MWe'),
+                ('P_e_gross_dwell', pe_dwell, 'MWe'),
+                ('P_e_net_smoothed', P_elec, 'MWe')):
+                print(f'[O] {_key:<48}: {_val:.3f} [{_unit}]', file=out)
         print(f"[O] E_store_th (Stored thermal energy)              : {E_store_th:.3f} [MWhth]", file=out)
         print(f"[O] P_coil_CS (CS recharge, cycle average)          : {P_coil_CS:.3f} [MWe]", file=out)
         print(f"[O] I_feeders (Total TF + CS feeder current)        : {I_feeders:.3f} [MA]", file=out)

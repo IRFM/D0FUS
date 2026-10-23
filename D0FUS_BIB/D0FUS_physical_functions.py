@@ -287,6 +287,8 @@ def f_bop_power(P_th_MWth, f_BoP):
 def f_pulsed_thermal_quantities(P_th_MWth, t_plateau_s, dwell_factor,
                                 eta_store=0.90):
     """
+    LEGACY thermal-only smoothing (not used by the updated D0FUS run).
+
     Thermal storage that delivers a constant power over a full pulse cycle.
 
     Cycle: flat-top t_p, dwell t_d = t_p (1/D - 1), with D the dwell factor.
@@ -310,6 +312,54 @@ def f_pulsed_thermal_quantities(P_th_MWth, t_plateau_s, dwell_factor,
                   / (1.0 + (1.0 / float(eta_store)) * t_dwell / float(t_plateau_s)))
     return t_dwell, E_store / 3600.0, P_smoothed
 
+def f_pulsed_electrical_quantities(P_th_MWth, t_plateau_s, dwell_factor,
+                                   eta_turbine, P_recirc_var_MWe,
+                                   P_recirc_fix_MWe, eta_store=0.90):
+    """Split reactor heat to equalize pulse/dwell net electrical output.
+
+    All powers are MW (thermal or electrical as named); stored energy is MWhth.
+    P_recirc_var is charged only in the pulse balance and P_recirc_fix in
+    both phases.
+
+    P_BoP in P_recirc_var is calculated on nominal reactor P_th, so the
+    recirculating powers must be calculated before calling this function.
+    """
+    P = float(P_th_MWth)
+    eta = float(eta_turbine)
+    var = float(P_recirc_var_MWe)
+    fix = float(P_recirc_fix_MWe)
+    if not np.all(np.isfinite([P, eta, var, fix])) or P <= 0 or eta <= 0:
+        raise ValueError('Electrical smoothing requires finite powers, P_th > 0, eta_turbine > 0')
+    if dwell_factor is None or float(dwell_factor) >= 1.0:
+        x, td = 1.0, 0.0
+    else:
+        if not (0 < float(dwell_factor) < 1 and t_plateau_s > 0 and
+                0 < float(eta_store) <= 1):
+            raise ValueError('Invalid pulsed storage duty factor, duration or efficiency')
+        td = float(t_plateau_s) * (1 / float(dwell_factor) - 1)
+        ratio = float(eta_store) * float(t_plateau_s) / td
+        x = (ratio + var / (eta * P)) / (1 + ratio)
+        if not 0 <= x <= 1:
+            raise ValueError('Electrical smoothing is infeasible: storage fraction x outside [0, 1]')
+    to_tank = (1 - x) * P
+    pulse_turbine = x * P
+    dwell_turbine = (float(eta_store) * float(t_plateau_s) / td * to_tank
+                     if td > 0 else 0.0)
+    gross_pulse = eta * pulse_turbine
+    gross_dwell = eta * dwell_turbine
+    net_pulse = gross_pulse - var - fix
+    net_dwell = gross_dwell - fix if td > 0 else net_pulse
+    if td > 0 and not np.isclose(net_pulse, net_dwell, rtol=1e-10, atol=1e-8):
+        raise ArithmeticError('Pulse and dwell net electrical power mismatch')
+    return dict(t_dwell=td, x_storage_split=x, P_th_reactor_pulse=P,
+                P_th_reactor_to_storage_pulse=to_tank,
+                P_th_reactor_to_turbine_pulse=pulse_turbine,
+                P_th_storage_to_turbine_dwell=dwell_turbine,
+                P_th_turbine_dwell=dwell_turbine,
+                E_store_th=to_tank * float(t_plateau_s) / 3600.0,
+                P_e_gross_pulse=gross_pulse, P_e_gross_dwell=gross_dwell,
+                P_e_net_pulse=net_pulse, P_e_net_dwell=net_dwell,
+                P_e_net_smoothed=net_pulse)
 
 def f_recirculated_power(P_aux_MW, eta_WP, P_coil_CS_MWe, P_cryo_electric_MWe,
                          P_BoP_MWe, P_house_load_MWe):
