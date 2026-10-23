@@ -4265,7 +4265,7 @@ def plot_run(
       [10/16]  CICC TF conductor
       [11/16]  CS cross-section
       [12/16]  CICC CS conductor
-      [13/16]  Cost breakdown (Sheffield 2016, CapEx / OpEx / COE)
+      [13/16]  Cost breakdown (Sheffield 2016 or Whyte 2024, CapEx / OpEx / COE)
       [14/16]  Plasma temperature map T(rho)
       [15/16]  Plasma density map n(rho)
       [16/16]  3D machine view (PyVista; skipped if PyVista is missing,
@@ -4345,7 +4345,7 @@ def plot_run(
           lambda: plot_CICC_cross_section(build_conductor_from_run(run, coil="CS"), save_dir=save_dir))
 
     # ── Techno-economic synthesis ─────────────────────────────────────
-    _emit(13, "Cost breakdown (Sheffield 2016)",
+    _emit(13, f"Cost breakdown ({(run.get('cost_breakdown') or {}).get('model', 'cost model off')})",
           lambda: plot_cost_breakdown(run, save_dir=save_dir))
 
     # ── Plasma field maps ────────────────────────────────────
