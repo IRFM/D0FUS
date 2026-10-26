@@ -27,6 +27,18 @@ else:
     from D0FUS_BIB.D0FUS_import import *
     from D0FUS_BIB.D0FUS_parameterization import *
 
+def f_lift_factor(T_op, B_op, numerator=0.062, a0=1.22e-2,
+                  a1=5.49e-4, b0=1.27e-3, b1=-2.70e-5, b2=5.93e-6):
+    """Dimensionless magnet lift factor at operating temperature [K] and field [T].
+
+    Fit: numerator / (a0 + a1*T_op + (b0 + b1*T_op + b2*T_op**2)*B_op)
+    """
+    denominator = a0 + a1 * T_op + (b0 + b1 * T_op + b2 * T_op**2) * B_op
+    if not np.isfinite(denominator) or denominator <= 0:
+        raise ValueError("Lift-factor denominator must be positive and finite")
+    return numerator / denominator
+
+
 # =============================================================================
 # Plant electrical balance and pulsed-operation utilities (M. Fletcher)
 # =============================================================================

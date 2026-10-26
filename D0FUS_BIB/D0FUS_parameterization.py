@@ -433,6 +433,15 @@ class GlobalConfig:
     Marge_T_NbTi  : float = 1.7    # NbTi temperature margin [K]
     Marge_T_REBCO : float = 5.0    # REBCO temperature margin [K]
 
+    # Lift-factor fit: LF = numerator / (a0 + a1*T + (b0 + b1*T + b2*T**2)*B).
+    # T in K, B in T. Shared between TF and CS (dimensionless result).
+    LF_numerator : float = 0.062
+    LF_a0        : float = 1.22e-2
+    LF_a1        : float = 5.49e-4
+    LF_b0        : float = 1.27e-3
+    LF_b1        : float = -2.70e-5
+    LF_b2        : float = 5.93e-6
+
     # Strand / tape operating parameters
     Eps : float = -6e-3  # Effective axial strain for Nb₃Sn [-]
                          # Ref: Corato et al. (2016)

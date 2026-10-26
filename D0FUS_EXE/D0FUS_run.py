@@ -3317,6 +3317,12 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     (C_tritium_fpy_solution, C_tritium_y_solution) = (f_tritium_consumption(
         P_fus, CF_solution * config.Dwell_factor) if Fuel == 'DT' else (0.0, 0.0))
 
+    # Lift factors use the same bath/operating temperature as conductor sizing
+    _lf_params = (config.LF_numerator, config.LF_a0, config.LF_a1,
+                  config.LF_b0, config.LF_b1, config.LF_b2)
+    LF_TF = f_lift_factor(T_helium, Bmax_TF, *_lf_params)
+    LF_CS = f_lift_factor(T_helium, B_CS, *_lf_params)
+
     return (B0_solution,  B_CS,  B_pol_solution,
             tauE_solution,  W_th_solution,
             Q_solution,  Volume_solution,  Surface_solution,
@@ -3402,7 +3408,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             electrical_balance['P_e_gross_pulse'],
             electrical_balance['P_e_gross_dwell'],
             electrical_balance['P_e_net_pulse'],
-            electrical_balance['P_e_net_dwell'])
+            electrical_balance['P_e_net_dwell'],
+            LF_TF, LF_CS) 
 
 
 #%% Output writer
@@ -3444,6 +3451,7 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         _plant['P_th_reactor_pulse'] = _plant['P_th']
         _plant['P_th_turbine_dwell'] = _plant['P_th_storage_to_turbine_dwell']
         _plant['P_e_net_smoothed'] = results[25]
+    _lift_factors = {'LF_TF': results[176], 'LF_CS': results[177]} if len(results) >= 178 else {}
 
     # ── Unpack the results tuple (same ordering as run() return statement) ────
     (B0, _B_CS_r, _B_pol_r,
@@ -3658,6 +3666,7 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         # On-axis field and plasma current
         "B0":          _f(B0),
         "B_max":       config.Bmax_TF,
+        **_lift_factors,
         "Ip":          _f(Ip),
         # Volume-averaged kinetics
         "nbar":        _f(nbar),
@@ -3918,6 +3927,9 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
     except Exception as e:
         notes.append(f"  (results tuple not fully unpacked, part of the outputs is n/a: {e})")
 
+    if len(results) >= 178:
+        named["LF_TF"], named["LF_CS"] = results[176:178]
+
     # Component lifetime / availability live at fixed absolute tuple indices.
     def _at(idx):
         try:
@@ -4135,6 +4147,7 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
     lines.append("")
 
     emit("10. OUTPUTS - TF coil (winding pack, composition, structure)", [
+        ("TF lift factor LF_TF", "LF_TF", "-"),
         ("TF current density J_wost_TF (no steel)", "J_wost_TF", "A/m^2"),
         ("TF current density J_coil_TF (full TF leg)", "J_coil_TF", "A/m^2"),
         ("TF radial thickness c_TF", "c_TF", "m"),
@@ -4169,6 +4182,7 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
     ])
 
     emit("11. OUTPUTS - CS coil (winding pack, composition, structure)", [
+        ("CS lift factor LF_CS", "LF_CS", "-"),
         ("CS current density J_wost_CS (no steel)", "J_wost_CS", "A/m^2"),
         ("CS current density J_coil_CS (steel incl.)", "J_coil_CS", "A/m^2"),
         ("CS radial thickness c_CS", "c_CS", "m"),
@@ -4596,6 +4610,9 @@ def save_run_output(config: GlobalConfig,
         print(f"[I] Bmax_TF (Peak field on TF conductor)            : {config.Bmax_TF:.3f} [T]",   file=out)
         print(f"[O] B0   (On-axis magnetic field)                   : {B0:.3f} [T]",             file=out)
         print(f"[O] BCS  (CS peak magnetic field)                   : {B_CS:.3f} [T]",           file=out)
+        if len(results) >= 178:
+            print(f"[O] LF_TF (TF lift factor - REBCO only)             : {results[176]:.5f} [-]", file=out)
+            print(f"[O] LF_CS (CS lift factor - REBCO only)             : {results[177]:.5f} [-]", file=out)
         print(f"[O] Engineering current density, by reference section", file=out)
         print(f"[O]  ├ J_wost-TF (TF cable, steel jacket excluded)  : {J_TF/1e6:.3f} [MA/m²]", file=out)
         print(f"[O]  ├ J_coil-TF (TF leg: WP + nose + backplate)    : {J_coil_TF/1e6:.3f} [MA/m²]", file=out)
