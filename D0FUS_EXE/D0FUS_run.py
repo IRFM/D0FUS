@@ -2670,6 +2670,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             _nan, _nan, _nan, _nan, _nan,        # plant electrical balance (150-164)
             _nan, _nan, _nan, _nan, _nan,
             _nan, _nan, _nan, _nan, _nan,
+            _nan, _nan, _nan, _nan, _nan, _nan,  # plant outputs 165–170
+            _nan, _nan, _nan, _nan, _nan,       # phase outputs 171–175
         )
 
     # =========================================================================
@@ -3022,7 +3024,9 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 # magnet build failed before these quantities could be solved.
                 _nan, _nan, _nan, _nan, _nan,
                 _nan, _nan, _nan, _nan, _nan,
-                _nan, _nan, _nan, _nan, _nan)
+                _nan, _nan, _nan, _nan, _nan,  # plant outputs 160–164
+                _nan, _nan, _nan, _nan, _nan,  # plant outputs 165–169
+                _nan, _nan, _nan, _nan, _nan, _nan)  # phase outputs 170–175
 
     # ==============================================================================
     #    MAGNETIC FLUX REQUIREMENTS (Inductive Scenario)
@@ -3310,8 +3314,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     E_recirculated_solution = f_recirculated_energy(
         P_recirc_var_solution, P_recirc_fix_solution, CF_solution)
     # Burn time fraction = Av × Util × Dwell. D-D consumes no external tritium.
-    C_tritium_solution = (f_tritium_consumption(
-        P_fus, CF_solution * config.Dwell_factor) if Fuel == 'DT' else 0.0)
+    (C_tritium_fpy_solution, C_tritium_y_solution) = (f_tritium_consumption(
+        P_fus, CF_solution * config.Dwell_factor) if Fuel == 'DT' else (0.0, 0.0))
 
     return (B0_solution,  B_CS,  B_pol_solution,
             tauE_solution,  W_th_solution,
@@ -3371,7 +3375,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             M_rb_VV,      M_rb_divertor, M_rb_total,
             divertor_solution,                         # 149
 
-            # ── Plant electrical balance outputs (150–166) + phase details (167–174)
+            # ── Plant electrical balance outputs (150–167) + phase details (168–175)
             P_th_solution,
             P_th_smoothed_solution,
             E_store_th_solution,
@@ -3388,7 +3392,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             P_recirc_fix_solution,
             P_recirculated_solution,
             E_recirculated_solution,
-            C_tritium_solution,
+            C_tritium_fpy_solution,
+            C_tritium_y_solution,
             # Additional explicitly phase-resolved smoothing metrics.
             electrical_balance['x_storage_split'],
             electrical_balance['P_th_reactor_to_storage_pulse'],
@@ -3427,15 +3432,15 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         'P_coil_CS', 'I_feeders', 'P_cryo_cool', 'P_cryo_electric',
         'V_cryo_LHe', 'V_cryo_LN', 'P_house_load', 'P_BoP',
         'P_recirc_var', 'P_recirc_fix', 'P_recirculated',
-        'E_recirculated', 'C_tritium')
+        'E_recirculated', 'C_tritium_fpy', 'C_tritium_y')
     _phase_keys = ('x_storage_split', 'P_th_reactor_to_storage_pulse',
                    'P_th_reactor_to_turbine_pulse',
                    'P_th_storage_to_turbine_dwell', 'P_e_gross_pulse',
                    'P_e_gross_dwell', 'P_e_net_pulse', 'P_e_net_dwell')
     if len(results) >= 150 + len(_base_plant_keys):
-        _plant.update(zip(_base_plant_keys, results[150:167]))
-    if len(results) >= 175:
-        _plant.update(zip(_phase_keys, results[167:175]))
+        _plant.update(zip(_base_plant_keys, results[150:168]))
+    if len(results) >= 176:
+        _plant.update(zip(_phase_keys, results[168:176]))
         _plant['P_th_reactor_pulse'] = _plant['P_th']
         _plant['P_th_turbine_dwell'] = _plant['P_th_storage_to_turbine_dwell']
         _plant['P_e_net_smoothed'] = results[25]
@@ -4260,7 +4265,8 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
     row("Fixed recirculating power P_recirc_fix", rd.get("P_recirc_fix"), "MWe")
     row("Total recirculated power P_recirculated", rd.get("P_recirculated"), "MWe")
     row("Annual recirculated electricity E_recirculated", rd.get("E_recirculated"), "MWh/year")
-    row("Annual tritium consumption C_tritium", rd.get("C_tritium"), "kg/year")
+    row("Nominal tritium consumption C_tritium_fpy", rd.get("C_tritium_fpy"), "kg/fpy")
+    row("Annual tritium consumption C_tritium_y", rd.get("C_tritium_y"), "kg/year")
     lines.append("")
 
     H("15. OUTPUTS - Techno-economics (Sheffield 2016)")
@@ -4387,23 +4393,23 @@ def save_run_output(config: GlobalConfig,
      divertor_out,
      *plant_results) = results
 
-    # ── Plant electrical-balance outputs (return indices 150–174) ───────────
+    # ── Plant electrical-balance outputs (return indices 150–175) ───────────
     # The original 150 result positions remain unchanged; the new quantities
     # are appended after them.
-    if len(plant_results) >= 17:
+    if len(plant_results) >= 18:
         (P_th, P_th_smoothed, E_store_th,
          P_e_gross, P_coil_CS, I_feeders,
          P_cryo_cool, P_cryo_electric, V_cryo_LHe,
          V_cryo_LN, P_house_load,
          P_BoP, P_recirc_var, P_recirc_fix,
-         P_recirculated, E_recirculated, C_tritium) = plant_results[:17]
+         P_recirculated, E_recirculated, C_tritium_fpy, C_tritium_y) = plant_results[:18]
     else:
         (P_th, P_th_smoothed, E_store_th,
          P_e_gross, P_coil_CS, I_feeders,
          P_cryo_cool, P_cryo_electric, V_cryo_LHe,
          V_cryo_LN, P_house_load,
          P_BoP, P_recirc_var, P_recirc_fix,
-         P_recirculated, E_recirculated, C_tritium) = (np.nan,) * 17
+         P_recirculated, E_recirculated, C_tritium_fpy, C_tritium_y) = (np.nan,) * 18
 
     # ── Recompute N_TF for display (not stored in results tuple) ──────────
     # Same deterministic call as in run().
@@ -4760,9 +4766,9 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] gamma_CD (CD figure of merit, effective)        : {eta_CD:.3f} [10²⁰ A/(W·m²)]", file=out)
         print(f"[O] Q      (Energy gain factor)                     : {Q:.3f}",                   file=out)
         print(f"[O] P_wallplug (Wall-plug heating/CD power)         : {P_wallplug:.3f} [MW]",     file=out)
-        if len(plant_results) >= 25:
+        if len(plant_results) >= 26:
             (x_split, p_to_store, p_reactor_turbine, p_tank_turbine,
-             pe_pulse, pe_dwell) = plant_results[17:23]
+             pe_pulse, pe_dwell) = plant_results[18:24]
             for _key, _val, _unit in (
                 ('x_storage_split', x_split, '-'),
                 ('P_th_reactor_pulse', P_th, 'MWth'),
@@ -4791,7 +4797,8 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] P_recirc_fix                                    : {P_recirc_fix:.3f} [MWe]", file=out)
         print(f"[O] P_recirculated                                  : {P_recirculated:.3f} [MWe]", file=out)
         print(f"[O] E_recirculated                                  : {E_recirculated:.3f} [MWh/year]", file=out)
-        print(f"[O] C_tritium                                       : {C_tritium:.3f} [kg/year]", file=out)
+        print(f"[O] C_tritium_fpy                                   : {C_tritium_fpy:.3f} [kg/fpy]", file=out)
+        print(f"[O] C_tritium_y                                     : {C_tritium_y:.3f} [kg/year]", file=out)
         _Q_E = P_e_gross / P_recirculated if P_recirculated > 0 else np.nan
         print(f"[O] Q_E    (Engineering gain, P_e_gross/P_recirc)   : {_Q_E:.3f}", file=out)
         print(f"[O] Cost   ((V_BB+V_TF+V_CS) / P_fus)               : {cost:.3f} [m³/MW]",    file=out)

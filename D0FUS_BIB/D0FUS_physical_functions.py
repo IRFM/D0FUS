@@ -392,7 +392,9 @@ def f_tritium_consumption(P_fus_MW, CF):
     1 GW.yr / 17.59 MeV = 1.12e28 reactions, x 3.016 u = 56.1 kg.
     CF must be the burn-time fraction (Av x Util x Dwell).
     """
-    return 56.0 * float(P_fus_MW) / 1000.0 * float(CF)
+    C_tritium_fpy = 56.1 * float(P_fus_MW) / 1000.0
+    C_tritium_y   = C_tritium_fpy * float(CF)
+    return (C_tritium_fpy, C_tritium_y)
 
 
 if __name__ == "__main__":
