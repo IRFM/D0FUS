@@ -3056,25 +3056,29 @@ def plot_assembly_side_view(run, save_dir=None, n_cs_modules=None):
     R_lcfs = R0 + a * np.cos(theta + np.arcsin(delta) * np.sin(theta))
     Z_lcfs = (kappa * a) * np.sin(theta)
 
-    _rb = f_radial_build_layers(
-        a=a, b=b, κ=kappa, δ=delta, R0=R0, Delta_TF=Delta_TF,
-        f_kappa_SOL=f_kappa_SOL, f_div_area_fraction=f_div,
-        R_tf_in=R_tf_in, Z_tf_in=Z_tf_in, Blanket_choice=Blanket_choice)
-    layers = _rb["layers"]
+    from .D0FUS_parameterization import radial_build_feasibility
+    _availability = radial_build_feasibility(Blanket_choice, b, Delta_TF)
+    # Keep one rendering pipeline for feasible and infeasible builds.  The
+    # latter has no radial layers, but retains the *identical* coil geometry,
+    # palette, legend placement, dimension arrows, axes and title.
+    _layers_feasible = bool(_availability["feasible"])
+    if _layers_feasible:
+        _rb = f_radial_build_layers(
+            a=a, b=b, κ=kappa, δ=delta, R0=R0, Delta_TF=Delta_TF,
+            f_kappa_SOL=f_kappa_SOL, f_div_area_fraction=f_div,
+            R_tf_in=R_tf_in, Z_tf_in=Z_tf_in, Blanket_choice=Blanket_choice,
+            delta_BB_IB=float(run.get("delta_BB_IB", 0.50)),
+            delta_BB_OB=float(run.get("delta_BB_OB", 0.50)),
+            delta_shield=float(run.get("delta_shield", 0.30)))
+        layers = _rb["layers"]
+    else:
+        layers = []
     N = len(layers)
-    i_breeder = next(i for i, L in enumerate(layers) if L["role"] == "breeder")
+    i_breeder = next((i for i, L in enumerate(layers)
+                      if L["role"] == "breeder"), None)
 
-    # The breeder outer boundary is the deepest inward offset of the TF face and
-    # can still self-intersect at the rounded junction; a stronger periodic
-    # smoothing there (and a lighter one on the shallower outer layers) removes
-    # the residual spike. A self-intersection is a high-frequency feature, so a
-    # wide Hann window averages it into a smooth bulge.
-    for i, L in enumerate(layers):
-        if i >= i_breeder:
-            frac_o = 0.08 if i == i_breeder else 0.045
-            L["R_outer"], L["Z_outer"] = _smooth_closed(L["R_outer"], L["Z_outer"], frac=frac_o)
-        if i > i_breeder:
-            L["R_inner"], L["Z_inner"] = _smooth_closed(L["R_inner"], L["Z_inner"], frac=0.045)
+    # Layer contours are already nested on common polar rays; independently
+    # smoothing them would alter layer widths and can create overlaps.
 
     # -- Colour scheme ------------------------------------------------------
     ALPHA = 0.72
@@ -3166,7 +3170,7 @@ def plot_assembly_side_view(run, save_dir=None, n_cs_modules=None):
     OUT = dict(color=col_line, lw=0.9, zorder=zbase + N + 4)
     SOL_L = next((L for L in layers if L["role"] == "SOL"), None)
     FW_L = next((L for L in layers if L["role"] == "FW"), None)
-    BB_L = layers[i_breeder]
+    BB_L = layers[i_breeder] if i_breeder is not None else None
     green_outer_L = layers[green_order[-1]] if green_order else BB_L
 
     def _outline(R, Z):
@@ -3178,8 +3182,10 @@ def plot_assembly_side_view(run, save_dir=None, n_cs_modules=None):
         _outline(SOL_L["R_outer"], SOL_L["Z_outer"])               # plasma+SOL group
     if FW_L is not None:
         _outline(FW_L["R_outer"], FW_L["Z_outer"])                 # first wall
-    _outline(BB_L["R_outer"], BB_L["Z_outer"])                     # breeding blanket
-    _outline(green_outer_L["R_outer"], green_outer_L["Z_outer"])   # structure/shield/VV block
+    if BB_L is not None:
+        _outline(BB_L["R_outer"], BB_L["Z_outer"])                 # breeding blanket
+    if green_outer_L is not None:
+        _outline(green_outer_L["R_outer"], green_outer_L["Z_outer"])  # structure/shield/VV
     _outline(R_tf_in, Z_tf_in)                                     # TF inner face
     _outline(R_tf_out, Z_tf_out)                                   # TF outer face
 
@@ -3204,8 +3210,9 @@ def plot_assembly_side_view(run, save_dir=None, n_cs_modules=None):
     def _clean(nm):
         return nm.split("(")[0].strip() if "(" in nm else nm
 
-    leg = [Patch(fc=col_plasma, alpha=ALPHA, ec="grey", lw=0.4, label="Plasma"),
-           Patch(fc=col_sol, ec="grey", lw=0.4, label="Scrape-off layer")]
+    leg = [Patch(fc=col_plasma, alpha=ALPHA, ec="grey", lw=0.4, label="Plasma")]
+    if _layers_feasible:
+        leg.append(Patch(fc=col_sol, ec="grey", lw=0.4, label="Scrape-off layer"))
     seen = set()
     for i, L in enumerate(layers):
         r = L["role"]

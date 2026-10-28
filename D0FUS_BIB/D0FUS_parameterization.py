@@ -151,6 +151,9 @@ class GlobalConfig:
     R0    : float = 9.0            # Major plasma radius [m]
     a     : float = 3.0            # Minor plasma radius [m]
     b     : float = 1.2            # Breeding blanket + neutron shield radial thickness [m]
+    delta_BB_IB : float = 0.50   # Requested inboard breeder zone [m]
+    delta_BB_OB : float = 0.50   # Requested outboard breeder zone [m]
+    delta_shield : float = 0.30  # Combined HT + LT shielding, each half [m]
     Bmax_TF  : float = 12.0        # Peak magnetic field on TF conductor [T]
     Bmax_CS_adm  : float = 25.0    # Peak magnetic field allowed on the CS [T]
     P_fus : float = 2000.0         # Total fusion power [MW]
@@ -629,6 +632,10 @@ class GlobalConfig:
         ValueError
             Option value not in CONFIG_OPTIONS, e.g. "Tbar_mode = greenwlad".
         """
+        for key in ('delta_BB_IB', 'delta_BB_OB', 'delta_shield'):
+            value = getattr(self, key)
+            if not isinstance(value, (int, float, np.integer, np.floating)) or isinstance(value, bool) or not np.isfinite(value) or value < 0:
+                raise ValueError(f"{key} must be a finite nonnegative thickness [m].")
         for f in fields(self):
             value = getattr(self, f.name)
             default = f.default
@@ -1437,53 +1444,79 @@ def plant_conversion(config) -> tuple:
     return M, eta, f_pump
 
 
-def radial_layers_effective(Blanket_choice: str, b: float, Delta_TF: float = 0.0) -> list:
+def radial_build_feasibility(Blanket_choice, b, Delta_TF=0.0):
+    """Check whether unscaled mandatory components fit each midplane budget.
+
+    The returned dict is safe to use for incomplete radial builds; no layers
+    are allocated when either side is infeasible.
     """
-    Concept-specific radial-build layer stack with the breeder layer's width
-    resolved to a value.
+    import math
+    if not all(math.isfinite(v) for v in (b, Delta_TF)):
+        raise ValueError('Radial dimensions must be finite.')
+    layers = material_blanket(Blanket_choice)['radial_layers']
+    mandatory = sum(L['width'] for L in layers[:-1]
+                    if L['role'] not in {'breeder','structure','multiplier','shield_HT','shield_LT'})
+    available_ib, available_ob = b, b + Delta_TF
+    return {'feasible': (available_ib + 1e-10 >= mandatory and
+                         available_ob + 1e-10 >= mandatory),
+            'available_ib': available_ib, 'available_ob': available_ob,
+            'mandatory_ib': mandatory, 'mandatory_ob': mandatory}
 
-    Returns BLANKET_CONCEPTS[Blanket_choice]['radial_layers'] (ordered plasma ->
-    TF) as a list of dicts, each augmented with 'delta_ib' and 'delta_ob' [m]
-    (IB/OB thickness).  Every fixed-width layer has delta_ib == delta_ob ==
-    'width'.  The single 'breeder' layer's thickness is the residual of b (IB)
-    / b + Delta_TF (OB) once every other layer's width has been subtracted:
 
-        delta_breeder_ib = b            - sum(fixed widths)
-        delta_breeder_ob = b + Delta_TF - sum(fixed widths)
+def radial_layers_effective(Blanket_choice: str, b: float, Delta_TF: float = 0.0,
+                            delta_BB_IB: float = 0.50, delta_BB_OB: float = 0.50,
+                            delta_shield: float = 0.30) -> list:
+    """Allocate IB/OB layers with mandatory > shields > breeding priority.
 
-    When b is smaller than the fixed stack, the fixed layers are scaled by
-    b / sum(fixed widths) so that the stack still fits: the breeder then
-    vanishes inboard and keeps Delta_TF outboard. Each layer carries this
-    scale as 'stack_scale' (1 when the stack fits).
-
-    Parameters
-    ----------
-    Blanket_choice : str    Concept key (see BLANKET_CONCEPTS).
-    b              : float  Breeding blanket + shield radial thickness [m].
-    Delta_TF       : float  Outboard port-access radial clearance [m].
-
-    Returns
-    -------
-    list of dict, one per layer, each with: name, role, width (None for
-    breeder), rho (None if not concept-specific — falls back to GlobalConfig at
-    run time), delta_ib, delta_ob.
+    Structural and multiplier layers are contingent on a positive breeder.
+    The final gap takes the remaining space. Mandatory widths never shrink.
+    Each side is clipped independently; HT and LT each receive half its
+    achieved combined shielding thickness.
     """
-    concept    = material_blanket(Blanket_choice)
-    fixed_sum  = sum(layer['width'] for layer in concept['radial_layers']
-                     if layer['width'] is not None)
-    scale      = min(1.0, b / fixed_sum) if fixed_sum > 0 else 1.0
-    delta_ib   = max(b - scale * fixed_sum, 0.0)
-    delta_ob   = max(b + Delta_TF - scale * fixed_sum, 0.0)
-
-    layers = []
-    for layer in concept['radial_layers']:
-        entry = dict(layer)
-        if entry['width'] is None:
-            entry['delta_ib'] = delta_ib
-            entry['delta_ob'] = delta_ob
-        else:
-            entry['delta_ib'] = scale * entry['width']
-            entry['delta_ob'] = scale * entry['width']
-        entry['stack_scale'] = scale
-        layers.append(entry)
+    import math
+    values = (b, Delta_TF, delta_BB_IB, delta_BB_OB, delta_shield)
+    if any(not math.isfinite(v) for v in values) or any(v < 0 for v in values):
+        raise ValueError('Radial dimensions must be finite and nonnegative.')
+    original = material_blanket(Blanket_choice)['radial_layers']
+    layers = [dict(layer) for layer in original]
+    if not layers or layers[-1]['role'] != 'gap':
+        raise ValueError('The last radial-build layer must be the residual TF gap.')
+    dependent = {'breeder', 'structure', 'multiplier'}
+    for side, budget, target in (('ib', b, delta_BB_IB),
+                                 ('ob', b + Delta_TF, delta_BB_OB)):
+        key = 'delta_' + side
+        mandatory = sum(L['width'] for L in layers[:-1]
+                        if L['role'] not in dependent | {'shield_HT', 'shield_LT'})
+        if budget + 1e-10 < mandatory:
+            # The caller must check radial_build_feasibility before requesting
+            # allocation. Do not rescale mandatory layers or manufacture widths.
+            return []
+        free = max(0.0, budget - mandatory)
+        shield = min(delta_shield, free)
+        remaining = max(0.0, free - shield)
+        dependent_fixed = sum(L['width'] for L in layers
+                              if L['role'] in {'structure', 'multiplier'})
+        # No partial structural assemblies: fit the mandatory associated
+        # components and a strictly positive breeder, or remove them all.
+        breeder = min(target, max(0.0, remaining - dependent_fixed)) if target > 0 else 0.0
+        present = breeder > 1e-10
+        if not present:
+            breeder = 0.0
+        for L in layers[:-1]:
+            role = L['role']
+            if role == 'breeder':
+                value = breeder
+            elif role in ('structure', 'multiplier'):
+                value = L['width'] if present else 0.0
+            elif role in ('shield_HT', 'shield_LT'):
+                value = shield / 2.0
+            else:
+                value = L['width']
+            L[key] = value
+        used = sum(L[key] for L in layers[:-1])
+        layers[-1][key] = max(0.0, budget - used)
+        if abs(sum(L[key] for L in layers) - budget) > 1e-8:
+            raise ArithmeticError('Radial layer allocation does not close.')
+    for L in layers:
+        L['stack_scale'] = 1.0
     return layers

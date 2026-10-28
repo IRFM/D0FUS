@@ -3167,11 +3167,13 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         R_tf_in=_R_in,
         Z_tf_in=_Z_in,
         Blanket_choice=config.Blanket_choice,
+        delta_BB_IB=config.delta_BB_IB, delta_BB_OB=config.delta_BB_OB,
+        delta_shield=config.delta_shield,
     )
     # A concept multiplication falls where the breeder is thin: it is
     # averaged over the breeder surface with the local breeder thickness.
     # A deck value is used as given.
-    if config.M_blanket is None:
+    if config.M_blanket is None and _rb['feasible']:
         M_blanket = f_blanket_multiplication(M_blanket, _rb['delta_BB_local'],
                                              config.Blanket_choice,
                                              _rb['w_BB_local'])
@@ -3185,6 +3187,10 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     V_rb_VV       = sum(L['V']     for L in _rb['layers'] if L['role'] == 'VV')
     V_rb_gap_TF   = sum(L['V']     for L in _rb['layers'] if L['role'] == 'gap')
     V_rb_divertor = _rb['V_divertor']
+    if not _rb['feasible']:
+        # Unbuilt components do not have known zero volumes: mark them missing.
+        V_rb_SOL = V_rb_FW = V_rb_BB = V_rb_shield = V_rb_VV = V_rb_gap_TF = np.nan
+
 
     # ── Radial build layer masses ─────────────────────────────────────────────
     M_rb_FW       = sum(L['M'] for L in _rb['layers'] if L['role'] == 'FW')
@@ -3193,6 +3199,9 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     M_rb_VV       = sum(L['M'] for L in _rb['layers'] if L['role'] == 'VV')
     M_rb_divertor = V_rb_divertor * config.rho_divertor
     M_rb_total    = M_rb_FW + M_rb_BB + M_rb_shield + M_rb_VV + M_rb_divertor
+    if not _rb['feasible']:
+        M_rb_FW = M_rb_BB = M_rb_shield = M_rb_VV = M_rb_divertor = M_rb_total = np.nan
+
 
     cost_solution = (V_rb_BB + V_TF_one * N_TF + V_CS_geom) / P_fus   # legacy cost proxy [m^3/MW]
 
@@ -3308,7 +3317,23 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # reactor-to-turbine heat *during pulse*; it is not constant over cycle.
     P_th_smoothed_solution = electrical_balance['P_th_reactor_to_turbine_pulse']
     P_e_gross_solution = electrical_balance['P_e_gross_pulse']
-    P_elec_solution = electrical_balance['P_e_net_smoothed']
+    P_elec_solution = electrical_balance['P_e_net_cycle_average']
+    if not electrical_balance['electrical_balance_valid']:
+        import warnings
+        warnings.warn(
+            'Electrical balance unavailable: ' + electrical_balance['electrical_balance_reason']
+            + f' (P_th={P_th_solution!r} MWth, eta_turbine={eta_T!r}, '
+              f'P_recirc_var={P_recirc_var_solution!r} MWe, '
+              f'P_recirc_fix={P_recirc_fix_solution!r} MWe). '
+              'Other machine calculations continue; power-dependent economics are undefined.',
+            RuntimeWarning, stacklevel=2)
+    elif not electrical_balance['smoothing_feasible']:
+        import warnings
+        warnings.warn(
+            'Electrical smoothing infeasible: ' + electrical_balance['electrical_balance_reason']
+            + '. Using x=1 (no thermal storage); annual production and economics '
+            'use cycle-average net electricity.',
+            RuntimeWarning, stacklevel=2)
 
     CF_solution = Av_solution * config.Util_factor
     E_recirculated_solution = f_recirculated_energy(
@@ -3409,7 +3434,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             electrical_balance['P_e_gross_dwell'],
             electrical_balance['P_e_net_pulse'],
             electrical_balance['P_e_net_dwell'],
-            LF_TF, LF_CS) 
+            LF_TF, LF_CS,
+            electrical_balance['smoothing_feasible']) 
 
 
 #%% Output writer
@@ -3451,6 +3477,13 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         _plant['P_th_reactor_pulse'] = _plant['P_th']
         _plant['P_th_turbine_dwell'] = _plant['P_th_storage_to_turbine_dwell']
         _plant['P_e_net_smoothed'] = results[25]
+    if len(results) >= 179:
+        _plant['smoothing_feasible'] = bool(results[178])
+        _plant['smoothing_fallback'] = not _plant['smoothing_feasible']
+    if len(results) >= 176:
+        _plant['P_e_net_cycle_average'] = results[25]
+        if len(results) >= 179 and not results[178]:
+            _plant['P_e_net_smoothed'] = float('nan')
     _lift_factors = {'LF_TF': results[176], 'LF_CS': results[177]} if len(results) >= 178 else {}
 
     # ── Unpack the results tuple (same ordering as run() return statement) ────
@@ -3706,6 +3739,9 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         # ── Radial build sublayer widths ──────────────────────────────────────
         "f_kappa_SOL": config.f_kappa_SOL,
         "Blanket_choice":   config.Blanket_choice,
+        "delta_BB_IB": config.delta_BB_IB,
+        "delta_BB_OB": config.delta_BB_OB,
+        "delta_shield": config.delta_shield,
         # Mechanical configuration key — consumed by _resolve_build() in figures
         # to decide whether the TF-CS gap is applied to the CS outer radius.
         "Choice_Buck_Wedg": config.Choice_Buck_Wedg,
@@ -4263,9 +4299,12 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
         ('Turbine gross electrical output during dwell', 'P_e_gross_dwell', 'MWe'),
         ('Net electrical output during pulse', 'P_e_net_pulse', 'MWe'),
         ('Net electrical output during dwell', 'P_e_net_dwell', 'MWe'),
-        ('Net smoothed electrical output', 'P_e_net_smoothed', 'MWe')):
+        ('Net smoothed electrical output (if feasible)', 'P_e_net_smoothed', 'MWe'),
+        ('Cycle-averaged net electrical output', 'P_e_net_cycle_average', 'MWe')):
         row(label, rd.get(key), unit)
 
+    if rd.get('smoothing_feasible') is False:
+        lines.append('[!] Electrical smoothing infeasible: x=1, no stored heat; pulse/dwell powers differ.')
     row("Gross electrical power P_e_gross", rd.get("P_e_gross"), "MWe")
     row("CS recharge, cycle average P_coil_CS", rd.get("P_coil_CS"), "MWe")
     row("Total TF + CS feeder current I_feeders", rd.get("I_feeders"), "MA")
@@ -4451,18 +4490,29 @@ def save_run_output(config: GlobalConfig,
         f_div_area_fraction=config.f_div_area_fraction,
         R_tf_in=_R_in_disp, Z_tf_in=_Z_in_disp,
         Blanket_choice=config.Blanket_choice,
+        delta_BB_IB=config.delta_BB_IB, delta_BB_OB=config.delta_BB_OB,
+        delta_shield=config.delta_shield,
     )
+    if not _rb_disp['feasible']:
+        import warnings
+        warnings.warn('Mandatory radial build infeasible: available IB '
+                      f"{_rb_disp['available_ib']:.4g} m, OB "
+                      f"{_rb_disp['available_ob']:.4g} m; "
+                      f"total cavity volume {_rb_disp['V_available']:.4g} m³. "
+                      'Layer geometry and masses are not calculated.',
+                      RuntimeWarning, stacklevel=2)
     _delta_BB_ib  = _rb_disp['delta_BB_ib']
     _delta_BB_ob  = _rb_disp['delta_BB_ob']
     _delta_BB_loc = _rb_disp['delta_BB_local']
     _w_BB_loc     = _rb_disp['w_BB_local']
     _blanket_concept = material_blanket(config.Blanket_choice)
     _RB_layers        = _rb_disp['layers']
-    _TBR_achieved     = f_TBR(_delta_BB_loc, config.Blanket_choice, _w_BB_loc)
+    _TBR_achieved     = (f_TBR(_delta_BB_loc, config.Blanket_choice, _w_BB_loc)
+                         if _rb_disp['feasible'] else np.nan)
     # Conversion parameters as used in run(): [I] from the deck, [O] from the
     # blanket concept (multiplication reduced for a thin breeder)
     _M_blanket, _eta_T, _f_pump = plant_conversion(config)
-    if config.M_blanket is None:
+    if config.M_blanket is None and _rb_disp['feasible']:
         _M_blanket = f_blanket_multiplication(_M_blanket, _delta_BB_loc,
                                               config.Blanket_choice, _w_BB_loc)
     _conv_src = {k: (('I', 'deck') if getattr(config, k) is not None
@@ -4713,32 +4763,40 @@ def save_run_output(config: GlobalConfig,
         print(f"[{_s[0]}]  ├ eta_T (gross)         : {_eta_T:.3f}  ({_s[1]})", file=out)
         _s = _conv_src['f_BoP']
         print(f"[{_s[0]}]  └ f_BoP (coolant pumps) : {_f_pump:.4f}  ({_s[1]})", file=out)
-        print(f"[O] TBR_achieved  (breeder {_delta_BB_loc.min():.2f} to {_delta_BB_loc.max():.2f} m, "
-              f"mean {_rb_disp['delta_BB_eff']:.2f} m) : {_TBR_achieved:.3f}  "
-              f"(TBR_max = {_blanket_concept['TBR_max']:.2f})", file=out)
-        if _rb_disp['stack_scale'] < 1.0:
-            print(f"[!] b = {config.b:.3f} m is thinner than the fixed layers of the "
-                  f"{config.Blanket_choice} stack: they are scaled by "
-                  f"{_rb_disp['stack_scale']:.2f} and the inboard breeder vanishes", file=out)
-        print(f"[O] Radial build layers  (plasma → TF, delta_BB_ib = {_delta_BB_ib:.3f} m, delta_BB_ob = {_delta_BB_ob:.3f} m)", file=out)
-        for _i, _layer in enumerate(_RB_layers):
-            _last   = _i == len(_RB_layers) - 1
-            _branch = "├" if not _last else "└"
-            _cont   = "│" if not _last else " "
-            print(f"[O]  {_branch} {_layer['name']:<28s}: "
-                  f"d_ib={_layer['delta_ib']:.3f} m  d_ob={_layer['delta_ob']:.3f} m  "
-                  f"V={_layer['V']:.1f} m³  M={_layer['M']/1e3:.1f} t  "
-                  f"rho={_layer['rho']:.1f} kg/m³", file=out)
-            # Compact one-line composition (volume fractions, dominant first).
-            # The per-material smeared thicknesses and masses are dropped from
-            # the text report to keep it readable; the full breakdown remains
-            # available in the run dict (_layer['component_masses']) and in the
-            # radial-build assembly figure.
-            _comp = _layer['composition']
-            if _comp and not (len(_comp) == 1 and next(iter(_comp)) == 'void'):
-                _parts = " · ".join(f"{_mat} {_frac*100:.0f}%" for _mat, _frac
-                                    in sorted(_comp.items(), key=lambda kv: -kv[1]))
-                print(f"[O]  {_cont}    └ {_parts}", file=out)
+        if not _rb_disp['feasible']:
+            print('[!] INFEASIBLE MANDATORY RADIAL BUILD — no layers calculated', file=out)
+            print(f"[O] Available width: IB={_rb_disp['available_ib']:.3f} m, "
+                  f"OB={_rb_disp['available_ob']:.3f} m", file=out)
+            print(f"[O] Total available LCFS-to-TF volume: "
+                  f"{_rb_disp['V_available']:.3f} m³", file=out)
+            print('[!] Layer volumes, masses and TBR are unavailable (not zero).', file=out)
+        else:
+            print(f"[O] TBR_achieved  (breeder {_delta_BB_loc.min():.2f} to {_delta_BB_loc.max():.2f} m, "
+                  f"mean {_rb_disp['delta_BB_eff']:.2f} m) : {_TBR_achieved:.3f}  "
+                  f"(TBR_max = {_blanket_concept['TBR_max']:.2f})", file=out)
+            if _rb_disp['stack_scale'] < 1.0:
+                print(f"[!] b = {config.b:.3f} m is thinner than the fixed layers of the "
+                      f"{config.Blanket_choice} stack: they are scaled by "
+                      f"{_rb_disp['stack_scale']:.2f} and the inboard breeder vanishes", file=out)
+            print(f"[O] Radial build layers  (plasma → TF, delta_BB_ib = {_delta_BB_ib:.3f} m, delta_BB_ob = {_delta_BB_ob:.3f} m)", file=out)
+            for _i, _layer in enumerate(_RB_layers):
+                _last   = _i == len(_RB_layers) - 1
+                _branch = "├" if not _last else "└"
+                _cont   = "│" if not _last else " "
+                print(f"[O]  {_branch} {_layer['name']:<28s}: "
+                      f"d_ib={_layer['delta_ib']:.3f} m  d_ob={_layer['delta_ob']:.3f} m  "
+                      f"V={_layer['V']:.1f} m³  M={_layer['M']/1e3:.1f} t  "
+                      f"rho={_layer['rho']:.1f} kg/m³", file=out)
+                # Compact one-line composition (volume fractions, dominant first).
+                # The per-material smeared thicknesses and masses are dropped from
+                # the text report to keep it readable; the full breakdown remains
+                # available in the run dict (_layer['component_masses']) and in the
+                # radial-build assembly figure.
+                _comp = _layer['composition']
+                if _comp and not (len(_comp) == 1 and next(iter(_comp)) == 'void'):
+                    _parts = " · ".join(f"{_mat} {_frac*100:.0f}%" for _mat, _frac
+                                        in sorted(_comp.items(), key=lambda kv: -kv[1]))
+                    print(f"[O]  {_cont}    └ {_parts}", file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[O] Psi_PI      (Breakdown flux)                    : {ΨPI:.3f} [Wb]",      file=out)
         print(f"[O] Psi_RampUp  (Ramp-up flux)                      : {ΨRampUp:.3f} [Wb]",  file=out)
@@ -4794,8 +4852,13 @@ def save_run_output(config: GlobalConfig,
                 ('P_th_storage_to_turbine_dwell', p_tank_turbine, 'MWth'),
                 ('P_e_gross_pulse', pe_pulse, 'MWe'),
                 ('P_e_gross_dwell', pe_dwell, 'MWe'),
-                ('P_e_net_smoothed', P_elec, 'MWe')):
+                ('P_e_net_cycle_average', P_elec, 'MWe')):
                 print(f'[O] {_key:<48}: {_val:.3f} [{_unit}]', file=out)
+        if len(results) >= 179 and not results[178]:
+            print('[!] Electrical smoothing INFEASIBLE: x=1 fallback (no storage); pulse and dwell net power differ.', file=out)
+        if len(plant_results) >= 26:
+            print(f'[O] P_e_net_pulse                                    : {plant_results[24]:.3f} [MWe]', file=out)
+            print(f'[O] P_e_net_dwell                                    : {plant_results[25]:.3f} [MWe]', file=out)
         print(f"[O] E_store_th (Stored thermal energy)              : {E_store_th:.3f} [MWhth]", file=out)
         print(f"[O] P_coil_CS (CS recharge, cycle average)          : {P_coil_CS:.3f} [MWe]", file=out)
         print(f"[O] I_feeders (Total TF + CS feeder current)        : {I_feeders:.3f} [MA]", file=out)
