@@ -4247,13 +4247,23 @@ def plot_all(
     print("Done.")
 
 
+def plot_plant_power_balance(run: dict, phase: str = "pulse", save_dir=None) -> None:
+    """Power-flow Sankey: connected pulse/dwell paths and recirculation loops.
+
+    Delegates to the dependency-light renderer (no additional package).
+    All values are computed by D0FUS; its electrical model is unchanged.
+    """
+    from .D0FUS_power_flow import plot_plant_power_balance as _render_flow
+    _render_flow(run, phase=phase, save_dir=save_dir)
+
+
 def plot_run(
     run: dict,
     save_dir: str | None = None,
     view_3d: bool = True,
 ) -> None:
     """
-    Render the run-specific figure set (16 figures, 15 without the 3D view).
+    Render the run-specific figure set (18 figures, 17 without the 3D view).
 
     This is the subset called after each D0FUS run.  It contains only the
     figures that depend on the current run configuration and results —
@@ -4275,7 +4285,9 @@ def plot_run(
       [13/16]  Cost breakdown (Sheffield 2016, CapEx / OpEx / COE)
       [14/16]  Plasma temperature map T(rho)
       [15/16]  Plasma density map n(rho)
-      [16/16]  3D machine view (PyVista; skipped if PyVista is missing,
+      [16/18]  Plant power balance — pulse
+      [17/18]  Plant power balance — dwell
+      [18/18]  3D machine view (PyVista; skipped if PyVista is missing,
                or with view_3d=False)
 
     The breeding-blanket concept comparison does not depend on the run: it
@@ -4290,7 +4302,7 @@ def plot_run(
     view_3d  : bool
         False skips the 3D machine view (command-line option --no-3d).
     """
-    N = 16 if view_3d else 15
+    N = 18 if view_3d else 17
 
     # When saving, prefix each PNG with its order index so that the files sort
     # in the logical reading order: geometry (Miller), profiles, physics detail,
@@ -4359,6 +4371,12 @@ def plot_run(
     _emit(14, "Plasma temperature map", lambda: plot_temperature_map(run, save_dir=save_dir))
     _emit(15, "Plasma density map", lambda: plot_density_map(run, save_dir=save_dir))
 
+    # ── Phase-specific energy and power balance ───────────────────────
+    _emit(16, "Plant power balance (pulse)",
+          lambda: plot_plant_power_balance(run, phase="pulse", save_dir=save_dir))
+    _emit(17, "Plant power balance (dwell)",
+          lambda: plot_plant_power_balance(run, phase="dwell", save_dir=save_dir))
+
     # ── 3D machine view (optional PyVista dependency) ─────────────────
     # plot_tokamak_3D guards its own import and any render failure, so a
     # missing or broken PyVista installation never aborts the figure bank.
@@ -4369,7 +4387,7 @@ def plot_run(
             print(f"  [warn] 3D machine view failed ({type(_e).__name__}: "
                   f"{_e}) — skipped.")
     if view_3d:
-        _emit(16, "3D machine view (PyVista)", _fig_3d)
+        _emit(18, "3D machine view (PyVista)", _fig_3d)
 
     print("Done.")
 

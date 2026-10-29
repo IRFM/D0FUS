@@ -3297,10 +3297,11 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     P_cryo_electric_solution = f_cryo_electric_power(
         M_cold_solution, config.M_cold_DEMO_ref, config.P_cryo_electric_DEMO_ref)
     (V_cryo_LHe_solution, V_cryo_LN_solution) = f_cryo_LHe_LN_volume(P_cryo_electric_solution)
-    P_house_load_solution = house_load_breakdown(
+    house_load_components_solution = house_load_breakdown(
         config, _R_TF_out, R_bore_TF, c, _H_TF_D, Z_TF_bore_half, N_TF,
         calculate_E_mag_TF(Bmax_TF, a, b, R0, c, Delta_TF),
-        P_cryo_cool_solution)['P_house']
+        P_cryo_cool_solution)
+    P_house_load_solution = house_load_components_solution['P_house']
     # Coolant pumping on the heat extracted during the burn
     P_BoP_solution = f_bop_power(P_th_solution, f_pump)
     # Heating/CD wall-plug power on P_CD, as in P_wallplug_solution, during
@@ -3435,7 +3436,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             electrical_balance['P_e_net_pulse'],
             electrical_balance['P_e_net_dwell'],
             LF_TF, LF_CS,
-            electrical_balance['smoothing_feasible']) 
+            electrical_balance['smoothing_feasible'],
+            house_load_components_solution) 
 
 
 #%% Output writer
@@ -3484,6 +3486,8 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         _plant['P_e_net_cycle_average'] = results[25]
         if len(results) >= 179 and not results[178]:
             _plant['P_e_net_smoothed'] = float('nan')
+    if len(results) >= 180 and isinstance(results[179], dict):
+        _plant['house_load_components'] = results[179]
     _lift_factors = {'LF_TF': results[176], 'LF_CS': results[177]} if len(results) >= 178 else {}
 
     # ── Unpack the results tuple (same ordering as run() return statement) ────
@@ -3717,6 +3721,17 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         "f_He":        _f(_f_alpha),
         # Power balance
         "P_fus":       config.P_fus,
+        "P_CD": _f(_P_CD),
+        "P_sep": _f(_P_sep),
+        "P_Brem": _f(_P_Brem),
+        "P_syn": _f(_P_syn),
+        "P_line": _f(_P_line),
+        "P_Ohm": (_f(config.P_fus / Q - _P_CD)
+                  if np.isfinite(_f(Q)) and _f(Q) != 0 else np.nan),
+        "P_CD_calculated": _f(_P_CD),
+        "P_wallplug_calculated": _f(_P_wallplug),
+        "Dwell_factor": config.Dwell_factor,
+        "t_pulse_s": config.Temps_Plateau_input,
         "P_aux":       config.P_aux_input,
         "Q":           _f(Q),
         **_plant,
@@ -5145,7 +5160,7 @@ def _generate_run_figures(config: GlobalConfig, results: tuple,
                           output_path: str, verbose: int = 0,
                           view_3d: bool = True) -> None:
     """
-    Generate and save run-specific figures (16, 15 without the 3D view) into
+    Generate and save run-specific figures (18, 17 without the 3D view) into
     output_path/figures/.
 
     Calls D0FUS_figures.plot_run() which produces only the figures that
@@ -5233,6 +5248,38 @@ def _generate_run_figures(config: GlobalConfig, results: tuple,
     except Exception as _e:
         if verbose >= 1:
             print(f"  [warn] Self-consistent q-profile for figures failed: {_e}")
+
+    # Power-flow figure inputs: derived from the SAME converged run quantities.
+    # These fields are display-only; they do not alter the electrical model.
+    try:
+        _fc, _fn = f_fuel_power_split(
+            config.Fuel, config.Tbar, run_dict['nu_T'], run_dict['nu_n'],
+            rho_ped=run_dict['rho_ped'], n_ped_frac=run_dict['n_ped_frac'],
+            T_ped_frac=run_dict['T_ped_frac'],
+            Vprime_data=run_dict.get('Vprime_data'), tau_i_e=config.tau_i_e)
+        _pf = run_dict['P_fus']
+        _pcd = run_dict['P_CD']
+        _pn = _pf * _fn
+        # Invert the exact plant-thermal equation used by run():
+        # P_th = P_fus*(f_neutron*M_blanket + f_charged) + P_CD.
+        _mb = ((run_dict['P_th'] - _pcd - _pf * _fc) / _pn
+               if _pn > 0 else float('nan'))
+        _prad = (run_dict['P_Brem'] + run_dict['P_syn'] + run_dict['P_line'])
+        _house = run_dict.get('house_load_components', {})
+        _ptrit = _house.get('P_tritium')
+        _pvac = _house.get('P_vacuum')
+        _pfac = _house.get('P_facilities')
+        _ptf = _house.get('P_TF_supplies')
+        run_dict.update(
+            P_alpha_balance=_pf * _fc, P_neutron_balance=_pn,
+            P_blanket_nuclear_gain=_pn * (_mb - 1.0),
+            M_blanket_balance=_mb, P_rad_total_balance=_prad,
+            P_div_balance=run_dict['P_sep'] + run_dict.get('P_Ohm', 0.0),
+            P_tritium_balance=_ptrit, P_vacuum_balance=_pvac,
+            P_facilities_balance=_pfac, P_TF_supplies_balance=_ptf)
+    except (ValueError, TypeError, KeyError, ZeroDivisionError) as _e:
+        if verbose >= 1:
+            print(f'  [warn] Extended power-flow inputs unavailable: {_e}')
 
     # ── Generate full figure catalogue ────────────────────────────────────────
     if verbose >= 2:
