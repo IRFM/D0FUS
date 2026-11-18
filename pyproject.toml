@@ -4,15 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "d0fus"
-version = "3.2.0"
+version = "3.3.0"
 description = "Design 0-dimensional for Fusion Systems - Tokamak power plant design and optimization tool"
 readme = "README.md"
 license = {text = "CeCILL-C"}
 authors = [
-    {name = "Timothé Auclair", email = "timothe.auclair@gmail.com"}
+    {name = "Timothé Auclair", email = "timothe.auclair@proton.me"}
 ]
 maintainers = [
-    {name = "Timothé Auclair", email = "timothe.auclair@gmail.com"}
+    {name = "Timothé Auclair", email = "timothe.auclair@proton.me"}
 ]
 keywords = [
     "fusion",

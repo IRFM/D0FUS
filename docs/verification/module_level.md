@@ -1,6 +1,6 @@
 (sec:chap2_module)=
 
-# Module-level validation
+# Module-level verification
 
 :::{admonition} Source
 :class: thesis-source

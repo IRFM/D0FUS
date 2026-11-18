@@ -21,7 +21,7 @@ with $\langle \cdot \rangle$ a layer-averaged value. The limit $\alpha_\mathrm{W
 
 The radial elastic problem is solved with the analytical multilayer thick-cylinder solver CIRCE {footcite:p}`boudes2025circe`, which provides closed-form expressions for the displacement and stress fields in concentric layers under combined boundary loading and a Lorentz body force $f_r(r) = J_\theta(r)\, B_z(r)$.
 
-The validation strategy is to sweep $\alpha_\mathrm{WP}$ across the full $[0, 1]$ interval and, at each value, use CIRCE to compute the stress field that is consistent with the prescribed level. The geometry $(R_\mathrm{sep}, \Delta_\mathrm{nose})$ is then optimised to minimise the total radial extent $\Delta_\mathrm{nose} + \Delta_\mathrm{WP}$ subject to the Tresca criterion saturated in both the nose steel and the WP steel. The procedure therefore produces, at every $\alpha_\mathrm{WP}$, a fully self-consistent design where mechanical equilibrium, the Tresca limit, and the ampere-turn constraint are simultaneously satisfied.
+The verification strategy is to sweep $\alpha_\mathrm{WP}$ across the full $[0, 1]$ interval and, at each value, use CIRCE to compute the stress field that is consistent with the prescribed level. The geometry $(R_\mathrm{sep}, \Delta_\mathrm{nose})$ is then optimised to minimise the total radial extent $\Delta_\mathrm{nose} + \Delta_\mathrm{WP}$ subject to the Tresca criterion saturated in both the nose steel and the WP steel. The procedure therefore produces, at every $\alpha_\mathrm{WP}$, a fully self-consistent design where mechanical equilibrium, the Tresca limit, and the ampere-turn constraint are simultaneously satisfied.
 
 :::{figure} /figures/thesis/alpha_wedge_circe_refined.png
 :name: fig:wedging_alpha

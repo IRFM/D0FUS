@@ -67,7 +67,7 @@ $$ (eq:Pline_integral)
 
 and the total impurity radiation is the sum $P_\mathrm{line} = \sum_j P_{\mathrm{line},j}$ over the user-prescribed species list. Multiple impurity species can be combined freely.
 
-D0FUS uses the polynomial fits of Mavrin {footcite:p}`mavrin2018improved` to evaluate $L_z(T_e)$, validated against the ADAS atomic database {footcite:p}`summers1994adas`. The fits cover eleven species and are piecewise in $\log T_e$, with the segmentation listed in {numref}`Table %s <tab:Lz_species>`. To avoid recomputing the polynomials at every solver iteration, a log-log lookup table is precomputed at module load, sampling each species on a uniform grid covering $[0.01, 100]\,\mathrm{keV}$, accurate to better than $0.5\,\%$ relative to the original polynomials.
+D0FUS uses the polynomial fits of Mavrin {footcite:p}`mavrin2018improved` to evaluate $L_z(T_e)$, verified against the ADAS atomic database {footcite:p}`summers1994adas`. The fits cover eleven species and are piecewise in $\log T_e$, with the segmentation listed in {numref}`Table %s <tab:Lz_species>`. To avoid recomputing the polynomials at every solver iteration, a log-log lookup table is precomputed at module load, sampling each species on a uniform grid covering $[0.01, 100]\,\mathrm{keV}$, accurate to better than $0.5\,\%$ relative to the original polynomials.
 
 :::{table} Impurity species supported by D0FUS through the Mavrin {footcite:p}`mavrin2018improved` radiative-cooling fits. The peak temperature $T_\mathrm{peak}$ indicates where $L_z$ reaches its maximum value (qualitative).
 :name: tab:Lz_species

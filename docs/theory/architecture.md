@@ -76,7 +76,7 @@ The same scan machinery produces a second kind of map. The POPCON (Plasma OPerat
 :width: 100%
 :align: center
 
-Illustrative POPCON output of D0FUS for the ITER baseline, in the line-averaged density / volume-averaged temperature plane. The colour map is the driven fusion gain $\log_{10} Q$. Solid blue and dashed green lines are iso-contours of the fusion and auxiliary powers, the red line marks the L-H access boundary $P_\mathrm{sep} = P_{\text{L-H}}$, the purple line the Greenwald density limit, and the dotted black lines the iso-$Q$ contours. The red star is the converged ITER design point on the $Q = 10$ contour (the plasma current quoted in the title is the value converged by D0FUS, discussed in {ref}`Validation and benchmarks <chap:validation>`).
+Illustrative POPCON output of D0FUS for the ITER baseline, in the line-averaged density / volume-averaged temperature plane. The colour map is the driven fusion gain $\log_{10} Q$. Solid blue and dashed green lines are iso-contours of the fusion and auxiliary powers, the red line marks the L-H access boundary $P_\mathrm{sep} = P_{\text{L-H}}$, the purple line the Greenwald density limit, and the dotted black lines the iso-$Q$ contours. The red star is the converged ITER design point on the $Q = 10$ contour (the plasma current quoted in the title is the value converged by D0FUS, discussed in {ref}`Verification and benchmarks <chap:verification>`).
 :::
 
 ### Optimization mode

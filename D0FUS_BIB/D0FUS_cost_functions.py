@@ -164,7 +164,7 @@ def f_costs_Whyte(discount_rate, T_life, S_FW, t_life_bl_fpy, f_burn, E_net):
 #%% 3. Sheffield (2016) model (2010 US$)
 
 def f_costs_Sheffield(discount_rate, contingency, T_life, T_build,
-                      P_t, P_t_smoothed, P_e, E_net, P_aux, E_store_th,
+                      P_t, P_t_turbine, P_e, E_net, P_aux, E_store_th,
                       Av, t_rep_bl_yr, t_rep_div_yr,
                       V_FI, V_pc, V_sg, V_bl, S_tt,
                       Supra_cost_factor):
@@ -194,8 +194,9 @@ def f_costs_Sheffield(discount_rate, contingency, T_life, T_build,
       - The COE divides by the annual net electricity E_net, which counts
         the fixed loads (cryoplant, house load) over the whole year,
         outages included.
-      - Pulsed plant: the BoP thermal scaling uses the turbine-side thermal
-        power P_t_smoothed, and the thermal store is costed (c_store_sfd).
+      - Pulsed plant: the BoP thermal scaling uses the turbine thermal
+        design power P_t_turbine, and the thermal store is costed
+        (c_store_sfd).
         The turbine term keeps the net P_e, on which Sheffield & Milora
         calibrated it (900 M$ at 1200 MWe).
 
@@ -207,9 +208,9 @@ def f_costs_Sheffield(discount_rate, contingency, T_life, T_build,
     T_build        : int    Construction time [yr].
     P_t            : float  Thermal power during the burn [MWth]
                             (heat transfer system).
-    P_t_smoothed   : float  Thermal power to the turbine, cycle average
-                            through the thermal store [MWth]. P_t in steady
-                            state.
+    P_t_turbine    : float  Turbine thermal design power, the largest heat
+                            flow to the turbine over the burn and the dwell
+                            [MWth]. P_t in steady state.
     P_e            : float  Net electric power, cycle average during
                             operation [MWe], >= 0 (BoP and O&M scalings).
     E_net          : float  Annual net electricity [MWh/yr]. The COE is NaN
@@ -253,7 +254,7 @@ def f_costs_Sheffield(discount_rate, contingency, T_life, T_build,
                                                     C_bl, spare_tt_sfd, C_tt,
                                                     spare_aux_sfd, C_aux)
     (C_D, C_BOP_tot, C_syst) = f_direct_cost_Sheffield(C_BoP_sfd, C_tur_sfd,
-                                                       P_tur_sfd, P_e, P_t_smoothed,
+                                                       P_tur_sfd, P_e, P_t_turbine,
                                                        P_BoP_sfd, x_BoP_sfd,
                                                        C_bld_sfd, V_bld_sfd,
                                                        x_bld_sfd, V_FI, C_FI, C_st)
@@ -515,7 +516,7 @@ if __name__ == "__main__":
         return err < tol_pct
 
     print("=" * 72)
-    print("  D0FUS_cost_functions.py — standalone validation")
+    print("  D0FUS_cost_functions.py — standalone verification")
     print("=" * 72)
 
     # ── 1. Capital Recovery Factor ───────────────────────────────────────────
@@ -557,7 +558,7 @@ if __name__ == "__main__":
         T_life         = 40,
         T_build        = 8,
         P_t            = 4150.0,
-        P_t_smoothed   = 4150.0,
+        P_t_turbine   = 4150.0,
         P_e            = _P_e,
         E_net          = _E_net,
         P_aux          = 200.0,

@@ -9,7 +9,7 @@ Adapted from T. Auclair, PhD thesis, Aix-Marseille Université (2026), Appendix 
 :::
 
 
-This page lists the 167 scalar outputs of the Run mode, organised in 13 families. The list is generated automatically from a converged run of the ITER reference deck.
+This page lists the 199 scalar outputs of the Run mode, organised in 14 families. The list is generated automatically from a converged run of the ITER reference deck.
 
 | p9.2cmp4.4cm@                                      | Unit         |     |
 |:---------------------------------------------------|:-------------|:----|
@@ -107,6 +107,7 @@ This page lists the 167 scalar outputs of the Run mode, organised in 13 families
 | Divertor radiated power P_wall_div                 | MW           |     |
 | Neutron wall load Gamma_n                          | MW/m^2       |     |
 | **TF coil (winding pack, composition, structure)** |              |     |
+| TF lift factor LF_TF                               | \-           |     |
 | TF current density J_TF                            | A/m^2        |     |
 | TF radial thickness c_TF                           | m            |     |
 | TF winding-pack thickness c_WP                     | m            |     |
@@ -139,6 +140,7 @@ This page lists the 167 scalar outputs of the Run mode, organised in 13 families
 | TF insulator mass M_In_TF                          | kg           |     |
 | TF total mass M_total_TF                           | kg           |     |
 | **CS coil (winding pack, composition, structure)** |              |     |
+| CS lift factor LF_CS                               | \-           |     |
 | CS current density J_CS_1                          | A/m^2        |     |
 | CS field (alt.) B_CS2                              | T            |     |
 | CS current density (alt.) J_CS2                    | A/m^2        |     |
@@ -189,6 +191,37 @@ This page lists the 167 scalar outputs of the Run mode, organised in 13 families
 | Divertor calendar lifetime t_life_div_yr           | yr           |     |
 | Operation time per cycle T_op_limit                | yr           |     |
 | Operating fraction CF (Av x Util)                  | \-           |     |
+| **Plant electrical balance & pulsed operation**    |              |     |
+| Instantaneous thermal power P_th                   | MWth         |     |
+| Turbine thermal design power P_th_turbine          | MWth         |     |
+| Stored thermal energy E_store_th                   | MWhth        |     |
+| Electrical smoothing split x                       | \-           |     |
+| Nominal reactor thermal output during pulse        | MWth         |     |
+| Reactor to storage during pulse                    | MWth         |     |
+| Reactor to turbine during pulse                    | MWth         |     |
+| Storage to turbine during dwell                    | MWth         |     |
+| Total turbine thermal input during dwell           | MWth         |     |
+| Turbine gross electrical output during pulse       | MWe          |     |
+| Turbine gross electrical output during dwell       | MWe          |     |
+| Net electrical output during pulse                 | MWe          |     |
+| Net electrical output during dwell                 | MWe          |     |
+| Net smoothed electrical output (if feasible)       | MWe          |     |
+| Cycle-averaged net electrical output               | MWe          |     |
+| Gross electrical power (burn) P_e_gross            | MWe          |     |
+| CS recharge power (dwell) P_coil_CS                | MWe          |     |
+| Total TF + CS feeder current I_feeders             | MA           |     |
+| Refrigeration load at 4.5 K P_cryo_cool            | kW           |     |
+| Cryogenic electrical consumption P_cryo_electric   | MWe          |     |
+| Cryogenic LHe volume V_cryo_LHe                    | L            |     |
+| Cryogenic LN volume V_cryo_LN                      | L            |     |
+| House load P_house_load (PROCESS model)            | MWe          |     |
+| Coolant pumping power (burn) P_BoP                 | MWe          |     |
+| Variable recirculating power (burn) P_recirc_var   | MWe          |     |
+| Fixed recirculating power P_recirc_fix             | MWe          |     |
+| Total recirculated power (burn) P_recirculated     | MWe          |     |
+| Annual recirculated electricity E_recirculated     | MWh/year     |     |
+| Tritium burn per full-power year m_tritium_fpy     | kg/fpy       |     |
+| Annual tritium burn m_tritium                      | kg/year      |     |
 | **Techno-economics (cost_model)**                  |              |     |
 | Geometric cost proxy (V_build / P_fus)             | m^3/MW       |     |
 | Annual net electricity E_net                       | MWh/year     |     |

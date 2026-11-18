@@ -65,7 +65,7 @@ without touching the source: aligned formulas and tables stay preformatted,
 
 - `index.md`, `getting_started/` and the first pages of `user_guide/`, adapted from
   the README.
-- `theory/`, `validation/` and `user_guide/reference/`, adapted from the thesis
+- `theory/`, `verification/` and `user_guide/reference/`, adapted from the thesis
   (Chapters 1, 2, 4 and Appendices B to D). Citations use the thesis
   bibliography, `docs/references.bib`, through `sphinxcontrib-bibtex`.
 

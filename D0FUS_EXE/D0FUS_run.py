@@ -143,7 +143,7 @@ def load_config_from_lines(lines,
             continue
 
         # Legacy-value remapping removed by design: an unrecognised
-        # option value must fail loudly in the downstream validator
+        # option value must fail loudly in the downstream check
         # (which lists the valid options) rather than being silently
         # translated. Unknown KEYS still warn and fall back to the
         # documented defaults.
@@ -694,8 +694,8 @@ _RI = dict(Surface=7, Ip=8, nbar_line=13, nG=14, betaT=17, qstar=19, q95=20,
            kappa=62, betaN_total=96, V_TF_one=99, V_CS_geom=100,
            t_life_bl_fpy=128, t_life_bl_yr=130, t_life_div_yr=131,
            T_op_limit=132, Av=134, CF=135, V_rb_BB=138, V_rb_shield=139,
-           V_rb_VV=140, V_rb_gap_TF=141, P_th=150, P_th_smoothed=151,
-           E_store_th=152, P_recirc_fix=161)
+           V_rb_VV=140, V_rb_gap_TF=141, P_th=150, P_th_turbine=151,
+           E_store_th=152, P_recirc_fix=163)
 
 
 def evaluate_costs(config, results):
@@ -740,7 +740,7 @@ def evaluate_costs(config, results):
     need = ('Surface', 'P_CD', 'P_elec', 'Gamma_n', 'c', 'd', 'kappa',
             'V_TF_one', 'V_CS_geom', 't_life_bl_fpy', 't_life_bl_yr',
             't_life_div_yr', 'T_op_limit', 'Av', 'CF', 'V_rb_BB',
-            'V_rb_shield', 'V_rb_VV', 'V_rb_gap_TF', 'P_th', 'P_th_smoothed',
+            'V_rb_shield', 'V_rb_VV', 'V_rb_gap_TF', 'P_th', 'P_th_turbine',
             'E_store_th', 'P_recirc_fix')
     # Lifetimes may be infinite (component never replaced)
     if not all(np.isfinite(g[k]) or (k.startswith('t_life') and g[k] == np.inf)
@@ -774,7 +774,7 @@ def evaluate_costs(config, results):
     V_sg = g['V_rb_shield'] + g['V_rb_VV'] + g['V_rb_gap_TF']
     t_rep_bl_yr, t_rep_div_yr, _ = f_replacement_intervals(
         g['t_life_bl_yr'], g['t_life_div_yr'])
-    inputs = dict(P_t=g['P_th'], P_t_smoothed=g['P_th_smoothed'],
+    inputs = dict(P_t=g['P_th'], P_t_turbine=g['P_th_turbine'],
                   P_e=common['P_e'], E_net=E_net, P_aux=g['P_CD'],
                   E_store_th=g['E_store_th'], Av=g['Av'],
                   t_rep_bl_yr=t_rep_bl_yr, t_rep_div_yr=t_rep_div_yr,
@@ -1339,7 +1339,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             "Valid options: 'L', 'H', 'Advanced', 'EU-DEMO', 'NT', 'Manual'."
         )
 
-    # Validate the fuel early. Atomic_mass stays an input (scaling laws,
+    # Check the fuel early. Atomic_mass stays an input (scaling laws,
     # L-H threshold, SOL sound speed). Flag a value inconsistent with Fuel.
     if Fuel not in FUELS:
         raise ValueError(f"Unknown Fuel: '{Fuel}'. "
@@ -1355,7 +1355,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         print(f"[warn] Atomic_mass = {Atomic_mass} with Fuel = '{Fuel}' "
               f"(pure fuel mass: {_A_fuel}).")
 
-    # Validate the bootstrap model early: fail fast at load time,
+    # Check the bootstrap model early: fail fast at load time,
     # before any physics evaluation, with the valid options listed.
     if Bootstrap_choice not in ('Sauter-Redl', 'Segal'):
         raise ValueError(
@@ -1363,7 +1363,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             "Valid options: 'Sauter-Redl', 'Segal'."
         )
 
-    # ── Validate manual superconductor option ─────────────────────────────────
+    # ── Check manual superconductor option ────────────────────────────────────
     if Supra_choice == 'Manual':
         if J_wost_Manual is None or J_wost_Manual <= 0:
             raise ValueError(
@@ -2220,7 +2220,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             print(f"  [bracket] fa ∈ [{fa_lo:.5f}, {fa_hi:.5f}], "
                   f"r ∈ [{r_lo:+.3e}, {r_hi:+.3e}]")
 
-        # -- Call brentq on the validated bracket --------------------------------
+        # -- Call brentq on the checked bracket ----------------------------------
         _eval_count = [0]
         def _counted_residual(fa):
             """Wrapper around _pulsed_residual that counts evaluations."""
@@ -2585,7 +2585,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     #  MAIN SOLVER DISPATCH
     # =========================================================================
 
-    # ── Pre-solver validation ─────────────────────────────────────────────────
+    # ── Pre-solver check ──────────────────────────────────────────────────────
     _reset_dbg(3)
     if Operation_mode == 'Pulsed':
         _P_aux_est = (P_LH + P_ECRH + P_NBI + P_ICRH) if CD_source == 'Multi' else P_aux_input
@@ -2598,7 +2598,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         except Exception as _pre_exc:
             import traceback as _tb
             if verbose >= 1:
-                print("\n[ERROR] Pre-solver validation failed:")
+                print("\n[ERROR] Pre-solver check failed:")
                 _tb.print_exc()
             raise RuntimeError(
                 f"Physics chain is broken at the initial guess "
@@ -2620,7 +2620,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         except Exception as _pre_exc:
             import traceback as _tb
             if verbose >= 1:
-                print("\n[ERROR] Pre-solver validation failed:")
+                print("\n[ERROR] Pre-solver check failed:")
                 _tb.print_exc()
             raise RuntimeError(
                 f"Physics chain is broken at the initial guess "
@@ -2700,6 +2700,9 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             _nan, _nan, _nan, _nan, _nan,        # plant electrical balance (150-164)
             _nan, _nan, _nan, _nan, _nan,
             _nan, _nan, _nan, _nan, _nan,
+            _nan, _nan, _nan,                    # plant outputs 165–167
+            _nan, _nan, _nan, _nan, _nan, _nan, _nan, _nan,  # phase outputs 168–175
+            _nan, _nan, False, None,             # LF_TF, LF_CS, smoothing, house load
         )
 
     # =========================================================================
@@ -3052,7 +3055,10 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
                 # magnet build failed before these quantities could be solved.
                 _nan, _nan, _nan, _nan, _nan,
                 _nan, _nan, _nan, _nan, _nan,
-                _nan, _nan, _nan, _nan, _nan)
+                _nan, _nan, _nan, _nan, _nan,  # plant outputs 160–164
+                _nan, _nan, _nan,              # plant outputs 165–167
+                _nan, _nan, _nan, _nan, _nan, _nan, _nan, _nan,  # phase outputs 168–175
+                _nan, _nan, False, None)       # LF_TF, LF_CS, smoothing, house load
 
     # ==============================================================================
     #    MAGNETIC FLUX REQUIREMENTS (Inductive Scenario)
@@ -3193,11 +3199,14 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         R_tf_in=_R_in,
         Z_tf_in=_Z_in,
         Blanket_choice=config.Blanket_choice,
+        delta_BB_IB=config.delta_BB_IB, delta_BB_OB=config.delta_BB_OB,
+        delta_shield_IB=config.delta_shield_IB,
+        delta_shield_OB=config.delta_shield_OB,
     )
     # A concept multiplication falls where the breeder is thin: it is
     # averaged over the breeder surface with the local breeder thickness.
     # A deck value is used as given.
-    if config.M_blanket is None:
+    if config.M_blanket is None and _rb['feasible']:
         M_blanket = f_blanket_multiplication(M_blanket, _rb['delta_BB_local'],
                                              config.Blanket_choice,
                                              _rb['w_BB_local'])
@@ -3211,6 +3220,10 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     V_rb_VV       = sum(L['V']     for L in _rb['layers'] if L['role'] == 'VV')
     V_rb_gap_TF   = sum(L['V']     for L in _rb['layers'] if L['role'] == 'gap')
     V_rb_divertor = _rb['V_divertor']
+    if not _rb['feasible']:
+        # Unbuilt components do not have known zero volumes: mark them missing.
+        V_rb_SOL = V_rb_FW = V_rb_BB = V_rb_shield = V_rb_VV = V_rb_gap_TF = np.nan
+
 
     # ── Radial build layer masses ─────────────────────────────────────────────
     M_rb_FW       = sum(L['M'] for L in _rb['layers'] if L['role'] == 'FW')
@@ -3219,6 +3232,9 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     M_rb_VV       = sum(L['M'] for L in _rb['layers'] if L['role'] == 'VV')
     M_rb_divertor = V_rb_divertor * config.rho_divertor
     M_rb_total    = M_rb_FW + M_rb_BB + M_rb_shield + M_rb_VV + M_rb_divertor
+    if not _rb['feasible']:
+        M_rb_FW = M_rb_BB = M_rb_shield = M_rb_VV = M_rb_divertor = M_rb_total = np.nan
+
 
     cost_solution = (V_rb_BB + V_TF_one * N_TF + V_CS_geom) / P_fus   # legacy cost proxy [m^3/MW]
 
@@ -3290,24 +3306,21 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # EU-DEMO reference values (config.*_DEMO_ref) with the TF + CS cold mass,
     # coolant pumping on P_th, house load from the PROCESS model
     # (house_load_breakdown).
-    # Pulsed operation: a thermal store delivers a constant P_th_smoothed over
-    # the full cycle (flat-top + dwell), so P_e_gross is a cycle average.
+    # Pulsed operation, electrical smoothing (M. Fletcher): a thermal store
+    # shifts part of the burn heat to the dwell so that the net electric
+    # power is the same in both phases (f_pulsed_electrical_quantities).
     # Loads are given at their nominal value, which sizes the plant: heating/
     # CD and coolant pumping during the burn (P_recirc_var), CS recharge
     # during the dwell (P_coil_CS), cryogenics and house load all the time
-    # (P_recirc_fix). The duty cycle D is applied once, in the cycle average
-    # <P_recirc> = D P_var + (1 - D) P_coil_CS + P_fix subtracted from
-    # P_e_gross (P_elec) and in E_recirculated (burn fraction Av x Util x D).
-    # P_elec is then a cycle average, so CF = Av x Util excludes the dwell in
-    # COE = cost / (8760 CF P_elec). Component calendar lifetimes and Av above
-    # keep the dwell (fluence per year).
+    # (P_recirc_fix). P_elec is the cycle-averaged net power, equal to the
+    # smoothed value when the smoothing is feasible, so CF = Av x Util
+    # excludes the dwell in COE = cost / (8760 CF P_elec). Component calendar
+    # lifetimes and Av above keep the dwell (fluence per year).
     P_th_solution = (P_fus * (f_neutron * M_blanket + 1.0 - f_neutron)
                      + P_CD_solution)   # neutron-only blanket multiplication
-    (t_dwell_solution, E_store_th_solution,
-     P_th_smoothed_solution) = f_pulsed_thermal_quantities(
-        P_th_solution, config.Temps_Plateau_input, config.Dwell_factor,
-        config.eta_store)
-    P_e_gross_solution = eta_T * P_th_smoothed_solution
+    t_dwell_solution = (config.Temps_Plateau_input
+                        * (1.0 / config.Dwell_factor - 1.0)
+                        if config.Dwell_factor < 1.0 else 0.0)
     # CS recharge power: E_mag_CS supplied during the dwell (zero without dwell)
     P_coil_CS_solution = (f_coil_power_supply(E_mag_CS_post, t_dwell_solution)
                           if config.Dwell_factor < 1.0 else 0.0)
@@ -3318,10 +3331,12 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         M_cold_solution, config.M_cold_DEMO_ref, config.P_cryo_cool_DEMO_ref)
     P_cryo_electric_solution = f_cryo_electric_power(
         M_cold_solution, config.M_cold_DEMO_ref, config.P_cryo_electric_DEMO_ref)
-    P_house_load_solution = house_load_breakdown(
+    (V_cryo_LHe_solution, V_cryo_LN_solution) = f_cryo_LHe_LN_volume(P_cryo_electric_solution)
+    house_load_components_solution = house_load_breakdown(
         config, _R_TF_out, R_bore_TF, c, _H_TF_D, Z_TF_bore_half, N_TF,
         calculate_E_mag_TF(Bmax_TF, a, b, R0, c, Delta_TF),
-        P_cryo_cool_solution)['P_house']
+        P_cryo_cool_solution)
+    P_house_load_solution = house_load_components_solution['P_house']
     # Coolant pumping on the heat extracted during the burn (nominal)
     P_BoP_solution = f_bop_power(P_th_solution, f_pump)
     # Heating/CD wall-plug power on P_CD, as in P_wallplug_solution (nominal)
@@ -3329,18 +3344,46 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
      P_recirculated_solution) = f_recirculated_power(
         P_CD_solution, eta_WP,
         P_cryo_electric_solution, P_BoP_solution, P_house_load_solution)
-    # Net electric power, cycle average: the only place where D enters P_elec
-    P_elec_solution = P_e_gross_solution - f_recirculated_power_cycle_average(
-        P_recirc_var_solution, P_coil_CS_solution, P_recirc_fix_solution,
-        config.Dwell_factor)
+    electrical_balance = f_pulsed_electrical_quantities(
+        P_th_solution, config.Temps_Plateau_input, config.Dwell_factor,
+        eta_T, P_recirc_var_solution, P_recirc_fix_solution,
+        P_coil_CS_solution, config.eta_store)
+    E_store_th_solution = electrical_balance['E_store_th']
+    # Turbine thermal design power: largest heat flow to the turbine over
+    # the burn and the dwell (sizes the BoP in the cost model)
+    P_th_turbine_solution = electrical_balance['P_th_turbine']
+    P_e_gross_solution = electrical_balance['P_e_gross_pulse']
+    P_elec_solution = electrical_balance['P_e_net_cycle_average']
+    if not electrical_balance['electrical_balance_valid']:
+        import warnings
+        warnings.warn(
+            'Electrical balance unavailable: ' + electrical_balance['electrical_balance_reason']
+            + f' (P_th={P_th_solution!r} MWth, eta_turbine={eta_T!r}, '
+              f'P_recirc_var={P_recirc_var_solution!r} MWe, '
+              f'P_recirc_fix={P_recirc_fix_solution!r} MWe). '
+              'Other machine calculations continue; power-dependent economics are undefined.',
+            RuntimeWarning, stacklevel=2)
+    elif not electrical_balance['smoothing_feasible']:
+        import warnings
+        warnings.warn(
+            'Electrical smoothing infeasible: ' + electrical_balance['electrical_balance_reason']
+            + '. Using x=1 (no thermal storage); annual production and economics '
+            'use cycle-average net electricity.',
+            RuntimeWarning, stacklevel=2)
 
     CF_solution = Av_solution * config.Util_factor   # operating fraction
     E_recirculated_solution = f_recirculated_energy(
         P_recirc_var_solution, P_coil_CS_solution, P_recirc_fix_solution,
         CF_solution, config.Dwell_factor)
     # Burn time fraction = Av × Util × Dwell. D-D consumes no external tritium.
-    m_tritium_solution = (f_tritium_consumption(
-        P_fus, CF_solution * config.Dwell_factor) if Fuel == 'DT' else 0.0)
+    (m_tritium_fpy_solution, m_tritium_solution) = (f_tritium_consumption(
+        P_fus, CF_solution * config.Dwell_factor) if Fuel == 'DT' else (0.0, 0.0))
+
+    # Lift factors use the same bath/operating temperature as conductor sizing
+    _lf_params = (config.LF_numerator, config.LF_a0, config.LF_a1,
+                  config.LF_b0, config.LF_b1, config.LF_b2)
+    LF_TF = f_lift_factor(T_helium, Bmax_TF, *_lf_params)
+    LF_CS = f_lift_factor(T_helium, B_CS, *_lf_params)
 
     return (B0_solution,  B_CS,  B_pol_solution,
             tauE_solution,  W_th_solution,
@@ -3400,22 +3443,38 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             M_rb_VV,      M_rb_divertor, M_rb_total,
             divertor_solution,                         # 149
 
-            # ── Plant electrical balance / pulsed-operation outputs (150–164)
+            # ── Plant electrical balance outputs (150–167), phase details (168–175),
+            # lift factors (176–177), smoothing flag (178), house load (179)
             P_th_solution,
-            P_th_smoothed_solution,
+            P_th_turbine_solution,
             E_store_th_solution,
             P_e_gross_solution,
             P_coil_CS_solution,
             I_feeders_solution,
             P_cryo_cool_solution,
             P_cryo_electric_solution,
+            V_cryo_LHe_solution,
+            V_cryo_LN_solution,
             P_house_load_solution,
             P_BoP_solution,
             P_recirc_var_solution,
             P_recirc_fix_solution,
             P_recirculated_solution,
             E_recirculated_solution,
-            m_tritium_solution)
+            m_tritium_fpy_solution,
+            m_tritium_solution,
+            # Additional explicitly phase-resolved smoothing metrics.
+            electrical_balance['x_storage_split'],
+            electrical_balance['P_th_reactor_to_storage_pulse'],
+            electrical_balance['P_th_reactor_to_turbine_pulse'],
+            electrical_balance['P_th_storage_to_turbine_dwell'],
+            electrical_balance['P_e_gross_pulse'],
+            electrical_balance['P_e_gross_dwell'],
+            electrical_balance['P_e_net_pulse'],
+            electrical_balance['P_e_net_dwell'],
+            LF_TF, LF_CS,
+            electrical_balance['smoothing_feasible'],
+            house_load_components_solution) 
 
 
 #%% Output writer
@@ -3440,14 +3499,33 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
     dict  Ready to pass to plot_run().
     """
     _plant = {}
-    try:
-        (_plant["P_th"], _plant["P_th_smoothed"], _plant["E_store_th"],
-         _plant["P_e_gross"], _plant["P_coil_CS"], _plant["I_feeders"],
-         _plant["P_cryo_cool"], _plant["P_cryo_electric"], _plant["P_house_load"],
-         _plant["P_BoP"], _plant["P_recirc_var"], _plant["P_recirc_fix"],
-         _plant["P_recirculated"], _plant["E_recirculated"], _plant["m_tritium"]) = results[-15:]
-    except Exception:
-        _plant = {}
+    _base_plant_keys = (
+        'P_th', 'P_th_turbine', 'E_store_th', 'P_e_gross',
+        'P_coil_CS', 'I_feeders', 'P_cryo_cool', 'P_cryo_electric',
+        'V_cryo_LHe', 'V_cryo_LN', 'P_house_load', 'P_BoP',
+        'P_recirc_var', 'P_recirc_fix', 'P_recirculated',
+        'E_recirculated', 'm_tritium_fpy', 'm_tritium')
+    _phase_keys = ('x_storage_split', 'P_th_reactor_to_storage_pulse',
+                   'P_th_reactor_to_turbine_pulse',
+                   'P_th_storage_to_turbine_dwell', 'P_e_gross_pulse',
+                   'P_e_gross_dwell', 'P_e_net_pulse', 'P_e_net_dwell')
+    if len(results) >= 150 + len(_base_plant_keys):
+        _plant.update(zip(_base_plant_keys, results[150:168]))
+    if len(results) >= 176:
+        _plant.update(zip(_phase_keys, results[168:176]))
+        _plant['P_th_reactor_pulse'] = _plant['P_th']
+        _plant['P_th_turbine_dwell'] = _plant['P_th_storage_to_turbine_dwell']
+        _plant['P_e_net_smoothed'] = results[25]
+    if len(results) >= 179:
+        _plant['smoothing_feasible'] = bool(results[178])
+        _plant['smoothing_fallback'] = not _plant['smoothing_feasible']
+    if len(results) >= 176:
+        _plant['P_e_net_cycle_average'] = results[25]
+        if len(results) >= 179 and not results[178]:
+            _plant['P_e_net_smoothed'] = float('nan')
+    if len(results) >= 180 and isinstance(results[179], dict):
+        _plant['house_load_components'] = results[179]
+    _lift_factors = {'LF_TF': results[176], 'LF_CS': results[177]} if len(results) >= 178 else {}
 
     # ── Unpack the results tuple (same ordering as run() return statement) ────
     (B0, _B_CS_r, _B_pol_r,
@@ -3675,6 +3753,7 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         # On-axis field and plasma current
         "B0":          _f(B0),
         "B_max":       config.Bmax_TF,
+        **_lift_factors,
         "Ip":          _f(Ip),
         # Volume-averaged kinetics
         "nbar":        _f(nbar),
@@ -3692,6 +3771,17 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         "f_He":        _f(_f_alpha),
         # Power balance
         "P_fus":       config.P_fus,
+        "P_CD": _f(_P_CD),
+        "P_sep": _f(_P_sep),
+        "P_Brem": _f(_P_Brem),
+        "P_syn": _f(_P_syn),
+        "P_line": _f(_P_line),
+        "P_Ohm": (_f(config.P_fus / Q - _P_CD)
+                  if np.isfinite(_f(Q)) and _f(Q) != 0 else np.nan),
+        "P_CD_calculated": _f(_P_CD),
+        "P_wallplug_calculated": _f(_P_wallplug),
+        "Dwell_factor": config.Dwell_factor,
+        "t_pulse_s": config.Temps_Plateau_input,
         "P_aux":       config.P_aux_input,
         "Q":           _f(Q),
         **_plant,
@@ -3714,6 +3804,10 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         # ── Radial build sublayer widths ──────────────────────────────────────
         "f_kappa_SOL": config.f_kappa_SOL,
         "Blanket_choice":   config.Blanket_choice,
+        "delta_BB_IB": config.delta_BB_IB,
+        "delta_BB_OB": config.delta_BB_OB,
+        "delta_shield_IB": config.delta_shield_IB,
+        "delta_shield_OB": config.delta_shield_OB,
         # Mechanical configuration key — consumed by _resolve_build() in figures
         # to decide whether the TF-CS gap is applied to the CS outer radius.
         "Choice_Buck_Wedg": config.Choice_Buck_Wedg,
@@ -3935,6 +4029,9 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
     except Exception as e:
         notes.append(f"  (results tuple not fully unpacked, part of the outputs is n/a: {e})")
 
+    if len(results) >= 178:
+        named["LF_TF"], named["LF_CS"] = results[176:178]
+
     # Component lifetime / availability live at fixed absolute tuple indices.
     def _at(idx):
         try:
@@ -4152,6 +4249,7 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
     lines.append("")
 
     emit("10. OUTPUTS - TF coil (winding pack, composition, structure)", [
+        ("TF lift factor LF_TF", "LF_TF", "-"),
         ("TF current density J_wost_TF (no steel)", "J_wost_TF", "A/m^2"),
         ("TF current density J_coil_TF (full TF leg)", "J_coil_TF", "A/m^2"),
         ("TF radial thickness c_TF", "c_TF", "m"),
@@ -4186,6 +4284,7 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
     ])
 
     emit("11. OUTPUTS - CS coil (winding pack, composition, structure)", [
+        ("CS lift factor LF_CS", "LF_CS", "-"),
         ("CS current density J_wost_CS (no steel)", "J_wost_CS", "A/m^2"),
         ("CS current density J_coil_CS (steel incl.)", "J_coil_CS", "A/m^2"),
         ("CS radial thickness c_CS", "c_CS", "m"),
@@ -4253,20 +4352,40 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
 
     H("14. OUTPUTS - Plant electrical balance & pulsed operation")
     row("Instantaneous thermal power P_th", rd.get("P_th"), "MWth")
-    row("Smoothed thermal power P_th_smoothed", rd.get("P_th_smoothed"), "MWth")
+    row("Turbine thermal design power P_th_turbine", rd.get("P_th_turbine"), "MWth")
     row("Stored thermal energy E_store_th", rd.get("E_store_th"), "MWhth")
-    row("Gross electrical power P_e_gross", rd.get("P_e_gross"), "MWe")
+    for label, key, unit in (
+        ('Electrical smoothing split x', 'x_storage_split', '-'),
+        ('Nominal reactor thermal output during pulse', 'P_th_reactor_pulse', 'MWth'),
+        ('Reactor to storage during pulse', 'P_th_reactor_to_storage_pulse', 'MWth'),
+        ('Reactor to turbine during pulse', 'P_th_reactor_to_turbine_pulse', 'MWth'),
+        ('Storage to turbine during dwell', 'P_th_storage_to_turbine_dwell', 'MWth'),
+        ('Total turbine thermal input during dwell', 'P_th_turbine_dwell', 'MWth'),
+        ('Turbine gross electrical output during pulse', 'P_e_gross_pulse', 'MWe'),
+        ('Turbine gross electrical output during dwell', 'P_e_gross_dwell', 'MWe'),
+        ('Net electrical output during pulse', 'P_e_net_pulse', 'MWe'),
+        ('Net electrical output during dwell', 'P_e_net_dwell', 'MWe'),
+        ('Net smoothed electrical output (if feasible)', 'P_e_net_smoothed', 'MWe'),
+        ('Cycle-averaged net electrical output', 'P_e_net_cycle_average', 'MWe')):
+        row(label, rd.get(key), unit)
+
+    if rd.get('smoothing_feasible') is False:
+        lines.append('[!] Electrical smoothing infeasible: x=1, no stored heat; pulse/dwell powers differ.')
+    row("Gross electrical power (burn) P_e_gross", rd.get("P_e_gross"), "MWe")
     row("CS recharge power (dwell) P_coil_CS", rd.get("P_coil_CS"), "MWe")
     row("Total TF + CS feeder current I_feeders", rd.get("I_feeders"), "MA")
     row("Refrigeration load at 4.5 K P_cryo_cool", rd.get("P_cryo_cool"), "kW")
     row("Cryogenic electrical consumption P_cryo_electric", rd.get("P_cryo_electric"), "MWe")
+    row("Cryogenic LHe volume V_cryo_LHe", rd.get("V_cryo_LHe"), "L")
+    row("Cryogenic LN volume V_cryo_LN", rd.get("V_cryo_LN"), "L")
     row("House load P_house_load (PROCESS model)", rd.get("P_house_load"), "MWe")
     row("Coolant pumping power (burn) P_BoP", rd.get("P_BoP"), "MWe")
     row("Variable recirculating power (burn) P_recirc_var", rd.get("P_recirc_var"), "MWe")
     row("Fixed recirculating power P_recirc_fix", rd.get("P_recirc_fix"), "MWe")
     row("Total recirculated power (burn) P_recirculated", rd.get("P_recirculated"), "MWe")
     row("Annual recirculated electricity E_recirculated", rd.get("E_recirculated"), "MWh/year")
-    row("Annual tritium consumption m_tritium", rd.get("m_tritium"), "kg/year")
+    row("Tritium burn per full-power year m_tritium_fpy", rd.get("m_tritium_fpy"), "kg/fpy")
+    row("Annual tritium burn m_tritium", rd.get("m_tritium"), "kg/year")
     lines.append("")
 
     _cb = rd.get("cost_breakdown") or {}
@@ -4395,21 +4514,23 @@ def save_run_output(config: GlobalConfig,
      divertor_out,
      *plant_results) = results
 
-    # ── Plant electrical-balance outputs (return indices 150–164) ───────────
+    # ── Plant electrical-balance outputs (return indices 150–175) ───────────
     # The original 150 result positions remain unchanged; the new quantities
     # are appended after them.
-    if len(plant_results) == 15:
-        (P_th, P_th_smoothed, E_store_th,
+    if len(plant_results) >= 18:
+        (P_th, P_th_turbine, E_store_th,
          P_e_gross, P_coil_CS, I_feeders,
-         P_cryo_cool, P_cryo_electric, P_house_load,
+         P_cryo_cool, P_cryo_electric, V_cryo_LHe,
+         V_cryo_LN, P_house_load,
          P_BoP, P_recirc_var, P_recirc_fix,
-         P_recirculated, E_recirculated, m_tritium) = plant_results
+         P_recirculated, E_recirculated, m_tritium_fpy, m_tritium) = plant_results[:18]
     else:
-        (P_th, P_th_smoothed, E_store_th,
+        (P_th, P_th_turbine, E_store_th,
          P_e_gross, P_coil_CS, I_feeders,
-         P_cryo_cool, P_cryo_electric, P_house_load,
+         P_cryo_cool, P_cryo_electric, V_cryo_LHe,
+         V_cryo_LN, P_house_load,
          P_BoP, P_recirc_var, P_recirc_fix,
-         P_recirculated, E_recirculated, m_tritium) = (np.nan,) * 15
+         P_recirculated, E_recirculated, m_tritium_fpy, m_tritium) = (np.nan,) * 18
 
     # ── Recompute N_TF for display (not stored in results tuple) ──────────
     # Same deterministic call as in run().
@@ -4437,18 +4558,30 @@ def save_run_output(config: GlobalConfig,
         f_div_area_fraction=config.f_div_area_fraction,
         R_tf_in=_R_in_disp, Z_tf_in=_Z_in_disp,
         Blanket_choice=config.Blanket_choice,
+        delta_BB_IB=config.delta_BB_IB, delta_BB_OB=config.delta_BB_OB,
+        delta_shield_IB=config.delta_shield_IB,
+        delta_shield_OB=config.delta_shield_OB,
     )
+    if not _rb_disp['feasible']:
+        import warnings
+        warnings.warn('Mandatory radial build infeasible: available IB '
+                      f"{_rb_disp['available_ib']:.4g} m, OB "
+                      f"{_rb_disp['available_ob']:.4g} m; "
+                      f"total cavity volume {_rb_disp['V_available']:.4g} m³. "
+                      'Layer geometry and masses are not calculated.',
+                      RuntimeWarning, stacklevel=2)
     _delta_BB_ib  = _rb_disp['delta_BB_ib']
     _delta_BB_ob  = _rb_disp['delta_BB_ob']
     _delta_BB_loc = _rb_disp['delta_BB_local']
     _w_BB_loc     = _rb_disp['w_BB_local']
     _blanket_concept = material_blanket(config.Blanket_choice)
     _RB_layers        = _rb_disp['layers']
-    _TBR_achieved     = f_TBR(_delta_BB_loc, config.Blanket_choice, _w_BB_loc)
+    _TBR_achieved     = (f_TBR(_delta_BB_loc, config.Blanket_choice, _w_BB_loc)
+                         if _rb_disp['feasible'] else np.nan)
     # Conversion parameters as used in run(): [I] from the deck, [O] from the
     # blanket concept (multiplication reduced for a thin breeder)
     _M_blanket, _eta_T, _f_pump = plant_conversion(config)
-    if config.M_blanket is None:
+    if config.M_blanket is None and _rb_disp['feasible']:
         _M_blanket = f_blanket_multiplication(_M_blanket, _delta_BB_loc,
                                               config.Blanket_choice, _w_BB_loc)
     _conv_src = {k: (('I', 'deck') if getattr(config, k) is not None
@@ -4596,6 +4729,9 @@ def save_run_output(config: GlobalConfig,
         print(f"[I] Bmax_TF (Peak field on TF conductor)            : {config.Bmax_TF:.3f} [T]",   file=out)
         print(f"[O] B0   (On-axis magnetic field)                   : {B0:.3f} [T]",             file=out)
         print(f"[O] BCS  (CS peak magnetic field)                   : {B_CS:.3f} [T]",           file=out)
+        if len(results) >= 178:
+            print(f"[O] LF_TF (TF lift factor - REBCO only)             : {results[176]:.5f} [-]", file=out)
+            print(f"[O] LF_CS (CS lift factor - REBCO only)             : {results[177]:.5f} [-]", file=out)
         print(f"[O] Engineering current density, by reference section", file=out)
         print(f"[O]  ├ J_wost-TF (TF cable, steel jacket excluded)  : {J_TF/1e6:.3f} [MA/m²]", file=out)
         print(f"[O]  ├ J_coil-TF (TF leg: WP + nose + backplate)    : {J_coil_TF/1e6:.3f} [MA/m²]", file=out)
@@ -4696,32 +4832,40 @@ def save_run_output(config: GlobalConfig,
         print(f"[{_s[0]}]  ├ eta_T (gross)         : {_eta_T:.3f}  ({_s[1]})", file=out)
         _s = _conv_src['f_BoP']
         print(f"[{_s[0]}]  └ f_BoP (coolant pumps) : {_f_pump:.4f}  ({_s[1]})", file=out)
-        print(f"[O] TBR_achieved  (breeder {_delta_BB_loc.min():.2f} to {_delta_BB_loc.max():.2f} m, "
-              f"mean {_rb_disp['delta_BB_eff']:.2f} m) : {_TBR_achieved:.3f}  "
-              f"(TBR_max = {_blanket_concept['TBR_max']:.2f})", file=out)
-        if _rb_disp['stack_scale'] < 1.0:
-            print(f"[!] b = {config.b:.3f} m is thinner than the fixed layers of the "
-                  f"{config.Blanket_choice} stack: they are scaled by "
-                  f"{_rb_disp['stack_scale']:.2f} and the inboard breeder vanishes", file=out)
-        print(f"[O] Radial build layers  (plasma → TF, delta_BB_ib = {_delta_BB_ib:.3f} m, delta_BB_ob = {_delta_BB_ob:.3f} m)", file=out)
-        for _i, _layer in enumerate(_RB_layers):
-            _last   = _i == len(_RB_layers) - 1
-            _branch = "├" if not _last else "└"
-            _cont   = "│" if not _last else " "
-            print(f"[O]  {_branch} {_layer['name']:<28s}: "
-                  f"d_ib={_layer['delta_ib']:.3f} m  d_ob={_layer['delta_ob']:.3f} m  "
-                  f"V={_layer['V']:.1f} m³  M={_layer['M']/1e3:.1f} t  "
-                  f"rho={_layer['rho']:.1f} kg/m³", file=out)
-            # Compact one-line composition (volume fractions, dominant first).
-            # The per-material smeared thicknesses and masses are dropped from
-            # the text report to keep it readable; the full breakdown remains
-            # available in the run dict (_layer['component_masses']) and in the
-            # radial-build assembly figure.
-            _comp = _layer['composition']
-            if _comp and not (len(_comp) == 1 and next(iter(_comp)) == 'void'):
-                _parts = " · ".join(f"{_mat} {_frac*100:.0f}%" for _mat, _frac
-                                    in sorted(_comp.items(), key=lambda kv: -kv[1]))
-                print(f"[O]  {_cont}    └ {_parts}", file=out)
+        if not _rb_disp['feasible']:
+            print('[!] INFEASIBLE MANDATORY RADIAL BUILD — no layers calculated', file=out)
+            print(f"[O] Available width: IB={_rb_disp['available_ib']:.3f} m, "
+                  f"OB={_rb_disp['available_ob']:.3f} m", file=out)
+            print(f"[O] Total available LCFS-to-TF volume: "
+                  f"{_rb_disp['V_available']:.3f} m³", file=out)
+            print('[!] Layer volumes, masses and TBR are unavailable (not zero).', file=out)
+        else:
+            print(f"[O] TBR_achieved  (breeder {_delta_BB_loc.min():.2f} to {_delta_BB_loc.max():.2f} m, "
+                  f"mean {_rb_disp['delta_BB_eff']:.2f} m) : {_TBR_achieved:.3f}  "
+                  f"(TBR_max = {_blanket_concept['TBR_max']:.2f})", file=out)
+            if _rb_disp['stack_scale'] < 1.0:
+                print(f"[!] b = {config.b:.3f} m is thinner than the fixed layers of the "
+                      f"{config.Blanket_choice} stack: they are scaled by "
+                      f"{_rb_disp['stack_scale']:.2f} and the inboard breeder vanishes", file=out)
+            print(f"[O] Radial build layers  (plasma → TF, delta_BB_ib = {_delta_BB_ib:.3f} m, delta_BB_ob = {_delta_BB_ob:.3f} m)", file=out)
+            for _i, _layer in enumerate(_RB_layers):
+                _last   = _i == len(_RB_layers) - 1
+                _branch = "├" if not _last else "└"
+                _cont   = "│" if not _last else " "
+                print(f"[O]  {_branch} {_layer['name']:<28s}: "
+                      f"d_ib={_layer['delta_ib']:.3f} m  d_ob={_layer['delta_ob']:.3f} m  "
+                      f"V={_layer['V']:.1f} m³  M={_layer['M']/1e3:.1f} t  "
+                      f"rho={_layer['rho']:.1f} kg/m³", file=out)
+                # Compact one-line composition (volume fractions, dominant first).
+                # The per-material smeared thicknesses and masses are dropped from
+                # the text report to keep it readable; the full breakdown remains
+                # available in the run dict (_layer['component_masses']) and in the
+                # radial-build assembly figure.
+                _comp = _layer['composition']
+                if _comp and not (len(_comp) == 1 and next(iter(_comp)) == 'void'):
+                    _parts = " · ".join(f"{_mat} {_frac*100:.0f}%" for _mat, _frac
+                                        in sorted(_comp.items(), key=lambda kv: -kv[1]))
+                    print(f"[O]  {_cont}    └ {_parts}", file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[O] Psi_PI      (Breakdown flux)                    : {ΨPI:.3f} [Wb]",      file=out)
         print(f"[O] Psi_RampUp  (Ramp-up flux)                      : {ΨRampUp:.3f} [Wb]",  file=out)
@@ -4765,15 +4909,32 @@ def save_run_output(config: GlobalConfig,
         print(f"[I] rho_rad_core (core/edge boundary, rho_tor)      : {rho_rad_core:.2f}", file=out)
         print(f"[O] gamma_CD (CD figure of merit, effective)        : {eta_CD:.3f} [10²⁰ A/(W·m²)]", file=out)
         print(f"[O] Q      (Energy gain factor)                     : {Q:.3f}",                   file=out)
-        print(f"[O] P_elec (Net electrical power)                   : {P_elec:.3f} [MW]",         file=out)
         print(f"[O] P_wallplug (Wall-plug heating/CD power)         : {P_wallplug:.3f} [MW]",     file=out)
-        print(f"[O] P_e_gross (Gross electrical power)              : {P_e_gross:.3f} [MWe]", file=out)
-        print(f"[O] P_th_smoothed (Smoothed thermal power)          : {P_th_smoothed:.3f} [MWth]", file=out)
+        if len(plant_results) >= 26:
+            (x_split, p_to_store, p_reactor_turbine, p_tank_turbine,
+             pe_pulse, pe_dwell) = plant_results[18:24]
+            for _key, _val, _unit in (
+                ('x_storage_split', x_split, '-'),
+                ('P_th_reactor_pulse', P_th, 'MWth'),
+                ('P_th_reactor_to_storage_pulse', p_to_store, 'MWth'),
+                ('P_th_reactor_to_turbine_pulse', p_reactor_turbine, 'MWth'),
+                ('P_th_storage_to_turbine_dwell', p_tank_turbine, 'MWth'),
+                ('P_e_gross_pulse', pe_pulse, 'MWe'),
+                ('P_e_gross_dwell', pe_dwell, 'MWe'),
+                ('P_e_net_cycle_average', P_elec, 'MWe')):
+                print(f'[O] {_key:<48}: {_val:.3f} [{_unit}]', file=out)
+        if len(results) >= 179 and not results[178]:
+            print('[!] Electrical smoothing INFEASIBLE: x=1 fallback (no storage); pulse and dwell net power differ.', file=out)
+        if len(plant_results) >= 26:
+            print(f'[O] P_e_net_pulse                                    : {plant_results[24]:.3f} [MWe]', file=out)
+            print(f'[O] P_e_net_dwell                                    : {plant_results[25]:.3f} [MWe]', file=out)
         print(f"[O] E_store_th (Stored thermal energy)              : {E_store_th:.3f} [MWhth]", file=out)
         print(f"[O] P_coil_CS (CS recharge power, dwell)            : {P_coil_CS:.3f} [MWe]", file=out)
         print(f"[O] I_feeders (Total TF + CS feeder current)        : {I_feeders:.3f} [MA]", file=out)
         print(f"[O] P_cryo_cool (Refrigeration load at 4.5 K)       : {P_cryo_cool:.3f} [kW]", file=out)
         print(f"[O] P_cryo_electric                                 : {P_cryo_electric:.3f} [MWe]", file=out)
+        print(f"[O] V_cryo_LHe                                      : {V_cryo_LHe:.3f} [L]", file=out)
+        print(f"[O] V_cryo_LN                                       : {V_cryo_LN:.3f} [L]", file=out)
         print(f"[O] P_house_load                                    : {P_house_load:.3f} [MWe]", file=out)
         _lbl = f"facilities (floor area {_hl['A_floor']:.0f} m²)"
         print(f"[O]  ├ {_lbl:<45s}: {_hl['P_facilities']:.3f} [MWe]", file=out)
@@ -4785,11 +4946,10 @@ def save_run_output(config: GlobalConfig,
         print(f"[O] P_recirc_fix                                    : {P_recirc_fix:.3f} [MWe]", file=out)
         print(f"[O] P_recirculated (burn)                           : {P_recirculated:.3f} [MWe]", file=out)
         print(f"[O] E_recirculated                                  : {E_recirculated:.3f} [MWh/year]", file=out)
+        print(f"[O] m_tritium_fpy (tritium burn per fpy)            : {m_tritium_fpy:.3f} [kg/fpy]", file=out)
         print(f"[O] m_tritium (annual tritium burn)                 : {m_tritium:.3f} [kg/year]", file=out)
-        # Cycle-averaged recirculated power = P_e_gross - P_elec
-        _P_rc_avg = P_e_gross - P_elec
-        _Q_E = P_e_gross / _P_rc_avg if _P_rc_avg > 0 else np.nan
-        print(f"[O] Q_E    (Engineering gain, P_e_gross/<P_recirc>) : {_Q_E:.3f}", file=out)
+        _Q_E = P_e_gross / P_recirculated if P_recirculated > 0 else np.nan
+        print(f"[O] Q_E    (Engineering gain, P_e_gross/P_recirc)   : {_Q_E:.3f}", file=out)
         print(f"[O] Cost   ((V_BB+V_TF+V_CS) / P_fus)               : {cost:.3f} [m³/MW]",    file=out)
         print("-------------------------------------------------------------------------", file=out)
         print(f"[O] t_blanket_fpy  (Blanket lifetime, dpa model)       : {t_life_bl_fpy:.3f} [fpy]", file=out)
@@ -4986,7 +5146,7 @@ def save_run_output(config: GlobalConfig,
                 # Derived inputs from D0FUS
                 if _shf:
                     print(f"[O] P_th  (thermal power during the burn)           : {_cr['P_t']:.1f} [MW]", file=out)
-                    print(f"[O] P_th_smoothed (thermal power to the turbine)    : {_cr['P_t_smoothed']:.1f} [MW]", file=out)
+                    print(f"[O] P_th_turbine (turbine thermal design power)     : {_cr['P_t_turbine']:.1f} [MW]", file=out)
                 print(f"[O] P_e   (net electric power, operation)           : {P_elec:.1f} [MWe]", file=out)
                 print(f"[O] E_net (annual net electricity)                  : {_cr['E_net']*1e-6:.3f} [TWh/yr]", file=out)
                 if not _cr['net_electric']:
@@ -5068,7 +5228,7 @@ def _generate_run_figures(config: GlobalConfig, results: tuple,
                           output_path: str, verbose: int = 0,
                           view_3d: bool = True) -> None:
     """
-    Generate and save run-specific figures (16, 15 without the 3D view) into
+    Generate and save run-specific figures (18, 17 without the 3D view) into
     output_path/figures/.
 
     Calls D0FUS_figures.plot_run() which produces only the figures that
@@ -5156,6 +5316,38 @@ def _generate_run_figures(config: GlobalConfig, results: tuple,
     except Exception as _e:
         if verbose >= 1:
             print(f"  [warn] Self-consistent q-profile for figures failed: {_e}")
+
+    # Power-flow figure inputs: derived from the SAME converged run quantities.
+    # These fields are display-only; they do not alter the electrical model.
+    try:
+        _fc, _fn = f_fuel_power_split(
+            config.Fuel, config.Tbar, run_dict['nu_T'], run_dict['nu_n'],
+            rho_ped=run_dict['rho_ped'], n_ped_frac=run_dict['n_ped_frac'],
+            T_ped_frac=run_dict['T_ped_frac'],
+            Vprime_data=run_dict.get('Vprime_data'), tau_i_e=config.tau_i_e)
+        _pf = run_dict['P_fus']
+        _pcd = run_dict['P_CD']
+        _pn = _pf * _fn
+        # Invert the exact plant-thermal equation used by run():
+        # P_th = P_fus*(f_neutron*M_blanket + f_charged) + P_CD.
+        _mb = ((run_dict['P_th'] - _pcd - _pf * _fc) / _pn
+               if _pn > 0 else float('nan'))
+        _prad = (run_dict['P_Brem'] + run_dict['P_syn'] + run_dict['P_line'])
+        _house = run_dict.get('house_load_components', {})
+        _ptrit = _house.get('P_tritium')
+        _pvac = _house.get('P_vacuum')
+        _pfac = _house.get('P_facilities')
+        _ptf = _house.get('P_TF_supplies')
+        run_dict.update(
+            P_alpha_balance=_pf * _fc, P_neutron_balance=_pn,
+            P_blanket_nuclear_gain=_pn * (_mb - 1.0),
+            M_blanket_balance=_mb, P_rad_total_balance=_prad,
+            P_div_balance=run_dict['P_sep'] + run_dict.get('P_Ohm', 0.0),
+            P_tritium_balance=_ptrit, P_vacuum_balance=_pvac,
+            P_facilities_balance=_pfac, P_TF_supplies_balance=_ptf)
+    except (ValueError, TypeError, KeyError, ZeroDivisionError) as _e:
+        if verbose >= 1:
+            print(f'  [warn] Extended power-flow inputs unavailable: {_e}')
 
     # ── Generate full figure catalogue ────────────────────────────────────────
     if verbose >= 2:
@@ -5292,4 +5484,4 @@ def main(input_file: str = None, save_figures: bool = None,
 if __name__ == "__main__":
     input_file = sys.argv[1] if len(sys.argv) > 1 else None
     main(input_file)
-    print("\nD0FUS_run completed successfully!")
+    print("\nD0FUS_run completed successfully!")

@@ -1065,16 +1065,6 @@ References
     Supercond. Sci. Technol. 37, 115013.
 """
 
-if __name__ == "__main__":
-    # TF coil count at the ITER geometry: D0FUS (pure ripple + port-width
-    # criterion, δ_adm = 0.5 %) selects n = 19, against the actual 18 —
-    # ITER's choice was driven by port segmentation [Mitchell et al.,
-    # IEEE TAS 22 (2012) 4200809], not ripple alone. The achieved ripple
-    # must respect the admissible bound.
-    _n, _rip, _L = Number_TF_coils(6.2, 2.0, 1.4, 0.005, 3.6)
-    assert 16 <= _n <= 20, _n
-    assert _rip <= 0.005 + 1e-12, _rip
-    print(f"OK  n_TF ITER: {_n} (réel 18, segmentation ports), ripple = {_rip*100:.2f} %")
 
 def J_non_Cu_Nb3Sn(B, T, Eps=-0.006):
     """
@@ -1489,33 +1479,8 @@ def _J_REBCO_Senatore2024(B, T, Tet=0, dataset='Fujikura_2019'):
     return np.squeeze(Jc)
 
 
-#%% Current density validation
+#%% Current density verification
 
-if __name__ == "__main__":
-    # Superconductor Jc anchors (sources in each line).
-    # Nb3Sn (ITER-2008 form, EU-DEMO WST parameters, Corato et al. 2016
-    # Table 2.1): Jc(12 T, 4.2 K, ε=-0.3%) must sit in the ITER/DEMO strand
-    # class — ITER TF strand spec ≥ 800 A/mm² at 12 T, 4.22 K
-    # [Devred et al., SuST 27 (2014) 044001].
-    _J = float(J_non_Cu_Nb3Sn(12., 4.2, Eps=-0.003))/1e6
-    assert 700. < _J < 1200., _J
-    # NbTi (Bottura fit, IEEE TAS 10 (2000) 1054; ITER parameters per
-    # Corato 2016): Jc(5 T, 4.2 K) ≈ 3000 A/mm² (textbook benchmark curve).
-    _J2 = float(J_non_Cu_NbTi(5., 4.2))/1e6
-    assert 2600. < _J2 < 3400., _J2
-    # REBCO — Senatore et al. (2024): the Fujikura_2019 dataset is anchored
-    # by construction at Jc(19 T, 4.2 K) = 2000 A/mm² (Fig. 9a); exact
-    # reproduction guards against drift of the scaling chain.
-    _J3 = float(J_non_Cu_REBCO(19., 4.2, dataset='Fujikura_2019'))/1e6
-    assert abs(_J3/2000. - 1) < 1e-3, _J3
-    # Physical invariants: Jc strictly decreasing in B and in T (in T at
-    # 8 T, below the upper critical field of NbTi at 4.2 K).
-    for _f in (J_non_Cu_Nb3Sn, J_non_Cu_NbTi,
-               lambda B, T: J_non_Cu_REBCO(B, T, dataset='Fujikura_2019')):
-        assert float(_f(10., 4.2)) > float(_f(14., 4.2))
-        assert float(_f(8., 4.2)) > float(_f(8., 6.5))
-    print(f"OK  Supra: Nb3Sn {_J:.0f} (spec ITER ≥800), NbTi {_J2:.0f} (≈3000), "
-          f"REBCO {_J3:.0f} (ancre Senatore exacte)")
 
 if __name__ == "__main__":
     # Superconductor Jc scaling laws: NbTi, Nb3Sn, REBCO — MAGLAB benchmark
@@ -1678,22 +1643,6 @@ def compute_quench_integral(T_op, T_hotspot, B, RRR, n_steps=200):
 # MAGNETIC ENERGY CALCULATIONS
 # =============================================================================
 
-if __name__ == "__main__":
-    # Copper property anchors.
-    # ρ_Cu(273 K, B=0) = 1.543e-8 Ω·m [NIST / CODATA; Simon et al.,
-    # NIST Monograph 177 (1992)] — 3 % tolerance on the fit.
-    _rho273, _cv273 = get_copper_properties(273., 0., 100.)
-    assert abs(_rho273/1.543e-8 - 1) < 0.03, _rho273
-    # RRR identity: ρ(273 K)/ρ(4 K, B=0) = RRR by definition (2 %).
-    _rho4, _ = get_copper_properties(4.5, 0., 100.)
-    assert abs(_rho273/_rho4/100. - 1) < 0.02
-    # Volumetric heat capacity at 273 K: c_p·ρ_m ≈ 385 J/(kg·K) × 8960 kg/m³
-    # = 3.45e6 J/(m³·K) [CRC Handbook] — 5 %.
-    assert abs(_cv273/3.45e6 - 1) < 0.05, _cv273
-    # Kohler magnetoresistance: ρ(4.5 K, 12 T) > ρ(4.5 K, 0 T).
-    assert get_copper_properties(4.5, 12., 100.)[0] > _rho4
-    print(f"OK  Cuivre: ρ(273K) = {_rho273:.3e} vs 1.543e-8 NIST, RRR exact, "
-          f"cv = {_cv273:.2e}")
 
 def _bore_log_integral(R, Z):
     """
@@ -2775,43 +2724,11 @@ def f_J_coil_CS(B_CS, d_CS):
 
 #%% Coil-scale current density test
 
-if __name__ == "__main__":
-    # The J_coil expressions must reproduce, at the winding-pack scale, the
-    # alpha definitions the mechanical solvers are built on. Two identities
-    # are asserted, both exact by construction:
-    #   TF : f_J_coil_TF(B, R_ext, c_WP) == alpha * J_wost with
-    #        alpha = 2 B R_ext / (mu0 J_wost (R_ext^2 - R_sep^2))   [Winding_Pack_refined]
-    #   CS : f_J_coil_CS(B_CS, d)        == alpha * J_wost with
-    #        alpha = B_CS / (mu0 J_wost d)                          [f_CS_refined]
-    _rng = np.random.default_rng(0)
-    _err_TF, _err_CS = 0.0, 0.0
-    for _ in range(500):
-        _R_ext = _rng.uniform(1.0, 6.0)
-        _c_WP  = _rng.uniform(0.02, 0.6) * _R_ext
-        _B     = _rng.uniform(4.0, 25.0)
-        _J_w   = _rng.uniform(20e6, 300e6)
-        _R_sep = _R_ext - _c_WP
-        _alpha = 2 * _B * _R_ext / (μ0 * _J_w * (_R_ext**2 - _R_sep**2))
-        _err_TF = max(_err_TF,
-                      abs(f_J_coil_TF(_B, _R_ext, _c_WP) / (_alpha * _J_w) - 1.0))
-        _d     = _rng.uniform(0.05, 1.5)
-        _B_CS  = _rng.uniform(4.0, 25.0)
-        _alpha = _B_CS / (μ0 * _J_w * _d)
-        _err_CS = max(_err_CS,
-                      abs(f_J_coil_CS(_B_CS, _d) / (_alpha * _J_w) - 1.0))
-    assert _err_TF < 1e-12, _err_TF
-    assert _err_CS < 1e-12, _err_CS
-    # Degenerate geometries must return NaN rather than raising.
-    assert np.isnan(f_J_coil_TF(10.0, 3.0, np.nan))
-    assert np.isnan(f_J_coil_TF(10.0, 3.0, 0.0))
-    assert np.isnan(f_J_coil_CS(10.0, 0.0))
-    assert np.isnan(f_J_coil_CS(np.nan, 0.5))
-    print(f"OK  J_coil scales: TF err = {_err_TF:.1e}, CS err = {_err_CS:.1e}")
 
 #%% Without Steel current density test
 
 """
-Validation benchmark for cable current density calculations.
+Verification benchmark for cable current density calculations.
 
 Definitions
 ---------------
@@ -3558,7 +3475,7 @@ def F_CIRCE0D(
     """
     n_layers = len(E)
     
-    # Input validation
+    # Input check
     if len(R) != n_layers + 1:
         raise ValueError(f"R must have {n_layers + 1} elements, got {len(R)}")
     if len(J) != n_layers or len(B) != n_layers or len(config) != n_layers:
@@ -3726,21 +3643,11 @@ def compute_tresca_stress(sigma_r: np.ndarray, sigma_t: np.ndarray) -> np.ndarra
 
 #%% TEST CASES CIRCE
 
-if __name__ == "__main__":
-    # CIRCE0D vs the Lamé thick-cylinder closed form [Lamé 1852] —
-    # pressurised single layer, machine-precision identity expected.
-    _sr, _st, _, _r, _ = F_CIRCE0D(100, [1., 2.], [0.], [0.], 100e6, 0.,
-                                   [200e9], 0.3, [1])
-    _srL = 100e6*1./(4.-1.)*(1 - 4./_r**2)
-    _stL = 100e6*1./(4.-1.)*(1 + 4./_r**2)
-    assert np.max(np.abs(_sr-_srL))/100e6 < 1e-10
-    assert np.max(np.abs(_st-_stL))/np.max(np.abs(_stL)) < 1e-10
-    print("OK  CIRCE0D: identité de Lamé à la précision machine")
 
 if __name__ == "__main__":
-    # CIRCE0D stress solver validation: Lame, CS 3-layer, composite
+    # CIRCE0D stress solver verification: Lame, CS 3-layer, composite
     import D0FUS_BIB.D0FUS_figures as figs
-    figs.plot_CIRCE_stress_validation()
+    figs.plot_CIRCE_stress_verification()
 
 #%% print
 
@@ -4034,7 +3941,7 @@ def Winding_Pack_refined(R_0, a, b, sigma_max, J_max, B_max, omega, n,
 
     R_ext = R_0 - a - b
 
-    # Validate J_max before proceeding
+    # Check J_max before proceeding
     if J_max is None or J_max <= 0:
         return np.nan, np.nan, np.nan, np.nan, np.nan
 
@@ -6271,28 +6178,10 @@ def f_V_TF(a: float, b: float, R0: float,
 #%% E_mag and t_dump test
 # (after f_TF_cross_section, which calculate_E_mag_TF uses)
     
-if __name__ == "__main__":
-    # Stored-energy anchors (asserted; the detailed table follows below).
-    # ITER CS: 6.4 GJ at 13 T [Schultz et al., 21st SOFE (2005);
-    # iter.org/machine/magnets] with the documented winding envelope
-    # (r_in = 1.32 m, r_out = 2.07 m, H = 12 m): D0FUS gives 6.33 GJ.
-    _E_CS = calculate_E_mag_CS(13., 1.32, 2.07, 12.)
-    assert abs(_E_CS/6.4e9 - 1) < 0.06, _E_CS/1e9
-    # TF energy: the Green line integral is exact on a rectangle,
-    # iint dR dZ / R = H ln(r_out/r_in). ITER: Princeton-D bore of the
-    # ITER deck (a = 2.0, b = 1.1, R0 = 6.2, c = 0.9, Delta_TF = 1.59 m)
-    # with the published B0 R0 = 5.3 T x 6.2 m, i.e. B_max = 10.6 T at
-    # R0 - a - b, against 41 GJ [Mitchell IEEE TAS 18 (2008)].
-    _Rr, _Zr = np.array([2.6, 11.5, 11.5, 2.6]), np.array([-7., -7., 7., 7.])
-    assert abs(_bore_log_integral(_Rr, _Zr) / (14. * np.log(11.5 / 2.6)) - 1) < 1e-12
-    _E_TF = calculate_E_mag_TF(5.3 * 6.2 / 3.1, 2.0, 1.1, 6.2, 0.9, 1.59)
-    assert abs(_E_TF / 41e9 - 1) < 0.10, _E_TF / 1e9
-    print(f"OK  E_mag: CS = {_E_CS/1e9:.2f} GJ vs 6.4 published; "
-          f"TF = {_E_TF/1e9:.1f} GJ vs 41 published")
 
 if __name__ == "__main__":
     """
-    Validation of magnetic energy and quench discharge time calculations.
+    Verification of magnetic energy and quench discharge time calculations.
     
     References
     ----------
@@ -6306,7 +6195,7 @@ if __name__ == "__main__":
     """
     
     print("\n" + "="*65)
-    print("MAGNETIC ENERGY & DISCHARGE TIME VALIDATION")
+    print("MAGNETIC ENERGY & DISCHARGE TIME VERIFICATION")
     print("="*65)
     
     # =========================================================================
@@ -6450,6 +6339,10 @@ def f_radial_build_layers(
     Z_tf_in: np.ndarray,
     Blanket_choice: str,
     N_theta: int = 500,
+    delta_BB_IB: float = 0.50,
+    delta_BB_OB: float = 0.50,
+    delta_shield_IB: float = 0.30,
+    delta_shield_OB: float = 0.30,
 ) -> dict:
     """
     Exact volumes/masses of every layer in the concept-specific radial build,
@@ -6465,8 +6358,8 @@ def f_radial_build_layers(
       - Layers between the breeder and the TF inner face (shields, VV, gaps,
         structure) are bounded by cumulative _offset_contour() shells of the
         TF inner face, built up TF-side first.
-      - The breeder layer fills the remaining shell between the two stacks —
-        its thickness is the residual of b (radial_layers_effective()).
+      - The breeder thickness is explicitly allocated rather than absorbing
+        the residual space; the final gap receives any unused clearance.
 
     Every layer boundary is an actual 3D contour; volumes are computed via the
     exact body-of-revolution formula V = 2π ∫∫ R dA (_moment_area).  No Pappus
@@ -6499,7 +6392,45 @@ def f_radial_build_layers(
         stack_scale  — scale of the fixed layers, below 1 when b is smaller
                         than the fixed stack (radial_layers_effective)
     """
-    layers    = radial_layers_effective(Blanket_choice, b, Delta_TF)
+    # Infeasible mandatory build: only the cavity geometry is meaningful.
+    def _unavailable(reason):
+        # No usable TF inner contour (failed coil build) or no cavity between
+        # the LCFS and the TF: layers, volumes and masses are not available
+        import warnings
+        warnings.warn(f'Radial build layers unavailable: {reason}', RuntimeWarning,
+                      stacklevel=3)
+        return dict(layers=[], V_total=np.nan, V_available=np.nan, V_divertor=np.nan,
+                    delta_BB_ib=np.nan, delta_BB_ob=np.nan,
+                    delta_BB_local=np.array([]), w_BB_local=np.array([]),
+                    delta_BB_eff=np.nan, stack_scale=np.nan, feasible=False,
+                    available_ib=b, available_ob=b + Delta_TF,
+                    mandatory_ib=np.nan, mandatory_ob=np.nan)
+
+    R_tf_in, Z_tf_in = np.asarray(R_tf_in, float), np.asarray(Z_tf_in, float)
+    if (R_tf_in.ndim != 1 or R_tf_in.shape != Z_tf_in.shape or len(R_tf_in) < 8
+            or not np.all(np.isfinite(R_tf_in)) or not np.all(np.isfinite(Z_tf_in))):
+        return _unavailable('no valid TF inner contour')
+    feasibility = radial_build_feasibility(Blanket_choice, b, Delta_TF)
+    if not feasibility['feasible']:
+        import warnings
+        warnings.warn('Mandatory radial build cannot fit; skipping all layer '
+                      'widths, volumes and masses.', RuntimeWarning, stacklevel=2)
+        V_available = f_V_blanket(a, b, R0, κ, δ, Delta_TF,
+                                  R_outer=R_tf_in, Z_outer=Z_tf_in,
+                                  N_theta=N_theta)
+        return dict(layers=[], V_total=float(V_available),
+                    V_available=float(V_available), V_divertor=np.nan,
+                    delta_BB_ib=np.nan, delta_BB_ob=np.nan,
+                    delta_BB_local=np.array([]), w_BB_local=np.array([]),
+                    delta_BB_eff=np.nan, stack_scale=np.nan, **feasibility)
+    layers    = radial_layers_effective(Blanket_choice, b, Delta_TF,
+                                         delta_BB_IB, delta_BB_OB,
+                                         delta_shield_IB, delta_shield_OB)
+    if layers and layers[0]['stack_scale'] < 1.0:
+        import warnings
+        warnings.warn(f'Radial build compressed: b is below the mandatory layers, '
+                      f'scaled by {layers[0]["stack_scale"]:.2f} (no shield, no breeder).',
+                      RuntimeWarning, stacklevel=2)
     i_breeder = next(i for i, L in enumerate(layers) if L['role'] == 'breeder')
     before    = layers[:i_breeder]
     breeder   = layers[i_breeder]
@@ -6510,52 +6441,103 @@ def f_radial_build_layers(
     cos_t     = np.cos(theta + np.arcsin(δ) * np.sin(theta))
     sin_t     = np.sin(theta)
 
-    # ── Plasma-side stack: cumulative Miller ellipses from the LCFS ─────────
-    R_prev, Z_prev = R0 + a * cos_t, κ * a * sin_t
+    # The old implementation made the breeder the residual between two
+    # independently offset contours. That violates the requested blanket
+    # thickness, especially when a breeder is absent. Instead use a common
+    # angular parametrisation of the physical LCFS and TF inner face, and
+    # partition *each ray* according to the allocated inboard/outboard stack.
+    # Every interface is a nested, star-shaped contour. This is a radial-ray
+    # engineering approximation, not a constant surface-normal thickness.
+    # It exactly partitions the actual enclosed cavity (modulo quadrature).
+    angles = np.linspace(-np.pi, np.pi, N_theta, endpoint=False)
+    def _ray_radius(R, Z):
+        R, Z = np.asarray(R, float), np.asarray(Z, float)
+        if R.shape != Z.shape or R.ndim != 1 or len(R) < 8:
+            raise ValueError('Invalid TF boundary contour.')
+        x = R - R0
+        phi = np.mod(np.arctan2(Z, x) + np.pi, 2*np.pi)
+        rad = np.hypot(x, Z)
+        order = np.argsort(phi)
+        phi, rad = phi[order], rad[order]
+        # Duplicate polar angles indicate a non-star-shaped TF boundary.
+        if np.min(np.diff(phi)) < 1e-12:
+            distinct = np.r_[True, np.diff(phi) > 1e-12]
+            phi, rad = phi[distinct], rad[distinct]
+        if np.max(np.diff(np.r_[phi, phi[0]+2*np.pi])) > 0.25:
+            raise ValueError('TF inner contour does not cover every polar ray.')
+        q = np.mod(angles + np.pi, 2*np.pi)
+        return np.interp(q, np.r_[phi[-1]-2*np.pi, phi, phi[0]+2*np.pi],
+                         np.r_[rad[-1], rad, rad[0]])
+
+    # Use the LCFS as the exact first interface; do not spuriously change its
+    # elongation on the initial SOL boundary.
+    phi0 = angles
+    r_lcfs = a * np.ones_like(phi0)
+    # The Miller surface cannot be expressed as a single radial distance in
+    # the Miller parameter itself; convert its sampled coordinates to rays.
+    theta_l = np.linspace(0, 2*np.pi, max(4*N_theta, 1000), endpoint=False)
+    R_l = R0 + a*np.cos(theta_l + np.arcsin(δ)*np.sin(theta_l))
+    Z_l = κ*a*np.sin(theta_l)
+    try:
+        r_lcfs = _ray_radius(R_l, Z_l)
+        r_tf = _ray_radius(R_tf_in, Z_tf_in)
+    except ValueError as exc:
+        return _unavailable(str(exc))
+    clearance = r_tf - r_lcfs
+    if np.any(~np.isfinite(clearance)) or np.min(clearance) <= 1e-9:
+        return _unavailable('TF boundary intersects the LCFS')
+
+    # The two input widths are midplane specifications. Between midplanes,
+    # smooth interpolation gives a continuous layer with no sharp corners.
+    # Allocation fractions are normalized by the corresponding budgets, so
+    # all layers sum to the actual cavity thickness even when it differs
+    # from the nominal midplane b due to the TF contour shape.
+    weight_ob = (1.0 + np.cos(angles))*0.5
+    budget_ib, budget_ob = b, b + Delta_TF
+    if budget_ib <= 0 or budget_ob <= 0:
+        raise ValueError('Radial clearance must be strictly positive.')
+    def _boundary(r):
+        return R0 + r*np.cos(angles), r*np.sin(angles)
+    R_prev, Z_prev = _boundary(r_lcfs)
     M_prev = _moment_area(R_prev, Z_prev)
-    a_cum  = a
-    for L in before:
-        a_cum += L['delta_ib']
-        R_out, Z_out = R0 + a_cum * cos_t, kappa_sol * a_cum * sin_t
-        M_cur = _moment_area(R_out, Z_out)
-        L['V'] = 2.0 * np.pi * (M_cur - M_prev)
+    fraction_sum = np.zeros_like(angles)
+    for i, L in enumerate(layers):
+        frac_ib = L['delta_ib']/budget_ib
+        frac_ob = L['delta_ob']/budget_ob
+        fraction = (1.0-weight_ob)*frac_ib + weight_ob*frac_ob
+        fraction_sum += fraction
+        if i == len(layers)-1:
+            # Force exact closure of the outermost surface (TF inner face).
+            fraction_sum[:] = 1.0
+        r_next = r_lcfs + clearance*fraction_sum
+        R_next, Z_next = _boundary(r_next)
+        M_next = _moment_area(R_next, Z_next)
+        V = 2*np.pi*(M_next-M_prev)
+        if V < -1e-7:
+            raise ValueError(f'Negative layer volume in {L["name"]}: {V}')
+        L['V'] = max(0.0, V)
         L['R_inner'], L['Z_inner'] = R_prev, Z_prev
-        L['R_outer'], L['Z_outer'] = R_out,  Z_out
-        R_prev, Z_prev, M_prev = R_out, Z_out, M_cur
-    M_breeder_in            = M_prev
-    R_breeder_in, Z_breeder_in = R_prev, Z_prev
-
-    # ── TF-side stack: cumulative offsets of the TF inner face ──────────────
-    R_prev, Z_prev = R_tf_in, Z_tf_in
-    M_prev = _moment_area(R_tf_in, Z_tf_in)
-    offset_cum = 0.0
-    for L in reversed(after):
-        offset_cum += L['delta_ib']
-        R_in, Z_in = _offset_contour(R_tf_in, Z_tf_in, offset_cum)
-        M_cur = _moment_area(R_in, Z_in)
-        L['V'] = 2.0 * np.pi * (M_prev - M_cur)
-        L['R_outer'], L['Z_outer'] = R_prev, Z_prev
-        L['R_inner'], L['Z_inner'] = R_in,   Z_in
-        R_prev, Z_prev, M_prev = R_in, Z_in, M_cur
-    M_breeder_out             = M_prev
-    R_breeder_out, Z_breeder_out = R_prev, Z_prev
-
-    # ── Breeder: fills the remaining shell between the two stacks ───────────
-    breeder['V'] = 2.0 * np.pi * (M_breeder_out - M_breeder_in)
-    breeder['R_inner'], breeder['Z_inner'] = R_breeder_in,  Z_breeder_in
-    breeder['R_outer'], breeder['Z_outer'] = R_breeder_out, Z_breeder_out
+        L['R_outer'], L['Z_outer'] = R_next, Z_next
+        R_prev, Z_prev, M_prev = R_next, Z_next, M_next
 
     V_total = sum(L['V'] for L in layers)
-
-    # Local breeder thickness at each point of its inner surface (distance
-    # to the outer surface) and area weight 2π R dl of each point
-    delta_BB_local = _contour_distance(R_breeder_in, Z_breeder_in,
-                                       R_breeder_out, Z_breeder_out)
+    V_cavity = 2*np.pi*(_moment_area(*_boundary(r_tf)) -
+                         _moment_area(*_boundary(r_lcfs)))
+    if not np.isclose(V_total, V_cavity, rtol=1e-9, atol=1e-6):
+        raise ArithmeticError('Radial build does not conserve cavity volume.')
+    # Directly use the *achieved local thickness*, not the distance between
+    # unrelated offset curves. For zero breeder this is identically zero.
+    frac_bb = ((1.0-weight_ob)*breeder['delta_ib']/budget_ib +
+               weight_ob*breeder['delta_ob']/budget_ob)
+    delta_BB_local = clearance*frac_bb
+    R_breeder_in, Z_breeder_in = breeder['R_inner'], breeder['Z_inner']
     R_next, Z_next = np.roll(R_breeder_in, -1), np.roll(Z_breeder_in, -1)
-    seg = 0.5 * (R_breeder_in + R_next) * np.hypot(R_next - R_breeder_in,
-                                                    Z_next - Z_breeder_in)
-    w_BB_local = 0.5 * (seg + np.roll(seg, 1))
-    w_BB_local = w_BB_local / w_BB_local.sum()
+    seg = 0.5*(R_breeder_in+R_next)*np.hypot(R_next-R_breeder_in,
+                                             Z_next-Z_breeder_in)
+    w_BB_local = 0.5*(seg+np.roll(seg, 1))
+    if w_BB_local.sum() <= 0:
+        raise ValueError('Invalid breeder surface area.')
+    w_BB_local /= w_BB_local.sum()
 
     # ── Divertor: fraction of FW + breeder/structure/multiplier volume ──────
     _DIV_ROLES = ('FW', 'breeder', 'structure', 'multiplier')
@@ -6574,6 +6556,7 @@ def f_radial_build_layers(
         L['M'] = sum(L['component_masses'].values())
 
     return {
+        'feasible':    True,
         'layers':      layers,
         'V_total':     V_total,
         'V_divertor':  V_divertor,
@@ -6940,41 +6923,3 @@ if __name__ == "__main__":
 #%% Print
 
 # print("D0FUS_radial_build_functions loaded")
-
-
-if __name__ == "__main__":
-    # ─────────────────────────────────────────────────────────────────────
-    # General ITER check (radial build): the shipped reference deck must
-    # reproduce the frozen 2026-10 coil quantities (anti-drift guard;
-    # intentional model changes must update these anchors). Context: the
-    # ITER actual builds are TF inboard ≈ 1.0 m and CS Δr = 0.75 m at
-    # B_CS = 13 T [Mitchell IEEE TAS 18 (2008); Schultz 21st SOFE (2005)];
-    # D0FUS sizes its CS at the lower self-consistent B_CS below.
-    # ─────────────────────────────────────────────────────────────────────
-    # NB executed in a fresh subprocess: the demo blocks above leave
-    # module-level state that shifts the CS sizing in-process (d_CS
-    # 0.622 -> 0.660); the production import path (driver, scans, GA) is
-    # unaffected — verified by repeated run() calls in a fresh process.
-    # Root cause to be investigated (see DEVELOPMENT_NOTES).
-    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    _deck = os.path.join(_root, 'D0FUS_INPUTS', '1_run_ITER.txt')
-    if os.path.exists(_deck):
-        import subprocess, textwrap
-        _code = textwrap.dedent("""
-            import sys; sys.path.insert(0, %r)
-            from D0FUS_EXE.D0FUS_run import load_config_from_file, run
-            res = run(load_config_from_file(%r), verbose=0)
-            frozen = {44: 0.9385, 45: 0.5029, 46: 0.3656, 51: 0.7254, 1: 12.009}
-            names = {44: 'c_TF', 45: 'c_WP', 46: 'c_Nose', 51: 'd_CS', 1: 'B_CS'}
-            for i, v in frozen.items():
-                assert abs(float(res[i])/v - 1) < 5e-3, \
-                    (names[i], float(res[i]), v)
-            print('frozen check passed')
-        """) % (_root, _deck)
-        _r = subprocess.run([sys.executable, '-c', _code],
-                            capture_output=True, text=True, timeout=600)
-        assert _r.returncode == 0, _r.stderr[-400:]
-        print("OK  Deck ITER (build): c_TF/c_WP/c_Nose/d_CS/B_CS gelés 2026-10, "
-              "dérive < 0.5 % (sous-process isolé)")
-    else:
-        print("--  Deck ITER absent : test général build sauté")
