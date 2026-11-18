@@ -30,10 +30,6 @@ from D0FUS_BIB.D0FUS_radial_build_functions import (
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def rel_err(value, reference):
-    return abs(value / reference - 1)
-
-
 # ── TF coil count at the ITER geometry ───────────────────────────────────────
 def test_number_tf_coils_iter():
     # D0FUS selects n = 19 against ITER's 18 (port segmentation, Mitchell
@@ -59,7 +55,7 @@ def test_jc_nbti_textbook():
 def test_jc_rebco_senatore_anchor():
     # Fujikura_2019 anchored at Jc(19 T, 4.2 K) = 2000 A/mm² [Senatore 2024].
     J = float(J_non_Cu_REBCO(19., 4.2, dataset="Fujikura_2019")) / 1e6
-    assert rel_err(J, 2000.) < 1e-3, J
+    np.testing.assert_allclose(J, 2000., rtol=1e-3)
 
 
 @pytest.mark.parametrize(
@@ -78,12 +74,12 @@ def test_jc_decreasing_in_B_and_T(jc):
 def test_copper_properties():
     rho273, cv273 = get_copper_properties(273., 0., 100.)
     # ρ_Cu(273 K) = 1.543e-8 Ω·m [NIST Monograph 177 (1992)], 3 %.
-    assert rel_err(rho273, 1.543e-8) < 0.03, rho273
+    np.testing.assert_allclose(rho273, 1.543e-8, rtol=0.03)
     # RRR identity ρ(273 K)/ρ(4 K) = RRR, 2 %.
     rho4, _ = get_copper_properties(4.5, 0., 100.)
-    assert abs(rho273 / rho4 / 100. - 1) < 0.02
+    np.testing.assert_allclose(rho273 / rho4, 100., rtol=0.02)
     # Volumetric heat capacity ≈ 3.45e6 J/(m³·K) [CRC Handbook], 5 %.
-    assert rel_err(cv273, 3.45e6) < 0.05, cv273
+    np.testing.assert_allclose(cv273, 3.45e6, rtol=0.05)
     # Kohler magnetoresistance.
     assert get_copper_properties(4.5, 12., 100.)[0] > rho4
 
@@ -128,19 +124,19 @@ def test_circe0d_lame_identity():
 def test_e_mag_cs_iter():
     # ITER CS: 6.4 GJ at 13 T [Schultz, 21st SOFE (2005)], 6 %.
     E_CS = calculate_E_mag_CS(13., 1.32, 2.07, 12.)
-    assert rel_err(E_CS, 6.4e9) < 0.06, E_CS / 1e9
+    np.testing.assert_allclose(E_CS, 6.4e9, rtol=0.06)
 
 
 def test_bore_log_integral_rectangle_exact():
     R = np.array([2.6, 11.5, 11.5, 2.6])
     Z = np.array([-7., -7., 7., 7.])
-    assert rel_err(_bore_log_integral(R, Z), 14. * np.log(11.5 / 2.6)) < 1e-12
+    np.testing.assert_allclose(_bore_log_integral(R, Z), 14. * np.log(11.5 / 2.6), rtol=1e-12)
 
 
 def test_e_mag_tf_iter():
     # ITER TF: 41 GJ [Mitchell IEEE TAS 18 (2008)], 10 %.
     E_TF = calculate_E_mag_TF(5.3 * 6.2 / 3.1, 2.0, 1.1, 6.2, 0.9, 1.59)
-    assert rel_err(E_TF, 41e9) < 0.10, E_TF / 1e9
+    np.testing.assert_allclose(E_TF, 41e9, rtol=0.10)
 
 
 # ── ITER deck frozen radial-build anchors ────────────────────────────────────
@@ -154,12 +150,13 @@ def test_iter_deck_frozen_radial_build():
     # state can shift the CS sizing (see the note in the source).
     code = textwrap.dedent("""
         import sys; sys.path.insert(0, %r)
+        import numpy as np
         from D0FUS_EXE.D0FUS_run import load_config_from_file, run
         res = run(load_config_from_file(%r), verbose=0)
         frozen = {44: 0.9385, 45: 0.5029, 46: 0.3656, 51: 0.7254, 1: 12.009}
         names = {44: 'c_TF', 45: 'c_WP', 46: 'c_Nose', 51: 'd_CS', 1: 'B_CS'}
         for i, v in frozen.items():
-            assert abs(float(res[i])/v - 1) < 5e-3, (names[i], float(res[i]), v)
+            np.testing.assert_allclose(float(res[i]), v, rtol=5e-3, err_msg=names[i])
     """) % (REPO_ROOT, ITER_DECK)
     env = dict(os.environ, MPLBACKEND="Agg", D0FUS_NO_BANNER="1")
     result = subprocess.run([sys.executable, "-c", code],

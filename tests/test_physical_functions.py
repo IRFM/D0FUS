@@ -17,10 +17,6 @@ from D0FUS_BIB.D0FUS_physical_functions import (
 )
 
 
-def rel_err(value, reference):
-    return abs(value / reference - 1)
-
-
 # ── Registry: published exponents stored exactly ─────────────────────────────
 # IPB98(y,2): ITER Physics Basis, NF 39 (1999) 2175 / Doyle, NF 47 (2007) S18.
 # ITPA20 / ITPA20-IL: Verdoolaege, NF 61 (2021) 076006.
@@ -44,7 +40,8 @@ def test_kappa_convention():
 # ── Published anchors (ported from the _bench tables) ────────────────────────
 def test_iter89p_prefactor():
     # Yushmanov, NF 30 (1990) 1999, converted to the n19 convention.
-    assert rel_err(f_Get_parameter_scaling_law("ITER89-P")[0], 0.048 * 10**-0.1) < 5e-3
+    np.testing.assert_allclose(f_Get_parameter_scaling_law("ITER89-P")[0],
+                               0.048 * 10**-0.1, rtol=5e-3)
 
 
 def test_tau_ipb98_iter_published_convention():
@@ -53,7 +50,7 @@ def test_tau_ipb98_iter_published_convention():
     C, _ad, aM, ak, ae, aR, aB, an, aI, aP = f_Get_parameter_scaling_law("IPB98(y,2)")
     tau98 = (C * 15**aI * 5.3**aB * 10.1**an * 2.5**aM * 6.2**aR
              * (2 / 6.2)**ae * 1.70**ak * 87.0**aP)
-    assert rel_err(tau98, 3.7) < 0.08
+    np.testing.assert_allclose(tau98, 3.7, rtol=0.08)
 
 
 def _tau_itpa_iter_point(law):
@@ -69,7 +66,7 @@ def _tau_itpa_iter_point(law):
      ("ITPA20-IL", 2.902)],  # Verdoolaege 2021, Table 10
 )
 def test_tau_itpa20_iter_point(law, published):
-    assert rel_err(_tau_itpa_iter_point(law), published) < 5e-3
+    np.testing.assert_allclose(_tau_itpa_iter_point(law), published, rtol=5e-3)
 
 
 def test_tau_auclair2026_iter_baseline():
@@ -77,10 +74,10 @@ def test_tau_auclair2026_iter_baseline():
     C, _ad, _aM, ak, ae, aR, aB, an, aI, aP = f_Get_parameter_scaling_law("Auclair2026")
     tauA = (C * 15**aI * 5.3**aB * 10.3**an * 6.2**aR
             * 0.32**ae * 1.70**ak * 87.0**aP)
-    assert rel_err(tauA, 2.96) < 0.01
+    np.testing.assert_allclose(tauA, 2.96, rtol=0.01)
 
 
 def test_auclair2026_fgw_correction():
     # Paper 2: correction at f_GW = 0.85 is exp(-0.49 x 0.33).
     sf, fref = f_Get_fGW_correction("Auclair2026-fGW")
-    assert rel_err(np.exp(sf * (0.85 - fref)), np.exp(-0.49 * 0.33)) < 1e-3
+    np.testing.assert_allclose(np.exp(sf * (0.85 - fref)), np.exp(-0.49 * 0.33), rtol=1e-3)
