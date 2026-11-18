@@ -33,11 +33,12 @@ def f_lift_factor(T_op, B_op, numerator=0.062, a0=1.22e-2,
 
     Fit: numerator / (a0 + a1*T_op + (b0 + b1*T_op + b2*T_op**2)*B_op)
     Source: M. Fletcher (2026), own study, unpublished. Reported only, not
-    used in the conductor sizing.
+    used in the conductor sizing, so it is NaN when the field is missing
+    (no CS, failed coil build) or the fit denominator is not positive.
     """
     denominator = a0 + a1 * T_op + (b0 + b1 * T_op + b2 * T_op**2) * B_op
     if not np.isfinite(denominator) or denominator <= 0:
-        raise ValueError("Lift-factor denominator must be positive and finite")
+        return np.nan
     return numerator / denominator
 
 

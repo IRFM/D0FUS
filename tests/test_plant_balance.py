@@ -99,3 +99,11 @@ def test_cost_indices_match_named_plant_outputs():
     result = subprocess.run([sys.executable, "-c", code],
                             capture_output=True, text=True, timeout=600, env=env)
     assert result.returncode == 0, result.stderr[-400:]
+
+
+# ── Lift factor (reported output) ────────────────────────────────────────────
+def test_lift_factor_is_nan_without_field():
+    # A missing CS field must not stop the run (spherical tokamaks, failed build)
+    from D0FUS_BIB.D0FUS_physical_functions import f_lift_factor
+    assert np.isnan(f_lift_factor(4.2, np.nan))
+    assert f_lift_factor(4.2, 12.0) > 0
