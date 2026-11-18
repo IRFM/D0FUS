@@ -9,10 +9,10 @@ description = "Design 0-dimensional for Fusion Systems - Tokamak power plant des
 readme = "README.md"
 license = {text = "CeCILL-C"}
 authors = [
-    {name = "Timothé Auclair", email = "timothe.auclair@gmail.com"}
+    {name = "Timothé Auclair", email = "timothe.auclair@proton.me"}
 ]
 maintainers = [
-    {name = "Timothé Auclair", email = "timothe.auclair@gmail.com"}
+    {name = "Timothé Auclair", email = "timothe.auclair@proton.me"}
 ]
 keywords = [
     "fusion",

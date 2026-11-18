@@ -264,7 +264,7 @@ To cite D0FUS, use `CITATION.cff` (GitHub's *Cite this repository* button) or ci
 
 ## Contributing
 
-Contributions and questions are welcome: timothe.auclair@cea.fr
+Contributions and questions are welcome: timothe.auclair@proton.me
 
 Tests: `pip install -e ".[dev]"`, then `python -m pytest` from the repository root. GitHub Actions runs the suite on Python 3.10 to 3.13 at every push and pull request.
 

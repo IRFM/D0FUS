@@ -7,7 +7,7 @@ type: software
 authors:
   - given-names: Timothé
     family-names: Auclair
-    email: timothe.auclair@cea.fr
+    email: timothe.auclair@proton.me
     affiliation: "CEA, IRFM, F-13108 Saint-Paul-lez-Durance, France"
 
 repository-code: "https://github.com/IRFM/D0FUS"
