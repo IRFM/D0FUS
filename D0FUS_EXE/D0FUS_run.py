@@ -5143,7 +5143,7 @@ def save_run_output(config: GlobalConfig,
                 # Derived inputs from D0FUS
                 if _shf:
                     print(f"[O] P_th  (thermal power during the burn)           : {_cr['P_t']:.1f} [MW]", file=out)
-                    print(f"[O] P_th_turbine (turbine thermal design power)   : {_cr['P_t_turbine']:.1f} [MW]", file=out)
+                    print(f"[O] P_th_turbine (turbine thermal design power)     : {_cr['P_t_turbine']:.1f} [MW]", file=out)
                 print(f"[O] P_e   (net electric power, operation)           : {P_elec:.1f} [MWe]", file=out)
                 print(f"[O] E_net (annual net electricity)                  : {_cr['E_net']*1e-6:.3f} [TWh/yr]", file=out)
                 if not _cr['net_electric']:

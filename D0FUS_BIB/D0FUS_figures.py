@@ -4270,21 +4270,21 @@ def plot_run(
     no verification curves, no benchmarks, no scaling-law surveys.
 
     Figures produced:
-      [ 1/16]  Tokamak LCFS comparison (with D0FUS overlay)
-      [ 2/16]  Miller flux surfaces (run geometry)
-      [ 3/16]  Shaping profiles κ(ρ), δ(ρ)
-      [ 4/16]  Kinetic profiles n(ρ), T(ρ), p(ρ)
-      [ 5/16]  Safety factor q(ρ) and current decomposition
-      [ 6/16]  Radiation profiles
-      [ 7/16]  Divertor two-point model (detachment vs SOL dissipation)
-      [ 8/16]  Radial build assembly (CS / TF / blanket)
-      [ 9/16]  TF coil side view
-      [10/16]  CICC TF conductor
-      [11/16]  CS cross-section
-      [12/16]  CICC CS conductor
-      [13/16]  Cost breakdown (Sheffield 2016 or Whyte 2024, CapEx / OpEx / COE)
-      [14/16]  Plasma temperature map T(rho)
-      [15/16]  Plasma density map n(rho)
+      [ 1/18]  Tokamak LCFS comparison (with D0FUS overlay)
+      [ 2/18]  Miller flux surfaces (run geometry)
+      [ 3/18]  Shaping profiles κ(ρ), δ(ρ)
+      [ 4/18]  Kinetic profiles n(ρ), T(ρ), p(ρ)
+      [ 5/18]  Safety factor q(ρ) and current decomposition
+      [ 6/18]  Radiation profiles
+      [ 7/18]  Divertor two-point model (detachment vs SOL dissipation)
+      [ 8/18]  Radial build assembly (CS / TF / blanket)
+      [ 9/18]  TF coil side view
+      [10/18]  CICC TF conductor
+      [11/18]  CS cross-section
+      [12/18]  CICC CS conductor
+      [13/18]  Cost breakdown (Sheffield 2016 or Whyte 2024, CapEx / OpEx / COE)
+      [14/18]  Plasma temperature map T(rho)
+      [15/18]  Plasma density map n(rho)
       [16/18]  Plant power balance — pulse
       [17/18]  Plant power balance — dwell
       [18/18]  3D machine view (PyVista; skipped if PyVista is missing,
