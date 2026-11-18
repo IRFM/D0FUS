@@ -1448,10 +1448,11 @@ def plant_conversion(config) -> tuple:
 
 
 def radial_build_feasibility(Blanket_choice, b, Delta_TF=0.0):
-    """Check whether unscaled mandatory components fit each midplane budget.
+    """Midplane budgets against the mandatory components of the concept.
 
-    The returned dict is safe to use for incomplete radial builds; no layers
-    are allocated when either side is infeasible.
+    A side whose budget is below the mandatory sum is built compressed
+    (radial_layers_effective). The build is infeasible only without any
+    radial space.
     """
     import math
     if not all(math.isfinite(v) for v in (b, Delta_TF)):
@@ -1460,8 +1461,7 @@ def radial_build_feasibility(Blanket_choice, b, Delta_TF=0.0):
     mandatory = sum(L['width'] for L in layers[:-1]
                     if L['role'] not in {'breeder','structure','multiplier','shield_HT','shield_LT'})
     available_ib, available_ob = b, b + Delta_TF
-    return {'feasible': (available_ib + 1e-10 >= mandatory and
-                         available_ob + 1e-10 >= mandatory),
+    return {'feasible': available_ib > 0 and available_ob > 0,
             'available_ib': available_ib, 'available_ob': available_ob,
             'mandatory_ib': mandatory, 'mandatory_ob': mandatory}
 
@@ -1472,7 +1472,10 @@ def radial_layers_effective(Blanket_choice: str, b: float, Delta_TF: float = 0.0
                             delta_shield_OB: float = 0.30) -> list:
     """Allocate IB/OB layers with mandatory > shields > breeding priority.
 
-    Structural and multiplier layers are contingent on a positive breeder.
+    When a budget is below the mandatory layers, these are scaled to fit,
+    without shield, breeder or structure, as in D0FUS 3.2 ('stack_scale'
+    below 1). Structural and multiplier layers are contingent on a positive
+    breeder.
     The final gap takes the remaining space. Mandatory widths never shrink.
     Each side is clipped independently, with its own breeder and shield
     targets. HT and LT each receive half the achieved shielding thickness.
@@ -1486,6 +1489,7 @@ def radial_layers_effective(Blanket_choice: str, b: float, Delta_TF: float = 0.0
     if not layers or layers[-1]['role'] != 'gap':
         raise ValueError('The last radial-build layer must be the residual TF gap.')
     dependent = {'breeder', 'structure', 'multiplier'}
+    scales = []
     for side, budget, target, shield_target in (
             ('ib', b, delta_BB_IB, delta_shield_IB),
             ('ob', b + Delta_TF, delta_BB_OB, delta_shield_OB)):
@@ -1493,9 +1497,16 @@ def radial_layers_effective(Blanket_choice: str, b: float, Delta_TF: float = 0.0
         mandatory = sum(L['width'] for L in layers[:-1]
                         if L['role'] not in dependent | {'shield_HT', 'shield_LT'})
         if budget + 1e-10 < mandatory:
-            # The caller must check radial_build_feasibility before requesting
-            # allocation. Do not rescale mandatory layers or manufacture widths.
-            return []
+            # Compressed stack: mandatory layers scaled to the budget
+            if budget <= 0:
+                return []
+            scale = budget / mandatory
+            for L in layers[:-1]:
+                kept = L['role'] not in dependent | {'shield_HT', 'shield_LT'}
+                L[key] = L['width'] * scale if kept else 0.0
+            layers[-1][key] = 0.0
+            scales.append(scale)
+            continue
         free = max(0.0, budget - mandatory)
         shield = min(shield_target, free)
         remaining = max(0.0, free - shield)
@@ -1523,5 +1534,5 @@ def radial_layers_effective(Blanket_choice: str, b: float, Delta_TF: float = 0.0
         if abs(sum(L[key] for L in layers) - budget) > 1e-8:
             raise ArithmeticError('Radial layer allocation does not close.')
     for L in layers:
-        L['stack_scale'] = 1.0
+        L['stack_scale'] = min(scales, default=1.0)
     return layers

@@ -6409,6 +6409,11 @@ def f_radial_build_layers(
     layers    = radial_layers_effective(Blanket_choice, b, Delta_TF,
                                          delta_BB_IB, delta_BB_OB,
                                          delta_shield_IB, delta_shield_OB)
+    if layers and layers[0]['stack_scale'] < 1.0:
+        import warnings
+        warnings.warn(f'Radial build compressed: b is below the mandatory layers, '
+                      f'scaled by {layers[0]["stack_scale"]:.2f} (no shield, no breeder).',
+                      RuntimeWarning, stacklevel=2)
     i_breeder = next(i for i, L in enumerate(layers) if L['role'] == 'breeder')
     before    = layers[:i_breeder]
     breeder   = layers[i_breeder]

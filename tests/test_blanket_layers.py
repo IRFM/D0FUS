@@ -1,6 +1,7 @@
 """Blanket layer allocation (``radial_layers_effective``, M. Fletcher 2026):
-closure of the inboard and outboard stacks and the priority order
-mandatory layers > shields > breeder. Structural checks only, no frozen values.
+closure of the inboard and outboard stacks, the priority order
+mandatory layers > shields > breeder and the compressed stack of thin builds.
+Structural checks only, no frozen values.
 """
 import numpy as np
 import pytest
@@ -45,7 +46,16 @@ def test_shields_before_breeder_and_structure():
     assert _width(layers, 'ib', {'breeder', 'structure', 'multiplier'}) == 0.0
 
 
-def test_infeasible_build_has_no_layers():
+def test_compressed_stack_below_mandatory_layers():
+    # As in D0FUS 3.2: mandatory layers scaled to fit, no shield, no breeder
     b = radial_build_feasibility('HCPB', 0.0)['mandatory_ib'] - 0.05
-    assert not radial_build_feasibility('HCPB', b)['feasible']
-    assert radial_layers_effective('HCPB', b, 0.0) == []
+    assert radial_build_feasibility('HCPB', b)['feasible']
+    layers = radial_layers_effective('HCPB', b, 0.0)
+    np.testing.assert_allclose(_width(layers, 'ib', {L['role'] for L in layers}), b, atol=1e-9)
+    assert _width(layers, 'ib', {'shield_HT', 'shield_LT', 'breeder', 'structure'}) == 0.0
+    assert 0.0 < layers[0]['stack_scale'] < 1.0
+
+
+def test_no_radial_space_has_no_layers():
+    assert not radial_build_feasibility('HCPB', 0.0)['feasible']
+    assert radial_layers_effective('HCPB', 0.0, 0.0) == []
