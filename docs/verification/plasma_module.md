@@ -31,7 +31,7 @@ The plasma volume is computed at the published ITER separatrix shaping {footcit
 
 The D-T reactivity implements the Bosch-Hale parameterisation {footcite:p}`bosch1992improved` presented in Section {ref}`Fusion power, density and pressure <ssec:chap1_fusion>`, tested against the tabulated values of the same paper (Table VIII) and against the independent `cfspopcon` implementation {footcite:p}`body2024detachment`. Both sit on the D0FUS curve over the full $1$ to $100$ keV range, five decades in reactivity ({numref}`Fig. %s <fig:chap2_sigmav>`).
 
-:::{figure} /figures/thesis/chap2_sigmav_validation.png
+:::{figure} /figures/thesis/chap2_sigmav_verification.png
 :name: fig:chap2_sigmav
 :width: 100%
 :align: center
@@ -43,7 +43,7 @@ D-T reactivity implemented in D0FUS compared to the tabulated values of Bosch an
 
 The radiative cooling rates $L_z(T_e)$ and the mean charge state $\langle Z\rangle(T_e)$, implemented from the Mavrin fits {footcite:p}`mavrin2018improved` presented in Section {ref}`Radiation losses <ssec:chap1_radiation>`, are compared in {numref}`Fig. %s <fig:chap2_radiation>` to OpenADAS coronal equilibrium values {footcite:p}`summers1994adas` and to the `TORAX` implementation {footcite:p}`citrin2024torax`, covering species from helium to krypton. To test the implementation, D0FUS is compared to `TORAX`, which codes the same Mavrin fits: the two agree to a fraction of a percent. To test the physics, it is compared to OpenADAS, whose coronal equilibrium is solved independently. Departures exist, but remain small: within $6\,\%$ over the core-relevant window, larger only at the two ends of the range, which concern the scrape-off layer or lie beyond the validity of the reference tables.
 
-:::{figure} /figures/thesis/chap2_radiation_validation.png
+:::{figure} /figures/thesis/chap2_radiation_verification.png
 :name: fig:chap2_radiation
 :width: 100%
 :align: center
@@ -70,7 +70,7 @@ The LHCD, ECCD and NBCD efficiencies presented in Section {ref}`Plasma current a
 
 The Sauter-Redl bootstrap model {footcite:p}`sauter1999neoclassical,redl2021bootstrap` implemented in D0FUS (Section {ref}`Plasma current and scaling law <ssec:chap1_currents>`) is benchmarked against the independent `TORAX` implementation {footcite:p}`citrin2024torax`, as shown in {numref}`Fig. %s <fig:chap2_bootstrap>`. The reference points sit on the D0FUS curves for all four coefficients, over five decades of collisionality and for the three trapped fractions, including the sign change and peak of $L_{32}$ and the steep collisional rise of $\alpha$: the implementation reproduces the reference to plotting accuracy, with no region of disagreement.
 
-:::{figure} /figures/thesis/chap2_bootstrap_validation.png
+:::{figure} /figures/thesis/chap2_bootstrap_verification.png
 :name: fig:chap2_bootstrap
 :width: 100%
 :align: center
@@ -98,7 +98,7 @@ D0FUS implements three L-H threshold scalings (Section {ref}`Heat exhaust: the t
 
 ## Scrape-off layer and detachment.
 
-The heat-flux width implements regression \#15 of Eich *et al.* {footcite:p}`eich2013scaling` presented in Section {ref}`Heat exhaust: the third first-order limit <ssec:chap1_exhaust>`, tested on the ITER evaluation provided by the same paper {footcite:p}`eich2013scaling`: D0FUS returns $0.70$ mm against the published $0.73$ mm, a $4\,\%$ agreement that validates the implementation of the regression.
+The heat-flux width implements regression \#15 of Eich *et al.* {footcite:p}`eich2013scaling` presented in Section {ref}`Heat exhaust: the third first-order limit <ssec:chap1_exhaust>`, tested on the ITER evaluation provided by the same paper {footcite:p}`eich2013scaling`: D0FUS returns $0.70$ mm against the published $0.73$ mm, a $4\,\%$ agreement that verifies the implementation of the regression.
 
 ## Safety factor.
 

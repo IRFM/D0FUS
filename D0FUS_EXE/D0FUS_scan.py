@@ -2240,7 +2240,7 @@ def display_available_parameters():
 
 def get_user_plot_choice(prompt, valid_options):
     """
-    Get user's choice for plotting parameter with validation.
+    Get user's choice for plotting parameter with input check.
 
     Parameters
     ----------

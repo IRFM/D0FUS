@@ -143,7 +143,7 @@ def load_config_from_lines(lines,
             continue
 
         # Legacy-value remapping removed by design: an unrecognised
-        # option value must fail loudly in the downstream validator
+        # option value must fail loudly in the downstream check
         # (which lists the valid options) rather than being silently
         # translated. Unknown KEYS still warn and fall back to the
         # documented defaults.
@@ -1339,7 +1339,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             "Valid options: 'L', 'H', 'Advanced', 'EU-DEMO', 'NT', 'Manual'."
         )
 
-    # Validate the fuel early. Atomic_mass stays an input (scaling laws,
+    # Check the fuel early. Atomic_mass stays an input (scaling laws,
     # L-H threshold, SOL sound speed). Flag a value inconsistent with Fuel.
     if Fuel not in FUELS:
         raise ValueError(f"Unknown Fuel: '{Fuel}'. "
@@ -1355,7 +1355,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         print(f"[warn] Atomic_mass = {Atomic_mass} with Fuel = '{Fuel}' "
               f"(pure fuel mass: {_A_fuel}).")
 
-    # Validate the bootstrap model early: fail fast at load time,
+    # Check the bootstrap model early: fail fast at load time,
     # before any physics evaluation, with the valid options listed.
     if Bootstrap_choice not in ('Sauter-Redl', 'Segal'):
         raise ValueError(
@@ -1363,7 +1363,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             "Valid options: 'Sauter-Redl', 'Segal'."
         )
 
-    # ── Validate manual superconductor option ─────────────────────────────────
+    # ── Check manual superconductor option ────────────────────────────────────
     if Supra_choice == 'Manual':
         if J_wost_Manual is None or J_wost_Manual <= 0:
             raise ValueError(
@@ -2220,7 +2220,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             print(f"  [bracket] fa ∈ [{fa_lo:.5f}, {fa_hi:.5f}], "
                   f"r ∈ [{r_lo:+.3e}, {r_hi:+.3e}]")
 
-        # -- Call brentq on the validated bracket --------------------------------
+        # -- Call brentq on the checked bracket ----------------------------------
         _eval_count = [0]
         def _counted_residual(fa):
             """Wrapper around _pulsed_residual that counts evaluations."""
@@ -2585,7 +2585,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     #  MAIN SOLVER DISPATCH
     # =========================================================================
 
-    # ── Pre-solver validation ─────────────────────────────────────────────────
+    # ── Pre-solver check ──────────────────────────────────────────────────────
     _reset_dbg(3)
     if Operation_mode == 'Pulsed':
         _P_aux_est = (P_LH + P_ECRH + P_NBI + P_ICRH) if CD_source == 'Multi' else P_aux_input
@@ -2598,7 +2598,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         except Exception as _pre_exc:
             import traceback as _tb
             if verbose >= 1:
-                print("\n[ERROR] Pre-solver validation failed:")
+                print("\n[ERROR] Pre-solver check failed:")
                 _tb.print_exc()
             raise RuntimeError(
                 f"Physics chain is broken at the initial guess "
@@ -2620,7 +2620,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         except Exception as _pre_exc:
             import traceback as _tb
             if verbose >= 1:
-                print("\n[ERROR] Pre-solver validation failed:")
+                print("\n[ERROR] Pre-solver check failed:")
                 _tb.print_exc()
             raise RuntimeError(
                 f"Physics chain is broken at the initial guess "

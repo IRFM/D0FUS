@@ -9,7 +9,7 @@ Adapted from T. Auclair, PhD thesis, Aix-Marseille Université (2026), Section 2
 :::
 
 
-The refined radial build models of D0FUS (see Section {ref}`Refined model <ssec:chap1_refined>`) are validated against published values, a dedicated magnet design code, and six constructed machines or highly refined designs, following the methodology published in {footcite:p}`auclair2026mechanical`. Parts of this section are reproduced from that publication with minor adaptations.
+The refined radial build models of D0FUS (see Section {ref}`Refined model <ssec:chap1_refined>`) are verified against published values, a dedicated magnet design code, and six constructed machines or highly refined designs, following the methodology published in {footcite:p}`auclair2026mechanical`. Parts of this section are reproduced from that publication with minor adaptations.
 
 (ssec:chap2_Jc_bench)=
 
@@ -25,10 +25,10 @@ The engineering current density that feeds the TF and CS sizings derives from th
 Strand and tape current density of the three superconductor scalings implemented in D0FUS, evaluated at 4.2 K. NHMFL maglab data {footcite:p}`maglab2024` (transparent, 2011 vintage) is overlaid as an experimental reference. The REBCO scaling itself is not anchored on that series but on two more recent tapes measured at Geneva {footcite:p}`senatore2024rebco`, a Fujikura EuBCO tape (sample 19-0008) and a SuperOx YBCO tape (sample \#337-R), both received in 2019, which reach $1220$ A cm$^{-1}$ of critical current per unit width at $19$ T and $4.2$ K.
 :::
 
-{numref}`Table %s <tab:Jc_validation>` summarises a benchmark against ITER conductor specifications and commercial tape data: the agreement is within a few percent on each reference point.
+{numref}`Table %s <tab:Jc_verification>` summarises a benchmark against ITER conductor specifications and commercial tape data: the agreement is within a few percent on each reference point.
 
 :::{table} Benchmark of the $J_{\text{non-Cu}}$ scaling laws implemented in D0FUS against reference specifications.
-:name: tab:Jc_validation
+:name: tab:Jc_verification
 :align: center
 
 | **Superconductor**    | **Conditions**                          | **D0FUS**     | **Reference**          | **Source**   |

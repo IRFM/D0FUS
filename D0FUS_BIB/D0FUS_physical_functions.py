@@ -3785,8 +3785,8 @@ def f_P_line_radiation_profile(impurity, f_imp, nbar, Tbar, nu_n, nu_T, V,
 # The finite-ne·τ balance enhances low-Z radiation above the coronal peak,
 # which is essential for the Lengyel integral: the coronal limit
 # underestimates L_INT by a factor 1.5-3.5 for these species. The coronal
-# limit of the same pipeline was cross-validated against the Mavrin (2018)
-# tables on the 0.1-2 keV overlap (agreement within 1-5%), validating the
+# limit of the same pipeline was cross-verified against the Mavrin (2018)
+# tables on the 0.1-2 keV overlap (agreement within 1-5%), verifying the
 # atomic-data chain. 40-point log-spaced grid; log-log interpolation.
 _LZ_SOL_TE_EV = np.array([
         1.0000e+00, 1.2152e+00, 1.4767e+00, 1.7944e+00,
@@ -4376,7 +4376,7 @@ if __name__ == "__main__":
     # integrity at freezing time, and the one-sided invariant
     # Lz_SOL >= Lz_coronal on the 0.1-2 keV overlap (the finite residence
     # time keeps line-radiating charge states alive). Lengyel: frozen
-    # cfspopcon SPARC-PRD regression point (chain validated to 0.3 % over
+    # cfspopcon SPARC-PRD regression point (chain verified to 0.3 % over
     # five decades of q_par, 2026-06 review).
     _rows = [
         ("<Z> Ne at 8.9 keV [-]", get_Z_mean('Ne', 8.9), 10.0, 1e-9,
@@ -5010,7 +5010,7 @@ def f_etaCD_effective(config, a, R0, B0, nbar, Tbar, nu_n, nu_T, Z_eff, *,
 
     .. warning:: **Development status (2026)**
 
-       Only ``'Academic'`` is fully validated and recommended for production
+       Only ``'Academic'`` is fully verified and recommended for production
        runs, parameter scans, and publications.
 
        The technology-specific branches (``'LHCD'``, ``'ECCD'``, ``'NBCD'``,
@@ -6514,8 +6514,8 @@ The recommendation on the NEOS page
   "Total pressure should be used for p and pe/p should be used where stated
    and not some approximations with Te and Ti for example."
 
-Validation against NEOS (Sauter's reference Fortran code)
----------------------------------------------------------
+Verification against NEOS (Sauter's reference Fortran code)
+-----------------------------------------------------------
 The Sauter coefficients L31, L32, L34, and alpha implemented in D0FUS have been
 verified term-by-term against the NEOS Fortran 90 module (neobscoeffmod.f90),
 the reference implementation by O. Sauter himself, distributed under Apache 2.0
@@ -6558,8 +6558,8 @@ I_bs(D0FUS) / I_bs(Fable) = 1.40 for EU-DEMO 2017 conditions.  The missing
 d(psi)/d(rho) factor most likely explains most of this ratio.  The ratio with
 the present assembly has not been re-measured.
 
-References for this validation
-------------------------------
+References for this verification
+--------------------------------
 [5] NEOS — neobscoeffmod.f90, O. Sauter, SPC-EPFL, Apache 2.0, 2025.
     https://gitlab.epfl.ch/spc/public/NEOS
     https://crppwww.epfl.ch/~sauter/neoclassical/
@@ -6573,7 +6573,7 @@ References for this validation
     DOI: 10.1063/5.0012664
 
 [8] E.A. Belli, J. Candy, Plasma Phys. Control. Fusion 54 (2012) 015015.
-    NEO drift-kinetic code used as reference for Sauter/Redl validation.
+    NEO drift-kinetic code used as reference for Sauter/Redl verification.
 
 """
 
@@ -6731,7 +6731,7 @@ def f_q_profile(rho, q95=3.0, rho95=0.95, alpha_J=1.5):
     Kovari et al., Fus. Eng. Des. 89 (2014) 3054 — PROCESS systems code
         (§4.1, §18): same current density ansatz and derived q-profile.
     Polevoi et al., Nucl. Fusion 55 (2015) 063019 — ITER V_loop
-        validation of the prescribed j-profile model.
+        verification of the prescribed j-profile model.
     """
     rho = np.asarray(rho, dtype=float)
     ap1 = alpha_J + 1.0
@@ -6999,7 +6999,7 @@ References
     bootstrap current and energetic particle confinement",
     Physics of Plasmas 29(8), 082501 (2022).
     DOI: 10.1063/5.0098166
-    (Application and validation of Redl formula)
+    (Application and verification of Redl formula)
 
 Physics Background
 ------------------
@@ -7041,9 +7041,9 @@ The Redl model provides new polynomial fits for L31, L32, L34, and α as
 functions of f_t, ν*_e, ν*_i, and Z_eff, with improved accuracy compared 
 to the Sauter fits.
 
-Validation
-----------
-The Redl model has been validated against:
+Verification and validation
+---------------------------
+The Redl model has been compared with:
 - NEO drift-kinetic calculations (within ~2% in core, ~5% in pedestal)
 - ASDEX Upgrade experimental profiles
 - SFINCS calculations for quasi-symmetric stellarators
@@ -7314,7 +7314,7 @@ def f_Sauter_Redl_Ib(R0, a, kappa, B0, nbar, Tbar, q95, Z_eff, nu_n, nu_T, n_rho
     nu_i_arr = _nu_i_star(n_i, Ti_eV, q_arr, R0, eps_arr)   # ion collisionality on T_i
 
     # Redl coefficients (vectorised — all use only np operations)
-    # Redl Eq. 19: L34 = L31 (simplification validated by NEO)
+    # Redl Eq. 19: L34 = L31 (simplification verified by NEO)
     L31 = _L31_Redl(f_t, nu_e, Z_eff)
     L32 = _L32_Redl(f_t, nu_e, Z_eff)
     L34 = L31                                    # Redl Eq. 19
@@ -8029,7 +8029,7 @@ def f_heat_PFU_Eich(P_sol, B_pol, R, eps, theta_deg,
     SOL-width scaling law.
 
     Provides a fast 0D estimate of the power deposited on divertor plasma-facing
-    units (PFUs).  For ITER/DEMO design validation, cross-check with dedicated
+    units (PFUs).  For ITER/DEMO design verification, cross-check with dedicated
     edge transport codes (SOLPS-ITER, UEDGE).
 
     Parameters
@@ -10375,7 +10375,7 @@ def compute_RE_indicators(Ip, nbar, Tbar, a, R0, κ, Z_eff, li,
     }
 
 
-# ── Validation ────────────────────────────────────────────────────────────────
+# ── Verification ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     # ── ITER chain (12/12) - q95, wall load and helium ash closure ───────

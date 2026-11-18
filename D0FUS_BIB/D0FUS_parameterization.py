@@ -109,7 +109,7 @@ class GlobalConfig:
     to a conservative DEMO-class power plant baseline.
 
     Instances are frozen: a field cannot be changed after creation. Derive a
-    variant with dataclasses.replace(), which builds a new, validated object.
+    variant with dataclasses.replace(), which builds a new, checked object.
     Every field is checked at creation (see __post_init__): numbers must be
     numbers, booleans must be booleans, and option fields must take one of
     the values listed in CONFIG_OPTIONS.
@@ -913,7 +913,7 @@ def preset_refined(**overrides) -> 'GlobalConfig':
     Build a GlobalConfig configured for the physically detailed 'refined'
     mode.
 
-    All sub-mode selectors are set to their best-validated physics-based
+    All sub-mode selectors are set to their best-verified physics-based
     counterparts; engineering, geometric and economic fields keep their
     GlobalConfig defaults.  Pass keyword arguments to surcharge any field
     after the preset has been applied.

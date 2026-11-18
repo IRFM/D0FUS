@@ -24,7 +24,7 @@
 
 About 39 000 lines of pure Python: a core library of seven modules and over 500 functions, plus five execution modes. The code is fully documented in the PhD thesis of T. Auclair (2026), whose Appendix D serves as the reference manual; release **v2.7.0** is the version archived with the thesis.
 
-**Documentation: [d0fus.readthedocs.io](https://d0fus.readthedocs.io)**. Installation, user guide, the models with their derivations, the validation benchmarks, and an API reference generated from the code at every release.
+**Documentation: [d0fus.readthedocs.io](https://d0fus.readthedocs.io)**. Installation, user guide, the models with their derivations, the verification benchmarks, and an API reference generated from the code at every release.
 
 ---
 

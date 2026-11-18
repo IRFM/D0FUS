@@ -56,7 +56,7 @@ MODULES = [
 _CELL = re.compile(r"^#%%\s*(.*\S)?\s*$")
 _INLINE = re.compile(r"^#\s*[─\-=]{2,}\s+(.+?)\s+[─\-=]{2,}\s*$")
 _RULE = re.compile(r"^#\s*[─=\-]{10,}\s*$")
-_IGNORED_TITLES = {"import", "imports", "main", "validation", "tests", "test"}
+_IGNORED_TITLES = {"import", "imports", "main", "verification", "tests", "test"}
 
 
 def _clean(title: str) -> str:

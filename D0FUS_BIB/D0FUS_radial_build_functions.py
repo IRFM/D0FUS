@@ -1479,7 +1479,7 @@ def _J_REBCO_Senatore2024(B, T, Tet=0, dataset='Fujikura_2019'):
     return np.squeeze(Jc)
 
 
-#%% Current density validation
+#%% Current density verification
 
 
 if __name__ == "__main__":
@@ -2728,7 +2728,7 @@ def f_J_coil_CS(B_CS, d_CS):
 #%% Without Steel current density test
 
 """
-Validation benchmark for cable current density calculations.
+Verification benchmark for cable current density calculations.
 
 Definitions
 ---------------
@@ -3475,7 +3475,7 @@ def F_CIRCE0D(
     """
     n_layers = len(E)
     
-    # Input validation
+    # Input check
     if len(R) != n_layers + 1:
         raise ValueError(f"R must have {n_layers + 1} elements, got {len(R)}")
     if len(J) != n_layers or len(B) != n_layers or len(config) != n_layers:
@@ -3645,9 +3645,9 @@ def compute_tresca_stress(sigma_r: np.ndarray, sigma_t: np.ndarray) -> np.ndarra
 
 
 if __name__ == "__main__":
-    # CIRCE0D stress solver validation: Lame, CS 3-layer, composite
+    # CIRCE0D stress solver verification: Lame, CS 3-layer, composite
     import D0FUS_BIB.D0FUS_figures as figs
-    figs.plot_CIRCE_stress_validation()
+    figs.plot_CIRCE_stress_verification()
 
 #%% print
 
@@ -3941,7 +3941,7 @@ def Winding_Pack_refined(R_0, a, b, sigma_max, J_max, B_max, omega, n,
 
     R_ext = R_0 - a - b
 
-    # Validate J_max before proceeding
+    # Check J_max before proceeding
     if J_max is None or J_max <= 0:
         return np.nan, np.nan, np.nan, np.nan, np.nan
 
@@ -6181,7 +6181,7 @@ def f_V_TF(a: float, b: float, R0: float,
 
 if __name__ == "__main__":
     """
-    Validation of magnetic energy and quench discharge time calculations.
+    Verification of magnetic energy and quench discharge time calculations.
     
     References
     ----------
@@ -6195,7 +6195,7 @@ if __name__ == "__main__":
     """
     
     print("\n" + "="*65)
-    print("MAGNETIC ENERGY & DISCHARGE TIME VALIDATION")
+    print("MAGNETIC ENERGY & DISCHARGE TIME VERIFICATION")
     print("="*65)
     
     # =========================================================================

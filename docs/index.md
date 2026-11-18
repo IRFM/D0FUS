@@ -50,8 +50,8 @@ Execution modes, input decks, outputs and every input field.
 Plasma, radial build, exhaust and cost models, with their derivations.
 :::
 
-:::{grid-item-card} Validation
-:link: validation/index
+:::{grid-item-card} Verification
+:link: verification/index
 :link-type: doc
 
 Module-level checks and full-device benchmarks on EU-DEMO and ITER.
@@ -79,7 +79,7 @@ Reference publications and how to cite the code.
 getting_started/index
 user_guide/index
 theory/index
-validation/index
+verification/index
 api/index
 about/index
 ```

@@ -516,7 +516,7 @@ if __name__ == "__main__":
         return err < tol_pct
 
     print("=" * 72)
-    print("  D0FUS_cost_functions.py — standalone validation")
+    print("  D0FUS_cost_functions.py — standalone verification")
     print("=" * 72)
 
     # ── 1. Capital Recovery Factor ───────────────────────────────────────────

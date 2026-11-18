@@ -1433,7 +1433,7 @@ def plot_TF_thickness_vs_field(
     mechanical models (Academic/refined × Wedging/Bucking).
 
     An optional MADE benchmark scatter dataset is superimposed on the Wedging
-    panel for EU-DEMO validation.
+    panel for EU-DEMO verification.
 
     Parameters
     ----------
@@ -1445,7 +1445,7 @@ def plot_TF_thickness_vs_field(
                          Default 60 MA/m². The refined cable model (Maddock
                          adiabatic hotspot) predicts ~40 MA/m² for HTS at
                          20 T,
-                         From Giannini 2023 Fig. 20 (validated FEM
+                         From Giannini 2023 Fig. 20 (FEM-verified
                          design at 20.3 T): 234 conductors × 107 kA over
                          a WP area of 0.67 m² gives J_WP = 38 MA/m²
                          (including steel). Correcting for a typical jacket
@@ -4140,13 +4140,13 @@ def plot_all(
     _p("1c", "δ = 0.6 (κ − 1) vs machines")
     plot_delta_trend(save_dir=save_dir)
 
-    _p(2, "Shaping profiles κ(ρ), δ(ρ) — validation")
+    _p(2, "Shaping profiles κ(ρ), δ(ρ) — verification")
     plot_shaping_profiles(save_dir=save_dir)
 
     _p(3, "Run shaping profiles κ(ρ), δ(ρ)")
     plot_shaping_run(run, save_dir=save_dir)
 
-    _p(4, "Miller flux surfaces — validation")
+    _p(4, "Miller flux surfaces — verification")
     plot_miller_surfaces(save_dir=save_dir)
 
     _p(5, "Run Miller flux surfaces")
@@ -4222,8 +4222,8 @@ def plot_all(
     _p(24, "CS thickness vs flux swing")
     plot_CS_thickness_vs_flux(cfg=cfg, save_dir=save_dir)
 
-    _p(25, "CIRCE stress-model validation")
-    plot_CIRCE_stress_validation(save_dir=save_dir)
+    _p(25, "CIRCE stress-model verification")
+    plot_CIRCE_stress_verification(save_dir=save_dir)
 
     _p(26, "Radial build assembly (CS / TF / blanket)")
     plot_assembly_side_view(run, save_dir=save_dir)
@@ -4267,7 +4267,7 @@ def plot_run(
 
     This is the subset called after each D0FUS run.  It contains only the
     figures that depend on the current run configuration and results —
-    no validation curves, no benchmarks, no scaling-law surveys.
+    no verification curves, no benchmarks, no scaling-law surveys.
 
     Figures produced:
       [ 1/16]  Tokamak LCFS comparison (with D0FUS overlay)
@@ -4392,15 +4392,15 @@ def plot_run(
     print("Done.")
 
 # =============================================================================
-# 7. CIRCE stress-model validation
+# 7. CIRCE stress-model verification
 # =============================================================================
 
-def plot_CIRCE_stress_validation(
+def plot_CIRCE_stress_verification(
     nu: float = 0.3,
     save_dir=None,
 ) -> None:
     """
-    Validate the F_CIRCE0D finite-element stress solver against three
+    Verify the F_CIRCE0D finite-element stress solver against three
     analytical reference cases:
 
       Test 1 : Pressurised thin cylinder — Lamé exact solution.
@@ -4450,7 +4450,7 @@ def plot_CIRCE_stress_validation(
     ax.plot(r, sigma_t_lame  / 1e6, "r--", lw=1.5, label=r"$\sigma_\theta$ (Lamé)")
     ax.set_xlabel("r [m]", fontsize=11)
     ax.set_ylabel("Stress [MPa]", fontsize=11)
-    ax.set_title("Test 1: Pressurised cylinder\n(Lamé analytical validation)", fontsize=10)
+    ax.set_title("Test 1: Pressurised cylinder\n(Lamé analytical verification)", fontsize=10)
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
 
@@ -4481,10 +4481,10 @@ def plot_CIRCE_stress_validation(
     ax.legend(loc="upper right", fontsize=8)
     ax.grid(True, alpha=0.3)
 
-    plt.suptitle("CIRCE0D stress-model validation suite",
+    plt.suptitle("CIRCE0D stress-model verification suite",
                  fontsize=13, fontweight="bold")
     plt.tight_layout()
-    _save_or_show(fig, save_dir, "CIRCE_stress_validation")
+    _save_or_show(fig, save_dir, "CIRCE_stress_verification")
 
 
 # =============================================================================
@@ -5036,7 +5036,7 @@ def plot_CS_benchmark_table(cfg=None, save_dir=None) -> None:
                     # 20.35 mm CICC with a 1.5 mm jacket carrying 14.5 kA at a
                     # 23 mm pitch (Wu 2008, Guo 2016), i.e. 36 and not 45 MA/m2.
                     # The same reconstruction on its TF conductor returns the
-                    # value the TF benchmark already uses, which validates it.
+                    # value the TF benchmark already uses, which verifies it.
                     "kappa": 1.9,  "J_wost": 36e6, "Gap": 0.193, "H_CS": 2.75},
         "ARC":     {"Ψplateau": 32.0, "a_cs": 1.10, "b_cs": 0.86, "c_cs": 0.64,
                     "R0_cs": 3.30, "B_TF": 23,   "B_cs": 12.9, "σ_CS": 700e6,
@@ -6091,7 +6091,7 @@ def build_figure_registry():
       run dict        -> 'run'          (rendered by plot_all on a run dict)
       results         -> 'uncertainty'  (Monte-Carlo robustness figures)
       scan_results    -> 'scan'
-      anything else   -> 'standalone'   (parametric / validation figures
+      anything else   -> 'standalone'   (parametric / verification figures
                                          taking explicit physics arguments)
 
     Returns
@@ -6131,7 +6131,7 @@ _CATEGORY_ORDER = ('meta', 'run', 'standalone', 'scan', 'uncertainty')
 _CATEGORY_LABEL = {
     'meta':        'META — full catalogue renderer',
     'run':         'RUN-DICT FIGURES — rendered from a D0FUS run dict',
-    'standalone':  'STANDALONE FIGURES — parametric / validation '
+    'standalone':  'STANDALONE FIGURES — parametric / verification '
                    '(explicit physics arguments)',
     'scan':        'SCAN FIGURES — rendered from scan-mode outputs',
     'uncertainty': 'UNCERTAINTY FIGURES — rendered from UQ outputs',
@@ -6314,7 +6314,7 @@ def _standalone_main():
 """
 D0FUS_uncertainty_figures.py -- decision-oriented plots for the uncertainty study.
 
-Restyled for the thesis: one restrained, colourblind-safe palette (validated
+Restyled for the thesis: one restrained, colourblind-safe palette (checked
 status + categorical + single-blue slots), recessive axes, and a per-figure
 style applied through a context manager so it never leaks into the module's
 other (RUN/SCAN/GENETIC) figures. Each figure carries a one-line plain-language
@@ -6340,7 +6340,7 @@ reading note so it stands on its own:
 import functools
 from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
 
-# --- validated, colourblind-safe palette (status + categorical + one blue) ----
+# --- checked, colourblind-safe palette (status + categorical + one blue) ------
 _INK, _INK2, _MUTED = "#1a1a19", "#52514e", "#8a8880"
 _GRIDC, _SURF = "#e4e3dd", "#ffffff"
 _GOOD, _AQUA, _BLUE, _BLUE_L = "#0ca30c", "#1baf7a", "#2a78d6", "#86b6ef"
