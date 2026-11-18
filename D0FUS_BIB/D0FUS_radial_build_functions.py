@@ -6393,6 +6393,23 @@ def f_radial_build_layers(
                         than the fixed stack (radial_layers_effective)
     """
     # Infeasible mandatory build: only the cavity geometry is meaningful.
+    def _unavailable(reason):
+        # No usable TF inner contour (failed coil build) or no cavity between
+        # the LCFS and the TF: layers, volumes and masses are not available
+        import warnings
+        warnings.warn(f'Radial build layers unavailable: {reason}', RuntimeWarning,
+                      stacklevel=3)
+        return dict(layers=[], V_total=np.nan, V_available=np.nan, V_divertor=np.nan,
+                    delta_BB_ib=np.nan, delta_BB_ob=np.nan,
+                    delta_BB_local=np.array([]), w_BB_local=np.array([]),
+                    delta_BB_eff=np.nan, stack_scale=np.nan, feasible=False,
+                    available_ib=b, available_ob=b + Delta_TF,
+                    mandatory_ib=np.nan, mandatory_ob=np.nan)
+
+    R_tf_in, Z_tf_in = np.asarray(R_tf_in, float), np.asarray(Z_tf_in, float)
+    if (R_tf_in.ndim != 1 or R_tf_in.shape != Z_tf_in.shape or len(R_tf_in) < 8
+            or not np.all(np.isfinite(R_tf_in)) or not np.all(np.isfinite(Z_tf_in))):
+        return _unavailable('no valid TF inner contour')
     feasibility = radial_build_feasibility(Blanket_choice, b, Delta_TF)
     if not feasibility['feasible']:
         import warnings
@@ -6461,11 +6478,14 @@ def f_radial_build_layers(
     theta_l = np.linspace(0, 2*np.pi, max(4*N_theta, 1000), endpoint=False)
     R_l = R0 + a*np.cos(theta_l + np.arcsin(δ)*np.sin(theta_l))
     Z_l = κ*a*np.sin(theta_l)
-    r_lcfs = _ray_radius(R_l, Z_l)
-    r_tf = _ray_radius(R_tf_in, Z_tf_in)
+    try:
+        r_lcfs = _ray_radius(R_l, Z_l)
+        r_tf = _ray_radius(R_tf_in, Z_tf_in)
+    except ValueError as exc:
+        return _unavailable(str(exc))
     clearance = r_tf - r_lcfs
     if np.any(~np.isfinite(clearance)) or np.min(clearance) <= 1e-9:
-        raise ValueError('Infeasible radial build: TF boundary intersects the LCFS.')
+        return _unavailable('TF boundary intersects the LCFS')
 
     # The two input widths are midplane specifications. Between midplanes,
     # smooth interpolation gives a continuous layer with no sharp corners.
