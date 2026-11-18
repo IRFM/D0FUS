@@ -1,8 +1,8 @@
 """Tests ported from the ``__main__`` self-check blocks of
 ``D0FUS_BIB/D0FUS_radial_build_functions.py`` that contain ``assert`` statements.
 
-One section per source block; the approximate source line of each block is
-given in its header. Checks and tolerances are unchanged from the source.
+The blocks were removed from the source once ported. One section per former
+block. Checks and tolerances are unchanged from the source.
 """
 import os
 import subprocess
@@ -34,7 +34,7 @@ def rel_err(value, reference):
     return abs(value / reference - 1)
 
 
-# ── TF coil count at the ITER geometry (block near line 1068) ────────────────
+# ── TF coil count at the ITER geometry ───────────────────────────────────────
 def test_number_tf_coils_iter():
     # D0FUS selects n = 19 against ITER's 18 (port segmentation, Mitchell
     # IEEE TAS 22 (2012)); the achieved ripple must respect δ_adm = 0.5 %.
@@ -43,7 +43,7 @@ def test_number_tf_coils_iter():
     assert ripple <= 0.005 + 1e-12, ripple
 
 
-# ── Superconductor Jc anchors (block near line 1494) ─────────────────────────
+# ── Superconductor Jc anchors ────────────────────────────────────────────────
 def test_jc_nb3sn_iter_strand_class():
     # ITER TF strand spec ≥ 800 A/mm² at 12 T, 4.22 K [Devred SuST 27 (2014)].
     J = float(J_non_Cu_Nb3Sn(12., 4.2, Eps=-0.003)) / 1e6
@@ -74,7 +74,7 @@ def test_jc_decreasing_in_B_and_T(jc):
     assert float(jc(8., 4.2)) > float(jc(8., 6.5))
 
 
-# ── Copper property anchors (block near line 1681) ───────────────────────────
+# ── Copper property anchors ──────────────────────────────────────────────────
 def test_copper_properties():
     rho273, cv273 = get_copper_properties(273., 0., 100.)
     # ρ_Cu(273 K) = 1.543e-8 Ω·m [NIST Monograph 177 (1992)], 3 %.
@@ -88,7 +88,7 @@ def test_copper_properties():
     assert get_copper_properties(4.5, 12., 100.)[0] > rho4
 
 
-# ── J_coil identities (block near line 2778) ─────────────────────────────────
+# ── J_coil identities ────────────────────────────────────────────────────────
 def test_j_coil_alpha_identities():
     rng = np.random.default_rng(0)
     err_TF, err_CS = 0.0, 0.0
@@ -115,7 +115,7 @@ def test_j_coil_degenerate_geometry_returns_nan():
     assert np.isnan(f_J_coil_CS(np.nan, 0.5))
 
 
-# ── CIRCE0D vs Lamé thick cylinder (block near line 3729) ────────────────────
+# ── CIRCE0D vs Lamé thick cylinder ───────────────────────────────────────────
 def test_circe0d_lame_identity():
     sr, st, _, r, _ = F_CIRCE0D(100, [1., 2.], [0.], [0.], 100e6, 0., [200e9], 0.3, [1])
     sr_lame = 100e6 * 1. / (4. - 1.) * (1 - 4. / r**2)
@@ -124,7 +124,7 @@ def test_circe0d_lame_identity():
     assert np.max(np.abs(st - st_lame)) / np.max(np.abs(st_lame)) < 1e-10
 
 
-# ── Stored magnetic energy anchors (block near line 6274) ────────────────────
+# ── Stored magnetic energy anchors ───────────────────────────────────────────
 def test_e_mag_cs_iter():
     # ITER CS: 6.4 GJ at 13 T [Schultz, 21st SOFE (2005)], 6 %.
     E_CS = calculate_E_mag_CS(13., 1.32, 2.07, 12.)
@@ -143,7 +143,7 @@ def test_e_mag_tf_iter():
     assert rel_err(E_TF, 41e9) < 0.10, E_TF / 1e9
 
 
-# ── ITER deck frozen radial-build anchors (block near line 6945) ─────────────
+# ── ITER deck frozen radial-build anchors ────────────────────────────────────
 ITER_DECK = os.path.join(REPO_ROOT, "D0FUS_INPUTS", "1_run_ITER.txt")
 
 

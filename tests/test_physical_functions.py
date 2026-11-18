@@ -1,10 +1,11 @@
 """Tests ported from the ``__main__`` self-check blocks of
 ``D0FUS_BIB/D0FUS_physical_functions.py`` that contain ``assert`` statements.
 
-Source block: the confinement-scaling registry anchors (``if __name__ ==
-"__main__"`` block starting near line 8872). Its ``assert`` statements are
-ported verbatim; its ``_bench`` rows that carry a tolerance (which make the
-self-check fail on violation) are ported as relative-tolerance asserts.
+Source block: the confinement-scaling registry anchors, a former
+``if __name__ == "__main__"`` block removed from the source once ported.
+Its ``assert`` statements are ported verbatim; its ``_bench`` rows that
+carry a tolerance (which make the self-check fail on violation) are ported
+as relative-tolerance asserts.
 """
 import numpy as np
 import pytest
