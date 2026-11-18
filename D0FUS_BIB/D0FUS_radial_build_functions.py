@@ -6450,6 +6450,9 @@ def f_radial_build_layers(
     Z_tf_in: np.ndarray,
     Blanket_choice: str,
     N_theta: int = 500,
+    delta_BB_IB: float = 0.50,
+    delta_BB_OB: float = 0.50,
+    delta_shield: float = 0.30,
 ) -> dict:
     """
     Exact volumes/masses of every layer in the concept-specific radial build,
@@ -6465,8 +6468,8 @@ def f_radial_build_layers(
       - Layers between the breeder and the TF inner face (shields, VV, gaps,
         structure) are bounded by cumulative _offset_contour() shells of the
         TF inner face, built up TF-side first.
-      - The breeder layer fills the remaining shell between the two stacks —
-        its thickness is the residual of b (radial_layers_effective()).
+      - The breeder thickness is explicitly allocated rather than absorbing
+        the residual space; the final gap receives any unused clearance.
 
     Every layer boundary is an actual 3D contour; volumes are computed via the
     exact body-of-revolution formula V = 2π ∫∫ R dA (_moment_area).  No Pappus
@@ -6499,7 +6502,22 @@ def f_radial_build_layers(
         stack_scale  — scale of the fixed layers, below 1 when b is smaller
                         than the fixed stack (radial_layers_effective)
     """
-    layers    = radial_layers_effective(Blanket_choice, b, Delta_TF)
+    # Infeasible mandatory build: only the cavity geometry is meaningful.
+    feasibility = radial_build_feasibility(Blanket_choice, b, Delta_TF)
+    if not feasibility['feasible']:
+        import warnings
+        warnings.warn('Mandatory radial build cannot fit; skipping all layer '
+                      'widths, volumes and masses.', RuntimeWarning, stacklevel=2)
+        V_available = f_V_blanket(a, b, R0, κ, δ, Delta_TF,
+                                  R_outer=R_tf_in, Z_outer=Z_tf_in,
+                                  N_theta=N_theta)
+        return dict(layers=[], V_total=float(V_available),
+                    V_available=float(V_available), V_divertor=np.nan,
+                    delta_BB_ib=np.nan, delta_BB_ob=np.nan,
+                    delta_BB_local=np.array([]), w_BB_local=np.array([]),
+                    delta_BB_eff=np.nan, stack_scale=np.nan, **feasibility)
+    layers    = radial_layers_effective(Blanket_choice, b, Delta_TF,
+                                         delta_BB_IB, delta_BB_OB, delta_shield)
     i_breeder = next(i for i, L in enumerate(layers) if L['role'] == 'breeder')
     before    = layers[:i_breeder]
     breeder   = layers[i_breeder]
@@ -6510,52 +6528,100 @@ def f_radial_build_layers(
     cos_t     = np.cos(theta + np.arcsin(δ) * np.sin(theta))
     sin_t     = np.sin(theta)
 
-    # ── Plasma-side stack: cumulative Miller ellipses from the LCFS ─────────
-    R_prev, Z_prev = R0 + a * cos_t, κ * a * sin_t
+    # The old implementation made the breeder the residual between two
+    # independently offset contours. That violates the requested blanket
+    # thickness, especially when a breeder is absent. Instead use a common
+    # angular parametrisation of the physical LCFS and TF inner face, and
+    # partition *each ray* according to the allocated inboard/outboard stack.
+    # Every interface is a nested, star-shaped contour. This is a radial-ray
+    # engineering approximation, not a constant surface-normal thickness.
+    # It exactly partitions the actual enclosed cavity (modulo quadrature).
+    angles = np.linspace(-np.pi, np.pi, N_theta, endpoint=False)
+    def _ray_radius(R, Z):
+        R, Z = np.asarray(R, float), np.asarray(Z, float)
+        if R.shape != Z.shape or R.ndim != 1 or len(R) < 8:
+            raise ValueError('Invalid TF boundary contour.')
+        x = R - R0
+        phi = np.mod(np.arctan2(Z, x) + np.pi, 2*np.pi)
+        rad = np.hypot(x, Z)
+        order = np.argsort(phi)
+        phi, rad = phi[order], rad[order]
+        # Duplicate polar angles indicate a non-star-shaped TF boundary.
+        if np.min(np.diff(phi)) < 1e-12:
+            distinct = np.r_[True, np.diff(phi) > 1e-12]
+            phi, rad = phi[distinct], rad[distinct]
+        if np.max(np.diff(np.r_[phi, phi[0]+2*np.pi])) > 0.25:
+            raise ValueError('TF inner contour does not cover every polar ray.')
+        q = np.mod(angles + np.pi, 2*np.pi)
+        return np.interp(q, np.r_[phi[-1]-2*np.pi, phi, phi[0]+2*np.pi],
+                         np.r_[rad[-1], rad, rad[0]])
+
+    # Use the LCFS as the exact first interface; do not spuriously change its
+    # elongation on the initial SOL boundary.
+    phi0 = angles
+    r_lcfs = a * np.ones_like(phi0)
+    # The Miller surface cannot be expressed as a single radial distance in
+    # the Miller parameter itself; convert its sampled coordinates to rays.
+    theta_l = np.linspace(0, 2*np.pi, max(4*N_theta, 1000), endpoint=False)
+    R_l = R0 + a*np.cos(theta_l + np.arcsin(δ)*np.sin(theta_l))
+    Z_l = κ*a*np.sin(theta_l)
+    r_lcfs = _ray_radius(R_l, Z_l)
+    r_tf = _ray_radius(R_tf_in, Z_tf_in)
+    clearance = r_tf - r_lcfs
+    if np.any(~np.isfinite(clearance)) or np.min(clearance) <= 1e-9:
+        raise ValueError('Infeasible radial build: TF boundary intersects the LCFS.')
+
+    # The two input widths are midplane specifications. Between midplanes,
+    # smooth interpolation gives a continuous layer with no sharp corners.
+    # Allocation fractions are normalized by the corresponding budgets, so
+    # all layers sum to the actual cavity thickness even when it differs
+    # from the nominal midplane b due to the TF contour shape.
+    weight_ob = (1.0 + np.cos(angles))*0.5
+    budget_ib, budget_ob = b, b + Delta_TF
+    if budget_ib <= 0 or budget_ob <= 0:
+        raise ValueError('Radial clearance must be strictly positive.')
+    def _boundary(r):
+        return R0 + r*np.cos(angles), r*np.sin(angles)
+    R_prev, Z_prev = _boundary(r_lcfs)
     M_prev = _moment_area(R_prev, Z_prev)
-    a_cum  = a
-    for L in before:
-        a_cum += L['delta_ib']
-        R_out, Z_out = R0 + a_cum * cos_t, kappa_sol * a_cum * sin_t
-        M_cur = _moment_area(R_out, Z_out)
-        L['V'] = 2.0 * np.pi * (M_cur - M_prev)
+    fraction_sum = np.zeros_like(angles)
+    for i, L in enumerate(layers):
+        frac_ib = L['delta_ib']/budget_ib
+        frac_ob = L['delta_ob']/budget_ob
+        fraction = (1.0-weight_ob)*frac_ib + weight_ob*frac_ob
+        fraction_sum += fraction
+        if i == len(layers)-1:
+            # Force exact closure of the outermost surface (TF inner face).
+            fraction_sum[:] = 1.0
+        r_next = r_lcfs + clearance*fraction_sum
+        R_next, Z_next = _boundary(r_next)
+        M_next = _moment_area(R_next, Z_next)
+        V = 2*np.pi*(M_next-M_prev)
+        if V < -1e-7:
+            raise ValueError(f'Negative layer volume in {L["name"]}: {V}')
+        L['V'] = max(0.0, V)
         L['R_inner'], L['Z_inner'] = R_prev, Z_prev
-        L['R_outer'], L['Z_outer'] = R_out,  Z_out
-        R_prev, Z_prev, M_prev = R_out, Z_out, M_cur
-    M_breeder_in            = M_prev
-    R_breeder_in, Z_breeder_in = R_prev, Z_prev
-
-    # ── TF-side stack: cumulative offsets of the TF inner face ──────────────
-    R_prev, Z_prev = R_tf_in, Z_tf_in
-    M_prev = _moment_area(R_tf_in, Z_tf_in)
-    offset_cum = 0.0
-    for L in reversed(after):
-        offset_cum += L['delta_ib']
-        R_in, Z_in = _offset_contour(R_tf_in, Z_tf_in, offset_cum)
-        M_cur = _moment_area(R_in, Z_in)
-        L['V'] = 2.0 * np.pi * (M_prev - M_cur)
-        L['R_outer'], L['Z_outer'] = R_prev, Z_prev
-        L['R_inner'], L['Z_inner'] = R_in,   Z_in
-        R_prev, Z_prev, M_prev = R_in, Z_in, M_cur
-    M_breeder_out             = M_prev
-    R_breeder_out, Z_breeder_out = R_prev, Z_prev
-
-    # ── Breeder: fills the remaining shell between the two stacks ───────────
-    breeder['V'] = 2.0 * np.pi * (M_breeder_out - M_breeder_in)
-    breeder['R_inner'], breeder['Z_inner'] = R_breeder_in,  Z_breeder_in
-    breeder['R_outer'], breeder['Z_outer'] = R_breeder_out, Z_breeder_out
+        L['R_outer'], L['Z_outer'] = R_next, Z_next
+        R_prev, Z_prev, M_prev = R_next, Z_next, M_next
 
     V_total = sum(L['V'] for L in layers)
-
-    # Local breeder thickness at each point of its inner surface (distance
-    # to the outer surface) and area weight 2π R dl of each point
-    delta_BB_local = _contour_distance(R_breeder_in, Z_breeder_in,
-                                       R_breeder_out, Z_breeder_out)
+    V_cavity = 2*np.pi*(_moment_area(*_boundary(r_tf)) -
+                         _moment_area(*_boundary(r_lcfs)))
+    if not np.isclose(V_total, V_cavity, rtol=1e-9, atol=1e-6):
+        raise ArithmeticError('Radial build does not conserve cavity volume.')
+    # Directly use the *achieved local thickness*, not the distance between
+    # unrelated offset curves. For zero breeder this is identically zero.
+    frac_bb = ((1.0-weight_ob)*breeder['delta_ib']/budget_ib +
+               weight_ob*breeder['delta_ob']/budget_ob)
+    delta_BB_local = clearance*frac_bb
+    R_breeder_in, Z_breeder_in = breeder['R_inner'], breeder['Z_inner']
     R_next, Z_next = np.roll(R_breeder_in, -1), np.roll(Z_breeder_in, -1)
-    seg = 0.5 * (R_breeder_in + R_next) * np.hypot(R_next - R_breeder_in,
-                                                    Z_next - Z_breeder_in)
-    w_BB_local = 0.5 * (seg + np.roll(seg, 1))
-    w_BB_local = w_BB_local / w_BB_local.sum()
+    seg = 0.5*(R_breeder_in+R_next)*np.hypot(R_next-R_breeder_in,
+                                             Z_next-Z_breeder_in)
+    w_BB_local = 0.5*(seg+np.roll(seg, 1))
+    if w_BB_local.sum() <= 0:
+        raise ValueError('Invalid breeder surface area.')
+    w_BB_local /= w_BB_local.sum()
 
     # ── Divertor: fraction of FW + breeder/structure/multiplier volume ──────
     _DIV_ROLES = ('FW', 'breeder', 'structure', 'multiplier')
@@ -6574,6 +6640,7 @@ def f_radial_build_layers(
         L['M'] = sum(L['component_masses'].values())
 
     return {
+        'feasible':    True,
         'layers':      layers,
         'V_total':     V_total,
         'V_divertor':  V_divertor,

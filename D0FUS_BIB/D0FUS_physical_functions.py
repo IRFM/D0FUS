@@ -27,6 +27,20 @@ else:
     from D0FUS_BIB.D0FUS_import import *
     from D0FUS_BIB.D0FUS_parameterization import *
 
+def f_lift_factor(T_op, B_op, numerator=0.062, a0=1.22e-2,
+                  a1=5.49e-4, b0=1.27e-3, b1=-2.70e-5, b2=5.93e-6):
+    """Dimensionless REBCO lift factor at operating temperature [K] and field [T].
+
+    Fit: numerator / (a0 + a1*T_op + (b0 + b1*T_op + b2*T_op**2)*B_op)
+    Source: M. Fletcher (2026), own study, unpublished. Reported only, not
+    used in the conductor sizing.
+    """
+    denominator = a0 + a1 * T_op + (b0 + b1 * T_op + b2 * T_op**2) * B_op
+    if not np.isfinite(denominator) or denominator <= 0:
+        raise ValueError("Lift-factor denominator must be positive and finite")
+    return numerator / denominator
+
+
 # =============================================================================
 # Plant electrical balance and pulsed-operation utilities (M. Fletcher)
 # =============================================================================
@@ -122,6 +136,12 @@ PROCESS_BUILDINGS = dict(
     esbldgm3=1.0e3,    # energy storage building, pulsed plant only [m3]
     f_z_cryostat=4.268,  # cryostat lid clearance factor, scaled from ITER (M. Kovari) [-]
 )
+
+def f_cryo_LHe_LN_volume(P_cryo_MWe):
+    """1. LHe volume for cryogenics [L]: function scaled against cryo electrical power (1 point fit: ITER [40 MWe, 190e3 L]) 2. LN volume for cryogenics [L]: scaled against LHe volume (1 point fit: ITER [LN: 300e3 L, LHe: 190e3 L]). Ref: H. Vaghela, “ITER Cryogenics System: Challenges and Current Status,” presented at the 2025 EIROforum Topical Workshop on Cryogenics, Garching, Germany, Oct. 14–15, 2025."""
+    V_LHe = 4.75e3 * float(P_cryo_MWe)
+    V_LN = 300 / 190 * V_LHe
+    return (V_LHe, V_LN)
 
 
 def f_tf_power_supplies(I_TF_A, R0, N_TF, V_dump_V, E_TF_J, rho_bus=2.62e-8,
@@ -278,31 +298,121 @@ def f_bop_power(P_th_MWth, f_BoP):
     return float(f_BoP) * float(P_th_MWth)
 
 
-def f_pulsed_thermal_quantities(P_th_MWth, t_plateau_s, dwell_factor,
-                                eta_store=0.90):
+def f_pulsed_electrical_quantities(P_th_MWth, t_plateau_s, dwell_factor,
+                                   eta_turbine, P_recirc_var_MWe,
+                                   P_recirc_fix_MWe, P_coil_CS_MWe,
+                                   eta_store=0.90):
     """
-    Thermal storage that delivers a constant power over a full pulse cycle.
+    Pulsed operation with electrical smoothing (M. Fletcher, 2026).
 
-    Cycle: flat-top t_p, dwell t_d = t_p (1/D - 1), with D the dwell factor.
-    The flat-top surplus (P_th - P_s) t_p is stored and returned with
-    efficiency eta_store during the dwell, eta (P_th - P_s) t_p = P_s t_d:
+    A thermal store takes the fraction (1 - x) of the burn heat and returns
+    it to the turbine during the dwell with efficiency eta_store, so that
+    the net electric power is the same in both phases:
 
-        P_s     = P_th / (1 + t_d / (eta t_p))
-        E_store = (P_th - P_s) t_p = P_th t_p / (1 + eta t_p / t_d)
+        burn : P_net = eta x P_th - P_var - P_fix
+        dwell: P_net = eta eta_store (1 - x) P_th t_p / t_d - P_coil_CS - P_fix
+        x    = (eta_store D + q (1 - D)) / (eta_store D + 1 - D),
+        q    = (P_var - P_coil_CS) / (eta P_th)
 
-    Returns (t_dwell [s], E_store_th [MWh_th], P_th_smoothed [MW_th]).
-    Without dwell (D >= 1): (0, 0, P_th).
+    with t_d = t_p (1 - D) / D and D = t_p / t_cycle the dwell factor.
+    P_var runs during the burn, the CS recharge P_coil_CS during the dwell
+    and P_fix all the time. When x falls outside [0, 1], the two phases
+    cannot be balanced: x = 1 (no storage) and the net power differs between
+    the phases. P_e_net_cycle_average is the value used for the annual
+    energy and the economics in both cases.
+
+    Invalid or non-finite inputs return NaN outputs with
+    electrical_balance_valid = False instead of raising, so that the rest of
+    the design stays available. A non-positive P_th gives no turbine output.
+
+    Returns
+    -------
+    dict  t_dwell [s], x_storage_split [-], smoothing_feasible,
+          smoothing_fallback, electrical_balance_valid and _reason, thermal
+          flows [MWth] (P_th_reactor_pulse, P_th_reactor_to_storage_pulse,
+          P_th_reactor_to_turbine_pulse, P_th_storage_to_turbine_dwell,
+          P_th_turbine_dwell, P_th_turbine = max over both phases),
+          E_store_th [MWh_th], electric powers [MWe] (P_e_gross_pulse,
+          P_e_gross_dwell, P_e_net_pulse, P_e_net_dwell,
+          P_e_net_cycle_average, P_e_net_smoothed = NaN when infeasible).
     """
-    if dwell_factor is None or float(dwell_factor) >= 1.0:
-        return 0.0, 0.0, float(P_th_MWth)
-    if dwell_factor <= 0 or t_plateau_s <= 0 or eta_store <= 0:
-        raise ValueError("dwell_factor, t_plateau_s and eta_store must be positive")
-    t_dwell = float(t_plateau_s) * (1.0 / float(dwell_factor) - 1.0)
-    E_store = (float(P_th_MWth) * float(t_plateau_s)
-               / (1.0 + float(eta_store) * float(t_plateau_s) / t_dwell))
-    P_smoothed = (float(P_th_MWth)
-                  / (1.0 + (1.0 / float(eta_store)) * t_dwell / float(t_plateau_s)))
-    return t_dwell, E_store / 3600.0, P_smoothed
+    P, eta = float(P_th_MWth), float(eta_turbine)
+    var, fix = float(P_recirc_var_MWe), float(P_recirc_fix_MWe)
+    cs = float(P_coil_CS_MWe)
+    D = 1.0 if dwell_factor is None else float(dwell_factor)
+    tp, es = float(t_plateau_s), float(eta_store)
+
+    def unavailable(reason):
+        nan = float('nan')
+        return dict(t_dwell=nan, x_storage_split=nan,
+                    smoothing_feasible=False, smoothing_fallback=False,
+                    electrical_balance_valid=False, electrical_balance_reason=reason,
+                    P_th_reactor_pulse=P, P_th_reactor_to_storage_pulse=nan,
+                    P_th_reactor_to_turbine_pulse=nan,
+                    P_th_storage_to_turbine_dwell=nan, P_th_turbine_dwell=nan,
+                    P_th_turbine=nan,
+                    E_store_th=nan, P_e_gross_pulse=nan, P_e_gross_dwell=nan,
+                    P_e_net_pulse=nan, P_e_net_dwell=nan,
+                    P_e_net_cycle_average=nan, P_e_net_smoothed=nan)
+
+    if not np.all(np.isfinite([P, eta, var, fix, cs, D])):
+        return unavailable('Nonfinite thermal power, turbine efficiency, recirculating load or dwell factor')
+    if not 0 < eta <= 1:
+        return unavailable('Turbine efficiency must satisfy 0 < eta_turbine <= 1')
+    if var < 0 or fix < 0 or cs < 0:
+        return unavailable('Recirculating loads must be nonnegative')
+    if not 0 < D <= 1:
+        return unavailable('Dwell factor must satisfy 0 < D <= 1')
+    if D < 1 and (not np.isfinite(tp) or tp <= 0 or
+                  not np.isfinite(es) or not 0 < es <= 1):
+        return unavailable('Invalid pulse duration or storage efficiency')
+
+    if D == 1:
+        td = 0.0
+    else:
+        td = tp * ((1 - D) / D)
+
+    if P <= 0:
+        # No usable reactor thermal output: storage cannot provide electricity.
+        # Retain the energy consumption of the plant rather than crashing.
+        x, feasible = 1.0, False
+        reason = ('Nonpositive reactor thermal power; no turbine output or storage'
+                  ' (the thermal power value is not used as negative generation)')
+    elif D == 1:
+        x, feasible, reason = 1.0, True, ''
+    else:
+        q = (var - cs) / (eta * P)
+        x_balance = (es * D + q * (1 - D)) / (es * D + (1 - D))
+        feasible = 0.0 <= x_balance <= 1.0
+        if feasible:
+            x, reason = x_balance, ''
+        else:
+            x = 1.0
+            reason = ('Burn and dwell loads cannot be balanced by the store'
+                      ' (storage split outside [0, 1])')
+
+    to_tank = (1 - x) * max(P, 0.0)
+    pulse_turbine = x * max(P, 0.0)
+    dwell_turbine = es * D / (1 - D) * to_tank if D < 1 else 0.0
+    gross_pulse, gross_dwell = eta * pulse_turbine, eta * dwell_turbine
+    net_pulse = gross_pulse - var - fix
+    net_dwell = gross_dwell - cs - fix if D < 1 else net_pulse
+    net_average = D * net_pulse + (1 - D) * net_dwell
+    if feasible and D < 1 and not np.isclose(net_pulse, net_dwell, rtol=1e-9, atol=1e-7):
+        return unavailable('Numerical inconsistency between pulse and dwell electrical powers')
+    return dict(t_dwell=td, x_storage_split=x, smoothing_feasible=feasible,
+                smoothing_fallback=not feasible, electrical_balance_valid=True,
+                electrical_balance_reason=reason,
+                P_th_reactor_pulse=P, P_th_reactor_to_storage_pulse=to_tank,
+                P_th_reactor_to_turbine_pulse=pulse_turbine,
+                P_th_storage_to_turbine_dwell=dwell_turbine,
+                P_th_turbine_dwell=dwell_turbine,
+                P_th_turbine=max(pulse_turbine, dwell_turbine),
+                E_store_th=to_tank * (tp if D < 1 else 0.0) / 3600.0,
+                P_e_gross_pulse=gross_pulse, P_e_gross_dwell=gross_dwell,
+                P_e_net_pulse=net_pulse, P_e_net_dwell=net_dwell,
+                P_e_net_cycle_average=net_average,
+                P_e_net_smoothed=net_pulse if feasible else float('nan'))
 
 
 def f_recirculated_power(P_aux_MW, eta_WP, P_cryo_electric_MWe,
@@ -314,8 +424,8 @@ def f_recirculated_power(P_aux_MW, eta_WP, P_cryo_electric_MWe,
         P_fix = P_cryo + P_house_load      (all year)
 
     Nominal values size the plant electrical systems, so they are not
-    averaged over the pulse cycle. The duty cycle enters once, in
-    f_recirculated_power_cycle_average and f_recirculated_energy.
+    averaged over the pulse cycle. The duty cycle enters in
+    f_pulsed_electrical_quantities and f_recirculated_energy.
     The CS recharge runs during the dwell and is kept apart (P_coil_CS).
     The magnets stay cold outside operation, so the cryoplant is a fixed
     load like the house load.
@@ -325,23 +435,6 @@ def f_recirculated_power(P_aux_MW, eta_WP, P_cryo_electric_MWe,
     P_var = float(P_aux_MW) / float(eta_WP) + float(P_BoP_MWe)
     P_fix = float(P_cryo_electric_MWe) + float(P_house_load_MWe)
     return P_var, P_fix, P_var + P_fix
-
-
-def f_recirculated_power_cycle_average(P_recirc_var_MWe, P_coil_CS_MWe,
-                                       P_recirc_fix_MWe, dwell_factor):
-    """
-    Recirculated power averaged over one pulse cycle [MWe].
-
-        <P_recirc> = D P_var + (1 - D) P_coil_CS + P_fix
-
-    D = t_flat-top / t_cycle. P_var runs during the burn, the CS recharge
-    P_coil_CS during the dwell. Steady state (D >= 1): P_var + P_fix.
-    This is the load subtracted from the cycle-averaged gross power
-    (thermal store) to get the net electric power.
-    """
-    D = min(float(dwell_factor), 1.0)
-    return (D * float(P_recirc_var_MWe) + (1.0 - D) * float(P_coil_CS_MWe)
-            + float(P_recirc_fix_MWe))
 
 
 def f_recirculated_energy(P_recirc_var_MWe, P_coil_CS_MWe, P_recirc_fix_MWe,
@@ -378,12 +471,15 @@ def f_net_electric_energy(P_elec_MWe, P_recirc_fix_MWe, f_op):
 
 def f_tritium_consumption(P_fus_MW, CF):
     """
-    Annual D-T tritium burn [kg/yr] = 56 kg per GW_fus full-power year x CF.
+    D-T tritium burn [kg]: per full-power year and per calendar year.
 
-    1 GW.yr / 17.59 MeV = 1.12e28 reactions, x 3.016 u = 56.1 kg.
-    CF must be the burn-time fraction (Av x Util x Dwell).
+    1 GW.yr / 17.59 MeV = 1.12e28 reactions, x 3.016 u = 56.1 kg per GW_fus
+    and full-power year. CF must be the burn-time fraction (Av x Util x Dwell).
+
+    Returns (m_tritium_fpy [kg/fpy], m_tritium [kg/yr]).
     """
-    return 56.0 * float(P_fus_MW) / 1000.0 * float(CF)
+    m_tritium_fpy = 56.1 * float(P_fus_MW) / 1000.0
+    return m_tritium_fpy, m_tritium_fpy * float(CF)
 
 
 if __name__ == "__main__":
