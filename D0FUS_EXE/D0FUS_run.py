@@ -3200,7 +3200,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
         Z_tf_in=_Z_in,
         Blanket_choice=config.Blanket_choice,
         delta_BB_IB=config.delta_BB_IB, delta_BB_OB=config.delta_BB_OB,
-        delta_shield=config.delta_shield,
+        delta_shield_IB=config.delta_shield_IB,
+        delta_shield_OB=config.delta_shield_OB,
     )
     # A concept multiplication falls where the breeder is thin: it is
     # averaged over the breeder surface with the local breeder thickness.
@@ -3805,7 +3806,8 @@ def _build_run_dict(config: GlobalConfig, results: tuple) -> dict:
         "Blanket_choice":   config.Blanket_choice,
         "delta_BB_IB": config.delta_BB_IB,
         "delta_BB_OB": config.delta_BB_OB,
-        "delta_shield": config.delta_shield,
+        "delta_shield_IB": config.delta_shield_IB,
+        "delta_shield_OB": config.delta_shield_OB,
         # Mechanical configuration key — consumed by _resolve_build() in figures
         # to decide whether the TF-CS gap is applied to the CS outer radius.
         "Choice_Buck_Wedg": config.Choice_Buck_Wedg,
@@ -4557,7 +4559,8 @@ def save_run_output(config: GlobalConfig,
         R_tf_in=_R_in_disp, Z_tf_in=_Z_in_disp,
         Blanket_choice=config.Blanket_choice,
         delta_BB_IB=config.delta_BB_IB, delta_BB_OB=config.delta_BB_OB,
-        delta_shield=config.delta_shield,
+        delta_shield_IB=config.delta_shield_IB,
+        delta_shield_OB=config.delta_shield_OB,
     )
     if not _rb_disp['feasible']:
         import warnings

@@ -3069,7 +3069,8 @@ def plot_assembly_side_view(run, save_dir=None, n_cs_modules=None):
             R_tf_in=R_tf_in, Z_tf_in=Z_tf_in, Blanket_choice=Blanket_choice,
             delta_BB_IB=float(run.get("delta_BB_IB", 0.50)),
             delta_BB_OB=float(run.get("delta_BB_OB", 0.50)),
-            delta_shield=float(run.get("delta_shield", 0.30)))
+            delta_shield_IB=float(run.get("delta_shield_IB", 0.30)),
+            delta_shield_OB=float(run.get("delta_shield_OB", 0.30)))
         layers = _rb["layers"]
     else:
         layers = []

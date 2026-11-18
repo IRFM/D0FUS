@@ -6341,7 +6341,8 @@ def f_radial_build_layers(
     N_theta: int = 500,
     delta_BB_IB: float = 0.50,
     delta_BB_OB: float = 0.50,
-    delta_shield: float = 0.30,
+    delta_shield_IB: float = 0.30,
+    delta_shield_OB: float = 0.30,
 ) -> dict:
     """
     Exact volumes/masses of every layer in the concept-specific radial build,
@@ -6406,7 +6407,8 @@ def f_radial_build_layers(
                     delta_BB_local=np.array([]), w_BB_local=np.array([]),
                     delta_BB_eff=np.nan, stack_scale=np.nan, **feasibility)
     layers    = radial_layers_effective(Blanket_choice, b, Delta_TF,
-                                         delta_BB_IB, delta_BB_OB, delta_shield)
+                                         delta_BB_IB, delta_BB_OB,
+                                         delta_shield_IB, delta_shield_OB)
     i_breeder = next(i for i, L in enumerate(layers) if L['role'] == 'breeder')
     before    = layers[:i_breeder]
     breeder   = layers[i_breeder]

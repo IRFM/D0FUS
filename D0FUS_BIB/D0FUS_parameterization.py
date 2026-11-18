@@ -153,7 +153,8 @@ class GlobalConfig:
     b     : float = 1.2            # Breeding blanket + neutron shield radial thickness [m]
     delta_BB_IB : float = 0.50   # Requested inboard breeder zone [m]
     delta_BB_OB : float = 0.50   # Requested outboard breeder zone [m]
-    delta_shield : float = 0.30  # Combined HT + LT shielding, each half [m]
+    delta_shield_IB : float = 0.30  # Requested inboard shielding, HT + LT halves [m]
+    delta_shield_OB : float = 0.30  # Requested outboard shielding, HT + LT halves [m]
     Bmax_TF  : float = 12.0        # Peak magnetic field on TF conductor [T]
     Bmax_CS_adm  : float = 25.0    # Peak magnetic field allowed on the CS [T]
     P_fus : float = 2000.0         # Total fusion power [MW]
@@ -634,7 +635,7 @@ class GlobalConfig:
         ValueError
             Option value not in CONFIG_OPTIONS, e.g. "Tbar_mode = greenwlad".
         """
-        for key in ('delta_BB_IB', 'delta_BB_OB', 'delta_shield'):
+        for key in ('delta_BB_IB', 'delta_BB_OB', 'delta_shield_IB', 'delta_shield_OB'):
             value = getattr(self, key)
             if not isinstance(value, (int, float, np.integer, np.floating)) or isinstance(value, bool) or not np.isfinite(value) or value < 0:
                 raise ValueError(f"{key} must be a finite nonnegative thickness [m].")
@@ -1467,16 +1468,17 @@ def radial_build_feasibility(Blanket_choice, b, Delta_TF=0.0):
 
 def radial_layers_effective(Blanket_choice: str, b: float, Delta_TF: float = 0.0,
                             delta_BB_IB: float = 0.50, delta_BB_OB: float = 0.50,
-                            delta_shield: float = 0.30) -> list:
+                            delta_shield_IB: float = 0.30,
+                            delta_shield_OB: float = 0.30) -> list:
     """Allocate IB/OB layers with mandatory > shields > breeding priority.
 
     Structural and multiplier layers are contingent on a positive breeder.
     The final gap takes the remaining space. Mandatory widths never shrink.
-    Each side is clipped independently; HT and LT each receive half its
-    achieved combined shielding thickness.
+    Each side is clipped independently, with its own breeder and shield
+    targets. HT and LT each receive half the achieved shielding thickness.
     """
     import math
-    values = (b, Delta_TF, delta_BB_IB, delta_BB_OB, delta_shield)
+    values = (b, Delta_TF, delta_BB_IB, delta_BB_OB, delta_shield_IB, delta_shield_OB)
     if any(not math.isfinite(v) for v in values) or any(v < 0 for v in values):
         raise ValueError('Radial dimensions must be finite and nonnegative.')
     original = material_blanket(Blanket_choice)['radial_layers']
@@ -1484,8 +1486,9 @@ def radial_layers_effective(Blanket_choice: str, b: float, Delta_TF: float = 0.0
     if not layers or layers[-1]['role'] != 'gap':
         raise ValueError('The last radial-build layer must be the residual TF gap.')
     dependent = {'breeder', 'structure', 'multiplier'}
-    for side, budget, target in (('ib', b, delta_BB_IB),
-                                 ('ob', b + Delta_TF, delta_BB_OB)):
+    for side, budget, target, shield_target in (
+            ('ib', b, delta_BB_IB, delta_shield_IB),
+            ('ob', b + Delta_TF, delta_BB_OB, delta_shield_OB)):
         key = 'delta_' + side
         mandatory = sum(L['width'] for L in layers[:-1]
                         if L['role'] not in dependent | {'shield_HT', 'shield_LT'})
@@ -1494,7 +1497,7 @@ def radial_layers_effective(Blanket_choice: str, b: float, Delta_TF: float = 0.0
             # allocation. Do not rescale mandatory layers or manufacture widths.
             return []
         free = max(0.0, budget - mandatory)
-        shield = min(delta_shield, free)
+        shield = min(shield_target, free)
         remaining = max(0.0, free - shield)
         dependent_fixed = sum(L['width'] for L in layers
                               if L['role'] in {'structure', 'multiplier'})
