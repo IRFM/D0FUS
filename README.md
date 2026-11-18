@@ -97,6 +97,7 @@ D0FUS/
 │   ├── D0FUS_radial_build_functions.py  # Magnets (TF/CS, CICC, quench, ripple)
 │   ├── D0FUS_cost_functions.py          # Techno-economics (Sheffield, Whyte)
 │   ├── D0FUS_cost_data.py               # Reference cost data
+│   ├── D0FUS_power_flow.py              # Plant power-balance Sankey diagrams
 │   └── D0FUS_figures.py                 # Figure catalogue
 ├── D0FUS_EXE/                       # Execution modes
 │   ├── D0FUS_run.py                     # Single design point
@@ -106,6 +107,7 @@ D0FUS/
 │   └── D0FUS_uncertainty.py             # Monte-Carlo uncertainty propagation
 ├── D0FUS_INPUTS/                    # Example decks, 1_run_ITER.txt … 5_popcon_ITER.txt
 ├── D0FUS_OUTPUTS/                   # Auto-created, timestamped result folders
+├── tests/                           # pytest suite, run by GitHub Actions (.github/workflows)
 ├── D0FUS.py                         # Entry point (mode auto-detection)
 ├── pyproject.toml · requirements.txt · CITATION.cff
 └── README.md
@@ -238,7 +240,7 @@ Continuous distributions: `norm(sigma)`, `norm(lo, hi)`, `norm(lo, centre, hi)`,
 
 ## Outputs
 
-Every mode writes a folder named after the mode and the time, to the second, under `D0FUS_OUTPUTS/<mode>/`. From a clone, `D0FUS_OUTPUTS` is at the root of the repository, whatever the working directory. For an installed package, it is in the working directory. A RUN produces `input_parameters.txt` (the deck), `output_highlight.txt` (key results), `output_detailed.txt` (every input including defaults, every output), and 16 figures (cross-section, Miller surfaces, profiles, q(ρ), radiation, divertor two-point, radial build, coil and CICC drawings, cost breakdown, temperature and density maps, PyVista 3D view skipped with `--no-3d`). A design without a solution gives NaN in the reports and figures. SCAN writes the 2D map, OPTIMIZATION the convergence plot, `optimization_summary.json` (settings, seed, Hall of Fame), a copy of the deck and the reports of the best design, POPCON the operating-contour map, UNCERTAINTY a summary with the feasible share and its confidence interval, the per-output distributions and figures.
+Every mode writes a folder named after the mode and the time, to the second, under `D0FUS_OUTPUTS/<mode>/`. From a clone, `D0FUS_OUTPUTS` is at the root of the repository, whatever the working directory. For an installed package, it is in the working directory. A RUN produces `input_parameters.txt` (the deck), `output_highlight.txt` (key results), `output_detailed.txt` (every input including defaults, every output), and 18 figures (cross-section, Miller surfaces, profiles, q(ρ), radiation, divertor two-point, radial build, coil and CICC drawings, cost breakdown, temperature and density maps, pulse and dwell power-balance Sankey diagrams, PyVista 3D view skipped with `--no-3d`). A design without a solution gives NaN in the reports and figures. SCAN writes the 2D map, OPTIMIZATION the convergence plot, `optimization_summary.json` (settings, seed, Hall of Fame), a copy of the deck and the reports of the best design, POPCON the operating-contour map, UNCERTAINTY a summary with the feasible share and its confidence interval, the per-output distributions and figures.
 
 ---
 
@@ -263,6 +265,8 @@ To cite D0FUS, use `CITATION.cff` (GitHub's *Cite this repository* button) or ci
 ## Contributing
 
 Contributions and questions are welcome: timothe.auclair@cea.fr
+
+Tests: `pip install -e ".[dev]"`, then `python -m pytest` from the repository root. GitHub Actions runs the suite on Python 3.10 to 3.13 at every push and pull request.
 
 ## License
 

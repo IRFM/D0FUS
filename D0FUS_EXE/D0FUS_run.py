@@ -4369,7 +4369,7 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
 
     if rd.get('smoothing_feasible') is False:
         lines.append('[!] Electrical smoothing infeasible: x=1, no stored heat; pulse/dwell powers differ.')
-    row("Gross electrical power P_e_gross", rd.get("P_e_gross"), "MWe")
+    row("Gross electrical power (burn) P_e_gross", rd.get("P_e_gross"), "MWe")
     row("CS recharge power (dwell) P_coil_CS", rd.get("P_coil_CS"), "MWe")
     row("Total TF + CS feeder current I_feeders", rd.get("I_feeders"), "MA")
     row("Refrigeration load at 4.5 K P_cryo_cool", rd.get("P_cryo_cool"), "kW")
