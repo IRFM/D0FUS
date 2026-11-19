@@ -1,0 +1,337 @@
+=========================================================================
+=== D0FUS Calculation Results ===
+-------------------------------------------------------------------------
+[I] Configuration choices
+[I]  ├ q_profile_mode    (q,j builder)              : refined
+[I]  ├ Plasma_geometry   (cross-section model)      : refined
+[I]  ├ Plasma_profiles   (n,T radial preset)        : Manual
+[I]  ├ Bootstrap_choice  (j_bs model)               : Sauter-Redl
+[I]  ├ CD_source         (current drive scheme)     : Multi
+[I]  ├ eta_model         (parallel resistivity)     : sauter
+[I]  └ Option_q95        (MHD scaling for q95)      : ITER_1989
+-------------------------------------------------------------------------
+[I] R0 (Major Radius)                               : 6.225 [m]
+[I] a  (Minor Radius)                               : 2.230 [m]
+[I] b  (BB & neutron shield thickness)              : 1.100 [m]
+[O] c  (TF inboard leg thickness)                   : 0.513 [m]
+[I] Gap (TF inner bore -> CS outer face)            : 0.100 [m]
+[O] d  (CS winding-pack radial thickness)           : 0.503 [m]
+[O] H_CS   (CS total height, TF bore)               : 13.991 [m]
+[O] H_CS/mod (CS module height)                     : 2.332 [m]
+-------------------------------------------------------------------------
+[O] Kappa    (Plasma elongation)                    : 1.918
+[O] Kappa_95 (Elongation at 95% flux surface)       : 1.713
+[O] Delta    (Plasma triangularity)                 : 0.551
+[O] Delta_95 (Triangularity at 95% flux surface)    : 0.367
+[O] Volume   (Plasma volume)                        : 1068.382 [m³]
+[O] Surface  (First wall area)                      : 774.011 [m²]
+[I] Mechanical configuration                        : Wedging
+[I] Superconductor technology (TF / CS)             : Nb3Sn / Nb3Sn
+[O] N_TF   (Number of TF coils)                     : 19
+[O] Delta_TF (Port-access outboard clearance)       : 1.620 [m]
+[I] N_CS   (Number of CS modules)                   : 6
+-------------------------------------------------------------------------
+[I] Bmax_TF (Peak field on TF conductor)            : 8.791 [T]
+[O] B0   (On-axis magnetic field)                   : 3.989 [T]
+[O] BCS  (CS peak magnetic field)                   : 9.225 [T]
+[O] LF_TF (TF lift factor - REBCO only)             : 2.40099 [-]
+[O] LF_CS (CS lift factor - REBCO only)             : 2.35085 [-]
+[O] Engineering current density, by reference section
+[O]  ├ J_wost-TF (TF cable, steel jacket excluded)  : 46.339 [MA/m²]
+[O]  ├ J_coil-TF (TF leg: WP + nose + backplate)    : 14.951 [MA/m²]
+[O]  ├ J_wost-CS (CS cable, steel jacket excluded)  : 52.298 [MA/m²]
+[O]  └ J_coil-CS (CS pack, steel jacket included)   : 14.586 [MA/m²]
+[O] E_mag_TF (TF stored magnetic energy)            : 26.599 [GJ]
+[O] E_mag_CS (CS stored magnetic energy)            : 5.654 [GJ]
+[I] I_cond (Operating current per TF conductor)     : 68.0 [kA]
+[I] I_cond_CS (Operating current per CS conductor)  : 45.0 [kA]
+[O] NI_TF/coil  (Ampere-turns per TF coil)          : 6.696 [MA·turns]
+[O] N_turns_TF  (Winding turns per TF coil)         : 98
+[O] NI_CS/mod   (Ampere-turns per CS module)        : 17.119 [MA·turns]
+[O] N_turns_CS  (Winding turns per CS module)       : 380
+[O] Steel fraction TF                               : 37.308 [%]
+[O] Cable fraction TF  (1 - Steel)                  : 62.692 [%]
+[O]  ├ f_sc      (superconductor)                   : 5.11 [%]
+[O]  ├ f_cu      (copper stabiliser)                : 40.39 [%]
+[O]  ├ f_He_pipe (He cooling pipe)                  : 10.00 [%]
+[O]  ├ f_void    (interstitial He void)             : 19.50 [%]
+[O]  ├ f_He      (total He = pipe + void)           : 29.50 [%]
+[O]  └ f_In_cable (turn insulation)                 : 10.00 [%]
+[O] Steel fraction CS                               : 72.109 [%]
+[O] Cable fraction CS  (1 - Steel)                  : 27.891 [%]
+[O]  ├ f_sc      (superconductor)                   : 6.39 [%]
+[O]  ├ f_cu      (copper stabiliser)                : 39.11 [%]
+[O]  ├ f_He_pipe (He cooling pipe)                  : 10.00 [%]
+[O]  ├ f_void    (interstitial He void)             : 19.50 [%]
+[O]  ├ f_He      (total He = pipe + void)           : 29.50 [%]
+[O]  └ f_In_cable (turn insulation)                 : 10.00 [%]
+-------------------------------------------------------------------------
+[O] L_cable_TF (total cable, all TF coils)          : 72.454 [km]
+[O] L_cable_CS (total cable, all CS modules)        : 29.102 [km]
+-------------------------------------------------------------------------
+[O] SC strands per cable  (Nb3Sn / Nb3Sn)
+[O]  ├ n_sc_TF                                      : 122
+[O]  └ n_sc_CS                                      : 104
+-------------------------------------------------------------------------
+[O] Total SC strand length
+[O]  ├ L_sc_strand_TF                               : 8839 [km]
+[O]  └ L_sc_strand_CS                               : 3030 [km]
+-------------------------------------------------------------------------
+[O] V_TF_one  (Single TF coil volume, Princeton-D)  : 15.6480 [m³]
+[O] V_CS_geom (Total CS solenoid volume)            : 89.7832 [m³]
+[O] V_blanket (blanket, Miller LCFS→TF inner face)  : 2904.7807 [m³]
+-------------------------------------------------------------------------
+[O] TF material volumes  (total = V_TF_one × N_TF = 15.648 × 19)
+[O]  ├ V_steel_TF  (structural steel)               : 205.918 [m³]
+[O]  ├ V_sc_TF     (superconductor)                 : 4.668 [m³]
+[O]  ├ V_cu_TF     (copper stabiliser)              : 36.917 [m³]
+[O]  ├ V_He_TF     (helium, pipe+void)              : 26.961 [m³]
+[O]  └ V_In_TF     (insulation)                     : 22.849 [m³]
+[O] CS material volumes  (total solenoid)
+[O]  ├ V_steel_CS  (structural steel)               : 64.742 [m³]
+[O]  ├ V_sc_CS     (superconductor)                 : 1.600 [m³]
+[O]  ├ V_cu_CS     (copper stabiliser)              : 9.794 [m³]
+[O]  ├ V_He_CS     (helium, pipe+void)              : 7.387 [m³]
+[O]  └ V_In_CS     (insulation)                     : 6.260 [m³]
+[O] Blanket components volumes (LCFS→TF inner face, exact body-of-revolution)
+[O]  ├ V_SOL        (scrape-off layer, all around)  : 52.9 [m³]
+[O]  ├ V_FW         (first wall, excl. divertor)    : 39.0 [m³]
+[O]  ├ V_BB         (breeder/structure/multip., excl. div.) : 735.6 [m³]
+[O]  ├ V_divertor   (divertor, f_div=0.10)          : 86.1 [m³]
+[O]  ├ V_shield     (HT+LT shield, all around)      : 465.3 [m³]
+[O]  ├ V_VV         (vacuum vessel, all around)     : 155.1 [m³]
+[O]  └ V_gap        (gaps/voids, all around)        : 1371.0 [m³]
+-------------------------------------------------------------------------
+[O] TF coil masses  (total all N_TF coils, 316L / Nb3Sn)
+[O]  ├ M_steel_TF                                   : 1632.9 [t]
+[O]  ├ M_sc_TF                                      : 40.1 [t]
+[O]  ├ M_cu_TF                                      : 330.8 [t]
+[O]  ├ M_In_TF                                      : 43.4 [t]
+[O]  └ M_total_TF                                   : 2047.3 [t]
+[O] CS coil masses  (total solenoid, 316L / Nb3Sn)
+[O]  ├ M_steel_CS                                   : 513.4 [t]
+[O]  ├ M_sc_CS                                      : 13.8 [t]
+[O]  ├ M_cu_CS                                      : 87.8 [t]
+[O]  ├ M_In_CS                                      : 11.9 [t]
+[O]  └ M_total_CS                                   : 626.8 [t]
+[O] Blanket components masses
+[O]  ├ M_rb_FW       (first wall, excl. div.)       : 135.1 [t]
+[O]  ├ M_rb_BB       (breeder/structure/multip., excl. div.) : 2741.8 [t]
+[O]  ├ M_rb_shield   (HT+LT shield)                 : 3665.8 [t]
+[O]  ├ M_rb_VV       (vacuum vessel)                : 942.0 [t]
+[O]  ├ M_rb_divertor (divertor)                     : 211.7 [t]
+[O]  └ M_rb_total    (FW+BB+shield+VV+div)          : 7696.4 [t]
+-------------------------------------------------------------------------
+[I] Blanket_choice  (Helium-Cooled Pebble Bed)
+[I]  ├ Breeder / Multiplier  : Li4SiO4 (pebble bed) / Be12Ti (pebble bed)
+[I]  ├ Coolant / Structure   : He / EUROFER97
+[I]  ├ 6Li enrichment        : Not required (natural Li)
+[I]  ├ Magnet shielding      : Excellent (dense solid breeder)
+[I]  ├ VV feasible           : True
+[I]  ├ M_blanket             : 1.000  (deck)
+[I]  ├ eta_T (gross)         : 0.350  (deck)
+[O]  └ f_BoP (coolant pumps) : 0.0362  (concept)
+[O] TBR_achieved  (breeder 0.32 to 0.77 m, mean 0.60 m) : 1.405  (TBR_max = 1.46)
+[O] Radial build layers  (plasma → TF, delta_BB_ib = 0.320 m, delta_BB_ob = 0.500 m)
+[O]  ├ SOL                         : d_ib=0.050 m  d_ob=0.050 m  V=52.9 m³  M=0.0 t  rho=0.0 kg/m³
+[O]  ├ First wall                  : d_ib=0.040 m  d_ob=0.040 m  V=43.3 m³  M=135.1 t  rho=3469.3 kg/m³
+[O]  │    └ HeT410P80 63% · MF82H 32% · W 5%
+[O]  ├ Breeder/Multiplier Zone (Li4SiO4 + Be12Ti): d_ib=0.320 m  d_ob=0.500 m  V=474.5 m³  M=986.8 t  rho=2310.7 kg/m³
+[O]  │    └ Be12Ti 54% · HeT410P80 27% · EUROFER97 11% · Li4SiO4 6% · Li2TiO3 2%
+[O]  ├ Back Wall                   : d_ib=0.100 m  d_ob=0.100 m  V=133.2 m³  M=453.6 t  rho=3783.3 kg/m³
+[O]  │    └ EUROFER97 46% · HeT410P80 46% · Li4SiO4 6% · Li2TiO3 2%
+[O]  ├ Manifold                    : d_ib=0.150 m  d_ob=0.150 m  V=209.6 m³  M=1301.3 t  rho=6898.1 kg/m³
+[O]  │    └ EUROFER97 89% · HeT410P80 11%
+[O]  ├ High-Temp Shield            : d_ib=0.150 m  d_ob=0.150 m  V=221.3 m³  M=2279.4 t  rho=10298.7 kg/m³
+[O]  │    └ WC 52% · MF82H 28% · HeT410P80 20%
+[O]  ├ Gap                         : d_ib=0.020 m  d_ob=0.020 m  V=30.4 m³  M=0.0 t  rho=0.0 kg/m³
+[O]  ├ Vacuum Vessel               : d_ib=0.100 m  d_ob=0.100 m  V=155.1 m³  M=942.0 t  rho=6073.8 kg/m³
+[O]  │    └ SS316L 76% · HeT410P80 24%
+[O]  ├ Gap                         : d_ib=0.020 m  d_ob=0.020 m  V=31.6 m³  M=0.0 t  rho=1.2 kg/m³
+[O]  │    └ airSTP 100%
+[O]  ├ Low-Temp Shield             : d_ib=0.150 m  d_ob=0.150 m  V=243.9 m³  M=1386.4 t  rho=5683.6 kg/m³
+[O]  │    └ SS316L 39% · Water 32% · BMF82H 29%
+[O]  └ Gap                         : d_ib=0.000 m  d_ob=1.440 m  V=1309.0 m³  M=1.6 t  rho=1.2 kg/m³
+[O]       └ airSTP 100%
+-------------------------------------------------------------------------
+[O] Psi_PI      (Breakdown flux)                    : 9.778 [Wb]
+[O] Psi_RampUp  (Ramp-up flux)                      : 228.435 [Wb]
+[O] Psi_Plateau (Flat-top flux)                     : 21.590 [Wb]
+[O] Psi_PF      (External PF contribution)          : 79.866 [Wb]
+[O] Psi_CS      (CS flux requirement)               : 179.937 [Wb]
+[O] V_loop      (Steady-state loop voltage)         : 54.0 [mV]
+-------------------------------------------------------------------------
+[I] Fuel   (Fuel mix)                               : DT
+[I] P_fus  (Fusion power)                           : 500 [MW]
+[O] P_CD   (Heating + current drive power)          : 49.700 [MW]
+[O]  ├ gamma_LH  (LHCD figure of merit)             : 0.3185 [10²⁰ A/(W·m²)]
+[O]  ├ gamma_EC  (ECCD figure of merit)             : 0.0239 [10²⁰ A/(W·m²)]
+[O]  ├ gamma_NBI (NBCD figure of merit)             : 0.5134 [10²⁰ A/(W·m²)]
+[O]  ├ P_LH  / I_LH  (LHCD)                         : 0.00 MW / 0.000 MA
+[O]  ├ P_EC  / I_EC  (ECCD)                         : 6.70 MW / 0.028 MA
+[O]  ├ P_NBI / I_NBI (NBCD)                         : 33.00 MW / 2.924 MA
+[O]  └ P_ICR        (ICRH, heating only)            : 10.00 MW
+[O] P_syn  (Synchrotron, Albajar-Fidone)            : 2.446 [MW]
+[O] P_Brem (Fuel bremsstrahlung, D+T+He)            : 14.765 [MW]
+[O] P_imp  (Impurity radiation, Mavrin L_z)         : 47.977 [MW]
+[O]  ├ P_imp_W   (f=2.0e-05, brem+line+recomb)      : 29.139 [MW] (core=21.957, edge=7.182)
+[O]  ├ P_imp_Ne  (f=7.0e-03, brem+line+recomb)      : 18.838 [MW] (core=15.297, edge=3.542)
+[O]  └ f_imp_dilution (Σ <Z_j> c_j, fuel dilution)  : 0.0710 [-]
+[O] P_rad_core  (core radiation, ρ_tor<0.85)        : 54.465 [MW]
+[O] P_rad_total (total radiated power)              : 65.188 [MW]
+[I] rho_rad_core (core/edge boundary, rho_tor)      : 0.85
+[O] gamma_CD (CD figure of merit, effective)        : 0.431 [10²⁰ A/(W·m²)]
+[O] Q      (Energy gain factor)                     : 9.933
+[O] P_wallplug (Wall-plug heating/CD power)         : 124.250 [MW]
+[O] x_storage_split                                 : 1.000 [-]
+[O] P_th_reactor_pulse                              : 549.700 [MWth]
+[O] P_th_reactor_to_storage_pulse                   : 0.000 [MWth]
+[O] P_th_reactor_to_turbine_pulse                   : 549.700 [MWth]
+[O] P_th_storage_to_turbine_dwell                   : 0.000 [MWth]
+[O] P_e_gross_pulse                                 : 192.395 [MWe]
+[O] P_e_gross_dwell                                 : 0.000 [MWe]
+[O] P_e_net_cycle_average                           : -33.999 [MWe]
+[O] P_e_net_pulse                                    : -33.999 [MWe]
+[O] P_e_net_dwell                                    : -33.999 [MWe]
+[O] E_store_th (Stored thermal energy)              : 0.000 [MWhth]
+[O] P_coil_CS (CS recharge power, dwell)            : 0.000 [MWe]
+[O] I_feeders (Total TF + CS feeder current)        : 1.562 [MA]
+[O] P_cryo_cool (Refrigeration load at 4.5 K)       : 33.891 [kW]
+[O] P_cryo_electric                                 : 16.697 [MWe]
+[O] V_cryo_LHe                                      : 79312.887 [L]
+[O] V_cryo_LN                                       : 125230.874 [L]
+[O] P_house_load                                    : 65.548 [MWe]
+[O]  ├ facilities (floor area 246700 m²)            : 42.005 [MWe]
+[I]  ├ tritium plant                                : 15.000 [MWe]
+[I]  ├ vacuum pumps                                 : 0.500 [MWe]
+[O]  └ TF power supplies (bus bars)                 : 8.043 [MWe]
+[O] P_BoP (coolant pumping, burn)                   : 19.899 [MWe]
+[O] P_recirc_var (burn)                             : 144.149 [MWe]
+[O] P_recirc_fix                                    : 82.245 [MWe]
+[O] P_recirculated (burn)                           : 226.394 [MWe]
+[O] E_recirculated                                  : 1746203.176 [MWh/year]
+[O] m_tritium_fpy (tritium burn per fpy)            : 28.050 [kg/fpy]
+[O] m_tritium (annual tritium burn)                 : 22.785 [kg/year]
+[O] Q_E    (Engineering gain, P_e_gross/P_recirc)   : 0.850
+[O] Cost   ((V_BB+V_TF+V_CS) / P_fus)               : 2.245 [m³/MW]
+-------------------------------------------------------------------------
+[O] t_blanket_fpy  (Blanket lifetime, dpa model)       : 10.159 [fpy]
+[O] t_div_fpy      (Divertor lifetime, heat model)     : 9.159 [fpy]
+[O] t_blanket_yr   (Blanket lifetime, calendar)        : 11.952 [yr]
+[O] t_div_yr       (Divertor lifetime, calendar)       : 10.775 [yr]
+[O] T_op_limit     (Operation per replacement cycle)   : 10.775 [yr]
+[O] dt_rep_eff     (Effective replacement downtime)    : 0.500 [yr]
+[O] Av             (Plant availability)                : 0.9557 [-]
+[O] CF             (Operating fraction Av x Util)      : 0.8123 [-]
+-------------------------------------------------------------------------
+[I] H              (H-factor)                       : 1.000
+[I] Operation mode                                  : Pulsed
+[I] t_plateau      (Flat-top duration)              : 400.000 [s]
+[O] tau_E          (Energy confinement time)        : 4.075 [s]
+[O] Ip             (Plasma current)                 : 17.863 [MA]
+[O] Ib             (Bootstrap current, Sauter-Redl) : 3.072 [MA]
+[O] I_CD           (Driven current, Multi)       : 2.951 [MA]
+[O] I_Ohm          (Ohmic current)                  : 11.839 [MA]
+[O] f_b            (Bootstrap fraction)             : 17.200 [%]
+[O] l_i(3)         (Internal inductance, refined)   : 0.944 [-]
+-------------------------------------------------------------------------
+[I] Tbar  (Volume-averaged Te)                      : 8.320 [keV]
+[I] tau_i_e (Ion/electron temperature ratio Ti/Te)   : 1.000 [-]
+[O] Ti    (Volume-averaged ion temperature)          : 8.320 [keV]
+[I] Z_eff (Effective charge, imposed) : 1.650 [-]
+[O] nbar  (Volume-averaged electron density)        : 0.931 [10²⁰ m⁻³]
+[O] nbar_line (Line-averaged electron density)      : 0.960 [10²⁰ m⁻³]
+[O] nG    (Greenwald density, Ip/πa²)               : 1.143 [10²⁰ m⁻³]
+[O] f_GW  (Greenwald fraction, nbar_line/(Ip/πa²))  : 0.839 [-]
+[I] density_limit_model                             : greenwald
+[O] f_DL / f_DL_limit (feasibility ratio, greenwald) : 0.839 [-]
+[O] pbar  (Volume-averaged pressure)                : 0.244 [MPa]
+[O] f_He  (Helium ash fraction)                     : 4.145 [%]
+[O] tau_alpha (He ash confinement time tau*_He)     : 23.230 [s]
+[O] W_th  (Plasma thermal energy content)           : 390.727 [MJ]
+-------------------------------------------------------------------------
+[O] beta_T (Toroidal beta)                          : 3.851 [%]
+[O] beta_P (Poloidal beta)                          : 0.534
+[O] beta_N (Normalised beta, toroidal, thermal)     : 1.918
+[O] beta_N Troyon (toroidal, incl. fast α)          : 2.036
+-------------------------------------------------------------------------
+[O] q*   (Kink safety factor)                       : 2.088
+[O] q95  (Safety factor at 95% flux surface)        : 2.504    [scaling only; profile q(rho_95) may differ (refined mode)]
+-------------------------------------------------------------------------
+[O] P_sep    (P_α+P_CD−P_rad_tot, separatrix power) : 84.513 [MW]
+[O] P_Thresh (L-H power threshold)                  : 60.184 [MW]
+[O] P_rad_tot / S_wall  (FW radiative load)         : 0.084 [MW/m²]
+[O] P_sep / S_wall  (mean SOL exhaust flux)         : 0.109 [MW/m²]
+[O] P_sep / R0  (Divertor heat scaling)             : 13.577 [MW/m]
+[O] P_sep·B0 / R0  (Parallel heat flux proxy)       : 54.158 [MW·T/m]
+[O] P_sep·B0 / (q95·R0·A)  (Poloidal heat flux)     : 7.748 [MW·T/m]
+[O] Gamma_n  (Neutron wall load)                    : 0.517 [MW/m²]
+[O] f_loss_req (SOL dissipation required, 2PM)      : 0.969 [-]   [sheath-limited at f_cooling = 0.00]
+[O] c_z_req (Ne, Lengyel, f_loss=0.969, T_t=25 eV) : 8.516 [%] of n_e (SOL)
+[!] c_z_req above 5 % of n_e: not a trace impurity, outside the validity of the Lengyel estimate
+[I] c_Ne core seeding (deck inventory)             : 0.700 [%]
+=========================================================================
+=== Runaway Electron Indicators (Indicative) ===
+-------------------------------------------------------------------------
+[!] INDICATOR ONLY — order-of-magnitude estimate for design comparison.
+[I] tau_TQ         (Thermal quench time)                : 1.0 [ms]
+[I] Te_final       (Post-TQ temperature)                : 5 [eV]
+[I] pellet_dilution (SPI/MGI density factor)            : 10.0 [-]
+[O] nbar_diluted   (Post-pellet density)                : 9.309 [1e20 m-3]
+[O] Tbar_diluted   (Pre-TQ temperature, unchanged)       : 8.32 [keV]
+[O] f_RE_core      (Hot-tail fraction at rho=0)         : 1.003e-18 [-]
+[O] f_RE_avg       (Volume-averaged hot-tail fraction)  : 1.028e-20 [-]
+[O] I_RE_seed      (Hot-tail seed, post-pellet n_e)     : 1.262e-08 [A]
+[O] I_RE_aval      (After avalanche, post-pellet)       : 7.899e-03 [MA]
+[O] I_RE / Ip      (RE-to-plasma current fraction)      : 4.422e-02 [%]
+[O] W_mag_RE       (RE magnetic energy = 1/2 Li I^2_RE) : 1.152e-04 [MJ]
+[O] E_RE_kin       (RE kinetic energy, <gamma>=10)      : 4.739e-03 [MJ]
+=========================================================================
+=== Feasibility (same rule in every execution mode) ===
+-------------------------------------------------------------------------
+[O] nbar_line / n_lim  (density)                    : 0.839 [-]
+[O] betaN_total / betaN_limit                       : 0.727 [-]
+[O] q_limit / q95                                   : 0.998 [-]
+[O] Radial build closes (r_d, c, d > 0)             : True
+[O] Verdict                                         : FEASIBLE
+=========================================================================
+=== Cost Assessment — Sheffield (2016) ===
+-------------------------------------------------------------------------
+[I] r=7%  T_life=40yr  T_build=10yr  contingency=15%  Supra_cost=2.0x
+[I] Util=0.85  Dwell=1.00  dt_rep_bl=0.5yr  dt_rep_div=0.4yr
+-------------------------------------------------------------------------
+[O] P_th  (thermal power during the burn)           : 549.7 [MW]
+[O] P_th_turbine (turbine thermal design power)     : 549.7 [MW]
+[O] P_e   (net electric power, operation)           : -34.0 [MWe]
+[O] E_net (annual net electricity)                  : -0.377 [TWh/yr]
+[!] No net electricity over the year: the COE is undefined, the capital cost takes P_e = max(P_elec, 0)
+[O] Gamma_n (neutron wall load)                     : 0.517 [MW/m^2]
+-------------------------------------------------------------------------
+[O] T_op_limit (time before replacement)            : 10.775 [yr]
+[O] CF (operating fraction Av x Util)               : 0.812
+[O] t_rep_bl / t_rep_div (operation between replacements): 10.77 / 10.77 [yr]
+-------------------------------------------------------------------------
+[O] V_bl  (breeding blanket, radial build)          : 735.6 [m^3]
+[O] V_sg  (shield + VV + gaps, radial build)        : 1991.4 [m^3]
+[O] V_TF_one*N_TF (TF winding packs, Princeton-D)   : 297.3 [m^3]
+[O] V_CS_geom (central solenoid)                    : 89.8 [m^3]
+[O] V_FI      (fusion island envelope)              : 6445.5 [m^3]
+-------------------------------------------------------------------------
+[O] C_reac_pc (primary coils)                       : 2515.2 [M EUR]
+[O] C_reac_bl (blanket)                             : 791.8 [M EUR]
+[O] C_reac_sg (shield & gaps)                       : 941.9 [M EUR]
+[O] C_reac_tt (divertor targets)                    : 13.8 [M EUR]
+[O] C_syst_heat (heat transfer)                     : 85.7 [M EUR]
+[O] C_syst_aux (heating & CD)                       : 378.1 [M EUR]
+[O] C_syst_BOP (turbine & BoP)                      : 349.2 [M EUR]
+[O] C_syst_other (buildings & auxiliaries)          : 1280.6 [M EUR]
+[O] C_D    (total direct cost)                      : 6356.3 [M EUR]
+[O] C_ind  (indirect + contingency)                 : 6984.0 [M EUR]
+[O] C_invest (total capital cost)                   : 13.340 [B EUR]
+-------------------------------------------------------------------------
+[O] C_Op_OM (annual O&M)                            : 0.0 [M EUR/yr]
+[O] C_Op_F  (annual fuel & replacements)            : 95.5 [M EUR/yr]
+[O] C_Op_waste (waste disposal)                     : 6.524 [EUR/MWh]
+-------------------------------------------------------------------------
+[O] COE (cost of electricity)                       : undefined (E_net <= 0)
+=========================================================================

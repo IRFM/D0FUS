@@ -1,0 +1,30 @@
+D0FUS uncertainty study summary
+Generated on 2026-11-19 16:38:35
+Input file : 4_uncertainty_ITER.txt
+Seed       : 12345
+
+Samples    : 240 total = 218 converged + 22 without a solution (no_operating_point=22)
+Feasible   : 48% (95% CI 42-55%) of all samples, as designed or after Tbar retuning
+Verdict    : AT RISK  (thresholds 85% / 60% on the share above)
+  as designed (frozen operating point)    : 33% (95% CI 27-39%)
+  including the draws that close only with CS flux relief (ramp assist and/or shorter pulse): 75% (95% CI 70-80%)
+Binding limit among converged non-feasible samples: kink=37
+
+Headroom to each limit (normalised margin, P5 / P50 / P95):
+  Greenwald   : +0.012 / +0.262 / +0.472
+  Troyon      : +0.292 / +0.479 / +0.577
+  Kink (q95)  : -0.099 / +0.260 / +1.072
+
+Feasible share by model combination (as designed or after Tbar retuning):
+  Wenninger · IPB98(y,2)            : 65% (95% CI 43-82%)
+  Freidberg · IPB98(y,2)            : 70% (95% CI 48-85%)
+  Blend · IPB98(y,2)                : 65% (95% CI 43-82%)
+  Stambaugh · IPB98(y,2)            : 90% (95% CI 70-97%)
+  Wenninger · ITPA20                : 20% (95% CI 8-42%)
+  Freidberg · ITPA20                : 30% (95% CI 15-52%)
+  Blend · ITPA20                    : 20% (95% CI 8-42%)
+  Stambaugh · ITPA20                : 70% (95% CI 48-85%)
+  Wenninger · ITPA20-IL             : 20% (95% CI 8-42%)
+  Freidberg · ITPA20-IL             : 20% (95% CI 8-42%)
+  Blend · ITPA20-IL                 : 20% (95% CI 8-42%)
+  Stambaugh · ITPA20-IL             : 90% (95% CI 70-97%)
