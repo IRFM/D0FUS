@@ -1,0 +1,331 @@
+{
+  "timestamp": "2026-11-19T16:40:33.253955",
+  "input_file": "/home/matti/code/D0FUS/tests/regression/genetic/input/3_genetic_ITER.txt",
+  "seed": 1,
+  "fitness_objective": "C_invest",
+  "C_invest_max_MEUR": 25000,
+  "settings": {
+    "population_size": 16,
+    "generations": 3,
+    "crossover_rate": 0.6,
+    "mutation_rate": 0.5,
+    "patience": 20,
+    "seed": 1,
+    "n_workers": 1,
+    "local_refine_method": "nelder-mead",
+    "local_refine_top_k": 1,
+    "local_refine_every": 0,
+    "diversity_inject_fraction": 0.3,
+    "cloud_refinement_min_dist": 0.05,
+    "make_gif": false,
+    "gif_var_x": "a",
+    "gif_var_y": "R0",
+    "gif_resolution": 30,
+    "gif_log_scale": true,
+    "gif_fps": 8,
+    "fitness_objective": "C_invest",
+    "fitness_expression": null,
+    "feasibility_epsilon": 0.0,
+    "infeasible_floor": 100000.0,
+    "feasibility_band_gain": 1.0,
+    "density_violation_weight": 1.0,
+    "beta_violation_weight": 1.0,
+    "q_kink_violation_weight": 1.0,
+    "Ip_violation_weight": 1.0,
+    "Ip_soft_start": null,
+    "Ip_soft_penalty": null
+  },
+  "settings_source": {
+    "population_size": "deck",
+    "generations": "deck",
+    "crossover_rate": "deck",
+    "mutation_rate": "deck",
+    "patience": "default",
+    "seed": "deck",
+    "n_workers": "deck",
+    "local_refine_method": "deck",
+    "local_refine_top_k": "deck",
+    "local_refine_every": "deck",
+    "diversity_inject_fraction": "default",
+    "cloud_refinement_min_dist": "default",
+    "make_gif": "deck",
+    "gif_var_x": "deck",
+    "gif_var_y": "deck",
+    "gif_resolution": "deck",
+    "gif_log_scale": "deck",
+    "gif_fps": "deck",
+    "fitness_objective": "deck",
+    "fitness_expression": "default",
+    "feasibility_epsilon": "default",
+    "infeasible_floor": "default",
+    "feasibility_band_gain": "default",
+    "density_violation_weight": "default",
+    "beta_violation_weight": "default",
+    "q_kink_violation_weight": "default",
+    "Ip_violation_weight": "default",
+    "Ip_soft_start": "default",
+    "Ip_soft_penalty": "default"
+  },
+  "local_refine_kwargs": {
+    "max_iters": 20
+  },
+  "optimized_parameters": {
+    "a": 2.2302061863015976,
+    "R0": 6.22456168488648,
+    "Bmax_TF": 8.79104649150499,
+    "Tbar": 8.320226957129982
+  },
+  "best_fitness": 13340.27541266839,
+  "cost_metrics": {
+    "volume_proxy_m3_per_MW": 2.245425818756297,
+    "COE_EUR_per_MWh": "NaN",
+    "C_invest_BEUR": 13.34027541266839,
+    "P_elec_MW": -33.99931738972873
+  },
+  "feasible": true,
+  "is_buildable": true,
+  "binding_constraint": null,
+  "feasibility_ratios": {
+    "density": 0.8394557739859486,
+    "beta": 0.7270889051322292,
+    "q": 0.9982771530487364
+  },
+  "stability_margins": {
+    "n_line_over_nG": 0.8394557739859486,
+    "q_kink_over_qlim": 1.0017258202754635,
+    "kink_parameter": "q95",
+    "betaN_over_betaN_limit": 0.7270889051322292,
+    "Ip_over_Ip_limit": null,
+    "Ip_soft_multiplier": 1.0
+  },
+  "radial_build": {
+    "c_TF_m": 0.5134356761757919,
+    "d_CS_m": 0.5032995259027343,
+    "r_d_m": 1.7776202965063561
+  },
+  "hall_of_fame": [
+    {
+      "rank": 1,
+      "fitness": 13340.27541266839,
+      "params": {
+        "a": 2.2302061863015976,
+        "R0": 6.22456168488648,
+        "Bmax_TF": 8.79104649150499,
+        "Tbar": 8.320226957129982
+      }
+    },
+    {
+      "rank": 2,
+      "fitness": 13749.070950958949,
+      "params": {
+        "a": 2.221108782087772,
+        "R0": 6.502874960290016,
+        "Bmax_TF": 8.829712565700989,
+        "Tbar": 8.607890396796595
+      }
+    },
+    {
+      "rank": 3,
+      "fitness": 14252.605871095855,
+      "params": {
+        "a": 2.4066148775407226,
+        "R0": 6.553916264898776,
+        "Bmax_TF": 8.480743875847425,
+        "Tbar": 7.143769343359969
+      }
+    },
+    {
+      "rank": 4,
+      "fitness": 14258.861414311257,
+      "params": {
+        "a": 2.4079984580168605,
+        "R0": 6.553916264898776,
+        "Bmax_TF": 8.480743875847425,
+        "Tbar": 7.143769343359969
+      }
+    },
+    {
+      "rank": 5,
+      "fitness": 14602.074131565798,
+      "params": {
+        "a": 2.4079984580168605,
+        "R0": 6.74894062660265,
+        "Bmax_TF": 8.480743875847425,
+        "Tbar": 7.878943494760958
+      }
+    },
+    {
+      "rank": 6,
+      "fitness": 15030.784763280539,
+      "params": {
+        "a": 2.408319343759557,
+        "R0": 6.965236710965803,
+        "Bmax_TF": 8.696512001005571,
+        "Tbar": 7.962415862347491
+      }
+    },
+    {
+      "rank": 7,
+      "fitness": 16865.948983419825,
+      "params": {
+        "a": 2.5782532091426846,
+        "R0": 6.968035017480968,
+        "Bmax_TF": 9.482252701582818,
+        "Tbar": 8.305597033509606
+      }
+    },
+    {
+      "rank": 8,
+      "fitness": 16899.386612517257,
+      "params": {
+        "a": 2.580666671998893,
+        "R0": 6.965236710965803,
+        "Bmax_TF": 9.495077802929108,
+        "Tbar": 7.967250213811746
+      }
+    },
+    {
+      "rank": 9,
+      "fitness": 16900.18855510567,
+      "params": {
+        "a": 2.4582502412858096,
+        "R0": 6.940258414082641,
+        "Bmax_TF": 9.938088140583316,
+        "Tbar": 8.007391236124876
+      }
+    },
+    {
+      "rank": 10,
+      "fitness": 16932.102104816895,
+      "params": {
+        "a": 2.564134343091595,
+        "R0": 6.965185194940494,
+        "Bmax_TF": 9.564053893027488,
+        "Tbar": 8.003517713072666
+      }
+    }
+  ],
+  "refinement_log": [
+    {
+      "phase": "final",
+      "gen": null,
+      "starting_rank": 1,
+      "method": "nelder-mead",
+      "iters": 20,
+      "nfev": 34,
+      "success": false,
+      "reason": "Maximum number of iterations has been exceeded.",
+      "f_before": 14252.605871095855,
+      "f_after": 13749.070950958949,
+      "improvement": 503.5349201369063,
+      "params": {
+        "a": 2.221108782087772,
+        "R0": 6.502874960290016,
+        "Bmax_TF": 8.829712565700989,
+        "Tbar": 8.607890396796595
+      }
+    },
+    {
+      "phase": "final",
+      "gen": null,
+      "starting_rank": 2,
+      "method": "nelder-mead",
+      "iters": 20,
+      "nfev": 39,
+      "success": false,
+      "reason": "Maximum number of iterations has been exceeded.",
+      "f_before": 14492.776658895502,
+      "f_after": 13340.27541266839,
+      "improvement": 1152.5012462271116,
+      "params": {
+        "a": 2.2302061863015976,
+        "R0": 6.22456168488648,
+        "Bmax_TF": 8.79104649150499,
+        "Tbar": 8.320226957129982
+      }
+    }
+  ],
+  "ga_trajectory": [
+    {
+      "gen": 0,
+      "fitness": 17000.210985461574,
+      "params": {
+        "a": 2.4582502412858096,
+        "R0": 6.965236710965803,
+        "Bmax_TF": 9.938088140583316,
+        "Tbar": 8.003517713072666
+      }
+    },
+    {
+      "gen": 1,
+      "fitness": 17000.210985461574,
+      "params": {
+        "a": 2.4582502412858096,
+        "R0": 6.965236710965803,
+        "Bmax_TF": 9.938088140583316,
+        "Tbar": 8.003517713072666
+      }
+    },
+    {
+      "gen": 2,
+      "fitness": 14258.861414311257,
+      "params": {
+        "a": 2.4079984580168605,
+        "R0": 6.553916264898776,
+        "Bmax_TF": 8.480743875847425,
+        "Tbar": 7.143769343359969
+      }
+    },
+    {
+      "gen": 3,
+      "fitness": 14252.605871095855,
+      "params": {
+        "a": 2.4066148775407226,
+        "R0": 6.553916264898776,
+        "Bmax_TF": 8.480743875847425,
+        "Tbar": 7.143769343359969
+      }
+    },
+    {
+      "gen": 3,
+      "fitness": 13340.27541266839,
+      "params": {
+        "a": 2.2302061863015976,
+        "R0": 6.22456168488648,
+        "Bmax_TF": 8.79104649150499,
+        "Tbar": 8.320226957129982
+      },
+      "phase": "post_refinement"
+    }
+  ],
+  "ga_exploration_summary": [
+    {
+      "gen": 0,
+      "n_evals": 4,
+      "f_min": 17000.210985461574,
+      "f_median": 101808.35478685303,
+      "f_max": 158910.27552969672
+    },
+    {
+      "gen": 1,
+      "n_evals": 4,
+      "f_min": 16696.69115093318,
+      "f_median": 18044.014274087494,
+      "f_max": 102506.46182352555
+    },
+    {
+      "gen": 2,
+      "n_evals": 15,
+      "f_min": 14258.861414311257,
+      "f_median": 17038.3131967403,
+      "f_max": 144297.56025268635
+    },
+    {
+      "gen": 3,
+      "n_evals": 18,
+      "f_min": 14252.605871095855,
+      "f_median": 16986.23063601017,
+      "f_max": 101695.16069890921
+    }
+  ]
+}

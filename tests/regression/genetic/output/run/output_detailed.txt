@@ -1,0 +1,502 @@
+================================================================================
+ D0FUS - DETAILED RUN REPORT
+================================================================================
+  Code version  : 3.3.0
+  Date / time   : 2026-11-19 16:40:33
+  Git commit    : 0496f83
+  Python        : 3.12.3
+  Platform      : Linux-7.1.5-76070105-generic-x86_64-with-glibc2.39
+  Input deck    : n/a
+  Output folder : Run_D0FUS_20261119_164033
+  Run timestamp : 20261119_164033
+
+  This report lists every input (including defaults) and every
+  computed output. It complements input_parameters.txt (inputs as
+  given) and output_highlight.txt (human-readable summary).
+
+================================================================================
+ 1. INPUTS - configuration used by run() (including default values)
+================================================================================
+  R0                                            : 6.22456    [float]
+  a                                             : 2.23021    [float]
+  b                                             : 1.1    [float]
+  delta_BB_IB                                   : 0.5    [float]
+  delta_BB_OB                                   : 0.5    [float]
+  delta_shield_IB                               : 0.3    [float]
+  delta_shield_OB                               : 0.3    [float]
+  Bmax_TF                                       : 8.79105    [float]
+  Bmax_CS_adm                                   : 15    [float]
+  P_fus                                         : 500    [float]
+  Tbar                                          : 8.32023    [float]
+  Tbar_mode                                     : manual    [str]
+  f_GW_target                                   : 0.85    [float]
+  Tbar_min                                      : 4    [float]
+  Tbar_max                                      : 30    [float]
+  P_fus_mode                                    : manual    [str]
+  tau_i_e                                       : 1    [float]
+  H                                             : 1    [float]
+  Operation_mode                                : Pulsed    [str]
+  Temps_Plateau_input                           : 400    [float]
+  P_aux_input                                   : 50    [float]
+  Q_target                                      : n/a    [float]
+  Plasma_profiles                               : Manual    [str]
+  nu_n_manual                                   : 0.01    [float]
+  nu_T_manual                                   : 2.8    [float]
+  rho_ped                                       : 0.95    [float]
+  n_ped_frac                                    : 0.99    [float]
+  T_ped_frac                                    : 0.55    [float]
+  Scaling_Law                                   : IPB98(y,2)    [str]
+  L_H_Scaling_choice                            : Martin    [str]
+  Bootstrap_choice                              : Sauter-Redl    [str]
+  trapped_fraction_model                        : Sauter2002    [str]
+  Option_q95                                    : ITER_1989    [str]
+  Option_Kappa                                  : Wenninger    [str]
+  κ_manual                                      : 1.9    [float]
+  Triangularity                                 : positive    [str]
+  Delta_manual                                  : n/a    [float]
+  q_profile_mode                                : refined    [str]
+  alpha_J                                       : 1.5    [float]
+  Plasma_geometry                               : refined    [str]
+  betaN_limit                                   : 2.8    [float]
+  kink_parameter                                : q95    [str]
+  q_limit                                       : 2.5    [float]
+  Greenwald_limit                               : 1    [float]
+  density_limit_model                           : greenwald    [str]
+  alpha_giacomin                                : 3.3    [float]
+  f0_zanca                                      : 0.5    [float]
+  Ip_limit                                      : n/a    [float]
+  ms                                            : 0.3    [float]
+  Fuel                                          : DT    [str]
+  Atomic_mass                                   : 2.5    [float]
+  Zeff                                          : 1.65    [float]
+  r_synch                                       : 0.6    [float]
+  C_Alpha                                       : 5.7    [float]
+  impurity_species                              : W, Ne    [str]
+  detachment_impurity                           : Ne    [str]
+  lengyel_T_target_eV                           : 25    [float]
+  f_imp_core                                    : 2e-5, 7e-3    [str]
+  rho_rad_core                                  : 0.85    [float]
+  coreradiationfraction                         : 1    [float]
+  Ce                                            : 0.45    [float]
+  f_heat_ramp                                   : 0    [float]
+  eta_model                                     : sauter    [str]
+  E_BD                                          : 0.25    [float]
+  Chosen_Steel_TF                               : 316L    [str]
+  Chosen_Steel_CS                               : 316L    [str]
+  σ_manual_TF                                   : 1500    [float]
+  σ_manual_CS                                   : 1500    [float]
+  nu_Steel                                      : 0.29    [float]
+  Young_modul_Steel                             : 2.000000e+11    [float]
+  Young_modul_GF                                : 9.000000e+10    [float]
+  fatigue_CS                                    : 2    [float]
+  SF_TF                                         : 1    [float]
+  SF_CS                                         : 1    [float]
+  Radial_build_model                            : refined    [str]
+  Choice_Buck_Wedg                              : Wedging    [str]
+  Supra_choice                                  : Nb3Sn    [str]
+  J_wost_Manual                                 : 1.000000e+08    [float]
+  Supra_choice_CS                               : same    [str]
+  J_wost_Manual_CS                              : n/a    [float]
+  coef_inboard_tension                          : 0.5    [float]
+  F_CClamp                                      : 0    [float]
+  n_shape_TF                                    : 1    [float]
+  c_BP                                          : 0.07    [float]
+  TF_grading                                    : False    [bool]
+  f_TF_steel_mass                               : 1    [float]
+  Gap                                           : 0.1    [float]
+  n_shape_CS                                    : 1    [float]
+  N_sub_CS                                      : 6    [int]
+  H_CS                                          : n/a    [float]
+  f_swing_usable                                : 0.75    [float]
+  T_helium                                      : 4.5    [float]
+  Marge_T_He                                    : 0.3    [float]
+  f_He_pipe                                     : 0.1    [float]
+  f_void                                        : 0.3    [float]
+  f_In_cable                                    : 0.1    [float]
+  f_In_WP                                       : 0.15    [float]
+  Marge_T_Nb3Sn                                 : 0.7    [float]
+  Marge_T_NbTi                                  : 1.7    [float]
+  Marge_T_REBCO                                 : 5    [float]
+  LF_numerator                                  : 0.062    [float]
+  LF_a0                                         : 0.0122    [float]
+  LF_a1                                         : 5.490000e-04    [float]
+  LF_b0                                         : 0.00127    [float]
+  LF_b1                                         : -2.700000e-05    [float]
+  LF_b2                                         : 5.930000e-06    [float]
+  Eps                                           : -0.006    [float]
+  Tet                                           : 0    [float]
+  I_cond                                        : 68000    [float]
+  I_cond_CS                                     : 45000    [float]
+  V_max                                         : 10000    [float]
+  tau_h_LTS                                     : 4    [float]
+  tau_h_HTS                                     : 10    [float]
+  T_hotspot                                     : 250    [float]
+  RRR                                           : 100    [float]
+  Dump_resistor_subdivision                     : 2    [int]
+  eta_T                                         : 0.35    [float]
+  M_blanket                                     : 1    [float]
+  eta_RF                                        : 0.4    [float]
+  CD_source                                     : Multi    [str]
+  gamma_CD_acad                                 : 0.2    [float]
+  eta_WP_acad                                   : 0.4    [float]
+  P_LH                                          : 0    [float]
+  P_ECRH                                        : 6.7    [float]
+  P_NBI                                         : 33    [float]
+  P_ICRH                                        : 10    [float]
+  f_heat_LH                                     : 0.25    [float]
+  f_heat_EC                                     : 0.25    [float]
+  f_heat_NBI                                    : 0.25    [float]
+  f_heat_ICR                                    : 0.25    [float]
+  rho_EC                                        : 0.4    [float]
+  theta_EC_pol_deg                              : 0    [float]
+  rho_NBI                                       : 0.3    [float]
+  A_beam                                        : 2    [int]
+  E_beam_keV                                    : 1000    [float]
+  angle_NBI_deg                                 : 20    [float]
+  theta_deg                                     : 2.5    [float]
+  f_n_sep                                       : 0.47    [float]
+  f_cooling_div                                 : 0    [float]
+  f_mom_div                                     : 0    [float]
+  q_dep_limit                                   : 5    [float]
+  flux_expansion                                : 1    [float]
+  ripple_adm                                    : 0.005    [float]
+  L_min                                         : 3.6    [float]
+  tau_TQ                                        : 0.001    [float]
+  Te_final_eV                                   : 5    [float]
+  pellet_dilution                               : 10    [float]
+  pellet_dilution_cools                         : False    [bool]
+  cost_model                                    : Sheffield    [str]
+  discount_rate                                 : 0.07    [float]
+  T_life                                        : 40    [int]
+  T_build                                       : 10    [int]
+  contingency                                   : 0.15    [float]
+  Util_factor                                   : 0.85    [float]
+  Dwell_factor                                  : 1    [float]
+  Supra_cost_factor                             : 2    [float]
+  C_invest_max                                  : 25000    [float]
+  eta_store                                     : 0.9    [float]
+  M_cold_DEMO_ref                               : 6.470000e+06    [float]
+  P_cryo_cool_DEMO_ref                          : 82    [float]
+  P_cryo_electric_DEMO_ref                      : 40.4    [float]
+  P_plant_base                                  : 5    [float]
+  pflux_plant_floor                             : 150    [float]
+  P_tritium_plant                               : 15    [float]
+  P_vacuum_pumps                                : 0.5    [float]
+  dr_TF_cryostat                                : 2.37    [float]
+  f_BoP                                         : n/a    [float]
+  f_kappa_SOL                                   : 0.25    [float]
+  Blanket_choice                                : HCPB    [str]
+  rho_divertor                                  : 2460    [float]
+  dpa_lim                                       : 70    [float]
+  C_dpa                                         : 12    [float]
+  epsilon_div                                   : 30    [float]
+  f_peak                                        : 3    [float]
+  f_div_area_fraction                           : 0.1    [float]
+  dt_rep_bl                                     : 0.5    [float]
+  dt_rep_div                                    : 0.4    [float]
+
+================================================================================
+ 2. OUTPUTS - Plasma geometry & shape
+================================================================================
+  Major radius R0                               : 6.22456 [m]
+  Minor radius a                                : 2.23021 [m]
+  Aspect ratio A = R0/a                         : 2.79103 [-]
+  Geometry model                                : refined
+  Elongation kappa_edge (LCFS)                  : 1.91845 [-]
+  Elongation kappa_95                           : 1.7129 [-]
+  Triangularity delta_edge (LCFS)               : 0.551069 [-]
+  Triangularity delta_95                        : 0.367379 [-]
+  Plasma volume                                 : 1068.38 [m^3]
+  Plasma surface                                : 774.011 [m^2]
+  Inboard LCFS radius r_minor = R0 - a          : 3.99436 [m]
+  TF leg plasma-side radius r_sep = R0-a-b      : 2.89436 [m]
+  CS outer radius r_c                           : 2.28092 [m]
+  CS bore radius r_d                            : 1.77762 [m]
+
+================================================================================
+ 3. OUTPUTS - Magnetic field & current
+================================================================================
+  Toroidal field on axis B0                     : 3.98888 [T]
+  Peak field B_max                              : 8.79105 [T]
+  CS field B_CS                                 : 9.22525 [T]
+  Poloidal field B_pol                          : 1.07112 [T]
+  Plasma current Ip                             : 17.8633 [MA]
+  Bootstrap current Ib                          : 3.07242 [MA]
+  Current-drive current I_CD                    : 2.95148 [MA]
+  Ohmic current I_Ohm                           : 11.8394 [MA]
+  Edge safety factor q95                        : 2.50431 [-]
+  Cylindrical safety factor q*                  : 2.08784 [-]
+  Loop voltage Vloop                            : 0.0539746 [V]
+  Internal inductance li                        : 0.944302 [-]
+
+================================================================================
+ 4. OUTPUTS - Density, temperature, pressure, beta
+================================================================================
+  Volume-avg density nbar                       : 0.930918 [1e20 m^-3]
+  Line-avg density nbar_line                    : 0.959666 [1e20 m^-3]
+  Density limit used nG (model x margin)        : 1.1432 [1e20 m^-3]
+  Volume-avg temperature Tbar                   : 8.32023 [keV]
+  Volume-avg pressure pbar                      : 0.243812 [MPa]
+  Effective charge Z_eff                        : 1.65 [-]
+  Helium ash fraction f_He = n_He/n_e           : 0.0414523 [-]
+  Normalised beta betaN (thermal)               : 1.9179 [% m T/MA]
+  Toroidal beta betaT                           : 0.0385117 [-]
+  Poloidal beta betaP                           : 0.534097 [-]
+  Total normalised beta betaN_total             : 2.03585 [% m T/MA]
+  Fast-alpha beta beta_fast_alpha               : 0.00236835 [-]
+  Density profile exponent nu_n                 : 0.01 [-]
+  Temperature profile exponent nu_T             : 2.8 [-]
+  Pedestal radius rho_ped, volume label rho_V   : 0.960348 [-]
+  Pedestal density fraction n_ped_frac          : 0.99 [-]
+  Pedestal temperature fraction T_ped_frac      : 0.55 [-]
+
+================================================================================
+ 5. OUTPUTS - Confinement & fusion
+================================================================================
+  Energy confinement time tauE                  : 4.07537 [s]
+  Thermal stored energy W_th                    : 3.907266e+08 [J]
+  Fusion power P_fus                            : 500 [MW]
+  Fusion gain Q                                 : 9.93265 [-]
+  He ash confinement tau*_He = C_Alpha tauE     : 23.2296 [s]
+  Fast-alpha slowing time tau_sd_alpha          : 0.634073 [s]
+  Fast-alpha stored energy W_fast_alpha         : 24.0285 [MJ]
+
+================================================================================
+ 6. OUTPUTS - Power balance
+================================================================================
+  Auxiliary power input P_aux_input             : 50 [MW]
+  Heating + CD power P_CD (incl. ICRH)          : 49.7 [MW]
+  Power across separatrix P_sep                 : 84.5126 [MW]
+  L-H threshold power P_Thresh                  : 60.1845 [MW]
+  Net electric power P_elec                     : -33.9993 [MWe]
+  Wall-plug power P_wallplug                    : 124.25 [MW]
+  CD figure of merit gamma_CD                   : 0.430794 [1e20 A W^-1 m^-2]
+  Bremsstrahlung P_Brem                         : 14.7653 [MW]
+  Synchrotron P_syn                             : 2.44563 [MW]
+  Impurity radiation P_line (Mavrin Lz)         : 47.9771 [MW]
+  Impurity radiation, rho < rho_rad_core        : 37.2536 [MW]
+
+================================================================================
+ 7. OUTPUTS - Current-drive breakdown
+================================================================================
+  LH figure of merit gamma_LH                   : 0.318476 [1e20 A W^-1 m^-2]
+  EC figure of merit gamma_EC                   : 0.0239218 [1e20 A W^-1 m^-2]
+  NBI figure of merit gamma_NBI                 : 0.513401 [1e20 A W^-1 m^-2]
+  LH power P_LH                                 : 0 [MW]
+  EC power P_EC                                 : 6.7 [MW]
+  NBI power P_NBI                               : 33 [MW]
+  ICRH power P_ICR                              : 10 [MW]
+  LH-driven current I_LH                        : 0 [MA]
+  EC-driven current I_EC                        : 0.0276597 [MA]
+  NBI-driven current I_NBI                      : 2.92382 [MA]
+
+================================================================================
+ 8. OUTPUTS - Poloidal flux budget
+================================================================================
+  Plasma initiation flux psi_PI                 : 9.77752 [Wb]
+  Ramp-up flux psi_RampUp                       : 228.435 [Wb]
+  Plateau flux psi_plateau                      : 21.5899 [Wb]
+  PF flux psi_PF                                : 79.8659 [Wb]
+  CS flux psi_CS                                : 179.937 [Wb]
+
+================================================================================
+ 9. OUTPUTS - Divertor & exhaust
+================================================================================
+  SOL elongation factor f_kappa_SOL             : 0.25 [-]
+  Divertor heat scaling P_sep/R0                : 13.5773 [MW/m]
+  Parallel heat flux proxy P_sep B0/R0          : 54.1581 [MW T/m]
+  Poloidal proxy P_sep B0/(q95 R0 A)            : 7.74838 [MW T/m]
+  SOL power width lambda_q (Eich #15)           : 7.245302e-04 [m]
+  Attached unmitigated target flux q_target     : 163.376 [MW/m^2]
+  Radiative wall load P_rad,tot/S               : 0.084221 [MW/m^2]
+  Mean SOL exhaust flux P_sep/S                 : 0.109188 [MW/m^2]
+  Neutron wall load Gamma_n                     : 0.516788 [MW/m^2]
+  Refined two-point divertor model (NaN target values when sheath-limited):
+    B_pol_omp                                   : 1.21036 [T]
+    Gamma_et                                    : n/a [m^-2 s^-1]
+    T_et                                        : 249.961 [eV]
+    T_eu                                        : 249.961 [eV]
+    detached                                    : False
+    f_cooling                                   : 0 [-]
+    f_mom                                       : 0 [-]
+    f_outer_target                              : 0.65 [-]
+    f_pwr_loss_req                              : 0.969396 [-]
+    m_f                                         : 4.175000e-27 [kg]
+    n_et                                        : n/a [m^-3]
+    n_sep                                       : 4.375314e+19 [m^-3]
+    pitch_B_over_Bpol                           : 2.62429 [-]
+    q_dep_limit                                 : 5 [MW/m^2]
+    q_dep_t                                     : n/a [MW/m^2]
+    q_par0_attached                             : 3745.48 [MW/m^2]
+    q_par_u                                     : 3745.48 [MW/m^2]
+    q_pol_omp                                   : 1427.24 [MW/m^2]
+    regime                                      : sheath-limited
+    sputtering_safe                             : False
+    theta_deg                                   : 2.5 [deg]
+
+================================================================================
+ 10. OUTPUTS - TF coil (winding pack, composition, structure)
+================================================================================
+  TF lift factor LF_TF                          : 2.40099 [-]
+  TF current density J_wost_TF (no steel)       : 4.633941e+07 [A/m^2]
+  TF current density J_coil_TF (full TF leg)    : 1.495138e+07 [A/m^2]
+  TF radial thickness c_TF                      : 0.513436 [m]
+  TF winding-pack thickness c_WP                : 0.251754 [m]
+  TF nose thickness c_nose                      : 0.191682 [m]
+  TF conductor shape factor n_shape_TF          : 1 [-]
+  Number of TF coils N_TF                       : 19 [-]
+  TF steel fraction Steel_fraction_TF           : 0.373076 [-]
+  TF axial stress sz_TF                         : 3.345742e+08 [Pa]
+  TF hoop stress st_TF                          : 0 [Pa]
+  TF radial stress sr_TF                        : 3.254027e+08 [Pa]
+  TF SC fraction f_sc_TF                        : 0.0510717 [-]
+  TF Cu fraction f_cu_TF                        : 0.403928 [-]
+  TF He-pipe fraction f_He_pipe_TF              : 0.1 [-]
+  TF void fraction f_void_TF                    : 0.195 [-]
+  TF He fraction f_He_TF                        : 0.295 [-]
+  TF insulator fraction f_In_TF                 : 0.1 [-]
+  TF steel volume V_steel_TF                    : 205.918 [m^3]
+  TF SC volume V_sc_TF                          : 4.66765 [m^3]
+  TF Cu volume V_cu_TF                          : 36.9167 [m^3]
+  TF He volume V_He_TF                          : 26.9613 [m^3]
+  TF insulator volume V_In_TF                   : 22.8485 [m^3]
+  Single-TF volume V_TF_one                     : 15.648 [m^3]
+  TF cable length L_cable_TF                    : 72453.9 [m]
+  TF equivalent SC strands per cable n_sc_TF    : 121.989 [-]
+  TF strand length L_sc_strand_TF               : 8.838545e+06 [m]
+  TF steel mass M_steel_TF                      : 1.632933e+06 [kg]
+  TF SC mass M_sc_TF                            : 40141.8 [kg]
+  TF Cu mass M_cu_TF                            : 330773 [kg]
+  TF insulator mass M_In_TF                     : 43412.2 [kg]
+  TF total mass M_total_TF                      : 2.047260e+06 [kg]
+
+================================================================================
+ 11. OUTPUTS - CS coil (winding pack, composition, structure)
+================================================================================
+  CS lift factor LF_CS                          : 2.35085 [-]
+  CS current density J_wost_CS (no steel)       : 5.229803e+07 [A/m^2]
+  CS current density J_coil_CS (steel incl.)    : 1.458618e+07 [A/m^2]
+  CS radial thickness c_CS                      : 0.5033 [m]
+  CS total height H_CS                          : 13.991 [m]
+  CS module height H_CS_module                  : 2.33183 [m]
+  CS module count N_sub_CS                      : 6 [-]
+  CS conductor shape factor n_shape_CS          : 1 [-]
+  CS steel fraction Steel_fraction_CS           : 0.721095 [-]
+  CS axial stress sz_CS                         : -1.377654e+08 [Pa]
+  CS hoop stress st_CS                          : 1.922494e+08 [Pa]
+  CS radial stress sr_CS                        : 0 [Pa]
+  CS SC fraction f_sc_CS                        : 0.0638922 [-]
+  CS Cu fraction f_cu_CS                        : 0.391108 [-]
+  CS He-pipe fraction f_He_pipe_CS              : 0.1 [-]
+  CS void fraction f_void_CS                    : 0.195 [-]
+  CS He fraction f_He_CS                        : 0.295 [-]
+  CS insulator fraction f_In_CS                 : 0.1 [-]
+  CS steel volume V_steel_CS                    : 64.7422 [m^3]
+  CS SC volume V_sc_CS                          : 1.59992 [m^3]
+  CS Cu volume V_cu_CS                          : 9.79373 [m^3]
+  CS He volume V_He_CS                          : 7.38709 [m^3]
+  CS insulator volume V_In_CS                   : 6.26025 [m^3]
+  CS solenoid volume V_CS_geom                  : 89.7832 [m^3]
+  CS cable length L_cable_CS                    : 29102.1 [m]
+  CS equivalent SC strands per cable n_sc_CS    : 104.102 [-]
+  CS strand length L_sc_strand_CS               : 3.029577e+06 [m]
+  CS steel mass M_steel_CS                      : 513406 [kg]
+  CS SC mass M_sc_CS                            : 13759.4 [kg]
+  CS Cu mass M_cu_CS                            : 87751.8 [kg]
+  CS insulator mass M_In_CS                     : 11894.5 [kg]
+  CS total mass M_total_CS                      : 626811 [kg]
+
+================================================================================
+ 12. OUTPUTS - Radial build volumes & masses
+================================================================================
+  Blanket+shield radial thickness b             : 1.1 [m]
+  Outboard clearance Delta_TF                   : 1.62 [m]
+  Assembly gap Gap                              : 0.1 [m]
+  Blanket concept Blanket_choice                : HCPB
+  LCFS-to-TF shell volume V_blanket             : 2904.78 [m^3]
+  Scrape-off layer volume V_rb_SOL              : 52.9343 [m^3]
+  First-wall volume V_rb_FW                     : 38.951 [m^3]
+  Breeding-blanket volume V_rb_BB               : 735.617 [m^3]
+  Shield volume V_rb_shield                     : 465.254 [m^3]
+  Vacuum-vessel volume V_rb_VV                  : 155.09 [m^3]
+  Gaps and voids volume V_rb_gap_TF             : 1371.03 [m^3]
+  Divertor volume V_rb_divertor                 : 86.0631 [m^3]
+  First-wall mass M_rb_FW                       : 135132 [kg]
+  Breeding-blanket mass M_rb_BB                 : 2.741781e+06 [kg]
+  Shield mass M_rb_shield                       : 3.665752e+06 [kg]
+  Vacuum-vessel mass M_rb_VV                    : 941976 [kg]
+  Divertor mass M_rb_divertor                   : 211715 [kg]
+  Radial-build total mass M_rb_total            : 7.696357e+06 [kg]
+
+================================================================================
+ 13. OUTPUTS - Component lifetime & availability
+================================================================================
+  Blanket lifetime t_life_bl_fpy                : 10.1589 [fpy]
+  Divertor lifetime t_life_div_fpy              : 9.15853 [fpy]
+  Blanket calendar lifetime t_life_bl_yr        : 11.9517 [yr]
+  Divertor calendar lifetime t_life_div_yr      : 10.7747 [yr]
+  Operation time per cycle T_op_limit           : 10.7747 [yr]
+  Effective replacement downtime dt_rep_eff     : 0.5 [yr]
+  Plant availability Av                         : 0.955653 [-]
+  Operating fraction CF (Av x Util)             : 0.812305 [-]
+
+================================================================================
+ 14. OUTPUTS - Plant electrical balance & pulsed operation
+================================================================================
+  Instantaneous thermal power P_th              : 549.7 [MWth]
+  Turbine thermal design power P_th_turbine     : 549.7 [MWth]
+  Stored thermal energy E_store_th              : 0 [MWhth]
+  Electrical smoothing split x                  : 1 [-]
+  Nominal reactor thermal output during pulse   : 549.7 [MWth]
+  Reactor to storage during pulse               : 0 [MWth]
+  Reactor to turbine during pulse               : 549.7 [MWth]
+  Storage to turbine during dwell               : 0 [MWth]
+  Total turbine thermal input during dwell      : 0 [MWth]
+  Turbine gross electrical output during pulse  : 192.395 [MWe]
+  Turbine gross electrical output during dwell  : 0 [MWe]
+  Net electrical output during pulse            : -33.9993 [MWe]
+  Net electrical output during dwell            : -33.9993 [MWe]
+  Net smoothed electrical output (if feasible)  : -33.9993 [MWe]
+  Cycle-averaged net electrical output          : -33.9993 [MWe]
+  Gross electrical power (burn) P_e_gross       : 192.395 [MWe]
+  CS recharge power (dwell) P_coil_CS           : 0 [MWe]
+  Total TF + CS feeder current I_feeders        : 1.562 [MA]
+  Refrigeration load at 4.5 K P_cryo_cool       : 33.8909 [kW]
+  Cryogenic electrical consumption P_cryo_electric: 16.6974 [MWe]
+  Cryogenic LHe volume V_cryo_LHe               : 79312.9 [L]
+  Cryogenic LN volume V_cryo_LN                 : 125231 [L]
+  House load P_house_load (PROCESS model)       : 65.5477 [MWe]
+  Coolant pumping power (burn) P_BoP            : 19.8991 [MWe]
+  Variable recirculating power (burn) P_recirc_var: 144.149 [MWe]
+  Fixed recirculating power P_recirc_fix        : 82.2452 [MWe]
+  Total recirculated power (burn) P_recirculated: 226.394 [MWe]
+  Annual recirculated electricity E_recirculated: 1.746203e+06 [MWh/year]
+  Tritium burn per full-power year m_tritium_fpy: 28.05 [kg/fpy]
+  Annual tritium burn m_tritium                 : 22.7852 [kg/year]
+
+================================================================================
+ 15. OUTPUTS - Techno-economics (Sheffield 2016)
+================================================================================
+  Geometric cost proxy (V_build / P_fus)        : 2.24543 [m^3/MW]
+  Annual net electricity E_net                  : -377160 [MWh/year]
+  Cost of electricity COE                       : n/a [EUR/MWh]
+  Total constructed capital C_invest            : 13340.3 [M EUR (2025)]
+  CapEx components [M EUR (2025)]:
+    TF + CS coils                               : 2515.22
+    Breeding blanket                            : 791.834
+    Shield + gaps                               : 941.866
+    Divertor targets                            : 13.8153
+    Heat transfer system                        : 85.7367
+    Balance of plant                            : 349.154
+    Aux. heating                                : 378.053
+    Buildings & other                           : 1280.61
+    Indirect, interest, contingency             : 6983.98
+  Annual OpEx [M EUR (2025)/yr]:
+    O&M                                         : 0
+    Fuel / consumables                          : 95.469
+    Waste disposal                              : 0
+  Waste disposal cost (included in COE)         : 6.52376 [EUR/MWh]
+
+================================================================================
+ END OF REPORT
+================================================================================
