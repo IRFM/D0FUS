@@ -64,3 +64,10 @@ D0FUS_INPUTS/SPARC/
 # Documentation build products (regenerated at every build)
 docs/_build/
 docs/api/generated/
+
+# Coverage data
+.coverage
+.coverage.*
+coverage.json
+coverage.xml
+htmlcov/
