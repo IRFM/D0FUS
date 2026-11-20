@@ -10,6 +10,8 @@
   <a href="https://cecill.info/licences/Licence_CeCILL-C_V1-en.html"><img src="https://img.shields.io/badge/License-CeCILL--C-blue.svg" alt="License: CeCILL-C"></a>
   <a href="https://pypi.org/project/d0fus/"><img src="https://badge.fury.io/py/d0fus.svg" alt="PyPI version"></a>
   <a href="https://d0fus.readthedocs.io"><img src="https://readthedocs.org/projects/d0fus/badge/?version=latest" alt="Documentation"></a>
+  <a href="https://github.com/IRFM/D0FUS/actions/workflows/tests.yml"><img src="https://github.com/IRFM/D0FUS/actions/workflows/tests.yml/badge.svg?branch=main" alt="Tests"></a>
+  <a href="https://github.com/IRFM/D0FUS/actions/workflows/tests.yml"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/IRFM/D0FUS/badges/coverage.json" alt="Coverage"></a>
 </p>
 
 <p align="center">

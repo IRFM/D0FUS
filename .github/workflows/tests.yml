@@ -41,4 +41,54 @@ jobs:
         env:
           MPLBACKEND: Agg
           D0FUS_NO_BANNER: "1"
-        run: python -m pytest -v
+        run: python -m pytest -v --cov --cov-report=term --cov-report=json:coverage.json
+
+      - name: Coverage summary
+        if: matrix.python-version == '3.12'
+        run: python -m coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.json
+
+  coverage-badge:
+    name: Update coverage badge
+    needs: pytest
+    # Only for pushes to the default branch, so the badge tracks main.
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage
+
+      - name: Write badge data
+        run: |
+          python - <<'PY'
+          import json
+          pct = json.load(open("coverage.json"))["totals"]["percent_covered"]
+          color = ("brightgreen" if pct >= 90 else "green" if pct >= 75 else
+                   "yellow" if pct >= 60 else "orange" if pct >= 40 else "red")
+          json.dump({"schemaVersion": 1, "label": "coverage",
+                     "message": f"{pct:.0f}%", "color": color},
+                    open("coverage-badge.json", "w"))
+          PY
+
+      # The badge data lives alone on the "badges" branch, which the README
+      # badge reads through shields.io. Force-pushed: no history is kept.
+      - name: Push badge data to the badges branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir badges && mv coverage-badge.json badges/coverage.json && cd badges
+          git init -q -b badges
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add coverage.json
+          git commit -q -m "Coverage badge for ${GITHUB_SHA::7}"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" badges
