@@ -340,6 +340,15 @@ def _rel_diff(c):
     return f"{c.abs_diff / abs(c.ref):.3e}"
 
 
+def _abs_diff(c):
+    """|new - ref| of a number comparison as text ('-' for others)."""
+    if c.kind != "number":
+        return "-"
+    if c.abs_diff != c.abs_diff:  # one side NaN
+        return "nan"
+    return f"{c.abs_diff:.3e}"
+
+
 def _table(header, rows, indent="    "):
     """Lines of a plain text table: header, rule, then one line per row."""
     rows = [[str(cell) for cell in row] for row in rows]
@@ -364,7 +373,8 @@ def summarize(comparisons, atol):
         head = (f"[{status}] {rel}: {len(failed)} of {len(items)} comparisons failed ")
         lines = [head]
         if failed:
-            lines += _table(["Parameter", "Reference", "New", "Rel. diff"],
-                            [[c.location, c.ref, c.new, _rel_diff(c)] for c in failed])
+            lines += _table(["Parameter", "Reference", "New", "Abs. diff", "Rel. diff"],
+                            [[c.location, c.ref, c.new, _abs_diff(c), _rel_diff(c)]
+                             for c in failed])
         blocks.append("\n".join(lines))
     return "\n".join(blocks)
