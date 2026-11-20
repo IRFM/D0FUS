@@ -24,7 +24,9 @@ REGRESSION_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(os.path.dirname(REGRESSION_DIR))
 INPUTS = os.path.join(REPO_ROOT, "D0FUS_INPUTS")
 
-DEFAULT_ATOL = 1e-7
+# Presently tuned to pass the regression tests on GitHub Actions with the default deck copies
+# for different Python version {3.10, 3.11, 3.12, 3.13}
+DEFAULT_ATOL = 2e-6
 
 # name: deck in D0FUS_INPUTS, deck keys rewritten in the stored copy (to keep
 # the run short), extra command line arguments, absolute tolerance
