@@ -55,10 +55,10 @@ overshoot of C_invest.
 Fitness objectives
 ------------------
 Selected via 'fitness_objective' in the input file:
-  - 'COE'       cost of electricity (Sheffield 2016, EUR/MWh) under the
-                soft C_invest_max ceiling. Default.
+  - 'COE'       cost of electricity (cost_model of the deck, EUR/MWh)
+                under the soft C_invest_max ceiling. Default.
   - 'volume'    machine-volume proxy (V_BB + V_TF + V_CS) / P_fus.
-  - 'C_invest'  total capital cost (Sheffield 2016, M EUR).
+  - 'C_invest'  total capital cost (cost_model of the deck, M EUR).
   - 'P_elec'    net electric power (maximised).
   - 'R0'        major radius (minimised), i.e. the most compact
                 machine satisfying every constraint. R0 must be a
@@ -359,7 +359,7 @@ _IDX = {
     'T_op_limit':      132,  # Operation per replacement cycle [yr]
     'dt_rep_eff':      133,  # Effective replacement downtime [yr]
     'Av':              134,  # Plant availability [-]
-    'CF':              135,  # Capacity factor [-]
+    'CF':              135,  # Operating fraction Av x Util [-]
     # ── Radial build component volumes ───────────────────────────────────────
     'V_rb_SOL':        136,  # SOL / far-SOL volume (all around) [m³]
     'V_rb_FW':         137,  # First wall volume (excl. divertor) [m³]
@@ -902,7 +902,7 @@ def evaluate_individual(individual, verbose=False):
 
     The design is run with run(), then judged with the shared RUN
     evaluators: evaluate_feasibility for the constraints and
-    evaluate_costs for the Sheffield cost. The objective is read from
+    evaluate_costs for the cost. The objective is read from
     static_inputs['fitness_objective'] (see VALID_FITNESS_OBJECTIVES).
 
     Returns
@@ -3045,7 +3045,7 @@ def run_genetic_optimization(input_file,
     _q_label = 'q95' if _kink_param == 'q95' else 'q*'
     q_lim, betaN_lim, Ip_lim = config.q_limit, config.betaN_limit, config.Ip_limit
 
-    # Compute Sheffield COE for the best design (regardless of objective)
+    # COE of the best design (regardless of objective)
     _COE_best = np.nan
     _C_invest_best = np.nan
     _cres_best = evaluate_costs(config, final_output)
@@ -3070,7 +3070,7 @@ def run_genetic_optimization(input_file,
     print(f"    Ip      (plasma current)      : {Ip:9.2f}  [MA]")
     print(f"    Q       (fusion gain)         : {Q:9.2f}")
     print(f"    P_elec  (net electric)        : {P_elec:9.1f}  [MWe]")
-    print(f"    COE     (Sheffield)           : {_COE_best:9.1f}  [EUR/MWh]")
+    print(f"    COE     ({config.cost_model + ')':<22s}: {_COE_best:9.1f}  [EUR/MWh]")
     print(f"    C_invest                      : {_C_invest_best:9.2f}  [B EUR]")
     print(f"    V/P_fus (volume proxy)        : {cost:9.4f}  [m^3/MW]")
     print(f"    c_TF / d_CS / r_d             : {c_TF:.3f} / {d_CS:.3f} / {r_d:.3f}  [m]")

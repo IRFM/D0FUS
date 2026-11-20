@@ -76,21 +76,24 @@ def _load_data(run, phase):
     pulse = phase == 'pulse'
     gross = _get(run, f'P_e_gross_{phase}', True)
     net = _get(run, f'P_e_net_{phase}', True)
+    # Burn loads during the pulse, CS recharge during the dwell, fixed loads
+    # in both phases (f_pulsed_electrical_quantities)
     var = _get(run, 'P_recirc_var', True) if pulse else 0.
+    cs = 0. if pulse else _get(run, 'P_coil_CS', True)
     fix = _get(run, 'P_recirc_fix', True)
-    if gross < -1e-8 or var < -1e-8 or fix < -1e-8:
+    if gross < -1e-8 or var < -1e-8 or cs < -1e-8 or fix < -1e-8:
         raise ValueError('Negative gross generation or recirculating load: invalid run data')
     gross = max(0., gross)
-    recirc = var + fix
+    recirc = var + cs + fix
     _approx(net, gross - recirc, max(gross, recirc, 1.), 'phase electrical balance')
     if pulse:
         keys = [('Heating / CD', 'P_wallplug_calculated'),
-                ('CS supply', 'P_coil_CS'),
                 ('BoP pumps', 'P_BoP'),
                 ('Cryogenics', 'P_cryo_electric'),
                 ('House loads', 'P_house_load')]
     else:
-        keys = [('Cryogenics', 'P_cryo_electric'), ('House loads', 'P_house_load')]
+        keys = [('CS supply', 'P_coil_CS'),
+                ('Cryogenics', 'P_cryo_electric'), ('House loads', 'P_house_load')]
     loads = [(n, _get(run, k, True)) for n, k in keys]
     if any(v < -1e-8 for _, v in loads):
         raise ValueError('Negative D0FUS electrical-load components')
@@ -561,13 +564,15 @@ def plot_plant_power_balance(run, phase='pulse', save_dir=None):
     """
     if phase not in ('pulse', 'dwell'):
         raise ValueError('phase must be pulse or dwell')
-    gross, net, loads, recirc, house = _load_data(run, phase)
-    # Same reference MW for both phases -> ribbon widths comparable.
-    scale = max(1., gross, recirc, _get(run, 'P_fus') or 0., _get(run, 'P_th') or 0.)
     df = _get(run, 'Dwell_factor')
     # D0FUS sets P_e_net_dwell = P_e_net_pulse when Dwell_factor = 1
     # (convenience), but NO dwell interval actually exists.
     no_dwell = phase == 'dwell' and df is not None and df >= 1.0
+    gross = recirc = 0.
+    if not no_dwell:
+        gross, net, loads, recirc, house = _load_data(run, phase)
+    # Same reference MW for both phases -> ribbon widths comparable.
+    scale = max(1., gross, recirc, _get(run, 'P_fus') or 0., _get(run, 'P_th') or 0.)
 
     g = None
     if not no_dwell:

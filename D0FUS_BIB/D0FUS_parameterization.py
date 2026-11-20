@@ -94,7 +94,7 @@ CONFIG_OPTIONS = {
     'Supra_choice':           ('Nb3Sn', 'NbTi', 'REBCO', 'Manual'),
     'Supra_choice_CS':        ('same', 'Nb3Sn', 'NbTi', 'REBCO', 'Manual'),
     'CD_source':              ('Academic', 'LHCD', 'ECCD', 'NBCD', 'Multi'),
-    'cost_model':             ('Sheffield', 'None'),
+    'cost_model':             ('Sheffield', 'Whyte', 'None'),
     # Must match the keys of BLANKET_CONCEPTS, defined further down.
     'Blanket_choice':         ('HCPB', 'HCLL', 'DCLL', 'SCLL', 'SCLV', 'F-LIB'),
 }
@@ -109,7 +109,7 @@ class GlobalConfig:
     to a conservative DEMO-class power plant baseline.
 
     Instances are frozen: a field cannot be changed after creation. Derive a
-    variant with dataclasses.replace(), which builds a new, validated object.
+    variant with dataclasses.replace(), which builds a new, checked object.
     Every field is checked at creation (see __post_init__): numbers must be
     numbers, booleans must be booleans, and option fields must take one of
     the values listed in CONFIG_OPTIONS.
@@ -153,7 +153,8 @@ class GlobalConfig:
     b     : float = 1.2            # Breeding blanket + neutron shield radial thickness [m]
     delta_BB_IB : float = 0.50   # Requested inboard breeder zone [m]
     delta_BB_OB : float = 0.50   # Requested outboard breeder zone [m]
-    delta_shield : float = 0.30  # Combined HT + LT shielding, each half [m]
+    delta_shield_IB : float = 0.30  # Requested inboard shielding, HT + LT halves [m]
+    delta_shield_OB : float = 0.30  # Requested outboard shielding, HT + LT halves [m]
     Bmax_TF  : float = 12.0        # Peak magnetic field on TF conductor [T]
     Bmax_CS_adm  : float = 25.0    # Peak magnetic field allowed on the CS [T]
     P_fus : float = 2000.0         # Total fusion power [MW]
@@ -436,8 +437,9 @@ class GlobalConfig:
     Marge_T_NbTi  : float = 1.7    # NbTi temperature margin [K]
     Marge_T_REBCO : float = 5.0    # REBCO temperature margin [K]
 
-    # Lift-factor fit: LF = numerator / (a0 + a1*T + (b0 + b1*T + b2*T**2)*B).
-    # T in K, B in T. Shared between TF and CS (dimensionless result).
+    # REBCO lift-factor fit, M. Fletcher (2026, own study, unpublished):
+    # LF = numerator / (a0 + a1*T + (b0 + b1*T + b2*T**2)*B), T in K, B in T.
+    # Shared between TF and CS (dimensionless result), reported only.
     LF_numerator : float = 0.062
     LF_a0        : float = 1.22e-2
     LF_a1        : float = 5.49e-4
@@ -539,8 +541,9 @@ class GlobalConfig:
     pellet_dilution_cools : bool = False  # True: isobaric cooling before TQ (T ∝ 1/dilution)
 
     # ── 15. Techno-economic cost model (indicative, post-convergence) ────────
-    # Model: Sheffield & Milora, Fus. Sci. Technol. 70 (2016).
-    cost_model          : str   = 'Sheffield'  # 'Sheffield' or 'None'
+    # Sheffield & Milora, Fus. Sci. Technol. 70 (2016), the reference, or the
+    # surface-proportional benchmark adapted from Whyte (2024).
+    cost_model          : str   = 'Sheffield'  # 'Sheffield', 'Whyte' or 'None'
     # Financial parameters (Ref: Sheffield 2016, Section III.D)
     discount_rate       : float = 0.07   # Real discount rate [-]
     T_life              : int   = 40     # Plant operational lifetime [yr]
@@ -632,7 +635,7 @@ class GlobalConfig:
         ValueError
             Option value not in CONFIG_OPTIONS, e.g. "Tbar_mode = greenwlad".
         """
-        for key in ('delta_BB_IB', 'delta_BB_OB', 'delta_shield'):
+        for key in ('delta_BB_IB', 'delta_BB_OB', 'delta_shield_IB', 'delta_shield_OB'):
             value = getattr(self, key)
             if not isinstance(value, (int, float, np.integer, np.floating)) or isinstance(value, bool) or not np.isfinite(value) or value < 0:
                 raise ValueError(f"{key} must be a finite nonnegative thickness [m].")
@@ -911,7 +914,7 @@ def preset_refined(**overrides) -> 'GlobalConfig':
     Build a GlobalConfig configured for the physically detailed 'refined'
     mode.
 
-    All sub-mode selectors are set to their best-validated physics-based
+    All sub-mode selectors are set to their best-verified physics-based
     counterparts; engineering, geometric and economic fields keep their
     GlobalConfig defaults.  Pass keyword arguments to surcharge any field
     after the preset has been applied.
@@ -1445,10 +1448,11 @@ def plant_conversion(config) -> tuple:
 
 
 def radial_build_feasibility(Blanket_choice, b, Delta_TF=0.0):
-    """Check whether unscaled mandatory components fit each midplane budget.
+    """Midplane budgets against the mandatory components of the concept.
 
-    The returned dict is safe to use for incomplete radial builds; no layers
-    are allocated when either side is infeasible.
+    A side whose budget is below the mandatory sum is built compressed
+    (radial_layers_effective). The build is infeasible only without any
+    radial space.
     """
     import math
     if not all(math.isfinite(v) for v in (b, Delta_TF)):
@@ -1457,24 +1461,27 @@ def radial_build_feasibility(Blanket_choice, b, Delta_TF=0.0):
     mandatory = sum(L['width'] for L in layers[:-1]
                     if L['role'] not in {'breeder','structure','multiplier','shield_HT','shield_LT'})
     available_ib, available_ob = b, b + Delta_TF
-    return {'feasible': (available_ib + 1e-10 >= mandatory and
-                         available_ob + 1e-10 >= mandatory),
+    return {'feasible': available_ib > 0 and available_ob > 0,
             'available_ib': available_ib, 'available_ob': available_ob,
             'mandatory_ib': mandatory, 'mandatory_ob': mandatory}
 
 
 def radial_layers_effective(Blanket_choice: str, b: float, Delta_TF: float = 0.0,
                             delta_BB_IB: float = 0.50, delta_BB_OB: float = 0.50,
-                            delta_shield: float = 0.30) -> list:
+                            delta_shield_IB: float = 0.30,
+                            delta_shield_OB: float = 0.30) -> list:
     """Allocate IB/OB layers with mandatory > shields > breeding priority.
 
-    Structural and multiplier layers are contingent on a positive breeder.
+    When a budget is below the mandatory layers, these are scaled to fit,
+    without shield, breeder or structure, as in D0FUS 3.2 ('stack_scale'
+    below 1). Structural and multiplier layers are contingent on a positive
+    breeder.
     The final gap takes the remaining space. Mandatory widths never shrink.
-    Each side is clipped independently; HT and LT each receive half its
-    achieved combined shielding thickness.
+    Each side is clipped independently, with its own breeder and shield
+    targets. HT and LT each receive half the achieved shielding thickness.
     """
     import math
-    values = (b, Delta_TF, delta_BB_IB, delta_BB_OB, delta_shield)
+    values = (b, Delta_TF, delta_BB_IB, delta_BB_OB, delta_shield_IB, delta_shield_OB)
     if any(not math.isfinite(v) for v in values) or any(v < 0 for v in values):
         raise ValueError('Radial dimensions must be finite and nonnegative.')
     original = material_blanket(Blanket_choice)['radial_layers']
@@ -1482,17 +1489,26 @@ def radial_layers_effective(Blanket_choice: str, b: float, Delta_TF: float = 0.0
     if not layers or layers[-1]['role'] != 'gap':
         raise ValueError('The last radial-build layer must be the residual TF gap.')
     dependent = {'breeder', 'structure', 'multiplier'}
-    for side, budget, target in (('ib', b, delta_BB_IB),
-                                 ('ob', b + Delta_TF, delta_BB_OB)):
+    scales = []
+    for side, budget, target, shield_target in (
+            ('ib', b, delta_BB_IB, delta_shield_IB),
+            ('ob', b + Delta_TF, delta_BB_OB, delta_shield_OB)):
         key = 'delta_' + side
         mandatory = sum(L['width'] for L in layers[:-1]
                         if L['role'] not in dependent | {'shield_HT', 'shield_LT'})
         if budget + 1e-10 < mandatory:
-            # The caller must check radial_build_feasibility before requesting
-            # allocation. Do not rescale mandatory layers or manufacture widths.
-            return []
+            # Compressed stack: mandatory layers scaled to the budget
+            if budget <= 0:
+                return []
+            scale = budget / mandatory
+            for L in layers[:-1]:
+                kept = L['role'] not in dependent | {'shield_HT', 'shield_LT'}
+                L[key] = L['width'] * scale if kept else 0.0
+            layers[-1][key] = 0.0
+            scales.append(scale)
+            continue
         free = max(0.0, budget - mandatory)
-        shield = min(delta_shield, free)
+        shield = min(shield_target, free)
         remaining = max(0.0, free - shield)
         dependent_fixed = sum(L['width'] for L in layers
                               if L['role'] in {'structure', 'multiplier'})
@@ -1518,5 +1534,5 @@ def radial_layers_effective(Blanket_choice: str, b: float, Delta_TF: float = 0.0
         if abs(sum(L[key] for L in layers) - budget) > 1e-8:
             raise ArithmeticError('Radial layer allocation does not close.')
     for L in layers:
-        L['stack_scale'] = 1.0
+        L['stack_scale'] = min(scales, default=1.0)
     return layers

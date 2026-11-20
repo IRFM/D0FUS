@@ -29,13 +29,16 @@ else:
 
 def f_lift_factor(T_op, B_op, numerator=0.062, a0=1.22e-2,
                   a1=5.49e-4, b0=1.27e-3, b1=-2.70e-5, b2=5.93e-6):
-    """Dimensionless magnet lift factor at operating temperature [K] and field [T].
+    """Dimensionless REBCO lift factor at operating temperature [K] and field [T].
 
     Fit: numerator / (a0 + a1*T_op + (b0 + b1*T_op + b2*T_op**2)*B_op)
+    Source: M. Fletcher (2026), own study, unpublished. Reported only, not
+    used in the conductor sizing, so it is NaN when the field is missing
+    (no CS, failed coil build) or the fit denominator is not positive.
     """
     denominator = a0 + a1 * T_op + (b0 + b1 * T_op + b2 * T_op**2) * B_op
     if not np.isfinite(denominator) or denominator <= 0:
-        raise ValueError("Lift-factor denominator must be positive and finite")
+        return np.nan
     return numerator / denominator
 
 
@@ -58,8 +61,8 @@ def f_coil_power_supply(E_mag_J, t_ramp_up_s):
         P = E_mag / t   [MWe]
 
     E_mag_J     : float  Stored magnetic energy [J].
-    t_ramp_up_s : float  Time over which E_mag is supplied or averaged [s]
-                         (the full pulse cycle for the CS cycle average).
+    t_ramp_up_s : float  Time over which E_mag is supplied [s] (the dwell
+                         for the CS recharge).
     Returns 0 if either input is missing or t <= 0.
     """
     if E_mag_J is None or t_ramp_up_s is None or t_ramp_up_s <= 0:
@@ -292,51 +295,51 @@ def f_house_load(A_floor_m2, P_TF_supplies_MWe, P_base_MWe, pflux_W_m2,
 
 
 def f_bop_power(P_th_MWth, f_BoP):
-    """Coolant pumping electrical load [MWe] = f_BoP * P_th."""
+    """Coolant pumping electrical load [MWe] = f_BoP * P_th, P_th during the burn."""
     return float(f_BoP) * float(P_th_MWth)
 
 
-def f_pulsed_thermal_quantities(P_th_MWth, t_plateau_s, dwell_factor,
-                                eta_store=0.90):
-    """
-    LEGACY thermal-only smoothing (not used by the updated D0FUS run).
-
-    Thermal storage that delivers a constant power over a full pulse cycle.
-
-    Cycle: flat-top t_p, dwell t_d = t_p (1/D - 1), with D the dwell factor.
-    The flat-top surplus (P_th - P_s) t_p is stored and returned with
-    efficiency eta_store during the dwell, eta (P_th - P_s) t_p = P_s t_d:
-
-        P_s     = P_th / (1 + t_d / (eta t_p))
-        E_store = (P_th - P_s) t_p = P_th t_p / (1 + eta t_p / t_d)
-
-    Returns (t_dwell [s], E_store_th [MWh_th], P_th_smoothed [MW_th]).
-    Without dwell (D >= 1): (0, 0, P_th).
-    """
-    if dwell_factor is None or float(dwell_factor) >= 1.0:
-        return 0.0, 0.0, float(P_th_MWth)
-    if dwell_factor <= 0 or t_plateau_s <= 0 or eta_store <= 0:
-        raise ValueError("dwell_factor, t_plateau_s and eta_store must be positive")
-    t_dwell = float(t_plateau_s) * (1.0 / float(dwell_factor) - 1.0)
-    E_store = (float(P_th_MWth) * float(t_plateau_s)
-               / (1.0 + float(eta_store) * float(t_plateau_s) / t_dwell))
-    P_smoothed = (float(P_th_MWth)
-                  / (1.0 + (1.0 / float(eta_store)) * t_dwell / float(t_plateau_s)))
-    return t_dwell, E_store / 3600.0, P_smoothed
-
 def f_pulsed_electrical_quantities(P_th_MWth, t_plateau_s, dwell_factor,
                                    eta_turbine, P_recirc_var_MWe,
-                                   P_recirc_fix_MWe, eta_store=0.90):
-    """Electrical smoothing with a bounded x=1 fallback.
+                                   P_recirc_fix_MWe, P_coil_CS_MWe,
+                                   eta_store=0.90):
+    """
+    Pulsed operation with electrical smoothing (M. Fletcher, 2026).
 
-    A finite nonpositive thermal power has zero recoverable generation; it
-    does not invalidate the rest of the reactor calculation. Invalid / NaN
-    electrical inputs are instead reported as unavailable (NaN), never
-    silently converted to a physically meaningful value. Negative net
-    electrical powers are permitted. Annual/economic use cycle-average net.
+    A thermal store takes the fraction (1 - x) of the burn heat and returns
+    it to the turbine during the dwell with efficiency eta_store, so that
+    the net electric power is the same in both phases:
+
+        burn : P_net = eta x P_th - P_var - P_fix
+        dwell: P_net = eta eta_store (1 - x) P_th t_p / t_d - P_coil_CS - P_fix
+        x    = (eta_store D + q (1 - D)) / (eta_store D + 1 - D),
+        q    = (P_var - P_coil_CS) / (eta P_th)
+
+    with t_d = t_p (1 - D) / D and D = t_p / t_cycle the dwell factor.
+    P_var runs during the burn, the CS recharge P_coil_CS during the dwell
+    and P_fix all the time. When x falls outside [0, 1], the two phases
+    cannot be balanced: x = 1 (no storage) and the net power differs between
+    the phases. P_e_net_cycle_average is the value used for the annual
+    energy and the economics in both cases.
+
+    Invalid or non-finite inputs return NaN outputs with
+    electrical_balance_valid = False instead of raising, so that the rest of
+    the design stays available. A non-positive P_th gives no turbine output.
+
+    Returns
+    -------
+    dict  t_dwell [s], x_storage_split [-], smoothing_feasible,
+          smoothing_fallback, electrical_balance_valid and _reason, thermal
+          flows [MWth] (P_th_reactor_pulse, P_th_reactor_to_storage_pulse,
+          P_th_reactor_to_turbine_pulse, P_th_storage_to_turbine_dwell,
+          P_th_turbine_dwell, P_th_turbine = max over both phases),
+          E_store_th [MWh_th], electric powers [MWe] (P_e_gross_pulse,
+          P_e_gross_dwell, P_e_net_pulse, P_e_net_dwell,
+          P_e_net_cycle_average, P_e_net_smoothed = NaN when infeasible).
     """
     P, eta = float(P_th_MWth), float(eta_turbine)
     var, fix = float(P_recirc_var_MWe), float(P_recirc_fix_MWe)
+    cs = float(P_coil_CS_MWe)
     D = 1.0 if dwell_factor is None else float(dwell_factor)
     tp, es = float(t_plateau_s), float(eta_store)
 
@@ -348,15 +351,16 @@ def f_pulsed_electrical_quantities(P_th_MWth, t_plateau_s, dwell_factor,
                     P_th_reactor_pulse=P, P_th_reactor_to_storage_pulse=nan,
                     P_th_reactor_to_turbine_pulse=nan,
                     P_th_storage_to_turbine_dwell=nan, P_th_turbine_dwell=nan,
+                    P_th_turbine=nan,
                     E_store_th=nan, P_e_gross_pulse=nan, P_e_gross_dwell=nan,
                     P_e_net_pulse=nan, P_e_net_dwell=nan,
                     P_e_net_cycle_average=nan, P_e_net_smoothed=nan)
 
-    if not np.all(np.isfinite([P, eta, var, fix, D])):
+    if not np.all(np.isfinite([P, eta, var, fix, cs, D])):
         return unavailable('Nonfinite thermal power, turbine efficiency, recirculating load or dwell factor')
     if not 0 < eta <= 1:
         return unavailable('Turbine efficiency must satisfy 0 < eta_turbine <= 1')
-    if var < 0 or fix < 0:
+    if var < 0 or fix < 0 or cs < 0:
         return unavailable('Recirculating loads must be nonnegative')
     if not 0 < D <= 1:
         return unavailable('Dwell factor must satisfy 0 < D <= 1')
@@ -378,24 +382,22 @@ def f_pulsed_electrical_quantities(P_th_MWth, t_plateau_s, dwell_factor,
     elif D == 1:
         x, feasible, reason = 1.0, True, ''
     else:
-        gross = eta * P
-        # Compare powers first: do not form q when gross is extremely small.
-        feasible = var <= gross
+        q = (var - cs) / (eta * P)
+        x_balance = (es * D + q * (1 - D)) / (es * D + (1 - D))
+        feasible = 0.0 <= x_balance <= 1.0
         if feasible:
-            q = var / gross
-            denominator = es * D + (1 - D)
-            x = min(1.0, max(0.0, (es * D + q * (1 - D)) / denominator))
-            reason = ''
+            x, reason = x_balance, ''
         else:
             x = 1.0
-            reason = 'Variable recirculating load exceeds pulse gross electrical generation'
+            reason = ('Burn and dwell loads cannot be balanced by the store'
+                      ' (storage split outside [0, 1])')
 
     to_tank = (1 - x) * max(P, 0.0)
     pulse_turbine = x * max(P, 0.0)
     dwell_turbine = es * D / (1 - D) * to_tank if D < 1 else 0.0
     gross_pulse, gross_dwell = eta * pulse_turbine, eta * dwell_turbine
     net_pulse = gross_pulse - var - fix
-    net_dwell = gross_dwell - fix if D < 1 else net_pulse
+    net_dwell = gross_dwell - cs - fix if D < 1 else net_pulse
     net_average = D * net_pulse + (1 - D) * net_dwell
     if feasible and D < 1 and not np.isclose(net_pulse, net_dwell, rtol=1e-9, atol=1e-7):
         return unavailable('Numerical inconsistency between pulse and dwell electrical powers')
@@ -406,6 +408,7 @@ def f_pulsed_electrical_quantities(P_th_MWth, t_plateau_s, dwell_factor,
                 P_th_reactor_to_turbine_pulse=pulse_turbine,
                 P_th_storage_to_turbine_dwell=dwell_turbine,
                 P_th_turbine_dwell=dwell_turbine,
+                P_th_turbine=max(pulse_turbine, dwell_turbine),
                 E_store_th=to_tank * (tp if D < 1 else 0.0) / 3600.0,
                 P_e_gross_pulse=gross_pulse, P_e_gross_dwell=gross_dwell,
                 P_e_net_pulse=net_pulse, P_e_net_dwell=net_dwell,
@@ -413,40 +416,71 @@ def f_pulsed_electrical_quantities(P_th_MWth, t_plateau_s, dwell_factor,
                 P_e_net_smoothed=net_pulse if feasible else float('nan'))
 
 
-def f_recirculated_power(P_aux_MW, eta_WP, P_coil_CS_MWe, P_cryo_electric_MWe,
+def f_recirculated_power(P_aux_MW, eta_WP, P_cryo_electric_MWe,
                          P_BoP_MWe, P_house_load_MWe):
     """
-    Recirculated electrical power [MWe].
+    Nominal recirculated electrical power during the burn [MWe].
 
-        P_var = P_aux / eta_WP + P_coil_CS + P_BoP   (plant in operation)
-        P_fix = P_cryo + P_house_load                (all year)
+        P_var = P_aux / eta_WP + P_BoP     (burn only)
+        P_fix = P_cryo + P_house_load      (all year)
 
+    Nominal values size the plant electrical systems, so they are not
+    averaged over the pulse cycle. The duty cycle enters in
+    f_pulsed_electrical_quantities and f_recirculated_energy.
+    The CS recharge runs during the dwell and is kept apart (P_coil_CS).
     The magnets stay cold outside operation, so the cryoplant is a fixed
     load like the house load.
 
     Returns (P_var, P_fix, P_var + P_fix).
     """
-    P_var = (float(P_aux_MW) / float(eta_WP) + float(P_coil_CS_MWe)
-             + float(P_BoP_MWe))
+    P_var = float(P_aux_MW) / float(eta_WP) + float(P_BoP_MWe)
     P_fix = float(P_cryo_electric_MWe) + float(P_house_load_MWe)
     return P_var, P_fix, P_var + P_fix
 
 
-def f_recirculated_energy(P_recirc_var_MWe, P_recirc_fix_MWe, CF):
-    """Annual recirculated electricity [MWh/yr] = 8760 (P_var CF + P_fix)."""
-    return 8760.0 * (float(P_recirc_var_MWe) * float(CF) + float(P_recirc_fix_MWe))
+def f_recirculated_energy(P_recirc_var_MWe, P_coil_CS_MWe, P_recirc_fix_MWe,
+                          f_op, dwell_factor):
+    """
+    Annual recirculated electricity [MWh/yr].
+
+        E = 8760 [f_op (D P_var + (1 - D) P_coil_CS) + P_fix]
+
+    f_op = Av x Util is the operating fraction of the year, so f_op D is the
+    burn fraction of the year (Av x Util x D) applied to the nominal burn
+    loads. The fixed loads run all year.
+    """
+    D = min(float(dwell_factor), 1.0)
+    return 8760.0 * (float(f_op) * (D * float(P_recirc_var_MWe)
+                                    + (1.0 - D) * float(P_coil_CS_MWe))
+                     + float(P_recirc_fix_MWe))
+
+
+def f_net_electric_energy(P_elec_MWe, P_recirc_fix_MWe, f_op):
+    """
+    Annual net electricity [MWh/yr].
+
+        E_net = 8760 [f_op P_elec - (1 - f_op) P_fix]
+
+    P_elec is the net power during operation (cycle average), f_op =
+    Av x Util the operating fraction of the year. The fixed loads (cryoplant,
+    house load) run all year, so they are drawn from the grid during the
+    outages. E_net = E_gross - E_recirculated.
+    """
+    return 8760.0 * (float(f_op) * float(P_elec_MWe)
+                     - (1.0 - float(f_op)) * float(P_recirc_fix_MWe))
 
 
 def f_tritium_consumption(P_fus_MW, CF):
     """
-    Annual D-T tritium burn [kg/yr] = 56 kg per GW_fus full-power year x CF.
+    D-T tritium burn [kg]: per full-power year and per calendar year.
 
-    1 GW.yr / 17.59 MeV = 1.12e28 reactions, x 3.016 u = 56.1 kg.
-    CF must be the burn-time fraction (Av x Util x Dwell).
+    1 GW.yr / 17.59 MeV = 1.12e28 reactions, x 3.016 u = 56.1 kg per GW_fus
+    and full-power year. CF must be the burn-time fraction (Av x Util x Dwell).
+
+    Returns (m_tritium_fpy [kg/fpy], m_tritium [kg/yr]).
     """
-    C_tritium_fpy = 56.1 * float(P_fus_MW) / 1000.0
-    C_tritium_y   = C_tritium_fpy * float(CF)
-    return (C_tritium_fpy, C_tritium_y)
+    m_tritium_fpy = 56.1 * float(P_fus_MW) / 1000.0
+    return m_tritium_fpy, m_tritium_fpy * float(CF)
 
 
 if __name__ == "__main__":
@@ -3752,8 +3786,8 @@ def f_P_line_radiation_profile(impurity, f_imp, nbar, Tbar, nu_n, nu_T, V,
 # The finite-ne·τ balance enhances low-Z radiation above the coronal peak,
 # which is essential for the Lengyel integral: the coronal limit
 # underestimates L_INT by a factor 1.5-3.5 for these species. The coronal
-# limit of the same pipeline was cross-validated against the Mavrin (2018)
-# tables on the 0.1-2 keV overlap (agreement within 1-5%), validating the
+# limit of the same pipeline was cross-verified against the Mavrin (2018)
+# tables on the 0.1-2 keV overlap (agreement within 1-5%), verifying the
 # atomic-data chain. 40-point log-spaced grid; log-log interpolation.
 _LZ_SOL_TE_EV = np.array([
         1.0000e+00, 1.2152e+00, 1.4767e+00, 1.7944e+00,
@@ -4343,7 +4377,7 @@ if __name__ == "__main__":
     # integrity at freezing time, and the one-sided invariant
     # Lz_SOL >= Lz_coronal on the 0.1-2 keV overlap (the finite residence
     # time keeps line-radiating charge states alive). Lengyel: frozen
-    # cfspopcon SPARC-PRD regression point (chain validated to 0.3 % over
+    # cfspopcon SPARC-PRD regression point (chain verified to 0.3 % over
     # five decades of q_par, 2026-06 review).
     _rows = [
         ("<Z> Ne at 8.9 keV [-]", get_Z_mean('Ne', 8.9), 10.0, 1e-9,
@@ -4977,7 +5011,7 @@ def f_etaCD_effective(config, a, R0, B0, nbar, Tbar, nu_n, nu_T, Z_eff, *,
 
     .. warning:: **Development status (2026)**
 
-       Only ``'Academic'`` is fully validated and recommended for production
+       Only ``'Academic'`` is fully verified and recommended for production
        runs, parameter scans, and publications.
 
        The technology-specific branches (``'LHCD'``, ``'ECCD'``, ``'NBCD'``,
@@ -6481,8 +6515,8 @@ The recommendation on the NEOS page
   "Total pressure should be used for p and pe/p should be used where stated
    and not some approximations with Te and Ti for example."
 
-Validation against NEOS (Sauter's reference Fortran code)
----------------------------------------------------------
+Verification against NEOS (Sauter's reference Fortran code)
+-----------------------------------------------------------
 The Sauter coefficients L31, L32, L34, and alpha implemented in D0FUS have been
 verified term-by-term against the NEOS Fortran 90 module (neobscoeffmod.f90),
 the reference implementation by O. Sauter himself, distributed under Apache 2.0
@@ -6525,8 +6559,8 @@ I_bs(D0FUS) / I_bs(Fable) = 1.40 for EU-DEMO 2017 conditions.  The missing
 d(psi)/d(rho) factor most likely explains most of this ratio.  The ratio with
 the present assembly has not been re-measured.
 
-References for this validation
-------------------------------
+References for this verification
+--------------------------------
 [5] NEOS — neobscoeffmod.f90, O. Sauter, SPC-EPFL, Apache 2.0, 2025.
     https://gitlab.epfl.ch/spc/public/NEOS
     https://crppwww.epfl.ch/~sauter/neoclassical/
@@ -6540,7 +6574,7 @@ References for this validation
     DOI: 10.1063/5.0012664
 
 [8] E.A. Belli, J. Candy, Plasma Phys. Control. Fusion 54 (2012) 015015.
-    NEO drift-kinetic code used as reference for Sauter/Redl validation.
+    NEO drift-kinetic code used as reference for Sauter/Redl verification.
 
 """
 
@@ -6698,7 +6732,7 @@ def f_q_profile(rho, q95=3.0, rho95=0.95, alpha_J=1.5):
     Kovari et al., Fus. Eng. Des. 89 (2014) 3054 — PROCESS systems code
         (§4.1, §18): same current density ansatz and derived q-profile.
     Polevoi et al., Nucl. Fusion 55 (2015) 063019 — ITER V_loop
-        validation of the prescribed j-profile model.
+        verification of the prescribed j-profile model.
     """
     rho = np.asarray(rho, dtype=float)
     ap1 = alpha_J + 1.0
@@ -6966,7 +7000,7 @@ References
     bootstrap current and energetic particle confinement",
     Physics of Plasmas 29(8), 082501 (2022).
     DOI: 10.1063/5.0098166
-    (Application and validation of Redl formula)
+    (Application and verification of Redl formula)
 
 Physics Background
 ------------------
@@ -7008,9 +7042,9 @@ The Redl model provides new polynomial fits for L31, L32, L34, and α as
 functions of f_t, ν*_e, ν*_i, and Z_eff, with improved accuracy compared 
 to the Sauter fits.
 
-Validation
-----------
-The Redl model has been validated against:
+Verification and validation
+---------------------------
+The Redl model has been compared with:
 - NEO drift-kinetic calculations (within ~2% in core, ~5% in pedestal)
 - ASDEX Upgrade experimental profiles
 - SFINCS calculations for quasi-symmetric stellarators
@@ -7281,7 +7315,7 @@ def f_Sauter_Redl_Ib(R0, a, kappa, B0, nbar, Tbar, q95, Z_eff, nu_n, nu_T, n_rho
     nu_i_arr = _nu_i_star(n_i, Ti_eV, q_arr, R0, eps_arr)   # ion collisionality on T_i
 
     # Redl coefficients (vectorised — all use only np operations)
-    # Redl Eq. 19: L34 = L31 (simplification validated by NEO)
+    # Redl Eq. 19: L34 = L31 (simplification verified by NEO)
     L31 = _L31_Redl(f_t, nu_e, Z_eff)
     L32 = _L32_Redl(f_t, nu_e, Z_eff)
     L34 = L31                                    # Redl Eq. 19
@@ -7996,7 +8030,7 @@ def f_heat_PFU_Eich(P_sol, B_pol, R, eps, theta_deg,
     SOL-width scaling law.
 
     Provides a fast 0D estimate of the power deposited on divertor plasma-facing
-    units (PFUs).  For ITER/DEMO design validation, cross-check with dedicated
+    units (PFUs).  For ITER/DEMO design verification, cross-check with dedicated
     edge transport codes (SOLPS-ITER, UEDGE).
 
     Parameters
@@ -8932,75 +8966,6 @@ def f_Get_fGW_correction(Scaling_Law):
 
 # ── Global energy and confinement descriptors ─────────────────────────────────
 
-if __name__ == "__main__":
-    # ── Published anchors - confinement-scaling registry ─────────────────
-    # The registry must store the published exponents EXACTLY:
-    # IPB98(y,2): ITER Physics Basis, NF 39 (1999) 2175 / Doyle, NF 47
-    # (2007) S18. ITPA20: Verdoolaege, NF 61 (2021) 076006. ITER89-P:
-    # Yushmanov, NF 30 (1990) 1999, with the prefactor converted to the
-    # D0FUS n19 convention: C(n19) = 0.048 x 10^-0.1 = 0.0381.
-    # Exact tuple equality is asserted (structural identity).
-    assert f_Get_parameter_scaling_law('IPB98(y,2)') == \
-        (0.0562, 0, 0.19, 0.78, 0.58, 1.97, 0.15, 0.41, 0.93, -0.69)
-    assert f_Get_parameter_scaling_law('ITPA20') == \
-        (0.0534, 0.362, 0.195, 0.799, 0.354, 1.710, 0.218, 0.2442, 0.976,
-         -0.6687)
-    assert f_Get_parameter_scaling_law('ITPA20-IL') == \
-        (0.0670, 0.560, 0.302, 0.673, 0, 1.194, -0.134, 0.1473, 1.291,
-         -0.6442)
-    assert [f_Get_kappa_convention(_l) for _l in
-            ('IPB98(y,2)', 'ITPA20', 'ITPA20-IL', 'ITER89-P')] == \
-        ['area', 'area', 'area', 'edge']
-    # IPB98 at the ITER Q=10 point evaluated at P = 87 MW (total heating
-    # power, no radiation subtracted in this published-value check;
-    # kappa_x = 1.70,
-    # n19 = 10.1): tolerance 8 % covers the kappa-convention and P_loss
-    # definition spread between sources. The production (PROCESS-like)
-    # convention, which subtracts the core radiation, is exercised by
-    # chain 11.
-    _Csl, _ad, _aM, _ak, _ae, _aR, _aB, _an, _aI, _aP = \
-        f_Get_parameter_scaling_law('IPB98(y,2)')
-    _tau98 = (_Csl * 15**_aI * 5.3**_aB * 10.1**_an * 2.5**_aM * 6.2**_aR
-              * (2 / 6.2)**_ae * 1.70**_ak * 87.0**_aP)
-    _bench("Published anchors - confinement scaling laws", [
-        ("IPB98(y,2) / ITPA20 exponents", "exact", "published", None,
-         "registry assert"),
-        ("ITER89-P prefactor C(n19) [-]",
-         f_Get_parameter_scaling_law('ITER89-P')[0], 0.048 * 10**-0.1, 5e-3,
-         "Yushmanov 1990"),
-        ("tau_IPB98, published convention [s]", _tau98, 3.7, 0.08,
-         "IPB 1999"),
-    ])
-    # ITPA20 and ITPA20-IL at the ITER point of Verdoolaege et al. (2021),
-    # section 3.2.2: Ip = 15 MA, B = 5.3 T, n19 = 10.3, P = 87 MW,
-    # R = 6.2 m, delta = 0.48, kappa_a = 1.7, eps = 0.32, M = 2.5.
-    # Published predictions: 3.067 s (Table 16) and 2.902 s (Table 10).
-    def _tau_law(_law):
-        _C, _ad, _aM, _ak, _ae, _aR, _aB, _an, _aI, _aP = \
-            f_Get_parameter_scaling_law(_law)
-        return (_C * 15**_aI * 5.3**_aB * 10.3**_an * 87.0**_aP * 6.2**_aR
-                * 1.48**_ad * 1.7**_ak * 0.32**_ae * 2.5**_aM)
-    _bench("Published anchors - ITPA20 scaling laws", [
-        ("tau_ITPA20 at the ITER point [s]", _tau_law('ITPA20'), 3.067,
-         5e-3, "Verdoolaege 2021 T16"),
-        ("tau_ITPA20-IL at the ITER point [s]", _tau_law('ITPA20-IL'),
-         2.902, 5e-3, "Verdoolaege 2021 T10"),
-    ])
-    # Auclair2026 at the ITER baseline point of paper 1 (Ip = 15 MA,
-    # B = 5.3 T, n19 = 10.3, P = 87 MW, R = 6.2 m, eps = 0.32,
-    # kappa_a = 1.7, metal wall): 2.96 s. The f_GW correction at
-    # f_GW = 0.85 lowers it by exp(-0.49 x 0.33) = 0.85.
-    _Csl, _ad, _aM, _ak, _ae, _aR, _aB, _an, _aI, _aP = \
-        f_Get_parameter_scaling_law('Auclair2026')
-    _tauA = (_Csl * 15**_aI * 5.3**_aB * 10.3**_an * 6.2**_aR
-             * 0.32**_ae * 1.70**_ak * 87.0**_aP)
-    _sf, _fref = f_Get_fGW_correction('Auclair2026-fGW')
-    _bench("Published anchors - Auclair2026 confinement law", [
-        ("tau_Auclair2026 at ITER baseline [s]", _tauA, 2.96, 0.01,
-         "paper 1 Table 3"),
-        ("f_GW correction at f_GW = 0.85 [-]", np.exp(_sf * (0.85 - _fref)),
-         np.exp(-0.49 * 0.33), 1e-3, "paper 2"),
-    ])
 
 def f_tauE(pbar, V, P_Alpha, P_Aux, P_Ohm, P_rad):
     """
@@ -9524,6 +9489,34 @@ def f_lifetime_to_years(t_fpy: float, Util_factor: float,
     return t_fpy / (Util_factor * Dwell_factor)
 
 
+def f_replacement_intervals(t_bl_yr: float, t_div_yr: float) -> tuple:
+    """
+    Operating calendar time between two replacements of the blanket and of
+    the divertor, in the parallel schedule of f_availability_schedule.
+
+    Let A = longer-lived component, B = shorter-lived, n = floor(t_A / t_B).
+    B is replaced every t_B. A is replaced with the n-th replacement of B,
+    every n t_B <= t_A. An infinite lifetime (e.g. a divertor without load,
+    P_sep <= 0) means that the component is never replaced (np.inf).
+
+    Parameters
+    ----------
+    t_bl_yr  : float  Blanket calendar lifetime [yr].
+    t_div_yr : float  Divertor calendar lifetime [yr].
+
+    Returns
+    -------
+    t_rep_bl_yr, t_rep_div_yr : float  Intervals [yr], np.inf if never replaced.
+    n                         : int    B-cycles per A-cycle (0 if A never replaced).
+    """
+    t_A, t_B = max(t_bl_yr, t_div_yr), min(t_bl_yr, t_div_yr)
+    n = max(1, int(t_A / t_B)) if np.isfinite(t_A) else 0
+    t_rep_A = n * t_B if n > 0 else np.inf
+    if t_bl_yr >= t_div_yr:
+        return t_rep_A, t_B, n
+    return t_B, t_rep_A, n
+
+
 def f_availability_schedule(t_life_bl_fpy: float, t_life_div_fpy: float,
                              dt_rep_bl: float, dt_rep_div: float,
                              Util_factor: float, Dwell_factor: float) -> tuple:
@@ -9536,7 +9529,8 @@ def f_availability_schedule(t_life_bl_fpy: float, t_life_div_fpy: float,
     Algorithm
     ---------
     Let A = longer-lived component, B = shorter-lived.
-    n = floor(t_A / t_B)  — how many B-cycles fit inside one A-cycle.
+    n = floor(t_A / t_B)  — how many B-cycles fit inside one A-cycle
+    (f_replacement_intervals).
 
     Every t_B calendar years a replacement occurs:
       - (n−1) out of n times: only B replaced  → downtime = dt_B
@@ -9546,7 +9540,9 @@ def f_availability_schedule(t_life_bl_fpy: float, t_life_div_fpy: float,
         dt_eff = [(n−1)*dt_B + max(dt_A, dt_B)] / n
 
     Availability: Av = t_B_yr / (t_B_yr + dt_eff)
-    Capacity factor: CF = Av * Util_factor * Dwell_factor
+
+    The operating fraction of the year is Av x Util, the burn fraction
+    Av x Util x Dwell. The caller builds them (D0FUS_run.run).
 
     Parameters
     ----------
@@ -9562,36 +9558,23 @@ def f_availability_schedule(t_life_bl_fpy: float, t_life_div_fpy: float,
     T_op_limit : float  Calendar years of operation per replacement cycle [yr].
     dt_rep_eff : float  Effective average replacement downtime per cycle [yr].
     Av         : float  Plant availability [-].
-    CF         : float  Capacity factor [-].
     """
     UD = Util_factor * Dwell_factor
     t_bl_yr  = t_life_bl_fpy  / UD
     t_div_yr = t_life_div_fpy / UD
+    dt_A, dt_B = ((dt_rep_bl, dt_rep_div) if t_bl_yr >= t_div_yr
+                  else (dt_rep_div, dt_rep_bl))
+    T_op_limit = min(t_bl_yr, t_div_yr)   # t_B
+    _, _, n = f_replacement_intervals(t_bl_yr, t_div_yr)
 
-    # Identify longer (A) and shorter (B) component
-    if t_bl_yr >= t_div_yr:
-        t_A, t_B   = t_bl_yr,  t_div_yr
-        dt_A, dt_B = dt_rep_bl, dt_rep_div
-    else:
-        t_A, t_B   = t_div_yr,  t_bl_yr
-        dt_A, dt_B = dt_rep_div, dt_rep_bl
-
-    # Number of B-cycles per A-cycle (floor, never exceed lifetime).
-    # An infinite lifetime (e.g. a divertor without load, P_sep ≤ 0) means
-    # that the component is never replaced: limit n → ∞, dt_rep_eff = dt_B.
-    if np.isfinite(t_A):
-        n = max(1, int(t_A / t_B))
-        dt_rep_eff = ((n - 1) * dt_B + max(dt_A, dt_B)) / n
-    else:
-        dt_rep_eff = dt_B
-    T_op_limit = t_B
+    # n = 0: the longer-lived component is never replaced, dt_rep_eff = dt_B
+    dt_rep_eff = ((n - 1) * dt_B + max(dt_A, dt_B)) / n if n > 0 else dt_B
 
     if np.isfinite(T_op_limit):
         Av = T_op_limit / (T_op_limit + dt_rep_eff)
     else:
         Av = 1.0   # neither component is ever replaced
-    CF = Av * UD
-    return (T_op_limit, dt_rep_eff, Av, CF)
+    return (T_op_limit, dt_rep_eff, Av)
 
 
 def _coulomb_log_ee(ne, Te_eV):
@@ -10393,7 +10376,7 @@ def compute_RE_indicators(Ip, nbar, Tbar, a, R0, κ, Z_eff, li,
     }
 
 
-# ── Validation ────────────────────────────────────────────────────────────────
+# ── Verification ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     # ── ITER chain (12/12) - q95, wall load and helium ash closure ───────
