@@ -48,9 +48,9 @@ On the engineering side, the self-consistent chain reproduces the ITER coil set 
 
 | Quantity                       | Symbol               | D0FUS | ITER | $\Delta$ (%) |
 |:-------------------------------|:---------------------|:------|:-----|:-------------|
-| TF inboard leg thickness \[m\] | $c_\mathrm{TF}$      | 0.94  | 0.90 | $+4$         |
-| CS radial thickness \[m\]      | $\Delta_\mathrm{CS}$ | 0.73  | 0.80 | $-9$         |
-| CS peak field \[T\]            | $B_\mathrm{CS}$      | 12.0  | 13.0 | $-8$         |
+| TF inboard leg thickness \[m\] | $c_\mathrm{TF}$      | 0.95  | 0.90 | $+5$         |
+| CS radial thickness \[m\]      | $\Delta_\mathrm{CS}$ | 0.75  | 0.80 | $-6$         |
+| CS peak field \[T\]            | $B_\mathrm{CS}$      | 12.3  | 13.0 | $-5$         |
 :::
 
 The inboard TF leg thickness lands within a few percent of the reference. The only larger residual is on the CS thickness and peak field. This is expected: the solenoid sits at the meeting point of the physics, through its flux demand, and the engineering, through its bore and its own electro-mechanical sizing.

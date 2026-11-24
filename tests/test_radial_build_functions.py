@@ -95,7 +95,7 @@ def test_j_coil_alpha_identities():
         J_w = rng.uniform(20e6, 300e6)
         R_sep = R_ext - c_WP
         alpha = 2 * B * R_ext / (μ0 * J_w * (R_ext**2 - R_sep**2))
-        err_TF = max(err_TF, abs(f_J_coil_TF(B, R_ext, c_WP) / (alpha * J_w) - 1.0))
+        err_TF = max(err_TF, abs(f_J_coil_TF(B, R_ext, c_WP, 0.0) / (alpha * J_w) - 1.0))
         d = rng.uniform(0.05, 1.5)
         B_CS = rng.uniform(4.0, 25.0)
         alpha = B_CS / (μ0 * J_w * d)
@@ -105,8 +105,8 @@ def test_j_coil_alpha_identities():
 
 
 def test_j_coil_degenerate_geometry_returns_nan():
-    assert np.isnan(f_J_coil_TF(10.0, 3.0, np.nan))
-    assert np.isnan(f_J_coil_TF(10.0, 3.0, 0.0))
+    assert np.isnan(f_J_coil_TF(10.0, 3.0, np.nan, 0.0))
+    assert np.isnan(f_J_coil_TF(10.0, 3.0, 0.0, 0.0))
     assert np.isnan(f_J_coil_CS(10.0, 0.0))
     assert np.isnan(f_J_coil_CS(np.nan, 0.5))
 
@@ -134,8 +134,11 @@ def test_bore_log_integral_rectangle_exact():
 
 
 def test_e_mag_tf_iter():
-    # ITER TF: 41 GJ [Mitchell IEEE TAS 18 (2008)], 10 %.
-    E_TF = calculate_E_mag_TF(5.3 * 6.2 / 3.1, 2.0, 1.1, 6.2, 0.9, 1.59)
+    # ITER TF: 41 GJ [Mitchell IEEE TAS 18 (2008)], 10 %. Bore and winding
+    # pack: c = 0.90 m (DDD), WP 0.633 m [Sborchia IEEE TAS 18 (2008),
+    # Fig. 2] behind a 0.07 m cover (DDD), B0 R0 = 5.3 x 6.2 T m.
+    E_TF = calculate_E_mag_TF(5.3 * 6.2 / 3.03, 2.0, 1.1, 6.2, 0.9, 1.59,
+                              0.633, 0.07)
     np.testing.assert_allclose(E_TF, 41e9, rtol=0.10)
 
 
@@ -145,7 +148,7 @@ ITER_DECK = os.path.join(REPO_ROOT, "D0FUS_INPUTS", "1_run_ITER.txt")
 
 @pytest.mark.skipif(not os.path.exists(ITER_DECK), reason="ITER reference deck not present")
 def test_iter_deck_frozen_radial_build():
-    # Anti-drift guard on the frozen 2026-10 coil quantities (< 0.5 %).
+    # Anti-drift guard on the frozen 2026-11 coil quantities (< 0.5 %).
     # Run in a fresh subprocess, as in the source block: in-process module
     # state can shift the CS sizing (see the note in the source).
     code = textwrap.dedent("""
@@ -153,7 +156,7 @@ def test_iter_deck_frozen_radial_build():
         import numpy as np
         from D0FUS_EXE.D0FUS_run import load_config_from_file, run
         res = run(load_config_from_file(%r), verbose=0)
-        frozen = {44: 0.9385, 45: 0.5029, 46: 0.3656, 51: 0.7254, 1: 12.009}
+        frozen = {44: 0.9455, 45: 0.5145, 46: 0.3610, 51: 0.7532, 1: 12.290}
         names = {44: 'c_TF', 45: 'c_WP', 46: 'c_Nose', 51: 'd_CS', 1: 'B_CS'}
         for i, v in frozen.items():
             np.testing.assert_allclose(float(res[i]), v, rtol=5e-3, err_msg=names[i])
