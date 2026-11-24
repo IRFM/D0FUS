@@ -1653,28 +1653,49 @@ def _bore_log_integral(R, Z):
     return abs(np.sum(0.5 * (np.log(R) + np.log(R_next)) * (Z_next - Z)))
 
 
-def calculate_E_mag_TF(B_max, a, b, R0, c, Delta_TF):
+# Gauss-Legendre rule (nodes and weights on [-1, 1]) of the winding-pack
+# depth integral of calculate_E_mag_TF.
+_EMAG_GL_T, _EMAG_GL_W = np.polynomial.legendre.leggauss(4)
+
+
+def calculate_E_mag_TF(B_max, a, b, R0, c, Delta_TF, c_WP, c_BP):
     """
-    Magnetic energy stored in the toroidal field.
+    Magnetic energy stored in the toroidal field, bore and winding pack.
 
-    Inside the TF coils the field is B(R) = B_max R_in / R, with B_max at
-    the plasma-facing face of the inboard leg, R_in = R0 - a - b. The
-    energy is integrated over the bore of the Princeton-D coil built by
-    f_TF_cross_section, the region enclosed by its inner contour:
+    Axisymmetric limit: B = mu0 NI / (2 pi R), NI being the ampere-turns
+    linked at the point. B_max sits on the plasma face of the winding pack,
+    at R_e = R0 - a - b - c_BP, behind the backplate cover if any.
 
-        E_mag = (pi (B_max R_in)^2 / mu0) * iint dR dZ / R
+    - Bore, enclosed by the plasma face of the winding pack (the cover
+      included, it carries no current): B = B_max R_e / R.
+    - Winding pack, at depth s from its plasma face: NI falls as in the
+      thick cylinder of Winding_Pack_refined (uniform smeared current
+      density, docs app:B_thick),
+          f(s) = ((R_e - s)^2 - R_i^2) / (R_e^2 - R_i^2),  R_i = R_e - c_WP.
+      The winding cross-section is constant along the coil, so f(s) holds
+      all around the Princeton-D.
+    - Nose: no field.
 
-    The field energy inside the winding itself, a few percent, is not
-    included. The bore depends on the coil thickness c through the
-    centreline of the Princeton-D.
+    With G(s) = iint dR dZ / R over the region enclosed by the contour at
+    depth s, an integration by parts gives
+
+        E_mag = (pi (B_max R_e)^2 / mu0) * int_0^c_WP w(s) G(s) ds,
+        w(s) = -d(f^2)/ds,  int_0^c_WP w(s) ds = 1,
+
+    the bore integral averaged over the depth of the winding pack. G(s) is
+    the Green integral of the coil contour offset by c_BP + s. The 4-point
+    Gauss-Legendre rule in s is converged to 1e-8 up to c_WP / R_e = 0.7.
 
     Parameters
     ----------
-    B_max    : float  Peak toroidal field at R_in [T].
+    B_max    : float  Peak toroidal field at R_e [T].
     a, b, R0 : float  Plasma minor radius, inboard build, major radius [m].
-    c        : float  TF inboard radial thickness [m]. c = 0 gives the bore
-                      of a thin coil, used before c is known.
+    c        : float  TF inboard radial thickness [m].
     Delta_TF : float  Outboard port-access clearance [m] (Number_TF_coils).
+    c_WP     : float  Winding-pack (current-carrying) thickness [m]. c_WP = 0
+                      gives the bore alone, used before c_WP is known.
+    c_BP     : float  Backplate cover between the plasma face of the coil
+                      and its winding pack [m], 0 without cover (f_TF_cover).
 
     Returns
     -------
@@ -1685,11 +1706,25 @@ def calculate_E_mag_TF(B_max, a, b, R0, c, Delta_TF):
     Wilson, Superconducting Magnets (1983), ch. 9 (stored energy);
     File, Mills & Sheffield, IEEE Trans. Nucl. Sci. 18 (1971) 277 (shape).
     """
-    R_in = R0 - a - b
-    *_, R_bore, Z_bore = f_TF_cross_section(a, b, R0, c, Delta_TF)
-    if not (np.all(np.isfinite(R_bore)) and np.all(R_bore > 0)):
+    R_e = R0 - a - b - c_BP
+    *_, R_face, Z_face = f_TF_cross_section(a, b, R0, c, Delta_TF)
+    if not (np.all(np.isfinite(R_face)) and np.all(R_face > 0) and R_e > 0):
         return np.nan
-    return np.pi * (B_max * R_in)**2 / μ0 * _bore_log_integral(R_bore, Z_bore)
+
+    def _G(s):
+        # Region enclosed by the contour at depth s behind the cover
+        return _bore_log_integral(*_offset_contour(R_face, Z_face, -(c_BP + s)))
+
+    E_unit = np.pi * (B_max * R_e)**2 / μ0
+    if c_WP <= 0.0:
+        return E_unit * _G(0.0)
+
+    # Depth average of G with the weight w(s) of the thick-cylinder profile
+    R_i = R_e - c_WP
+    s = 0.5 * c_WP * (_EMAG_GL_T + 1.0)
+    w = 4.0 * (R_e - s) * ((R_e - s)**2 - R_i**2) / (R_e**2 - R_i**2)**2
+    G = np.array([_G(s_k) for s_k in s])
+    return E_unit * 0.5 * c_WP * np.sum(_EMAG_GL_W * w * G)
 
 
 
@@ -2624,7 +2659,7 @@ def f_H_CS_module(H_CS, N_sub_CS):
 # internal composition of the conductor is required, so they hold for every
 # TF/CS model implemented in D0FUS (academic, refined, CIRCE).
 
-def f_J_coil_TF(B_max_TF, R_TF_out, c_TF):
+def f_J_coil_TF(B_max_TF, R_TF_out, c_TF, c_BP):
     """
     Overall current density of the TF inboard leg (J_coil scale).
 
@@ -2635,18 +2670,20 @@ def f_J_coil_TF(B_max_TF, R_TF_out, c_TF):
     Wedged (or bucked) TF coils fill the whole toroidal sector at any radius,
     so the inboard cross-section summed over the N_TF coils is the annulus
     between R_TF_out - c_TF and R_TF_out. Ampere's law on the toroidal path at
-    the high-field face gives the total ampere-turns, hence
+    the high-field face of the winding pack, behind the backplate cover c_BP,
+    gives the total ampere-turns, hence
 
-        N I_tot = 2 pi R_TF_out B_max_TF / mu0
+        N I_tot = 2 pi (R_TF_out - c_BP) B_max_TF / mu0
         A_tot   = pi (R_TF_out^2 - (R_TF_out - c_TF)^2)
         J_coil  = N I_tot / A_tot
-                = 2 R_TF_out B_max_TF / [mu0 (R_TF_out^2 - (R_TF_out - c_TF)^2)]
+                = 2 (R_TF_out - c_BP) B_max_TF / [mu0 (R_TF_out^2 - (R_TF_out - c_TF)^2)]
 
     Consistency. For the refined model the winding-pack solver defines
     alpha = 2 B_max R_ext / (mu0 J_wost (R_ext^2 - R_sep^2)), i.e. alpha is
     exactly the ratio of the WP-smeared current density to J_wost. Evaluating
-    the expression above with c_TF = c_WP therefore returns alpha * J_wost
-    identically. For the academic model the WP is sized from
+    the expression above at the winding-pack face (R_TF_out = R_ext, c_BP = 0)
+    with c_TF = c_WP therefore returns alpha * J_wost identically. For the
+    academic model the WP is sized from
     S_cond = N I_tot / J_wost, so the same expression with c_TF = c_WP returns
     J_wost identically. Both identities were verified numerically to machine
     precision.
@@ -2661,6 +2698,9 @@ def f_J_coil_TF(B_max_TF, R_TF_out, c_TF):
         Total inboard radial thickness of the coil [m]. Pass the converged
         c (WP + nose + backplate) for J_coil, or c_WP alone for the
         winding-pack-scale density.
+    c_BP : float
+        Backplate cover in front of the winding pack [m] (f_TF_cover).
+        B_max_TF sits at R_TF_out - c_BP.
 
     Returns
     -------
@@ -2680,7 +2720,7 @@ def f_J_coil_TF(B_max_TF, R_TF_out, c_TF):
     A_tot = np.pi * (R_TF_out**2 - R_in**2)
     if A_tot <= 0.0:
         return np.nan
-    return (2.0 * np.pi * R_TF_out * B_max_TF / μ0) / A_tot
+    return (2.0 * np.pi * (R_TF_out - c_BP) * B_max_TF / μ0) / A_tot
 
 
 def f_J_coil_CS(B_CS, d_CS):
@@ -4249,7 +4289,9 @@ def f_TF_refined(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n
     omega : WP share of the vertical tension f_z,WP [-]
         (Auclair et al. 2026, Table 1 and Eq. 23)
     n : Conductor geometry factor for γ(α, n) [-]
-    c_BP : Backplate thickness (m)
+    c_BP : Backplate cover on the plasma side of the winding pack (m),
+        wedging only. B_max sits behind it, at R0 - a - b - c_BP
+        (f_TF_cover, f_B0)
     coef_inboard_tension : Inboard share of the total vertical force [-]
         (keep 0.5 for consistency with the WP sigma_z; see Nose_refined)
     F_CClamp : Clamping (pre-compression) force [N], subtracted from the
@@ -4309,13 +4351,17 @@ def f_TF_refined(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n
     
     if Choice_Buck_Wedg == "Wedging":
         
-        c_WP, σ_r, σ_z, σ_theta, Steel_fraction  = Winding_Pack_refined( R0, a, b, σ_TF, J_max_TF, B_max_TF, omega, n, grading=TF_grading, delta_port=delta_port, F_CClamp=F_CClamp)
+        # Backplate cover on the plasma side, as in ITER [Sborchia 2008]: the
+        # winding pack, with B_max on its face, starts at R0 - a - b - c_BP.
+        b_WP = b + c_BP
+
+        c_WP, σ_r, σ_z, σ_theta, Steel_fraction  = Winding_Pack_refined( R0, a, b_WP, σ_TF, J_max_TF, B_max_TF, omega, n, grading=TF_grading, delta_port=delta_port, F_CClamp=F_CClamp)
         
         # Vérification que c_WP est valide
         if c_WP is None or np.isnan(c_WP) or c_WP < 0:
             return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
-        c_Nose = R0 - a - b - c_WP - Nose_refined(R0 - a - b - c_WP, σ_TF, omega, B_max_TF, R0, a, b,
+        c_Nose = R0 - a - b_WP - c_WP - Nose_refined(R0 - a - b_WP - c_WP, σ_TF, omega, B_max_TF, R0, a, b_WP,
                                           coef_inboard_tension, delta_port=delta_port, F_CClamp=F_CClamp)
 
         # Vérification que c_Nose est valide
@@ -4358,8 +4404,8 @@ def f_TF_refined(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n
             c_case_min = f_case_min * 2.0 * kappa * a
             c_Nose = max(c_Nose, c_case_min - c_BP)
 
-        # Vérification que la somme ne dépasse pas R0 - a - b
-        if (c_WP + c_Nose) > (R0 - a - b):
+        # Vérification que la somme ne dépasse pas R0 - a - b - c_BP
+        if (c_WP + c_Nose) > (R0 - a - b_WP):
             return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
         
         # Epaisseur totale de la bobine
@@ -4387,6 +4433,20 @@ def f_TF_refined(a, b, R0, σ_TF, J_max_TF, B_max_TF, Choice_Buck_Wedg, omega, n
         return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
 
     return c, c_WP, c_Nose, σ_z, σ_theta, σ_r, Steel_fraction
+
+
+def f_TF_cover(Radial_build_model, Choice_Buck_Wedg, c_BP):
+    """
+    Backplate cover between the plasma face of the TF coil and its winding
+    pack [m].
+
+    Only the refined wedging build contains it (f_TF_refined,
+    c = c_WP + c_Nose + c_BP). B_max then sits on the winding pack, behind
+    the cover, at R0 - a - b - c_BP. The other builds have no cover.
+    """
+    if Choice_Buck_Wedg == "Wedging" and Radial_build_model in ("refined", "CIRCE"):
+        return c_BP
+    return 0.0
 
 
 #%% TF Benchmark
@@ -6206,9 +6266,11 @@ if __name__ == "__main__":
     print("\n--- ITER TF ---")
     # Geometry: r_bore_in/out are the inner/outer radii of the toroidal volume
     # where B_tor exists, i.e., the TF inner and outer leg positions.
-    # Princeton-D bore of the ITER deck with the published B0 R0 = 5.3 x 6.2
-    # T m, i.e. B_max = 10.6 T at R0 - a - b = 3.1 m.
-    E_TF = calculate_E_mag_TF(5.3 * 6.2 / 3.1, 2.0, 1.1, 6.2, 0.9, 1.59)
+    # ITER coil with the published B0 R0 = 5.3 x 6.2 T m: c = 0.90 m (DDD),
+    # winding pack 0.633 m [Sborchia 2008, Fig. 2] behind a 0.07 m cover
+    # (DDD), i.e. B_max = 10.85 T at R0 - a - b - c_BP = 3.03 m.
+    E_TF = calculate_E_mag_TF(5.3 * 6.2 / 3.03, 2.0, 1.1, 6.2, 0.9, 1.59,
+                              0.633, 0.07)
     E_TF_ref = 41e9
     # Discharge parameters [2]: 9 FDU, V_max ~ 6 kV, tau_dis ~ 11 s
     I_TF = 68e3
@@ -6784,9 +6846,9 @@ def f_cable_length(
     """
     Total cable conductor length for the TF and CS systems.
 
-    TF — Ampere's law on toroidal path at the plasma-facing inner face
-    (R_TF_in = R0 − a − b), consistent with the NI convention used
-    throughout D0FUS (save_run_output, calculate_E_mag_TF):
+    TF — Ampere's law on toroidal path at the plasma face of the winding
+    pack (R_TF_in = R0 − a − b − c_cover, f_TF_cover), consistent with the
+    NI convention used throughout D0FUS (save_run_output, calculate_E_mag_TF):
         NI_total = Bmax_TF × 2π × R_TF_in / μ₀
         N_turns  = NI_total / (N_TF × I_cond_TF)
         L_cable  = N_TF × N_turns × L_turn_TF
@@ -6801,7 +6863,8 @@ def f_cable_length(
     N_TF       : int    Number of TF coils.
     L_turn_TF  : float  Princeton-D outer contour arc length [m].
     Bmax_TF    : float  Peak field on TF conductor [T].
-    R_TF_in    : float  Plasma-facing inner face radius = R0 − a − b [m].
+    R_TF_in    : float  Winding-pack plasma face, where Bmax_TF sits,
+                        R0 − a − b − c_cover [m].
                         This is the radius used for Ampere's law throughout
                         D0FUS (consistent with N_turns displayed in output).
     I_cond_TF  : float  Operating current per TF conductor [A].

@@ -1554,15 +1554,20 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
             Marge_T_REBCO=Marge_T_REBCO, Eps=Eps, Tet=Tet,
             J_wost_Manual=J_wost_Manual if Supra_choice == 'Manual' else None)
 
-    # Stored energy in the Princeton-D bore. The bore depends on the coil
-    # thickness c, unknown here: thin-coil estimate (c = 0), refined by the
-    # fixed point of the TF sizing below.
-    E_mag_TF            = calculate_E_mag_TF(Bmax_TF, a, b, R0, 0.0, Delta_TF)
+    # Backplate cover in front of the winding pack, refined wedging only
+    # (f_TF_cover). B_max sits behind it, for B0 and the stored energy.
+    c_cover = f_TF_cover(Radial_build_model, Choice_Buck_Wedg, c_BP)
+
+    # Stored energy in the bore and the winding pack. Both depend on the coil
+    # build, unknown here: thin-coil estimate (cover alone, c_WP = 0), refined
+    # by the fixed point of the TF sizing below.
+    E_mag_TF            = calculate_E_mag_TF(Bmax_TF, a, b, R0, c_cover, Delta_TF,
+                                             0.0, c_cover)
     result_J_TF         = _tf_cable(E_mag_TF)
     J_max_TF_conducteur = result_J_TF['J_wost']
 
     # ── On-axis magnetic field and alpha power ────────────────────────────────
-    B0_solution = f_B0(Bmax_TF, a, b, R0, b_cover=c_BP)
+    B0_solution = f_B0(Bmax_TF, a, b, R0, b_cover=c_cover)
     # Charged-product and neutron fractions of P_fus (constant for D-T,
     # branch-weighted on the deck profiles for D-D).
     f_charged, f_neutron = f_fuel_power_split(
@@ -2943,7 +2948,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # WP envelope, stress concentrations, weld efficiency and manufacturing
     # tolerances not represented in the idealised CICC area model.
     # The quench protection sizes J_TF from the stored energy, and the
-    # Princeton-D bore holding that energy grows with c: fixed point on c,
+    # bore and winding pack holding that energy grow with c: fixed point on c,
     # 2 to 4 sizings. delta_port = Delta_TF puts the outboard leg where the
     # ripple and port-access sizing placed it, in the vertical force.
     for _ in range(10):
@@ -2969,7 +2974,8 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
 
         if not np.isfinite(c):
             break
-        E_mag_c = calculate_E_mag_TF(Bmax_TF, a, b, R0, c, Delta_TF)
+        E_mag_c = calculate_E_mag_TF(Bmax_TF, a, b, R0, c, Delta_TF,
+                                     c_WP_TF, c_cover)
         if abs(E_mag_c - E_mag_TF) <= 1e-3 * E_mag_TF:
             break
         E_mag_TF            = E_mag_c
@@ -3260,7 +3266,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     # ── Cable conductor lengths ───────────────────────────────────────────────
     R_CS_ext_val = R0 - a - b - c - _gap_eff
     L_turn_CS    = np.pi * (R_CS_ext_val + R_CS_ext_val - d)   # 2π × R_mean
-    _R_TF_in     = R0 - a - b   # plasma-facing inner face, consistent with D0FUS NI convention
+    _R_TF_in     = R0 - a - b - c_cover   # winding-pack face, where Bmax_TF sits (NI convention)
     (L_cable_TF, L_cable_CS,
      _Nturns_TF, _Nturns_CS) = f_cable_length(
         int(N_TF), L_turn_TF, Bmax_TF, _R_TF_in,
@@ -3334,7 +3340,7 @@ def run(config: GlobalConfig = None, verbose: int = 0) -> tuple:
     (V_cryo_LHe_solution, V_cryo_LN_solution) = f_cryo_LHe_LN_volume(P_cryo_electric_solution)
     house_load_components_solution = house_load_breakdown(
         config, _R_TF_out, R_bore_TF, c, _H_TF_D, Z_TF_bore_half, N_TF,
-        calculate_E_mag_TF(Bmax_TF, a, b, R0, c, Delta_TF),
+        calculate_E_mag_TF(Bmax_TF, a, b, R0, c, Delta_TF, c_WP_TF, c_cover),
         P_cryo_cool_solution)
     P_house_load_solution = house_load_components_solution['P_house']
     # Coolant pumping on the heat extracted during the burn (nominal)
@@ -4024,7 +4030,10 @@ def _write_full_report(config, results, output_path, timestamp, input_file_path=
         named["J_wost_CS"] = J_CS_1
         named["J_coil_TF"] = f_J_coil_TF(config.Bmax_TF,
                                          config.R0 - config.a - config.b,
-                                         c_TF)
+                                         c_TF,
+                                         f_TF_cover(config.Radial_build_model,
+                                                    config.Choice_Buck_Wedg,
+                                                    config.c_BP))
         named["J_coil_CS"] = f_J_coil_CS(B_CS, c_CS)
     except Exception as e:
         notes.append(f"  (results tuple not fully unpacked, part of the outputs is n/a: {e})")
@@ -4592,16 +4601,20 @@ def save_run_output(config: GlobalConfig,
                                        "for a thick breeder")
 
     # ── Magnetic stored energy and ampere-turns (display only) ────────────
-    # Princeton-D bore of the sized coil, as in run()
+    # Bore and winding pack of the sized coil, as in run()
     _r_in_TF  = config.R0 - config.a - config.b
+    _c_cover  = f_TF_cover(config.Radial_build_model, config.Choice_Buck_Wedg,
+                           config.c_BP)
     E_mag_TF_disp = calculate_E_mag_TF(config.Bmax_TF, config.a, config.b,
-                                       config.R0, c, Delta_TF_disp)
+                                       config.R0, c, Delta_TF_disp,
+                                       c_WP_TF, _c_cover)
     # House load breakdown, as in run()
     _hl = house_load_breakdown(config, _R_TF_out_disp, _R_bore_disp, c,
                                _H_TF_disp, float(np.max(_Z_in_disp)), N_TF_disp,
                                E_mag_TF_disp, P_cryo_cool)
-    # Ampere's law on toroidal path at inner bore: NI_total = B_max × 2π r_in / μ₀
-    NI_TF_total = config.Bmax_TF * 2 * np.pi * _r_in_TF / μ0
+    # Ampere's law on toroidal path at the winding pack, behind the cover:
+    # NI_total = B_max × 2π (r_in − c_cover) / μ₀
+    NI_TF_total = config.Bmax_TF * 2 * np.pi * (_r_in_TF - _c_cover) / μ0
     # Per-coil ampere-turns and winding turns
     NI_TF_coil     = NI_TF_total / N_TF_disp if N_TF_disp > 0 else np.nan
     Nturns_TF_coil = NI_TF_coil / config.I_cond if config.I_cond > 0 else np.nan
@@ -4638,7 +4651,7 @@ def save_run_output(config: GlobalConfig,
     # full coil cross-section, steel jacket and structural case included.
     # Both follow from Ampere's law and the converged build alone; see
     # f_J_coil_TF / f_J_coil_CS in D0FUS_radial_build_functions.
-    J_coil_TF = f_J_coil_TF(config.Bmax_TF, _r_in_TF, c)
+    J_coil_TF = f_J_coil_TF(config.Bmax_TF, _r_in_TF, c, _c_cover)
     J_coil_CS = f_J_coil_CS(B_CS, d)
 
     # Impurity inventory for the per-species display, with the same coronal

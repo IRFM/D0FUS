@@ -1,19 +1,19 @@
 <a name="readme-top"></a>
 
 <p align="center">
-  <img src="docs/figures/D0FUS_logo.png" alt="D0FUS logo" width="190">
+  <img src="https://raw.githubusercontent.com/IRFM/D0FUS/main/docs/figures/D0FUS_logo.png" alt="D0FUS logo" width="190">
 </p>
 
 <h1 align="center">D0FUS</h1>
 
 <p align="center">
   <a href="https://cecill.info/licences/Licence_CeCILL-C_V1-en.html"><img src="https://img.shields.io/badge/License-CeCILL--C-blue.svg" alt="License: CeCILL-C"></a>
-  <a href="https://pypi.org/project/d0fus/"><img src="https://badge.fury.io/py/d0fus.svg" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/d0fus/"><img src="https://img.shields.io/pypi/v/d0fus.svg" alt="PyPI version"></a>
   <a href="https://d0fus.readthedocs.io"><img src="https://readthedocs.org/projects/d0fus/badge/?version=latest" alt="Documentation"></a>
 </p>
 
 <p align="center">
-  <img src="docs/figures/d0fus_capabilities_banner.png" alt="D0FUS capabilities" width="100%">
+  <img src="https://raw.githubusercontent.com/IRFM/D0FUS/main/docs/figures/d0fus_capabilities_banner.png" alt="D0FUS capabilities" width="100%">
 </p>
 
 <p align="center">
@@ -270,7 +270,7 @@ Tests: `pip install -e ".[dev]"`, then `python -m pytest` from the repository ro
 
 ## License
 
-[CeCILL-C](https://cecill.info/licences/Licence_CeCILL-C_V1-en.html), a French free software license compatible with the GNU LGPL. See [LICENSE](LICENSE).
+[CeCILL-C](https://cecill.info/licences/Licence_CeCILL-C_V1-en.html), a French free software license compatible with the GNU LGPL. See [LICENSE](https://github.com/IRFM/D0FUS/blob/main/LICENSE).
 
 © 2025-2026 CEA/IRFM
 
