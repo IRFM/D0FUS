@@ -1,13 +1,14 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "d0fus"
-version = "3.3.2"
+version = "3.3.3"
 description = "Design 0-dimensional for Fusion Systems - Tokamak power plant design and optimization tool"
 readme = "README.md"
-license = {text = "CeCILL-C"}
+license = "CECILL-C"
+license-files = ["LICENSE"]
 authors = [
     {name = "Timothé Auclair", email = "timothe.auclair@proton.me"}
 ]
@@ -31,7 +32,6 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Intended Audience :: Education",
     "Topic :: Scientific/Engineering :: Physics",
-    "License :: OSI Approved :: CEA CNRS Inria Logiciel Libre License, version 2.1 (CeCILL-2.1)",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
