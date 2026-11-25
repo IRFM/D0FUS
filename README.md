@@ -121,7 +121,7 @@ The mode is detected from the content of the input file. Text after `#` is a com
 
 | Mode | Purpose | Trigger in the deck |
 |------|---------|---------------------|
-| **RUN** | Single design point, 165 outputs, report files, 16 figures | Fixed values only (`R0 = 9`) |
+| **RUN** | Single design point, 165 outputs, report files, 19 figures | Fixed values only (`R0 = 9`) |
 | **SCAN** | 2D feasibility map, 108 registered output quantities | Exactly 2 entries `[min, max, n_points]`, other than the POPCON pair |
 | **OPTIMIZATION** | Genetic cost minimisation (DEAP) | 2+ entries `[min, max]` |
 | **POPCON** | Operating map (n̄, T̄) at fixed machine | `nbar_line` and `Tbar` written `[min, max, n_points]` |
@@ -240,7 +240,7 @@ Continuous distributions: `norm(sigma)`, `norm(lo, hi)`, `norm(lo, centre, hi)`,
 
 ## Outputs
 
-Every mode writes a folder named after the mode and the time, to the second, under `D0FUS_OUTPUTS/<mode>/`. From a clone, `D0FUS_OUTPUTS` is at the root of the repository, whatever the working directory. For an installed package, it is in the working directory. A RUN produces `input_parameters.txt` (the deck), `output_highlight.txt` (key results), `output_detailed.txt` (every input including defaults, every output), and 18 figures (cross-section, Miller surfaces, profiles, q(ρ), radiation, divertor two-point, radial build, coil and CICC drawings, cost breakdown, temperature and density maps, pulse and dwell power-balance Sankey diagrams, PyVista 3D view skipped with `--no-3d`). A design without a solution gives NaN in the reports and figures. SCAN writes the 2D map, OPTIMIZATION the convergence plot, `optimization_summary.json` (settings, seed, Hall of Fame), a copy of the deck and the reports of the best design, POPCON the operating-contour map, UNCERTAINTY a summary with the feasible share and its confidence interval, the per-output distributions and figures.
+Every mode writes a folder named after the mode and the time, to the second, under `D0FUS_OUTPUTS/<mode>/`. From a clone, `D0FUS_OUTPUTS` is at the root of the repository, whatever the working directory. For an installed package, it is in the working directory. A RUN produces `input_parameters.txt` (the deck), `output_highlight.txt` (key results), `output_detailed.txt` (every input including defaults, every output), and 19 figures (cross-section, Miller surfaces, profiles, q(ρ), radiation, divertor two-point, radial build as a cross-section and as a midplane bar, coil and CICC drawings, cost breakdown, temperature and density maps, pulse and dwell power-balance Sankey diagrams, PyVista 3D view skipped with `--no-3d`). A design without a solution gives NaN in the reports and figures. SCAN writes the 2D map, OPTIMIZATION the convergence plot, `optimization_summary.json` (settings, seed, Hall of Fame), a copy of the deck and the reports of the best design, POPCON the operating-contour map, UNCERTAINTY a summary with the feasible share and its confidence interval, the per-output distributions and figures.
 
 ---
 

@@ -66,7 +66,8 @@ if __name__ != "__main__":
         _offset_contour,
         f_TBR,
     )
-    from .D0FUS_parameterization import DEFAULT_CONFIG, E_ELEM, BLANKET_CONCEPTS, radial_layers_effective
+    from .D0FUS_parameterization import (DEFAULT_CONFIG, E_ELEM, BLANKET_CONCEPTS,
+                                         radial_layers_effective, radial_build_feasibility)
 
 # Standalone-execution imports (development / testing)
 else:
@@ -101,7 +102,8 @@ else:
         _offset_contour,
         f_TBR,
     )
-    from D0FUS_BIB.D0FUS_parameterization import DEFAULT_CONFIG, E_ELEM, BLANKET_CONCEPTS, radial_layers_effective
+    from D0FUS_BIB.D0FUS_parameterization import (DEFAULT_CONFIG, E_ELEM, BLANKET_CONCEPTS,
+                                                  radial_layers_effective, radial_build_feasibility)
 
 
 # =============================================================================
@@ -2982,6 +2984,38 @@ def _smooth_closed(R, Z, frac=0.045):
     return _sm(R), _sm(Z)
 
 
+# Palette of the radial-build figures (plot_assembly_side_view, plot_radial_build)
+_RB_ALPHA = 0.72
+_RB_COL = {
+    "plasma":  "#7E3FA8",   # violet
+    "FW":      "#9AA0A6",   # grey
+    "breeder": "#E8853A",   # orange
+    "TF":      "#D1495B",   # red
+    "CS":      "#3E6DB5",   # blue
+}
+# Structure, shield and vacuum-vessel layers: green shades, darkest at the plasma side
+_RB_GREEN_ROLES = ("structure", "multiplier", "shield_HT", "shield_LT", "VV")
+_RB_GREEN_SHADES = ("#1B5E20", "#2E7D32", "#43A047", "#66BB6A", "#86C98E", "#A5D6A7")
+
+
+def _rb_green_colors(layers):
+    """Green shade of each structure / shield / VV layer, by index in ``layers``."""
+    order = [i for i, L in enumerate(layers) if L["role"] in _RB_GREEN_ROLES]
+    return {gi: _RB_GREEN_SHADES[min(k, len(_RB_GREEN_SHADES) - 1)]
+            for k, gi in enumerate(order)}
+
+
+def _rb_label(L, short=False):
+    """Display name of a radial-build layer (legend names of plot_assembly_side_view)."""
+    role = L["role"]
+    name = L["name"].split("(")[0].strip()
+    full = {"SOL": "Scrape-off layer", "FW": "First wall",
+            "breeder": "Breeding blanket", "gap": "Gap"}
+    abbr = {"SOL": "SOL", "FW": "FW", "breeder": "BB", "gap": "Gap",
+            "shield_HT": "HT shield", "shield_LT": "LT shield", "VV": "VV"}
+    return (abbr if short else full).get(role, name)
+
+
 def plot_assembly_side_view(run, save_dir=None, n_cs_modules=None):
     """Poloidal (R-Z) cross-section of the full radial build.
 
@@ -3082,20 +3116,19 @@ def plot_assembly_side_view(run, save_dir=None, n_cs_modules=None):
     # smoothing them would alter layer widths and can create overlaps.
 
     # -- Colour scheme ------------------------------------------------------
-    ALPHA = 0.72
-    col_plasma = "#7E3FA8"      # violet
+    ALPHA = _RB_ALPHA
+    col_plasma = _RB_COL["plasma"]
     col_sol    = "white"        # SOL drawn as open space (see docstring)
-    col_fw     = "#9AA0A6"      # grey
-    col_bb     = "#E8853A"      # orange
-    col_tf     = "#D1495B"      # red
-    col_cs     = "#3E6DB5"      # blue
+    col_fw     = _RB_COL["FW"]
+    col_bb     = _RB_COL["breeder"]
+    col_tf     = _RB_COL["TF"]
+    col_cs     = _RB_COL["CS"]
     col_gap    = "white"
     # green shades (inner -> outer) for the structure/shield/VV block
-    GREEN_ROLES = ("structure", "multiplier", "shield_HT", "shield_LT", "VV")
-    green_shades = ["#1B5E20", "#2E7D32", "#43A047", "#66BB6A", "#86C98E", "#A5D6A7"]
+    GREEN_ROLES = _RB_GREEN_ROLES
+    green_shades = list(_RB_GREEN_SHADES)
     green_order = [i for i, L in enumerate(layers) if L["role"] in GREEN_ROLES]
-    green_color = {gi: green_shades[min(k, len(green_shades) - 1)]
-                   for k, gi in enumerate(green_order)}
+    green_color = _rb_green_colors(layers)
 
     def _role_color(i, L):
         r = L["role"]
@@ -3295,6 +3328,251 @@ def plot_assembly_side_view(run, save_dir=None, n_cs_modules=None):
         plt.close(fig)
         return None
     return fig
+
+
+# ---------------------------------------------------------------------------
+# B2b — Midplane radial build (bar from the machine axis to the TF outer face)
+# ---------------------------------------------------------------------------
+
+def _midplane_build(run: dict) -> list:
+    """
+    Midplane radial build of a run, as contiguous segments from R = 0 to the
+    outer face of the TF outboard leg.
+
+    Order: CS bore, CS, TF-CS gap (wedging only), TF inboard leg, inboard
+    layers (TF -> LCFS), plasma (2a), outboard layers (LCFS -> TF), TF
+    outboard leg. The layers and their midplane widths (delta_ib, delta_ob)
+    come from radial_layers_effective, as in plot_assembly_side_view; layers
+    of zero width are dropped. The outboard stack fills b + Delta_TF, its last
+    gap taking the remaining space. The outboard leg has the inboard thickness
+    c_TF, as in f_TF_cross_section. When the mandatory layers do not fit
+    (radial_build_feasibility), each side is a single 'build' segment.
+
+    Parameters
+    ----------
+    run : dict   D0FUS run output.
+
+    Returns
+    -------
+    list of dict, inboard to outboard, each with: name, short (abbreviated
+    name), role, R_in, R_out [m], color, alpha.
+    """
+    R0, a = float(run["R0"]), float(run["a"])
+    bd = _resolve_build(run)
+    b, c_TF, Delta_TF = bd["b"], bd["c_TF"], bd["Delta_TF"]
+    if radial_build_feasibility(bd["Blanket_choice"], b, Delta_TF)["feasible"]:
+        layers = radial_layers_effective(
+            bd["Blanket_choice"], b, Delta_TF,
+            float(run.get("delta_BB_IB", 0.50)), float(run.get("delta_BB_OB", 0.50)),
+            float(run.get("delta_shield_IB", 0.30)), float(run.get("delta_shield_OB", 0.30)))
+    else:
+        layers = []
+    green = _rb_green_colors(layers)
+
+    def _seg(name, short, role, R_in, R_out, color, alpha=_RB_ALPHA):
+        return dict(name=name, short=short, role=role, R_in=float(R_in),
+                    R_out=float(R_out), color=color, alpha=alpha)
+
+    def _stack(R_start, side, budget, order):
+        if not layers:
+            return ([_seg("Blanket and shield", "Build", "build", R_start,
+                          R_start + budget, "#D9D9D9", 1.0)] if budget > 1e-9 else [])
+        segs, R = [], R_start
+        for i in order:
+            L = layers[i]
+            width = float(L["delta_" + side])
+            if width <= 1e-9:
+                continue
+            if L["role"] in ("SOL", "gap"):
+                color, alpha = "white", 1.0
+            elif L["role"] in ("FW", "breeder"):
+                color, alpha = _RB_COL[L["role"]], _RB_ALPHA
+            else:
+                color, alpha = green.get(i, _RB_GREEN_SHADES[-1]), _RB_ALPHA
+            segs.append(_seg(_rb_label(L), _rb_label(L, short=True), L["role"], R,
+                             R + width, color, alpha))
+            R += width
+        return segs
+
+    gap_eff = bd["Gap"] if run.get("Choice_Buck_Wedg", "Wedging") == "Wedging" else 0.0
+    R_TF_in = bd["R_TF_in"]                     # plasma-side face of the TF inboard leg
+    R_ob = R0 + a + b + Delta_TF                # plasma-side face of the TF outboard leg
+    segs = [_seg("CS bore", "Bore", "bore", 0.0, bd["R_CS_int"], "#EFEFEF", 1.0),
+            _seg("CS", "CS", "CS", bd["R_CS_int"], bd["R_CS_ext"], _RB_COL["CS"])]
+    if gap_eff > 0:
+        segs.append(_seg("TF-CS gap", "Gap", "gap", bd["R_CS_ext"],
+                         bd["R_CS_ext"] + gap_eff, "white", 1.0))
+    segs.append(_seg("TF inboard leg", "TF", "TF", R_TF_in - c_TF, R_TF_in, _RB_COL["TF"]))
+    segs += _stack(R_TF_in, "ib", b, range(len(layers) - 1, -1, -1))
+    segs.append(_seg("Plasma", "Plasma", "plasma", R0 - a, R0 + a, _RB_COL["plasma"]))
+    segs += _stack(R0 + a, "ob", b + Delta_TF, range(len(layers)))
+    segs.append(_seg("TF outboard leg", "TF", "TF", R_ob, bd["R_TF_out"], _RB_COL["TF"]))
+    return segs
+
+
+def plot_radial_build(run: dict, save_dir: str | None = None) -> None:
+    """
+    Midplane radial build: bar from the machine axis to the TF outer face.
+
+    Top: the whole build at scale (CS bore, CS, TF legs, inboard and outboard
+    layers, plasma), with the inboard build b, the outboard build b + Delta_TF
+    and the major radius R0. Bottom: zooms on the inboard (TF -> LCFS) and
+    outboard (LCFS -> TF) layers, each layer labelled with its width (above the
+    bar, with a leader line, when the layer is too thin).
+    Same layers and colours as plot_assembly_side_view (see _midplane_build).
+    White segments are empty: scrape-off layer and gaps.
+
+    Parameters
+    ----------
+    run      : dict          D0FUS run output.
+    save_dir : str or None   Saves run_radial_build.png there; otherwise shown.
+    """
+    segs = _midplane_build(run)
+    R0, a = float(run["R0"]), float(run["a"])
+    bd = _resolve_build(run)
+    b, Delta_TF = bd["b"], bd["Delta_TF"]
+    R_TF_in, R_end = bd["R_TF_in"], segs[-1]["R_out"]
+    R_ob = R0 + a + b + Delta_TF
+    i_pl = next(i for i, s in enumerate(segs) if s["role"] == "plasma")
+    ib = [s for s in segs[:i_pl] if s["R_in"] >= R_TF_in - 1e-9]
+    ob = [s for s in segs[i_pl + 1:] if s["R_out"] <= R_ob + 1e-9]
+
+    # Fixed layout in inches, so that the label fit tests of _bar are exact
+    fig_w, fig_h = 9.0, 4.95
+    x0, w_main, w_zoom, gap = 0.4, 8.35, 3.95, 0.45
+    h_main, h_zoom = 1.45, 1.7
+    fig = plt.figure(figsize=(fig_w, fig_h))
+    ax = fig.add_axes([x0 / fig_w, 3.05 / fig_h, w_main / fig_w, h_main / fig_h])
+    ax_ib = fig.add_axes([x0 / fig_w, 0.5 / fig_h, w_zoom / fig_w, h_zoom / fig_h])
+    ax_ob = fig.add_axes([(x0 + w_zoom + gap) / fig_w, 0.5 / fig_h, w_zoom / fig_w,
+                          h_zoom / fig_h])
+
+    def _text_w(text, size):
+        """Approximate length of the longest line of a label [in] (0.6 em per glyph)."""
+        return 0.6 * size / 72.0 * max(len(t) for t in text.split("\n"))
+
+    def _spread(want, widths, lo, hi):
+        """Centres of labels of given widths, wanted at increasing positions, without
+        overlap and inside [lo, hi]. Overlapping labels merge into a cluster centred
+        on the mean of their wanted positions."""
+        def _place(cl):
+            total = sum(widths[i] for i in cl)
+            x = max(lo, min(float(np.mean([want[i] for i in cl])) - 0.5 * total,
+                            hi - total))
+            centres = []
+            for i in cl:
+                centres.append(x + 0.5 * widths[i])
+                x += widths[i]
+            return centres
+        clusters, k = [[i] for i in range(len(want))], 0
+        while k < len(clusters) - 1:
+            left, right = clusters[k], clusters[k + 1]
+            if (_place(left)[-1] + 0.5 * widths[left[-1]]
+                    > _place(right)[0] - 0.5 * widths[right[0]] + 1e-12):
+                clusters[k] = left + clusters.pop(k + 1)
+                k = max(k - 1, 0)       # the merged cluster may now reach its left neighbour
+            else:
+                k += 1
+        return [c for cl in clusters for c in _place(cl)]
+
+    def _bar(axis, items, y_top, axis_w, axis_h, x_lo, x_hi, size, digits, above):
+        """Bar of segments on y in [0, 1], ylim (-0.02, y_top). Labels inside: two
+        lines, horizontal then vertical, full name then abbreviation, then one vertical
+        line. Else above the bar (zooms only), spread apart, with leader lines."""
+        axis.set_xlim(x_lo, x_hi)
+        axis.set_ylim(-0.02, y_top)
+        per_m = axis_w / (x_hi - x_lo)                      # inches per metre
+        bar_h = axis_h / (y_top + 0.02)                     # bar height [in]
+        line = 1.3 * size / 72.0                            # width of one vertical line [in]
+        tops = []                                           # labels placed above the bar
+        for s in items:
+            w = s["R_out"] - s["R_in"]
+            axis.add_patch(plt.Rectangle((s["R_in"], 0.0), w, 1.0, fc=s["color"],
+                                         alpha=s["alpha"], ec="none", zorder=2))
+            axis.plot([s["R_in"], s["R_in"]], [0.0, 1.0], color="grey", lw=0.4, zorder=3)
+            width = (f"2a = {w:.{digits}f} m" if s["role"] == "plasma"
+                     else f"{w:.{digits}f} m")
+            seg_in, xc = w * per_m, 0.5 * (s["R_in"] + s["R_out"])
+            tries = [(f"{name}\n{width}", rot) for name in (s["name"], s["short"])
+                     for rot in (0, 90)]
+            tries += [(f"{name} {width}", 90) for name in (s["name"], s["short"])]
+            for text, rot in tries:
+                n_lines = text.count("\n") + 1
+                fits = (_text_w(text, size) <= 0.9 * seg_in if rot == 0 else
+                        _text_w(text, size) <= 0.9 * bar_h and n_lines * line <= seg_in)
+                if fits:
+                    axis.text(xc, 0.5, text, ha="center", va="center", fontsize=size,
+                              rotation=rot, linespacing=1.25, zorder=5)
+                    break
+            else:
+                if above:
+                    # One line if it fits in the space above the bar, else two
+                    text = f"{s['short']} {width}"
+                    if _text_w(text, size - 1) > (y_top - 1.16) * bar_h:
+                        text = f"{s['short']}\n{width}"
+                    tops.append((xc, text))
+        if tops:
+            # Width of each vertical label [m]: its lines at size - 1, plus a small gap
+            widths = [((t.count("\n") + 1) * 1.35 * (size - 1) / 72.0 + 0.015) / per_m
+                      for _, t in tops]
+            for (xc, text), x in zip(tops, _spread([xc for xc, _ in tops], widths,
+                                                   x_lo, x_hi)):
+                axis.plot([xc, xc, x, x], [1.0, 1.03, 1.12, 1.15], color="grey", lw=0.5,
+                          zorder=3)
+                axis.text(x, 1.16, text, ha="center", va="bottom", fontsize=size - 1,
+                          rotation=90, linespacing=1.1, zorder=5)
+        axis.plot([items[-1]["R_out"]] * 2, [0.0, 1.0], color="grey", lw=0.4, zorder=3)
+        axis.add_patch(plt.Rectangle((items[0]["R_in"], 0.0),
+                                     items[-1]["R_out"] - items[0]["R_in"], 1.0,
+                                     fc="none", ec="black", lw=0.8, zorder=4))
+        axis.set_yticks([])
+        for side in ("left", "right", "top"):
+            axis.spines[side].set_visible(False)
+        axis.tick_params(labelsize=9, direction="out")
+        axis.set_xlabel("$R$  [m]", fontsize=10)
+
+    # -- Whole build ----------------------------------------------------------
+    pad = 0.01 * R_end
+    _bar(ax, segs, 1.62, w_main, h_main, -pad, R_end + pad, 9, 2, above=False)
+
+    def _span(R1, R2, label):
+        ax.annotate("", xy=(R2, 1.2), xytext=(R1, 1.2), zorder=6,
+                    arrowprops=dict(arrowstyle="<->", color="#333333", lw=0.9,
+                                    mutation_scale=9, shrinkA=0, shrinkB=0))
+        ax.text(0.5 * (R1 + R2), 1.26, label, ha="center", va="bottom", fontsize=9,
+                color="#333333", zorder=6)
+
+    _span(R_TF_in, R0 - a, f"$b$ = {b:.2f} m")
+    _span(R0 + a, R_ob, f"$b + \\Delta_{{TF}}$ = {b + Delta_TF:.2f} m")
+    for y1, y2 in ((0.0, 0.27), (0.73, 1.0)):              # R0 line, broken at the label
+        ax.plot([R0, R0], [y1, y2], color="black", lw=0.8, ls="--", zorder=6)
+    ax.text(R0, 1.06, f"$R_0$ = {R0:.2f} m", ha="center", va="bottom", fontsize=9,
+            zorder=6)
+
+    # -- Zooms on the inboard and outboard layers ----------------------------
+    zooms = ((ax_ib, ib, "Inboard, TF to LCFS", f"$b$ = {b:.3f} m"),
+             (ax_ob, ob, "Outboard, LCFS to TF",
+              f"$b + \\Delta_{{TF}}$ = {b + Delta_TF:.3f} m"))
+    for axis, items, title, total in zooms:
+        if not items:                                       # no radial space on that side
+            axis.set_axis_off()
+            continue
+        lo, hi = items[0]["R_in"], items[-1]["R_out"]
+        pz = 0.02 * (hi - lo)
+        _bar(axis, items, 2.25, w_zoom, h_zoom, lo - pz, hi + pz, 8, 3, above=True)
+        for x, text, ha in ((0.0, title, "left"), (1.0, total, "right")):
+            axis.text(x, 1.03, text, transform=axis.transAxes, ha=ha, va="bottom",
+                      fontsize=9.5, fontweight="bold")
+        axis.xaxis.set_major_locator(plt.MaxNLocator(6))
+
+    Bmax = run.get("B_max")
+    head = f"Midplane radial build:  $R_0$ = {R0:.2f} m,  $a$ = {a:.2f} m"
+    if Bmax is not None and np.isfinite(Bmax):
+        head += f",  $B_{{max,TF}}$ = {float(Bmax):.1f} T"
+    head += f",  {run.get('Choice_Buck_Wedg', 'Wedging')}"
+    fig.text(x0 / fig_w, (fig_h - 0.12) / fig_h, head, ha="left", va="top", fontsize=11,
+             fontweight="bold")
+    _save_or_show(fig, save_dir, "run_radial_build")
 
 
 def plot_blanket_concepts_comparison(save_dir: str | None = None) -> None:
@@ -4229,6 +4507,9 @@ def plot_all(
     _p(26, "Radial build assembly (CS / TF / blanket)")
     plot_assembly_side_view(run, save_dir=save_dir)
 
+    _p("26b", "Midplane radial build")
+    plot_radial_build(run, save_dir=save_dir)
+
     _p(27, "TF coil side view")
     plot_TF_side_view(run, save_dir=save_dir)
 
@@ -4264,31 +4545,32 @@ def plot_run(
     view_3d: bool = True,
 ) -> None:
     """
-    Render the run-specific figure set (18 figures, 17 without the 3D view).
+    Render the run-specific figure set (19 figures, 18 without the 3D view).
 
     This is the subset called after each D0FUS run.  It contains only the
     figures that depend on the current run configuration and results —
     no verification curves, no benchmarks, no scaling-law surveys.
 
     Figures produced:
-      [ 1/18]  Tokamak LCFS comparison (with D0FUS overlay)
-      [ 2/18]  Miller flux surfaces (run geometry)
-      [ 3/18]  Shaping profiles κ(ρ), δ(ρ)
-      [ 4/18]  Kinetic profiles n(ρ), T(ρ), p(ρ)
-      [ 5/18]  Safety factor q(ρ) and current decomposition
-      [ 6/18]  Radiation profiles
-      [ 7/18]  Divertor two-point model (detachment vs SOL dissipation)
-      [ 8/18]  Radial build assembly (CS / TF / blanket)
-      [ 9/18]  TF coil side view
-      [10/18]  CICC TF conductor
-      [11/18]  CS cross-section
-      [12/18]  CICC CS conductor
-      [13/18]  Cost breakdown (Sheffield 2016 or Whyte 2024, CapEx / OpEx / COE)
-      [14/18]  Plasma temperature map T(rho)
-      [15/18]  Plasma density map n(rho)
-      [16/18]  Plant power balance — pulse
-      [17/18]  Plant power balance — dwell
-      [18/18]  3D machine view (PyVista; skipped if PyVista is missing,
+      [ 1/19]  Tokamak LCFS comparison (with D0FUS overlay)
+      [ 2/19]  Miller flux surfaces (run geometry)
+      [ 3/19]  Shaping profiles κ(ρ), δ(ρ)
+      [ 4/19]  Kinetic profiles n(ρ), T(ρ), p(ρ)
+      [ 5/19]  Safety factor q(ρ) and current decomposition
+      [ 6/19]  Radiation profiles
+      [ 7/19]  Divertor two-point model (detachment vs SOL dissipation)
+      [ 8/19]  Radial build assembly (CS / TF / blanket)
+      [ 9/19]  Midplane radial build
+      [10/19]  TF coil side view
+      [11/19]  CICC TF conductor
+      [12/19]  CS cross-section
+      [13/19]  CICC CS conductor
+      [14/19]  Cost breakdown (Sheffield 2016 or Whyte 2024, CapEx / OpEx / COE)
+      [15/19]  Plasma temperature map T(rho)
+      [16/19]  Plasma density map n(rho)
+      [17/19]  Plant power balance — pulse
+      [18/19]  Plant power balance — dwell
+      [19/19]  3D machine view (PyVista; skipped if PyVista is missing,
                or with view_3d=False)
 
     The breeding-blanket concept comparison does not depend on the run: it
@@ -4303,7 +4585,7 @@ def plot_run(
     view_3d  : bool
         False skips the 3D machine view (command-line option --no-3d).
     """
-    N = 18 if view_3d else 17
+    N = 19 if view_3d else 18
 
     # When saving, prefix each PNG with its order index so that the files sort
     # in the logical reading order: geometry (Miller), profiles, physics detail,
@@ -4355,27 +4637,29 @@ def plot_run(
     # ── Radial build & coils ──────────────────────────────────────────
     _emit(8, "Radial build assembly (CS / TF / blanket)",
           lambda: plot_assembly_side_view(run, save_dir=save_dir))
-    _emit(9, "TF coil side view",
+    _emit(9, "Midplane radial build",
+          lambda: plot_radial_build(run, save_dir=save_dir))
+    _emit(10, "TF coil side view",
           lambda: plot_TF_side_view(run, save_dir=save_dir))
-    _emit(10, "CICC TF conductor",
+    _emit(11, "CICC TF conductor",
           lambda: plot_CICC_cross_section(build_conductor_from_run(run, coil="TF"), save_dir=save_dir))
-    _emit(11, "CS cross-section",
+    _emit(12, "CS cross-section",
           lambda: plot_CS_cross_section(run, save_dir=save_dir))
-    _emit(12, "CICC CS conductor",
+    _emit(13, "CICC CS conductor",
           lambda: plot_CICC_cross_section(build_conductor_from_run(run, coil="CS"), save_dir=save_dir))
 
     # ── Techno-economic synthesis ─────────────────────────────────────
-    _emit(13, f"Cost breakdown ({(run.get('cost_breakdown') or {}).get('model', 'cost model off')})",
+    _emit(14, f"Cost breakdown ({(run.get('cost_breakdown') or {}).get('model', 'cost model off')})",
           lambda: plot_cost_breakdown(run, save_dir=save_dir))
 
     # ── Plasma field maps ────────────────────────────────────
-    _emit(14, "Plasma temperature map", lambda: plot_temperature_map(run, save_dir=save_dir))
-    _emit(15, "Plasma density map", lambda: plot_density_map(run, save_dir=save_dir))
+    _emit(15, "Plasma temperature map", lambda: plot_temperature_map(run, save_dir=save_dir))
+    _emit(16, "Plasma density map", lambda: plot_density_map(run, save_dir=save_dir))
 
     # ── Phase-specific energy and power balance ───────────────────────
-    _emit(16, "Plant power balance (pulse)",
+    _emit(17, "Plant power balance (pulse)",
           lambda: plot_plant_power_balance(run, phase="pulse", save_dir=save_dir))
-    _emit(17, "Plant power balance (dwell)",
+    _emit(18, "Plant power balance (dwell)",
           lambda: plot_plant_power_balance(run, phase="dwell", save_dir=save_dir))
 
     # ── 3D machine view (optional PyVista dependency) ─────────────────
@@ -4388,7 +4672,7 @@ def plot_run(
             print(f"  [warn] 3D machine view failed ({type(_e).__name__}: "
                   f"{_e}) — skipped.")
     if view_3d:
-        _emit(18, "3D machine view (PyVista)", _fig_3d)
+        _emit(19, "3D machine view (PyVista)", _fig_3d)
 
     print("Done.")
 

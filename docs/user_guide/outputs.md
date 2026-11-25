@@ -12,11 +12,11 @@ A RUN produces:
 - `output_highlight.txt`, the key results;
 - `output_detailed.txt`, every input including defaults, and every output.
   Currents are in MA, densities in 10²⁰ m⁻³, pressures in MPa and energies in MJ;
-- 18 figures: cross-section, Miller surfaces, profiles, q(ρ), radiation, divertor
-  two-point model, radial build, coil and CICC drawings, cost breakdown,
-  temperature and density maps, the plant power balance of the pulse and of the
-  dwell (Sankey diagrams), and the 3D machine view (PyVista, skipped with
-  `--no-3d`).
+- 19 figures: cross-section, Miller surfaces, profiles, q(ρ), radiation, divertor
+  two-point model, radial build as a cross-section and as a midplane bar, coil and
+  CICC drawings, cost breakdown, temperature and density maps, the plant power
+  balance of the pulse and of the dwell (Sankey diagrams), and the 3D machine view
+  (PyVista, skipped with `--no-3d`).
 
 A design without a solution gives NaN in the reports and the figures.
 

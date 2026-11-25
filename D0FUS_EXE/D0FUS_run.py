@@ -5241,7 +5241,7 @@ def _generate_run_figures(config: GlobalConfig, results: tuple,
                           output_path: str, verbose: int = 0,
                           view_3d: bool = True) -> None:
     """
-    Generate and save run-specific figures (18, 17 without the 3D view) into
+    Generate and save run-specific figures (19, 18 without the 3D view) into
     output_path/figures/.
 
     Calls D0FUS_figures.plot_run() which produces only the figures that
